@@ -1,7 +1,7 @@
 import type { UsageAnalyticsBreakdownDimension, UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
 import type { UsageQueryResultSlice } from './resolveUsagePageAggregation.js';
 import type { ProjectListGroupV1, ProjectListOrganizationV1 } from '../projects/projectListProjectionV1.js';
-import { isEarlierProjectBaselineRefV1, qualifyCollidingProjectTitlesV1, resolveWorkspacePathBasenameV1 } from '../workspaces/workspaceRefResolutionV1.js';
+import { isEarlierProjectBaselineRefV1, resolveQualifiedProjectTitlesV1, resolveWorkspacePathBasenameV1 } from '../workspaces/workspaceRefResolutionV1.js';
 
 export type UsageScopeFilterField = 'sources' | 'agents' | 'machines' | 'projects';
 export const usageScopeFilterDimensions = {
@@ -92,23 +92,28 @@ type UsageProjectOptionNames = Readonly<{
   projectFacts?: UsageProjectOptionFacts;
 }>;
 
-/** One title index for Work, the toolbar and the options Action. Checkout facts never add filter membership. */
 export function resolveUsageProjectTitles(labels: ReadonlyMap<string, string>,
   options: UsageProjectOptionNames = {}): ReadonlyMap<string, string | null> {
-  const facts = new Map<string, { title: string | null; rootPath?: string; machineName?: string }>();
+  return projectUsageProjectTitles(labels, options).titles;
+}
+
+/** One title index for Work, the toolbar and the options Action. Checkout facts never add filter membership. */
+export function projectUsageProjectTitles(labels: ReadonlyMap<string, string>,
+  options: UsageProjectOptionNames = {}): ReturnType<typeof resolveQualifiedProjectTitlesV1> {
+  const facts = new Map<string, { title: string | null; rootPath?: string; machineName?: string; machineId?: string }>();
   const add = (key: string, fallback: string) => {
     const fact = options.projectFacts?.get(key);
     const base = (fact?.label ?? fallback).trim();
     const checkout = fact?.label == null ? fact?.checkoutPathLabel ?? '' : '';
     const title = hasUsageProjectOptionName(key, base) ? base
       : hasUsageProjectOptionName(key, checkout) ? checkout : null;
-    facts.set(key, { title, rootPath: fact?.rootPath,
+    facts.set(key, { title, rootPath: fact?.rootPath, machineId: fact?.baselineMachineId,
       machineName: fact?.baselineMachineId ? options.machineNames?.[fact.baselineMachineId] : undefined });
   };
   for (const [key, label] of labels) add(key, label);
   // A date/window filter can remove a choice but cannot rename a known Project.
   for (const key of options.projectFacts?.keys() ?? []) if (!facts.has(key)) add(key, key);
-  return qualifyCollidingProjectTitlesV1(facts, { compact: true });
+  return resolveQualifiedProjectTitlesV1(facts, { compact: true });
 }
 
 /** A null title is the toolbar's unnamed group. Its underlying accounting keys remain usable in Actions. */

@@ -349,18 +349,19 @@ export function UsageCoachWidget(props: UsageBodyProps) {
   );
   const clear = coach.evaluations.filter((row) => row.status === 'no_finding');
   const disabled = coach.evaluations.filter(row => row.status === 'disabled');
-  // Nothing was actually checked: every check still waits for evidence. That is a first use, not "nothing needs you",
-  // and the way forward is work for the Coach to read.
-  const firstUse = insufficient.length > 0 && clear.length === 0;
   // What the checks found, as one row of facts (lab d2coach "This week"). Savings are never summed:
   // overlapping estimates would double count, so the band counts findings and checks only.
   const checked = coach.evaluations.length - disabled.length;
+  const firstUse = insufficient.length > 0 && insufficient.length === checked;
   // The band holds only what is known (owner ruling 11-13: unknown is never the lead row). Listed findings are
   // counted from the list itself, even while another source still reads; an unread check is not one that needs
   // more evidence, and an unknown session count leaves the band rather than standing in it as a dash.
   const sessionsChecked = reading ? undefined : countUsageCheckedSessions(coach.sessionCoverage);
   const summary = [
-    ...(!reading || visible.length > 0 ? [{ key: 'findings', label: t('usage.board.coach.summaryFindings'), value: visible.length,
+    // No check ran (every one waits for evidence): how many would find something is unknown, a dash, never zero; the
+    // first-use line under the band says why (USAGE-DESIGN-PASS-57 #13).
+    ...(!reading || visible.length > 0 ? [{ key: 'findings', label: t('usage.board.coach.summaryFindings'),
+      value: firstUse ? '—' : visible.length,
       caption: t('usage.board.coach.summaryOfChecks', { count: checked }) }] : []),
     ...(sessionsChecked !== undefined ? [{ key: 'sessions', label: t('usage.board.coach.summarySessions'), value: sessionsChecked,
       caption: usagePeriodPhrase(props.query) }] : []),

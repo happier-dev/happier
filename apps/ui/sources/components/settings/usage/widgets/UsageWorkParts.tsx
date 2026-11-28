@@ -10,13 +10,12 @@ import { Text } from '@/components/ui/text/Text';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Typography } from '@/constants/Typography';
 import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
-import { getPreferredLanguage, t } from '@/text';
+import { t } from '@/text';
 import { UsageAgentMark, UsageBodyReading, UsageShowAllRows, leadingUsageRows, readUsageWorkReadAsOfMs, useUsagePluginTheme } from './usageBodyKit';
 import { UsageWorkProviderMark, usageWorkProviderIdentities, usageWorkProviderNames } from './UsageWorkProviderMark';
-import { usageAgentTitle, usageSourceTitle } from '@/sync/domains/usage/usageLabels';
-import { UsageWorkProjectionSchema } from '@happier-dev/protocol/usage/usageOutcomeAllocation';
+import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
-import { readUsageWorkOutcomesEvidence } from './usageWorkPresentation';
+import { usageWorkLinksNotice } from './usageWorkPresentation';
 import { usageTokensFromPartsNote } from '../usageCostPresentation';
 import { formatUsageObservedAt } from '@/sync/domains/usage/usageCalendarPresentation';
 import type {
@@ -25,9 +24,10 @@ import type {
   UsageWorkSessionRow,
   UsageWorkSummary,
   UsageWorkRetainedChange,
-  UsageWorkUnallocatedReason,
   UsageWorkMoneyBasis,
 } from './usageWorkPresentation';
+
+export { USAGE_WORK_UNALLOCATED_REASONS, usageWorkAllocationReasonLabel, usageWorkLinksNotice, usageWorkPageReadLabel } from './usageWorkPresentation';
 
 /** The parts the Work bodies share: identity marks, an in-place disclosure and a Session's rows. */
 
@@ -49,54 +49,6 @@ export function usageWorkRetainedChangeLine(changes: readonly UsageWorkRetainedC
     return `${range}+${change.addedLines} / −${change.removedLines}`
       + (change.status === 'partial' ? ` · ${t('usage.board.work.linesKeptPartial')}` : '');
   }).join(' · ');
-}
-
-export const USAGE_WORK_UNALLOCATED_REASONS = UsageWorkProjectionSchema.shape.allocations._zod.def.element
-  .shape.reason.options.filter(reason => reason !== 'allocated');
-
-export function usageWorkAllocationReasonLabel(reason: UsageWorkUnallocatedReason | 'missing_pr'): string {
-  return t(`usage.board.work.reason_${reason}`);
-}
-
-/** Name known Work gaps while reading, and allocation reasons once the read settles. */
-export function usageWorkLinksNotice(slice: UsageQueryResultSlice): Readonly<{ title: string; cause: string | null; progress?: true }> {
-  const source = slice.sources.find(row => row.source === 'work');
-  const coverage = readUsageWorkOutcomesEvidence(slice, 'work');
-  const unread = source?.unreadSessions ?? {};
-  const other = (unread.not_entitled ?? 0) + (unread.timed_out ?? 0) + (unread.failed ?? 0);
-  const formatCount = (count: number) => ({ count, formattedCount: count.toLocaleString(getPreferredLanguage()) });
-  const unreadCauses = [
-    unread.machine_unavailable ? t('usage.board.work.workUnreadUnreachable', formatCount(unread.machine_unavailable))
-      : source?.errorCode === 'machine_offline' ? t('usage.board.work.workUnreadUnreachableSome') : null,
-    other > 0 ? t('usage.board.work.workUnreadOther', formatCount(other)) : null,
-  ];
-  if (coverage === 'reading') {
-    const cause = unreadCauses.filter(Boolean).join(' · ') || null;
-    if (source?.status === 'pending' && (cause || slice.work?.outcomes.length || slice.work?.branches.length)) {
-      return { title: t('usage.board.page.coveragePending', { sources: usageSourceTitle('work') }), cause, progress: true };
-    }
-    return { title: t('usage.board.work.workUnavailableTitle'), cause: null };
-  }
-
-  const attribution: string[] = [];
-  if (slice.work && slice.work.outcomes.length === 0) {
-    const reasons = new Set(slice.work.allocations.map(row => row.reason));
-    for (const reason of USAGE_WORK_UNALLOCATED_REASONS) {
-      // An empty witness set also comes from reads that could not run.
-      if (reason === 'missing_evidence' && coverage !== 'observed' && source?.status !== 'available') continue;
-      if (reasons.has(reason)) attribution.push(usageWorkAllocationReasonLabel(reason));
-    }
-  }
-  if (source?.status !== 'partial' || coverage === 'observed') {
-    const failed = source?.status === 'error' || source?.status === 'stale' || source?.status === 'unsupported'
-      || source?.errorCode !== undefined || source?.unreadSessions !== undefined;
-    return {
-      title: failed ? t('usage.board.page.workNotRead') : t('usage.board.work.notLinked'),
-      cause: attribution.join(' · ') || null,
-    };
-  }
-  const cause = [...unreadCauses, ...attribution].filter(Boolean).join(' · ');
-  return { title: t('usage.board.work.workPartialTitle'), cause: cause || null };
 }
 
 export function UsageWorkPendingNotice(props: Readonly<{

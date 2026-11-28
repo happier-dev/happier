@@ -284,8 +284,8 @@ export function SidebarUsagePopoverView(props: Readonly<{
     }, [sourceAccounts]);
     const clockNow = useSessionListRuntimeDeadlineNowMs(readNextExpiry, activelyViewed && usage.staleAt !== null);
     // Keep the source order within each group. An expired or saved reading can still show its numbers.
-    const accounts = React.useMemo(() => {
-        type Entry = (typeof sourceAccounts)[number] & { expired: boolean };
+    const { accounts, visibleAccounts, foldedAccountCount, unavailableRowKeys } = React.useMemo(() => {
+        type Entry = (typeof sourceAccounts)[number] & { expired: boolean; content: AccountGroupContent };
         const usable: Entry[] = [];
         const spent: Entry[] = [];
         const unknown: Entry[] = [];
@@ -293,9 +293,17 @@ export function SidebarUsagePopoverView(props: Readonly<{
             const expired = isQuotaReadingExpired(entry.account.staleAt, clockNow);
             const verdict = usage.source === 'live' && !expired ? facts.accounts?.[entry.account.key]?.quotaExhausted : undefined;
             const group = verdict === false ? usable : verdict === true ? spent : unknown;
-            group.push({ ...entry, expired });
+            const { account } = entry;
+            const content = account.windows.length > 0 ? 'meters' : account.state === 'ready' ? 'unavailable' : account.state;
+            group.push({ ...entry, expired, content });
         }
-        return [...usable, ...spent, ...unknown];
+        const accounts = [...usable, ...spent, ...unknown];
+        // Several accounts with nothing to show are one quiet line. A lone account keeps its status row.
+        const silent = accounts.filter(({ content }) => content !== 'meters' && content !== 'loading');
+        const folded = silent.length > 1 ? new Set(silent) : null;
+        const visibleAccounts = folded ? accounts.filter(entry => !folded.has(entry)) : accounts;
+        const unavailableRowKeys = new Set(visibleAccounts.filter(({ content }) => content === 'unavailable').map(({ account }) => account.key));
+        return { accounts, visibleAccounts, foldedAccountCount: folded?.size ?? 0, unavailableRowKeys };
     }, [sourceAccounts, usage.source, facts.accounts, clockNow]);
     const now = Math.max(Date.now(), clockNow);
 
@@ -315,7 +323,7 @@ export function SidebarUsagePopoverView(props: Readonly<{
     // The rail's header is dated by the newest shown reading, decided by the summary owner (review J-B50); a row past
     // its window carries its own as-of line. Scoped, the one row's own time, unless that row already dates itself.
     const shownAsOf = scoped
-        ? sessionAccount && !(sessionAccount.expired && sessionAccount.account.windows.length > 0) ? sessionAccount.account.fetchedAt : null
+        ? sessionAccount && !(sessionAccount.expired && sessionAccount.content === 'meters') ? sessionAccount.account.fetchedAt : null
         : usage.shownReadAt;
 
     // Every account shown together is named at once, so two that read as their service's account are
@@ -332,8 +340,8 @@ export function SidebarUsagePopoverView(props: Readonly<{
     ]), [sourceAccounts, facts.accountsNeedingSignIn, privacy.present]);
     const refreshAccountKey = scoped ? session?.accountKey ?? null : undefined;
     const { keys: refreshKeys, refreshing, error: refreshError } = React.useMemo(() => summarizeUsagePopoverRefresh({
-        refresh, accountKey: refreshAccountKey, names, presentIdentity: privacy.present, identitiesHidden: privacy.hidden,
-    }), [refresh, refreshAccountKey, names, privacy.present, privacy.hidden]);
+        refresh, accountKey: refreshAccountKey, names, unavailableRowKeys, presentIdentity: privacy.present, identitiesHidden: privacy.hidden,
+    }), [refresh, refreshAccountKey, names, unavailableRowKeys, privacy.present, privacy.hidden]);
 
     const renderAccount = (entry: (typeof accounts)[number]) => (
         <UsageAccountGroup
@@ -342,6 +350,7 @@ export function SidebarUsagePopoverView(props: Readonly<{
             service={parseQualifiedPluginContributionKey(entry.provider.key)}
             legacyServiceId={entry.provider.legacyServiceId}
             account={entry.account}
+            content={entry.content}
             facts={facts.accounts?.[entry.account.key] ?? null}
             name={names.get(entry.account.key)!}
             expired={entry.expired}
@@ -394,18 +403,15 @@ export function SidebarUsagePopoverView(props: Readonly<{
                     </Text>
                 );
     } else {
-        // Several accounts with nothing to show are one quiet line after the ones that answer; a lone one keeps its row.
-        const silent = accounts.filter(({ account }) => account.windows.length === 0 && account.state !== 'loading');
-        const collapsed = silent.length > 1 ? new Set(silent) : null;
         // Then what cannot take work, by reason: used up (in the list above), no usage data, signed out. A long
         // signed-out run is one line with its count, opened in place (acceptance 11-22 #7).
         const signedOut = facts.accountsNeedingSignIn;
         const foldSignedOut = signedOut.length >= SIGNED_OUT_FOLD_AT;
         const signedOutLabel = foldSignedOut ? t('sidebarFooter.usageSignedOutAccounts', { count: signedOut.length }) : null;
         body = withDividers([
-            ...accounts.filter(entry => !collapsed?.has(entry)).map(renderAccount),
-            ...(collapsed ? [<Text key="silent" testID="usage-popover-unavailable-accounts" style={styles.scopeLine}>
-                {t('sidebarFooter.usageUnavailableAccounts', { count: collapsed.size })}
+            ...visibleAccounts.map(renderAccount),
+            ...(foldedAccountCount > 0 ? [<Text key="silent" testID="usage-popover-unavailable-accounts" style={styles.scopeLine}>
+                {t('sidebarFooter.usageUnavailableAccounts', { count: foldedAccountCount })}
             </Text>] : []),
             ...(signedOutLabel === null ? signedOut.map(renderSignedOut) : [
                 <ActionListSection key="signedOut" actions={[{
@@ -576,22 +582,25 @@ function AccountHeader(props: Readonly<{
 
 const noop = () => {};
 
+type AccountGroupContent = Exclude<UsageAccountRow['state'], 'ready'> | 'meters';
+
 const UsageAccountGroup = React.memo(function UsageAccountGroup(props: Readonly<{
     serviceLabel: string;
     service?: PluginContributionIdentityV1 | null;
     legacyServiceId: string | null;
     account: UsageAccountRow;
+    content: AccountGroupContent;
     facts: UsagePopoverAccountFacts | null;
     name: ConnectedAccountNamePresentation;
     expired: boolean;
     now: number;
 }>) {
-    const { account, expired } = props;
+    const { account, content, expired } = props;
     const identity = accountHeaderLine(props.serviceLabel, props.name);
-    const stateLabel = account.windows.length > 0
+    const stateLabel = content === 'meters'
         ? null
-        : account.state === 'loading' ? t('common.loading')
-            : account.state === 'no_usage_observed' ? t('connectedServicesSettings.usageAppearsAfterSession')
+        : content === 'loading' ? t('common.loading')
+            : content === 'no_usage_observed' ? t('connectedServicesSettings.usageAppearsAfterSession')
             : t('common.unavailable');
     return (
         <View testID={`sidebar-usage-account-${account.key}`} style={styles.group}>
@@ -620,7 +629,7 @@ const UsageAccountGroup = React.memo(function UsageAccountGroup(props: Readonly<
                     ))}
                 </UsageMeterStack>
             )}
-            {expired && account.windows.length > 0 ? (
+            {expired && content === 'meters' ? (
                 <SurfaceFreshnessLine testID={`sidebar-usage-account-${account.key}.freshness`} presentation="inline"
                     asOf={account.fetchedAt} reason={t('usage.board.plans.paceStale')} />
             ) : null}

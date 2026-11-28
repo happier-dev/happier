@@ -716,11 +716,13 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'flex-start',
     paddingLeft: theme.space.s4,
   },
-  // Wide rows read as the lab's table: identity, one status column, then Counted and its menu.
+  // Wide rows read as the lab's table: identity, then the status in the row's trailing meta column (right-aligned, beside
+  // Counted and its menu), never floating mid-row where the identity ends (USAGE-DESIGN-PASS-57 #16).
   stateColumn: {
-    flex: 1,
+    flexShrink: 1,
     marginTop: 0,
     alignSelf: 'center',
+    justifyContent: 'flex-end',
   },
   controls: {
     flexDirection: 'row',

@@ -284,10 +284,12 @@ export function UsageWorkAutopsy(
               size="stat"
               showLabel
               label={t('usage.board.work.turns')}
-              // The recorded turns the list names; usage with no turn is said once beside them, never as "Not recorded".
-              value={ordinals.size > 0 ? ordinals.size : t('usage.board.howYouWork.notRecorded')}
-              {...(ordinals.size > 0 && turns.some(turn => turn.turnId === null)
-                ? { caption: t('usage.board.work.turnsUnrecordedPart') } : {})}
+              // The recorded turns the list names; usage with no turn is said once beside them. With none recorded the
+              // figure is a quiet dash and the reason sits in the caption, never a word in the figure's slot
+              // (USAGE-DESIGN-PASS-57 #18).
+              value={ordinals.size > 0 ? ordinals.size : '—'}
+              {...(ordinals.size === 0 ? { caption: t('usage.board.howYouWork.notRecorded') }
+                : turns.some(turn => turn.turnId === null) ? { caption: t('usage.board.work.turnsUnrecordedPart') } : {})}
             />
             {largest ? (
               <HappierDataMetric
@@ -313,16 +315,10 @@ export function UsageWorkAutopsy(
             </View>
             <Text style={[styles.outcomeText, caption]}>
               {[
-                `${t('usage.board.work.linkedOutcome')}: ${
-                  outcomes.length === 0
-                    ? t('usage.board.work.noOutcome')
-                    : outcomes
-                        .map(
-                          (outcome) =>
-                            `${usageWorkPullRequestTitle(outcome.pullRequest)} · ${usageWorkPullRequestState(outcome.pullRequest)}`,
-                        )
-                        .join(', ')
-                }`,
+                // With no outcome the line says the state itself, never a label over its own negation.
+                outcomes.length === 0 ? t('usage.board.work.unlinkedTitle') : `${t('usage.board.work.linkedOutcome')}: ${outcomes
+                  .map((outcome) => `${usageWorkPullRequestTitle(outcome.pullRequest)} · ${usageWorkPullRequestState(outcome.pullRequest)}`)
+                  .join(', ')}`,
                 sharedIdentity,
               ]
                 .filter(Boolean)

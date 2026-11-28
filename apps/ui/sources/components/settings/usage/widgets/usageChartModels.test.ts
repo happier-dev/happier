@@ -856,6 +856,24 @@ describe('Usage chart models', () => {
     const led = [bucket(0, { tokens: 900, eventCount: 3 }, [], { tokens: { status: 'leading', agentIds: ['codex'], includesUnknown: false } })];
     expect(projectUsageSkyModel(calendar({ days: led }), 'tokens', 'leadingAgent', START + 2 * DAY, { relative: '7days' }).colourBy).toBe('leadingAgent');
   });
+  // USAGE-DESIGN-PASS-57 #15: a streak bracket that spans a day the sky draws as "Not recorded" contradicts its own card.
+  it('brackets a Sky of days streak only over the days it draws as active', () => {
+    const days = [bucket(3, { busyMs: 3_600_000, eventCount: 3 }), bucket(4, { busyMs: null, eventCount: 2 })];
+    const model = projectUsageSkyModel(calendar({ days }), 'busy', 'intensity', START + 4 * DAY + 11 * HOUR, { relative: '7days' });
+    expect(model.days.slice(3).map(day => day.state)).toEqual(['active', 'unknown']);
+    expect(model.best ?? model.current).not.toBeNull();
+    for (const run of [model.best, model.current]) {
+      if (!run) continue;
+      const drawn = model.days.filter(day => day.date >= run.startDate && day.date <= run.endDate);
+      expect(drawn.every(day => day.state === 'active')).toBe(true);
+    }
+  });
+  it('brackets consecutive measured busy days without accounting events', () => {
+    const days = [bucket(3, { busyMs: HOUR }), bucket(4, { busyMs: 2 * HOUR })];
+    const model = projectUsageSkyModel(calendar({ days }), 'busy', 'intensity', START + 4 * DAY + 11 * HOUR, { relative: '7days' });
+    expect(model.days.slice(3).map(day => day.state)).toEqual(['active', 'active']);
+    expect(model.current).toEqual({ startDate: days[0]!.date, endDate: days[1]!.date, days: 2 });
+  });
   // r227 #76: at 11 AM the running day is a small amount, never a finished day the line dives to.
   it('marks only the day still running as partial on Sky of days', () => {
     const days = [bucket(3, { tokens: 900, eventCount: 3 }), bucket(4, { tokens: 10, eventCount: 1 })];

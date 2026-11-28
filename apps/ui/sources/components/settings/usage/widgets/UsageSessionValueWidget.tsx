@@ -161,6 +161,10 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
   );
   return (
     <View style={styles.body} testID={`${props.testID}.value`}>
+      {/* The card's promise leads, above the rows it describes, never a footer under them (USAGE-DESIGN-PASS-57 #10). */}
+      <Text style={[styles.note, sectionStyle]}>
+        {t('usage.board.work.judgement')}
+      </Text>
       <UsageWorkAutopsy {...props} testID={`${props.testID}.autopsy`} />
       {showScatter ? projectUsageSessionValuePlots(summary.sessions, props.query.metric).map(plot => {
         const usedSlots = slots.filter(agentId => plot.rows.some(row => slotOf(row) === agentId));
@@ -286,9 +290,6 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
       {/* Sessions this view has not counted yet follow the counted ones: Browse is the ledger's next step, not a
           label above its value (sweep 1110 #25). */}
       {outside}
-      <Text style={[styles.note, sectionStyle]}>
-        {t('usage.board.work.judgement')}
-      </Text>
       <UsageCoverageLine
         slice={props.slice}
         sources={['work']}

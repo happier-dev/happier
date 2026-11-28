@@ -3,14 +3,16 @@ import type { UsageAnalyticsTokens } from '@happier-dev/protocol/usage/usageAnal
 import { resolveUsageCostBasis } from '@happier-dev/protocol/usage/usageCostFacts';
 import type { RepositoryCheckpointCommitEvidence } from '@happier-dev/protocol/sessions/changes/types';
 import type { UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
-import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import type { UsageQueryResultSlice, UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import type { ScmPullRequestSummary } from '@happier-dev/protocol/scm';
 import { resolveUsageMeasuredTokens } from '@/sync/api/account/usageMeasuredTokens';
-import { isUsageCoverageFailure } from '@/sync/api/account/usageReadFailure';
-import type {
-  UsageWorkAllocation as UsageWorkAllocationRef,
-  UsageWorkContribution,
-  UsageWorkProjection as UsageWorkAllocationGraph,
+import { usageSourceTitle } from '@/sync/domains/usage/usageLabels';
+import { getPreferredLanguage, t } from '@/text';
+import {
+  UsageWorkProjectionSchema,
+  type UsageWorkAllocation as UsageWorkAllocationRef,
+  type UsageWorkContribution,
+  type UsageWorkProjection as UsageWorkAllocationGraph,
 } from '@happier-dev/protocol/usage/usageOutcomeAllocation';
 
 type UsageWorkAllocation = UsageWorkAllocationRef & { contribution: UsageWorkContribution };
@@ -46,6 +48,17 @@ export type UsageWorkUnallocatedReason = Exclude<
   UsageWorkAllocation['reason'],
   'allocated'
 >;
+
+export const USAGE_WORK_UNALLOCATED_REASONS = UsageWorkProjectionSchema.shape.allocations._zod.def.element
+  .shape.reason.options.filter(reason => reason !== 'allocated');
+
+export function usageWorkAllocationReasonLabel(reason: UsageWorkUnallocatedReason | 'missing_pr'): string {
+  return t(`usage.board.work.reason_${reason}`);
+}
+
+export function usageWorkPageReadLabel(state: 'partial' | 'unavailable'): string {
+  return t(state === 'partial' ? 'usage.board.charts.coveragePartialShort' : 'usage.board.page.notReadTitle');
+}
 
 export function usageWorkContributionAmount(
   allocation: Pick<UsageWorkAllocation, 'contribution'>,
@@ -146,18 +159,113 @@ type UsageWorkOutcomesPresentation = Readonly<{ kind: 'ready' }> | Readonly<{
   machineIds: readonly string[];
 }>;
 
-/**
- * The one Work coverage decision every Work body consumes: observed, still reading, settled with some Sessions unread
- * (`partial`: an offline Machine, never a failure, and waiting will not finish it), or unavailable (a failed read).
- */
-export function readUsageWorkOutcomesEvidence(
-  slice: UsageQueryResultSlice, projection: 'work' | 'mergedOutcomes',
-): 'observed' | 'reading' | 'partial' | 'unavailable' {
-  const source = slice.sources.find(row => row.source === 'work');
+type UsageWorkEvidence = 'observed' | 'reading' | 'partial' | 'unavailable';
+type UsageWorkProjectionKey = 'work' | 'mergedOutcomes';
+
+function readUsageWorkEvidence(
+  slice: UsageQueryResultSlice, projection: UsageWorkProjectionKey, source: UsageQuerySourceState | undefined,
+): UsageWorkEvidence {
   // The query projection decides whether an empty result was observed.
   if (slice[projection] !== undefined && slice.workSummary?.pullRequestsRead === true) return 'observed';
   if (source?.status === 'pending' || source?.status === 'not_loaded') return 'reading';
-  return source?.status === 'partial' && !isUsageCoverageFailure(source) ? 'partial' : 'unavailable';
+  // Partial Work can settle a subset while an unread Session still has a retryable failure.
+  return source?.status === 'partial' ? 'partial' : 'unavailable';
+}
+
+export function readUsageWorkOutcomesEvidence(slice: UsageQueryResultSlice, projection: UsageWorkProjectionKey): UsageWorkEvidence {
+  return readUsageWorkEvidence(slice, projection, slice.sources.find(row => row.source === 'work'));
+}
+
+type UsageWorkUnreadCause = Readonly<{ kind: 'unreachable' | 'unread'; count: number | null }>;
+type UsageWorkCause = UsageWorkUnreadCause | Readonly<{ kind: 'allocation'; reason: UsageWorkUnallocatedReason }>;
+
+function readUsageWorkUnreadCauses(source: UsageQuerySourceState | undefined): UsageWorkUnreadCause[] {
+  const unread = source?.unreadSessions ?? {};
+  const other = (unread.not_entitled ?? 0) + (unread.timed_out ?? 0) + (unread.failed ?? 0);
+  const causes: UsageWorkUnreadCause[] = [];
+  if (unread.machine_unavailable || source?.errorCode === 'machine_offline') {
+    causes.push({ kind: 'unreachable', count: unread.machine_unavailable ?? null });
+  }
+  if (other > 0) causes.push({ kind: 'unread', count: other });
+  return causes;
+}
+
+export function usageWorkCauseLabel(cause: UsageWorkCause): string {
+  if (cause.kind === 'allocation') return usageWorkAllocationReasonLabel(cause.reason);
+  if (cause.count === null) {
+    return t(cause.kind === 'unreachable' ? 'usage.board.work.workUnreadUnreachableSome' : 'usage.board.work.workUnreadOtherSome');
+  }
+  return t(cause.kind === 'unreachable' ? 'usage.board.work.workUnreadUnreachable' : 'usage.board.work.workUnreadOther', {
+    count: cause.count,
+    formattedCount: cause.count.toLocaleString(getPreferredLanguage()),
+  });
+}
+
+// The Resource retains unchanged allocation identities through sibling publications.
+const reasonsByAllocation = new WeakMap<UsageWorkAllocationGraph['allocations'], readonly UsageWorkUnallocatedReason[]>();
+
+function readUsageWorkAllocationReasons(
+  slice: UsageQueryResultSlice, source: UsageQuerySourceState | undefined, state: UsageWorkEvidence,
+): readonly UsageWorkUnallocatedReason[] {
+  if (!slice.work || slice.work.outcomes.length > 0) return [];
+  const { allocations } = slice.work;
+  let reasons = reasonsByAllocation.get(allocations);
+  if (!reasons) {
+    const present = new Set<UsageWorkAllocationRef['reason']>();
+    for (const row of allocations) present.add(row.reason);
+    reasons = USAGE_WORK_UNALLOCATED_REASONS.filter(reason => present.has(reason));
+    reasonsByAllocation.set(allocations, reasons);
+  }
+  // An empty witness set also comes from reads that could not run.
+  return state === 'observed' || source?.status === 'available' ? reasons : reasons.filter(reason => reason !== 'missing_evidence');
+}
+
+/** Name known Work gaps while reading, and allocation reasons once the read settles. */
+export function usageWorkLinksNotice(slice: UsageQueryResultSlice): Readonly<{
+  state: UsageWorkEvidence;
+  title: string;
+  cause: string | null;
+  progress?: true;
+}> {
+  const source = slice.sources.find(row => row.source === 'work');
+  const state = readUsageWorkEvidence(slice, 'work', source);
+  const unreadCauses = readUsageWorkUnreadCauses(source).map(usageWorkCauseLabel);
+  if (state === 'reading') {
+    if (source?.status === 'pending' && (unreadCauses.length || slice.work?.outcomes.length || slice.work?.branches.length)) {
+      return { state, title: t('usage.board.page.coveragePending', { sources: usageSourceTitle('work') }),
+        cause: unreadCauses.join(' · ') || null, progress: true };
+    }
+    return { state, title: t('usage.board.work.workUnavailableTitle'), cause: null };
+  }
+  const failed = source?.status === 'error' || source?.status === 'stale' || source?.status === 'unsupported'
+    || source?.errorCode !== undefined || source?.unreadSessions !== undefined;
+  const title = state === 'partial' ? t('usage.board.work.workPartialTitle')
+    : failed ? t('usage.board.page.workNotRead') : t('usage.board.work.notLinked');
+  const causes = unreadCauses.concat(readUsageWorkAllocationReasons(slice, source, state).map(usageWorkAllocationReasonLabel));
+  return { state, title, cause: causes.join(' · ') || null };
+}
+
+/** The page Details says the settled Work gaps that cards abbreviate. */
+export function readUsagePageWorkCauses(slices: readonly UsageQueryResultSlice[]): UsageWorkCause[] {
+  const unreadCauses = new Map<UsageWorkUnreadCause['kind'], UsageWorkUnreadCause>();
+  const reasons = new Set<UsageWorkUnallocatedReason>();
+  let scopes = 0;
+  for (const slice of slices) {
+    if (!slice.requestedQuery.includeWorkEvidence) continue;
+    const source = slice.sources.find(row => row.source === 'work');
+    if (!source) continue;
+    scopes++;
+    const state = readUsageWorkEvidence(slice, 'work', source);
+    if (state === 'reading' || (state === 'observed' && source.status === 'available')) continue;
+    for (const cause of readUsageWorkUnreadCauses(source)) unreadCauses.set(cause.kind, cause);
+    for (const reason of readUsageWorkAllocationReasons(slice, source, state)) reasons.add(reason);
+  }
+  // The batch carries counts scoped to each query, with no Session identities for a page-wide total.
+  return [
+    ...Array.from(unreadCauses.values(), cause => scopes === 1 ? cause : { ...cause, count: null }),
+    ...USAGE_WORK_UNALLOCATED_REASONS.filter(reason => reasons.has(reason))
+      .map(reason => ({ kind: 'allocation' as const, reason })),
+  ];
 }
 
 /** Empty Outcomes consumes identities and evidence, never monetary or Project detail. */

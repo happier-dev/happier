@@ -16,6 +16,7 @@ import { formatUsageCost } from '@/utils/format/usageNumbers';
 import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
 import {
   UsageBodyInsufficient,
+  UsageBodyPageLine,
   UsageCoverageLine,
   UsageShowAllRows,
   leadingUsageRows,
@@ -24,6 +25,7 @@ import {
   type UsageBodyProps,
 } from './usageBodyKit';
 import { useUsageWork } from './useUsageWork';
+import { useUsageWidgetPageHasCoverageDetail } from './usageWidgetBatch';
 import { usageWorkProviderIdentities, usageWorkProviderNames } from './UsageWorkProviderMark';
 import type {
   UsageWorkBranchRow,
@@ -34,6 +36,7 @@ import {
   USAGE_WORK_UNALLOCATED_REASONS,
   UsageWorkDisclosure,
   UsageWorkMarks,
+  UsageWorkReading,
   UsageWorkRowLead,
   UsageWorkSectionTitle,
   UsageWorkSessionRows,
@@ -44,6 +47,7 @@ import {
   usageWorkShortCommit,
   usageWorkLinksNotice,
   usageWorkLinksReadAt,
+  usageWorkPageReadLabel,
   usageWorkRetainedChangeLine,
   useUsageWorkDisclosures,
 } from './UsageWorkParts';
@@ -63,6 +67,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
     props.serverId,
   );
   const drill = useUsageDrill(props.query);
+  const pageHasDetail = useUsageWidgetPageHasCoverageDetail();
   const [showAllProjects, setShowAllProjects] = React.useState(false);
   // A Project or branch can hold hundreds of PRs and branches: each detail list leads with its largest and folds the
   // rest behind the same "Show all · n" as the ledger (acceptance r224 #48). Keyed by the list's testID.
@@ -95,8 +100,11 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
   // Work links not read whole: still reading, settled with some Sessions unread, or failed (one decision, one wording).
   const linksNotice = usageWorkLinksNotice(props.slice);
   const linksReadAt = usageWorkLinksReadAt(props.slice);
-  if (!summary)
-    return (
+  const pageState = pageHasDetail && (linksNotice.state === 'partial' || linksNotice.state === 'unavailable')
+    ? usageWorkPageReadLabel(linksNotice.state) : null;
+  if (!summary) {
+    if (linksNotice.state === 'reading') return <UsageWorkReading slice={props.slice} testID={props.testID} />;
+    return pageState ? <UsageBodyPageLine testID={`${props.testID}.workUnavailable`} title={pageState} /> : (
       <View style={styles.body}>
         <UsageBodyInsufficient
           testID={`${props.testID}.workUnavailable`}
@@ -111,6 +119,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
         />
       </View>
     );
+  }
   if (summary.projects.length === 0)
     return (
       <UsageBodyInsufficient
@@ -155,7 +164,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
   const noneLinked = !anyLinked && summary.allocated === 0 && summary.total !== null && summary.total > 0;
   const showAllocationParts = allocationRead && !noneLinked;
   // An unread or partly read set of links is said once, here at the total, with the owner's cause; never on a row.
-  const allocationStatus = !allocationRead ? [linksNotice.title, linksNotice.cause, linksReadAt].filter(Boolean).join(' · ')
+  const allocationStatus = !allocationRead ? pageState ?? [linksNotice.title, linksNotice.cause, linksReadAt].filter(Boolean).join(' · ')
     : noneLinked ? [t('usage.board.work.noneLinked'), linksNotice.cause, linksReadAt].filter(Boolean).join(' · ') : null;
   // A read set of links still says when it was read, in the total's one quiet line (J-A35).
   const totalNote = [linksReadAt, summary.tokensFromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · ');
@@ -194,18 +203,28 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
       testID={testID}
     />
   );
-  const branchCells = (row: UsageWorkBranchRow, withProject: boolean) => [
-    usageWorkBranchName(row.branch.branch.ref),
-    cell(row.amount, row.moneyBasis),
-    withProject ? row.projectKeys.map(projectWhere).join(', ') : '',
-    sessionsLine(row.sessions.length),
-    row.perSession === null || row.sessions.length < 2
-      ? ''
-      : t('usage.board.work.perSession', { amount: format(row.perSession, row.moneyBasis) }),
-    `${t('usage.board.work.commit')} ${usageWorkShortCommit(row.branch.branch.headSha)}`,
-    usageWorkRetainedChangeLine(row.retainedChanges, row.branch.branch.headSha),
-    row.linkedPullRequests.map(usageWorkPullRequestTitle).join(' · ') || t('usage.board.work.noOutcome'),
-  ];
+  const branchProjects = (row: UsageWorkBranchRow) => row.projectKeys.map(projectWhere).join(', ');
+  const branchPerSession = (row: UsageWorkBranchRow) => row.perSession === null || row.sessions.length < 2
+    ? '' : t('usage.board.work.perSession', { amount: format(row.perSession, row.moneyBasis) });
+  const branchHead = (row: UsageWorkBranchRow) =>
+    `${t('usage.board.work.commit')} ${usageWorkShortCommit(row.branch.branch.headSha)}`;
+  const branchPullRequests = (row: UsageWorkBranchRow) => row.linkedPullRequests.map(usageWorkPullRequestTitle).join(' · ')
+    || t('usage.board.work.noOutcome');
+  // A narrow card keeps a branch row's session count and diff; where it ran, its cost per session, commit and PRs open with
+  // the row (its detail lists the commits), so the meta never wraps onto two cut lines (USAGE-DESIGN-PASS-57 #9).
+  const branchCells = (row: UsageWorkBranchRow, withProject: boolean) => {
+    const opensDetail = compact && withProject;
+    return [
+      usageWorkBranchName(row.branch.branch.ref),
+      cell(row.amount, row.moneyBasis),
+      withProject && !opensDetail ? branchProjects(row) : '',
+      sessionsLine(row.sessions.length),
+      opensDetail ? '' : branchPerSession(row),
+      opensDetail ? '' : branchHead(row),
+      usageWorkRetainedChangeLine(row.retainedChanges, row.branch.branch.headSha),
+      opensDetail ? '' : branchPullRequests(row),
+    ];
+  };
   const branchColumns = [
     { label: t('usage.board.work.branches') },
     { label: metricLabel, proportion: true },
@@ -468,6 +487,9 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
                   testID={testID}
                   detail={() => (
                     <>
+                      {compact ? <Text style={[styles.reasonLabel, caption]} testID={`${testID}.meta`}>
+                        {[branchProjects(row), branchPerSession(row), branchHead(row), branchPullRequests(row)].filter(Boolean).join(' · ')}
+                      </Text> : null}
                       {identityLine(row, testID)}
                       {row.commits.length > 0 ? (
                         <View style={styles.group}>

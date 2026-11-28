@@ -426,6 +426,7 @@ describe('SidebarUsagePopoverContent', () => {
             setHidden?: (hidden: boolean) => void;
             session?: import('./SidebarUsagePopoverContent').UsagePopoverSession;
             accountState?: 'loading' | 'unavailable';
+            additionalWithoutUsage?: readonly ConnectedServiceAccountWithoutUsage[];
             refresh?: import('./SidebarUsagePopoverContent').UsagePopoverRefresh;
         }> = {}) {
             const { SidebarUsagePopoverView } = await import('./SidebarUsagePopoverContent');
@@ -439,11 +440,14 @@ describe('SidebarUsagePopoverContent', () => {
                     summary('claude:acct_9f2c8e71', null, 71),
                 ]),
                 saved: null,
-                accountsWithoutUsage: options.accountState ? [{
-                    key: 'claude:pending', serviceLabel: 'Anthropic Claude', legacyServiceId: 'claude-subscription',
-                    serviceGroupKey: 'plugin.anthropic/claude', accountLabel: 'Pending', accountEmail: null,
-                    accountId: 'pending', state: options.accountState,
-                }] : [],
+                accountsWithoutUsage: [
+                    ...(options.accountState ? [{
+                        key: 'claude:pending', serviceLabel: 'Anthropic Claude', legacyServiceId: 'claude-subscription' as const,
+                        serviceGroupKey: 'plugin.anthropic/claude', accountLabel: 'Pending', accountEmail: null,
+                        accountId: 'pending', state: options.accountState,
+                    }] : []),
+                    ...(options.additionalWithoutUsage ?? []),
+                ],
             });
             return renderScreen(
                 <SidebarUsagePopoverView
@@ -494,6 +498,7 @@ describe('SidebarUsagePopoverContent', () => {
         it('refreshes only the session account until All accounts explicitly widens the scope', async () => {
             const scopes: Array<readonly string[] | undefined> = [];
             const screen = await renderView({
+                providerLabel: 'Personal',
                 session: { accountKey: 'claude:work', ownSignIn: null, scopeLine: null, nextMove: null },
                 refresh: {
                     keys: ['claude:work', 'claude:personal'],
@@ -508,7 +513,51 @@ describe('SidebarUsagePopoverContent', () => {
             await screen.pressByTestIdAsync('usage-popover-all-accounts');
             await screen.pressByTestIdAsync('sidebar-usage-refresh');
             expect(scopes).toEqual([['claude:work'], undefined]);
-            expect(screen.getTextContent()).toContain('sidebarFooter.usageRefreshFailedAccounts(count=1,accounts=kevin@gmail.com)');
+            const retained = screen.findByTestId('sidebar-usage-account-claude:personal');
+            expect(retained?.findAll(node => node.props.children === 'connectedServices.quota.remaining(percent=6%)').length).toBeGreaterThan(0);
+            expect(retained?.findAll(node => node.props.children === 'common.unavailable')).toHaveLength(0);
+            expect(screen.findByTestId('sidebar-usage-refresh-error-text')?.children.join(''))
+                .toBe('sidebarFooter.usageRefreshFailedAccounts(count=1,accounts=Personal)');
+        });
+
+        it.each([false, true])('names a failed account only when its unavailable row is folded (folded=%s)', async folded => {
+            const screen = await renderView({
+                accountState: 'unavailable',
+                additionalWithoutUsage: folded ? [{
+                    key: 'claude:other', serviceLabel: 'Anthropic Claude', legacyServiceId: null,
+                    serviceGroupKey: 'plugin.anthropic/claude', accountLabel: 'Other', accountEmail: null,
+                    accountId: 'other', state: 'unavailable',
+                }] : [],
+                refresh: {
+                    keys: ['claude:pending'], refreshingByKey: {}, errorsByKey: { 'claude:pending': 'provider_refused' },
+                    run: async () => {},
+                },
+            });
+            const row = screen.findByTestId('sidebar-usage-account-claude:pending');
+            expect(Boolean(row)).toBe(!folded);
+            expect(Boolean(screen.findByTestId('usage-popover-unavailable-accounts'))).toBe(folded);
+            expect(screen.getTextContent().includes('common.unavailable')).toBe(!folded);
+            const warning = screen.findByTestId('sidebar-usage-refresh-error-text')?.children.join('');
+            expect(warning).toBe(folded
+                ? 'sidebarFooter.usageRefreshFailedAccounts(count=1,accounts=Pending)'
+                : 'sidebarFooter.usageRefreshFailedAccounts(count=1)');
+        });
+
+        it('names only the undrawn failed account when a visible row already shows its own failure', async () => {
+            const screen = await renderView({
+                accountState: 'unavailable',
+                refresh: {
+                    keys: ['claude:pending', 'claude:undrawn'], refreshingByKey: {},
+                    errorsByKey: { 'claude:pending': 'provider_refused', 'claude:undrawn': 'provider_unreachable' },
+                    accountIdentities: [summary('claude:undrawn', 'Undrawn', 0)],
+                    run: async () => {},
+                },
+            });
+            const visible = screen.findByTestId('sidebar-usage-account-claude:pending');
+            expect(visible?.findAll(node => node.props.children === 'common.unavailable').length).toBeGreaterThan(0);
+            expect(screen.findByTestId('sidebar-usage-account-claude:undrawn')).toBeFalsy();
+            expect(screen.findByTestId('sidebar-usage-refresh-error-text')?.children.join(''))
+                .toBe('sidebarFooter.usageRefreshFailedAccounts(count=2,accounts=Undrawn)');
         });
 
         it('names the accounts whose reads failed when identities are visible and keeps the successful reading', async () => {
@@ -555,6 +604,8 @@ describe('SidebarUsagePopoverContent', () => {
                 }
                 expect(screen.findByTestId('sidebar-usage-refresh-error-text')?.children.join(''))
                     .toBe('sidebarFooter.usageRefreshFailedAccounts(count=2)');
+                expect(screen.getTextContent()).not.toContain('Synthetic Provider Name');
+                expect(screen.getTextContent()).not.toContain('Second Synthetic Name');
                 expect(screen.findByTestId('sidebar-usage-account-claude:work')).toBeTruthy();
             } finally {
                 await screen.unmount();

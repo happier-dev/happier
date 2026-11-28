@@ -59,7 +59,7 @@ import { selectProjectChoiceMachineNames } from '@/sync/domains/machines/identit
 import { createProjectAnchorOfKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { projectProjectListV1 } from '@happier-dev/protocol/workspaces';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
-import { projectUsageOptionFacts, resolveUsageProjectTitles } from '@happier-dev/protocol/usage/usageFilterOptions';
+import { projectUsageOptionFacts, projectUsageProjectTitles } from '@happier-dev/protocol/usage/usageFilterOptions';
 import { useUsageDisclosureCommand, useUsageRetryCommand, type UsageRetryRead } from './usageMountedControls';
 import { isWidgetResourceQuietRefresh } from '@/components/widgets/frame/widgetFrameResourceActivity';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
@@ -255,13 +255,14 @@ export function useUsageProjectChoiceMachineNames(enabled = true) {
 export function useUsageProjectNames(serverId: string, fallbacks: readonly UsageProjectNameFact[] = NO_PROJECT_NAME_FACTS): Readonly<{
   labels: ReadonlyMap<string, string>;
   machineIds: ReadonlyMap<string, readonly string[]>;
+  qualifiedMachineIds: ReadonlyMap<string, string>;
   label: (key: string | null) => string;
   displayKey: (key: string | null) => string | null;
 }> {
   const projectFacts = useUsageProjectOptionFacts(serverId);
   const machineNames = useUsageProjectChoiceMachineNames();
   return React.useMemo(() => {
-    const titles = resolveUsageProjectTitles(new Map(fallbacks.map(row => [row.key, row.label ?? row.key])),
+    const { titles, qualifiedMachineIds } = projectUsageProjectTitles(new Map(fallbacks.map(row => [row.key, row.label ?? row.key])),
       { projectFacts, machineNames });
     const labels = new Map<string, string>();
     for (const [key, title] of titles) if (title !== null) labels.set(key, title);
@@ -270,7 +271,7 @@ export function useUsageProjectNames(serverId: string, fallbacks: readonly Usage
     for (const [key, fact] of projectFacts ?? []) {
       if (fact.machineIds) machineIds.set(key, [...new Set([...(machineIds.get(key) ?? []), ...fact.machineIds])]);
     }
-    return { labels, machineIds, displayKey: (key: string | null) => usageProjectDisplayKey(key, labels),
+    return { labels, machineIds, qualifiedMachineIds, displayKey: (key: string | null) => usageProjectDisplayKey(key, labels),
       label: (key: string | null) => key === null
       ? t('usage.board.work.unknownProject') : labels.get(key) ?? t('usage.board.work.unknownProject') };
   }, [projectFacts, machineNames, fallbacks]);

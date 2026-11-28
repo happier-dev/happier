@@ -9,6 +9,7 @@ import { usageSeriesColor } from '../usageAccent';
 import { usageTokensFromPartsNote } from '../usageCostPresentation';
 import {
   UsageBodyInsufficient,
+  UsageBodyPageLine,
   UsageBodyNote,
   UsageCoverageLine,
   usagePeriodPhrase,
@@ -16,6 +17,7 @@ import {
   type UsageBodyProps,
 } from './usageBodyKit';
 import { useUsageWork, useUsageWorkSessionNavigation } from './useUsageWork';
+import { useUsageWidgetPageHasCoverageDetail } from './usageWidgetBatch';
 import { formatUsageDuration } from './usageHowYouWorkPresentation';
 import { partitionUsageWorkMoneyRows, readUsageWorkOutcomesPresentation, type UsageWorkOutcomeRow } from './usageWorkPresentation';
 import {
@@ -28,6 +30,7 @@ import {
   UsageWorkSessionRows,
   usageWorkPullRequestState,
   usageWorkLinksNotice,
+  usageWorkPageReadLabel,
   usageWorkPullRequestTitle,
   useUsageWorkDisclosures,
 } from './UsageWorkParts';
@@ -63,12 +66,16 @@ function UsageOutcomesEmpty(props: UsageBodyProps & Readonly<{
   presentation: Exclude<ReturnType<typeof readUsageWorkOutcomesPresentation>, Readonly<{ kind: 'ready' }>>;
 }>) {
   const { presentation } = props;
+  const pageHasDetail = useUsageWidgetPageHasCoverageDetail();
   useUsageWorkSessionNavigation(presentation.sessions, props.query, props.serverId, presentation.machineIds);
   useWidgetFrameBodyCaption(presentation.kind === 'unavailable' || presentation.kind === 'partial' || presentation.kind === 'reading' ? usagePeriodPhrase(props.query)
     : t('usage.board.page.noneLinkedByEvidence'));
   if (presentation.kind === 'reading')
     return <UsageWorkReading slice={props.slice} testID={props.testID} />;
   if (presentation.kind === 'unavailable' || presentation.kind === 'partial') {
+    // On the Usage page the header says the Work read with its Details and Retry; this body keeps one quiet line in
+    // the header's word and never repeats the cause (USAGE-DESIGN-PASS-57 #8).
+    if (pageHasDetail) return <UsageBodyPageLine testID={`${props.testID}.workUnavailable`} title={usageWorkPageReadLabel(presentation.kind)} />;
     const notice = usageWorkLinksNotice(props.slice);
     return (
       <View style={styles.body}>

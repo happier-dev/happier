@@ -877,19 +877,19 @@ describe('Work and Coach widget bodies', () => {
       const { projectLabel, projectPlace, sessionLabel, summary } = hook.getCurrent();
       expect(summary?.projects.map(row => [row.projectKey, row.amount])).toEqual(projectKeys.map(key => [key, 3]));
       expect(projectKeys.map(projectLabel)).toEqual(machines.map(machine => `happier · ${names.get(machine.id)}`));
+      // The titles already say where each ran, so the row's own line does not say it again (USAGE-DESIGN-PASS-57 #9).
       for (const [index, machine] of machines.entries()) {
-        expect(projectPlace(projectKeys[index]!)).toBe(names.get(machine.id));
+        expect(projectPlace(projectKeys[index]!)).toBe('');
         expect(sessionLabel(`session-${index}`)).toContain(names.get(machine.id)!);
       }
-      expect(projectPlace(projectKeys[0]!)).not.toBe(projectPlace(projectKeys[1]!));
       const ledger = hook.tree.root.findByType(HappierDataRows);
       expect(ledger.props.rowIds).toEqual(projectKeys);
-      for (const [index, machine] of machines.entries()) expect(ledger.props.rows[index][2]).toContain(names.get(machine.id)!);
+      for (const [index, machine] of machines.entries()) expect(ledger.props.rows[index][2]).not.toContain(names.get(machine.id)!);
       for (const [index, key] of projectKeys.entries()) {
         const title = projectLabel(key);
         expect(ledger.props.rows[index][0]).toBe(title);
         const toggle = hook.tree.root.findAllByProps({ testID: `same-folder-ledger.project.${key}.toggle` });
-        expect(toggle.some(node => node.props.accessibilityLabel === `${title} · ${projectPlace(key)}`)).toBe(true);
+        expect(toggle.some(node => node.props.accessibilityLabel === title)).toBe(true);
       }
       const text = JSON.stringify(ledger.props.rows);
       for (const key of [...projectKeys, ...machines.map(machine => machine.id)]) expect(text).not.toContain(key);
@@ -918,6 +918,48 @@ describe('Work and Coach widget bodies', () => {
       await ledger.unmount();
       await meta.unmount();
     } finally { storage.setState(previous, true); }
+  });
+  it('keeps the real place after a literal Project name and omits the Machine already in a generated title', async () => {
+    const { WorkspaceRefV1Schema } = await import('@/sync/domains/workspaces/workspaceRefModel');
+    const previous = storage.getState();
+    const scope = { serverId: actionHome!.homes.work!.id, accountId: 'work-account' };
+    const machines = ['buildbox', 'devbox'].map(name => {
+      const row = createMachineFixture({ id: `test-${name}` });
+      return { ...row, metadata: row.metadata && { ...row.metadata, host: name, displayName: name } };
+    });
+    const projects = [
+      { label: 'Checkout on buildbox', machine: machines[0]!, rootPath: '/checkout' },
+      { label: 'Shared checkout', machine: machines[0]!, rootPath: '/shared/a' },
+      { label: 'Shared checkout', machine: machines[0]!, rootPath: '/shared/b' },
+      { label: 'Shared checkout', machine: machines[1]!, rootPath: '/shared/a' },
+    ].map((project, index) => ({ ...project, key: index.toString().repeat(64) }));
+    const work = allocateFixtureWork({ contributions: projects.map(({ key, machine }) => ({
+      ...contribution(`usage-${key}`, `session-${key}`, 'turn'), projectKey: key, machineId: machine.id,
+    })), evidence: [] });
+    const screen = await renderScreen(<UsageProjectLedgerWidget {...props} serverId={scope.serverId}
+      slice={withFixtureWorkAccounting({ ...slice, work })} id="usage_project_ledger" testID="ledger" />);
+    try {
+      await act(async () => {
+        storage.getState().applyMachines(machines);
+        storage.setState({ profileScope: scope, projectAccountRows: { scope, status: 'ready', coverage: 'complete',
+          workspaceRefs: projects.map(({ key, label, machine, rootPath }) => WorkspaceRefV1Schema.parse({
+            id: `checkout-${key}`, projectKey: key, serverId: scope.serverId, machineId: machine.id, label, rootPath, createdAtMs: 0,
+          })), relationships: [], revisionsByPhysicalKey: {}, organizations: [] } });
+      });
+      const { rows } = screen.findByType(HappierDataRows).props;
+      const places = new Map(rows.map(([title, , place]) => [title, place]));
+      expect([...places.keys()]).toEqual(expect.arrayContaining([
+        'Checkout on buildbox', 'Shared checkout · buildbox · /shared/a',
+        'Shared checkout · /shared/b', 'Shared checkout · devbox',
+      ]));
+      expect.soft(places.get('Checkout on buildbox')).toContain('buildbox');
+      expect.soft(places.get('Shared checkout · buildbox · /shared/a')).not.toContain('buildbox');
+      expect.soft(places.get('Shared checkout · /shared/b')).toContain('buildbox');
+      expect.soft(places.get('Shared checkout · devbox')).not.toContain('devbox');
+    } finally {
+      await screen.unmount();
+      storage.setState(previous, true);
+    }
   });
   it('keeps Project names whole and includes where each ran', async () => {
     const rows: UsageWorkContribution[] = [
@@ -1041,7 +1083,9 @@ describe('Work and Coach widget bodies', () => {
     await screen.update(<UsageCoachWidget {...props} query={allQuery} slice={settledSlice}
       id="usage_coach" testID="first-coach" />);
     expect(screen.findHostByTestId('first-coach.empty')).not.toBeNull();
-    expect(metric('findings')).toBe(0);
+    // No check ran: the number of findings is unknown, never zero (USAGE-DESIGN-PASS-57 #13).
+    expect(screen.getTextContent()).toContain(t('usage.board.coach.firstUseTitle'));
+    expect(metric('findings')).toBe('—');
   });
   it('leads the facts band with the listed findings while another source still reads, never a row of dashes (USAGE-ACCEPT #8)', async () => {
     const pendingSlice = resolveUsagePageAggregation({ queries: [query],
@@ -1640,8 +1684,13 @@ describe('Work and Coach widget bodies', () => {
     expect(total?.props.value).toBe(0.0013284);
     expect(total?.props.valueFormatter(total.props.value)).toContain('$0.0013');
     if (metric === 'tokens') expect(metrics.find(node => node.props.label === usagePeriodPhrase(sessionQuery))?.props.value).toBe(3309);
-    expect(metrics.find(node => node.props.label === t('usage.board.work.turns'))?.props.value)
-      .toBe(t('usage.board.howYouWork.notRecorded'));
+    // A word never stands in a figure's slot: an unknown count is a quiet dash with its reason under it, and the
+    // outcome line says the state itself (USAGE-DESIGN-PASS-57 #18).
+    const turnsFact = metrics.find(node => node.props.label === t('usage.board.work.turns'));
+    expect(turnsFact?.props.value).toBe('—');
+    expect(turnsFact?.props.caption).toBe(t('usage.board.howYouWork.notRecorded'));
+    expect(screen.getTextContent()).toContain(t('usage.board.work.unlinkedTitle'));
+    expect(screen.getTextContent()).not.toContain(`${t('usage.board.work.linkedOutcome')}: ${t('usage.board.work.noOutcome')}`);
     await screen.update(<UsageSessionValueWidget {...props} query={sessionQuery} slice={{ ...cumulativeSlice, work: undefined }}
       id="usage_session_value" testID="value" />);
     expect(screen.findAllByType(HappierDataMetric).find(node => node.props.label === totalLabel)?.props.value).toBe(0.0013284);
@@ -1964,7 +2013,7 @@ describe('Work and Coach widget bodies', () => {
       expect(screen.findByTestId('ledger.project.p1.detail')).toBeFalsy();
     } finally { navigation.mockRestore(); }
   });
-  it('expands a branch into its commit evidence and Sessions, and a PR into the Sessions that paid for it', async () => {
+  it.each([390, 700])('keeps a branch HEAD distinct from its witnessed commits when expanded at %ipx', async width => {
     const navigation = vi.spyOn(router, 'push');
     try {
       const branch = { ref: 'refs/heads/glass', headSha: 'c'.repeat(40) };
@@ -1972,15 +2021,24 @@ describe('Work and Coach widget bodies', () => {
         evidence: [evidence('s1', 't1', 2493)],
         branchEvidence: [{ sessionId: 's2', turnId: 't2', repositoryKey: 'repo', checkpointRef: 'checkpoint/s2/t2',
           checkpointCommitSha: 'a'.repeat(40), commitSha: 'd'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed', branch }] });
-      const screen = await renderScreen(<>
+      const screen = await renderScreen(<WidgetPresentationProvider value={{ size: 'full',
+        footprint: { columns: 2, columnSpan: 2, rowSpan: 2, width: 'full', height: 'tall' },
+        geometry: { width, height: 500 } }}>
         <UsageProjectLedgerWidget {...props} slice={withFixtureWorkAccounting({ ...slice, work: branchWork })} id="usage_project_ledger" testID="ledger" />
         <UsageOutcomesWidget {...props} slice={withFixtureWorkAccounting({ ...slice, work: branchWork })} id="usage_outcomes" testID="outcomes" />
-      </>);
+      </WidgetPresentationProvider>);
       const branchKey = branchWork.branches[0]!.key;
-      expect(screen.findByTestId(`ledger.branch.${branchKey}.session.open.s2`)).toBeFalsy();
-      await screen.pressByTestIdAsync(`ledger.branch.${branchKey}.toggle`);
-      expect(screen.getTextContent()).toContain('ddddddd');
-      await screen.pressByTestIdAsync(`ledger.branch.${branchKey}.session.open.s2`);
+      const branchRow = `ledger.branch.${branchKey}`;
+      const head = branch.headSha.slice(0, 7);
+      expect(screen.findByTestId(`${branchRow}.session.open.s2`)).toBeFalsy();
+      const branchCells = screen.findAllByType(HappierDataRows).find(rows => rows.props.testID === 'ledger.branches')!.props.rows[0];
+      expect(branchCells.some((cell: unknown) => typeof cell === 'string' && cell.includes(head))).toBe(width === 700);
+      expect(screen.findByTestId(`${branchRow}.commits`)).toBeNull();
+      await screen.pressByTestIdAsync(`${branchRow}.toggle`);
+      const commits = screen.findHostByTestId(`${branchRow}.commits`)!;
+      expect(commits.props.children).toBe('ddddddd');
+      if (width === 390) expect(screen.findHostByTestId(`${branchRow}.meta`)?.props.children).toContain(head);
+      await screen.pressByTestIdAsync(`${branchRow}.session.open.s2`);
       expect(new URL(String(navigation.mock.calls.at(-1)?.[0]), 'https://usage.test').pathname).toBe('/session/s2/usage');
       const prKey = branchWork.outcomes[0]!.key;
       expect(screen.findByTestId(`outcomes.pr.${prKey}.session.open.s1`)).toBeFalsy();
@@ -2742,6 +2800,9 @@ describe('Work and Coach widget bodies', () => {
       },
       500,
     );
+    expect(dismissed.evaluations.some(row => row.status === 'finding')).toBe(true);
+    expect(dismissed.evaluations.some(row => row.status === 'insufficient_evidence')).toBe(true);
+    expect(dismissed.evaluations.some(row => row.status === 'no_finding')).toBe(false);
     const hidden = await renderScreen(
       <UsageCoachWidget
         {...props}
@@ -2751,6 +2812,8 @@ describe('Work and Coach widget bodies', () => {
       />,
     );
     expect(hidden.findByTestId('coach.finding.compaction_storms')).toBeFalsy();
+    expect(hidden.findAllByType(HappierDataMetric).find(node => node.props.testID === 'coach.summary.findings')?.props.value).toBe(0);
+    expect(hidden.getTextContent()).not.toContain(t('usage.board.coach.firstUseTitle'));
     expect(hidden.findByTestId('coach.empty')).toBeTruthy();
     expect(hidden.findByTestId('coach.hidden-header')).toBeTruthy();
     await hidden.pressByTestIdAsync('coach.hidden-header');
@@ -2783,6 +2846,23 @@ describe('Work view when Work links are only partly read (USAGE-UI-WORK-R5)', ()
     expect(text).toContain(t('usage.board.work.ledgerRowLine', { sessions: 2, prs: 1 }));
     expect(screen.findByType(HappierDataRows).props.rows[0][1]).toBe(42);
     expect(text.split(footer())).toHaveLength(2);
+  });
+
+  // A read still in flight keeps its own reading note; the settled caveats are what the header already says.
+  it.each(workStates)('on the Usage page the ledger keeps amounts with a truthful $state state', async ({ state, source, footer }) => {
+    const { UsageWidgetBatchProvider } = await import('./usageWidgetBatch');
+    const { readUsageWidgetQueryOverrides } = await import('../usageWidgetPageContext');
+    const screen = await renderScreen(<InjectedAuthProvider credentials={null}>
+      <UsageWidgetBatchProvider clauses={readUsageWidgetQueryOverrides(tokensQuery)} enabled={false}>
+        <UsageProjectLedgerWidget {...props} query={tokensQuery} slice={unreadSlice(source)} id="usage_project_ledger" testID="ledger" />
+        <UsageOutcomesWidget {...props} query={tokensQuery} slice={unreadSlice(source)} id="usage_outcomes" testID="outcomes" />
+      </UsageWidgetBatchProvider>
+    </InjectedAuthProvider>);
+    const text = screen.getTextContent();
+    const label = screen.findByTestId('ledger.conservation')?.props.accessibilityLabel;
+    expect(label).toContain(state === 'partly read' ? t('usage.board.charts.coveragePartialShort')
+      : state === 'failed' ? t('usage.board.page.notReadTitle') : footer());
+    if (state === 'partly read') expect(text).not.toContain(footer());
   });
 
   it('the ledger keeps its read state unchanged: the linked and not linked parts add back to the total', async () => {
@@ -2857,18 +2937,29 @@ describe('Work view when Work links are only partly read (USAGE-UI-WORK-R5)', ()
     expect(text).not.toContain(t('usage.board.work.workUnavailableTitle'));
   });
 
-  it('says a one-commit branch range once: "Commit 027cb70 · +1 / −0" (acceptance 1122 #59)', async () => {
+  it.each([390, 700])('keeps a one-commit diff distinct from its branch HEAD at %ipx (acceptance 1122 #59)', async width => {
     const sha = '027cb70'.padEnd(40, 'e');
     const branch = { ref: 'refs/heads/usage-outcome-01', headSha: sha };
     const branchWork = allocateFixtureWork({ contributions: [contribution('one', 's1', 't1')], evidence: [],
       branchEvidence: [{ sessionId: 's1', turnId: 't1', repositoryKey: 'repo', checkpointRef: 'checkpoint/s1/t1',
         checkpointCommitSha: 'a'.repeat(40), commitSha: sha, attributionScope: 'no_happier_checkpoint_overlap_observed', branch,
         retainedChange: { targetSha: sha, method: 'changed_file_tree_comparison', status: 'retained', addedLines: 1, removedLines: 0 } }] });
-    const screen = await renderScreen(<UsageProjectLedgerWidget {...props} slice={withFixtureWorkAccounting({ ...slice, work: branchWork })} id="usage_project_ledger" testID="ledger" />);
+    const screen = await renderScreen(<WidgetPresentationProvider value={{ size: 'full',
+      footprint: { columns: 2, columnSpan: 2, rowSpan: 2, width: 'full', height: 'tall' },
+      geometry: { width, height: 500 } }}>
+      <UsageProjectLedgerWidget {...props} slice={withFixtureWorkAccounting({ ...slice, work: branchWork })} id="usage_project_ledger" testID="ledger" />
+    </WidgetPresentationProvider>);
     const text = screen.getTextContent();
-    expect(text).toContain(`${t('usage.board.work.commit')} 027cb70`);
     expect(text).toContain('+1 / −0');
-    expect(text.split('027cb70')).toHaveLength(2);
+    if (width === 390) {
+      expect(text).not.toContain('027cb70');
+      const branchRow = `ledger.branch.${branchWork.branches[0]!.key}`;
+      await screen.pressByTestIdAsync(`${branchRow}.toggle`);
+      expect(screen.findHostByTestId(`${branchRow}.meta`)?.props.children).toContain(`${t('usage.board.work.commit')} 027cb70`);
+    } else {
+      expect(text).toContain(`${t('usage.board.work.commit')} 027cb70`);
+      expect(text.split('027cb70')).toHaveLength(2);
+    }
   });
 
   it('on the Tokens lens the Session cost basis is said once; the Cost over time caption keeps only the currency (acceptance 1122 #58)', async () => {

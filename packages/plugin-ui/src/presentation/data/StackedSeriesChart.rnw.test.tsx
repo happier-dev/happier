@@ -8,6 +8,7 @@ import { projectHappierUiEnvironment } from '../../environment/projectEnvironmen
 import { View } from 'react-native';
 import { Path, Svg } from 'react-native-svg';
 import { BurnUpChart, StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
+import { formatUsageCost } from '@happier-dev/protocol/usage/usageFormatting';
 import { HappierDataChart } from './Chart.js';
 import type { HappierLayoutChangeEvent } from '../portableTypes.js';
 import { ChartInteractionProvider } from './ChartDatum.js';
@@ -355,6 +356,35 @@ describe('neutral series dataset', () => {
       variant="bar" size="full" testID="rain" showScaleValues scaleGutter={44} />);
     try {
       expect(['rain-scale-0', 'rain-scale-1', 'rain-scale-2'].map((id) => find(mount.container, id).textContent)).toEqual(['0', '50', '100']);
+    } finally { mount.unmount(); }
+  });
+  it('never prints the same scale value twice: a middle value that rounds to an end is left out (USAGE-DESIGN-PASS-57 #22)', () => {
+    const input = [{ id: 'cost', label: 'Cost', points: [0.00012, 0, 0.00005].map((y, x) => ({ id: String(x), x, y })) }];
+    const mount = mountThroughReactNativeWeb(<StackedSeriesChart theme={theme} label="Cost" series={input} width={240} viewportHeight={100}
+      variant="bar" size="full" testID="cost" showScaleValues scaleGutter={44} valueFormatter={(value) => `$${value.toFixed(4)}`} />);
+    try {
+      const labels = ['cost-scale-0', 'cost-scale-1', 'cost-scale-2']
+        .map((id) => mount.container.querySelector<HTMLElement>(`[data-testid="${id}"]`)?.textContent).filter(Boolean);
+      expect(labels.length).toBeGreaterThanOrEqual(2);
+      expect(new Set(labels).size).toBe(labels.length);
+    } finally { mount.unmount(); }
+  });
+  it.each([
+    { name: 'labels rounded endpoints once', values: [0, 0.00004],
+      mirrored: false, reference: undefined, labels: ['$0.00', undefined, undefined] },
+    { name: 'keeps a midpoint clear of the reference', values: [0, 0.00012],
+      mirrored: false, reference: { value: 0.00012, label: 'Average' }, labels: ['$0.00', '$0.0001', undefined] },
+    { name: 'keeps mirrored pairs', values: [-0.00012, 0.00012],
+      mirrored: true, reference: undefined, labels: ['$0.0001', '$0.00', '$0.0001'] },
+  ])('$name', ({ values, mirrored, reference, labels }) => {
+    const input = [{ id: 'cost', label: 'Cost', points: values.map((y, x) => ({ id: String(x), x, y })) }];
+    const valueFormatter = vi.fn((value: number) => formatUsageCost(value, 'USD', 'en-US'));
+    const mount = mountThroughReactNativeWeb(<StackedSeriesChart theme={theme} label="Cost" series={input} width={240} viewportHeight={100}
+      variant="bar" size="full" testID="cost" showScaleValues scaleGutter={44} mirrored={mirrored} reference={reference}
+      valueFormatter={valueFormatter} />);
+    try {
+      expect([0, 1, 2].map(index => mount.container.querySelector(`[data-testid="cost-scale-${index}"]`)?.textContent)).toEqual(labels);
+      expect(valueFormatter).toHaveBeenCalledTimes(reference ? 2 : 3);
     } finally { mount.unmount(); }
   });
   it('sits the peak figure on its bar, and keeps the first bucket\'s figure inside the plot', () => {

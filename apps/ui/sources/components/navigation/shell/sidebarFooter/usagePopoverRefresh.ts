@@ -19,6 +19,7 @@ export type UsagePopoverRefresh = Readonly<{
 function presentFailedReads(
     refresh: UsagePopoverRefresh,
     names: ReadonlyMap<string, ConnectedAccountNamePresentation>,
+    unavailableRowKeys: ReadonlySet<string>,
     presentIdentity: ConnectedAccountIdentityPresenter,
     identitiesHidden: boolean,
 ): string | null {
@@ -26,21 +27,24 @@ function presentFailedReads(
     const count = failedKeys.length;
     if (count === 0) return null;
     if (identitiesHidden || count > 2) return t('sidebarFooter.usageRefreshFailedAccounts', { count });
+    // Visible unavailable rows already show their own failure (USAGE-DESIGN-PASS-57 #21).
+    const failuresWithoutRowStatus = failedKeys.filter(key => !unavailableRowKeys.has(key));
+    if (failuresWithoutRowStatus.length === 0) return t('sidebarFooter.usageRefreshFailedAccounts', { count });
 
-    // A usage record may fail even when its account has no limits row to supply a name.
-    const catalogNames = failedKeys.some(key => !names.has(key))
+    // A usage record may fail even when its account has no quota data to supply a name.
+    const catalogNames = failuresWithoutRowStatus.some(key => !names.has(key))
         ? presentConnectedAccountNames((refresh.accountIdentities ?? []).map(account => ({
             key: account.key, serviceTitle: account.serviceLabel, userLabel: account.profileLabel, providerDisplayName: account.accountLabel,
             email: account.accountEmail, accountId: account.accountId, presentIdentity,
         })))
         : null;
-    const labels = failedKeys.flatMap(key => {
+    const labels = failuresWithoutRowStatus.flatMap(key => {
         const name = catalogNames?.get(key) ?? names.get(key);
         return name ? [name.inlineLabel ?? name.primaryLabel] : [];
     });
     return t('sidebarFooter.usageRefreshFailedAccounts', {
         count,
-        ...(labels.length === count ? { accounts: joinList(labels) } : {}),
+        ...(labels.length === failuresWithoutRowStatus.length ? { accounts: joinList(labels) } : {}),
     });
 }
 
@@ -50,6 +54,7 @@ export function summarizeUsagePopoverRefresh(input: Readonly<{
     /** Undefined widens to all accounts. Null is a Session without a connected account. */
     accountKey?: string | null;
     names: ReadonlyMap<string, ConnectedAccountNamePresentation>;
+    unavailableRowKeys: ReadonlySet<string>;
     presentIdentity: ConnectedAccountIdentityPresenter;
     identitiesHidden: boolean;
 }>): Readonly<{ keys: readonly string[]; refreshing: boolean; error: string | null }> {
@@ -60,7 +65,7 @@ export function summarizeUsagePopoverRefresh(input: Readonly<{
         keys,
         refreshing: keys.some(key => refresh.refreshingByKey[key] === true || refresh.loadingByKey?.[key] === true),
         error: accountKey === undefined
-            ? presentFailedReads(refresh, input.names, input.presentIdentity, input.identitiesHidden)
+            ? presentFailedReads(refresh, input.names, input.unavailableRowKeys, input.presentIdentity, input.identitiesHidden)
             : accountKey === null ? null : refresh.errorsByKey[accountKey] ?? null,
     };
 }

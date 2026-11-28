@@ -110,11 +110,15 @@ export function useUsageWork(
   const { machineNames, machinePlace, sessionLabel, openSession } = useUsageWorkSessionNavigation(
     summary?.sessions ?? EMPTY_SESSION_IDENTITIES, query, serverId, projectMachineIds,
   );
-  // Two rows never read alike: a Project name several share keeps its name whole; where it ran is a separate fact the
-  // row carries on its own line, so a narrow screen never truncates the part that tells the rows apart.
   const projectName = projectNames.label;
-  const projectPlaces = React.useMemo(() => new Map((summary?.projects ?? []).map(row =>
-    [row.projectKey, row.projectKey === null ? '' : machinePlace(row.machineIds)] as const)), [summary, machinePlace]);
+  // The title's generated qualifier can speak for one Machine; the row still says where else work ran.
+  const qualifiedMachineIds = projectNames.qualifiedMachineIds;
+  const projectPlaces = React.useMemo(() => new Map<string | null, string>((summary?.projects ?? []).map(row => {
+    if (row.projectKey === null) return [null, ''] as const;
+    const qualifiedMachineId = qualifiedMachineIds.get(row.projectKey);
+    const ids = qualifiedMachineId === undefined ? row.machineIds : row.machineIds.filter(id => id !== qualifiedMachineId);
+    return [row.projectKey, machinePlace(ids)] as const;
+  })), [summary, machinePlace, qualifiedMachineIds]);
   const projectPlace = React.useCallback((projectKey: string | null) => projectPlaces.get(projectKey) ?? '', [projectPlaces]);
   return { summary, format, cell, datum, basisLabel, captioned, projectLabel: projectName, projectPlace, sessionLabel, openSession, machineNames };
 }

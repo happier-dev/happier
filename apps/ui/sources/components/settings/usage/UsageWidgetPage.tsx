@@ -85,6 +85,7 @@ import {
 import { useOpenNewSession } from '@/components/sessions/new/navigation/newSessionEntry';
 import type { UsagePageHistoryFact } from './useUsageWidgetPageContext';
 import { describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsageCoverageGaps, readUsagePageFailure, readUsagePageFreshness, readUsagePageWorkOffline, UsageScopeRefusalLine, UsageSessionPageHost, usageSourceTitle, useUsageSessionRecipient } from './widgets/usageBodyKit';
+import { readUsagePageWorkCauses, usageWorkCauseLabel } from './widgets/usageWorkPresentation';
 
 const PRESET_ICON: Readonly<Record<UsageWidgetPresetId, IconName>> = {
   overview: 'squares-four',
@@ -584,6 +585,7 @@ function readUsagePageFacts(slices: readonly UsageQueryResultSlice[], needsFilte
       failure: readUsagePageFailure(slices),
       newerServer: describeUsagePageNewerServerSources(slices),
       workOffline: readUsagePageWorkOffline(slices),
+      workCauses: readUsagePageWorkCauses(slices),
       partial: describeUsagePagePartialSources(slices),
       // The displayed minute, not the raw clock: a refresh within the same minute changes nothing on screen.
       observedAtMs: observedAt === null ? null : Math.floor(observedAt / 60_000) * 60_000,
@@ -703,7 +705,7 @@ function UsagePageHeader(
   const subtitle = props.sessionId && scopeRefusal ? undefined : isRecipient
     ? t('usage.board.page.sessionRecipientSubtitle')
     : t(props.sessionId ? 'usage.board.page.sessionSubtitle' : 'usage.board.page.subtitle');
-  const { observedAtMs, olderReadAtMs, olderSource, machines, agents } = props.facts;
+  const { observedAtMs, olderReadAtMs, olderSource, workCauses, machines, agents } = props.facts;
   const openNewSession = useOpenNewSession();
   const startSession = React.useCallback(() => { openNewSession(); }, [openNewSession]);
   const counts = React.useMemo((): PageHeaderMetaFact[] => [
@@ -723,14 +725,14 @@ function UsagePageHeader(
     );
     const resolved = resolveUsagePageNotice(props.appsShown ? { ...props.facts, nothingRecorded: false } : props.facts,
       retry, history, layouts, props.sessionId ? null : startSession);
-    const showFreshness = !!resolved || olderReadAtMs !== null || olderSource !== null;
+    const showFreshness = !!resolved || olderReadAtMs !== null || olderSource !== null || workCauses.length > 0;
     if (!scopeRefusal && !showFreshness) return null;
     const testID = resolved?.testID ?? 'usage-page.header.freshness';
     // The short word stands in only when the sentence is longer; Details is offered only when opening adds text.
     const shortened = phone && resolved?.short && resolved.short !== resolved.reason ? resolved.short : null;
     const noticeKey = `${testID}:${resolved?.reason ?? ''}`;
     const noticeOpen = openNotice === noticeKey;
-    const detail = shortened || olderReadAtMs !== null || olderSource ? { label: noticeOpen ? t('usage.showLess') : t('common.details'), testID: `${testID}.detail`,
+    const detail = shortened || olderReadAtMs !== null || olderSource || workCauses.length > 0 ? { label: noticeOpen ? t('usage.showLess') : t('common.details'), testID: `${testID}.detail`,
       onPress: () => setOpenNotice(open => open === noticeKey ? null : noticeKey) } : null;
     const expanded = detail !== null && noticeOpen;
     const reason = [
@@ -738,6 +740,7 @@ function UsagePageHeader(
       olderReadAtMs !== null ? t('usage.board.coach.staleEvidence') : null,
       expanded && olderReadAtMs !== null ? `${usageSourceTitle('accounting')} (${t('usage.board.page.asOf', { time: formatUsageObservedAt(olderReadAtMs) })})` : null,
       expanded && olderSource ? `${t('usage.board.page.oldestSourceUpdate', { time: formatUsageObservedAt(olderSource.asOfMs) })} (${usageSourceTitle(olderSource.source, undefined, 'coverage')})` : null,
+      ...(expanded ? workCauses.map(usageWorkCauseLabel) : []),
     ].filter(Boolean).join(' · ');
     // A plain line under the purpose, on the title's edge: the page header is not a surface to band. It is drawn as
     // tall as the facts line it replaces, its Retry right after the sentence, so no view's header is taller (R139).
@@ -761,7 +764,7 @@ function UsagePageHeader(
         </View>
       </SurfaceFreshnessOnSheetProvider>
     );
-  }, [props.facts, props.homeUnavailable, props.appsShown, retry, history, layouts, startSession, phone, openNotice, olderReadAtMs, olderSource, counts, scopeRefusal, onChangeScope]);
+  }, [props.facts, props.homeUnavailable, props.appsShown, retry, history, layouts, startSession, phone, openNotice, olderReadAtMs, olderSource, workCauses, counts, scopeRefusal, onChangeScope]);
   const facts = React.useMemo((): PageHeaderMetaFact[] => [
     ...(observedAtMs !== null
       ? [{ key: 'asOf', icon: 'clock' as const, text: t('usage.board.page.asOf', { time: formatUsageObservedAt(observedAtMs) }) }]

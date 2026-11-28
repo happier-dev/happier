@@ -38,6 +38,7 @@ export function isEarlierProjectBaselineRefV1(candidate: WorkspaceRefV1, current
 
 type ProjectDisplayTitleFactsV1 = Readonly<{
   title: string | null;
+  machineId?: string;
   machineName?: string;
   rootPath?: string | null;
 }>;
@@ -54,9 +55,18 @@ function compareProjectTitleKeys(left: string, right: string): number {
  */
 export function qualifyCollidingProjectTitlesV1(
   facts: ReadonlyMap<string, ProjectDisplayTitleFactsV1>,
-  { compact = false }: Readonly<{ compact?: boolean }> = {},
+  options?: Readonly<{ compact?: boolean }>,
 ): ReadonlyMap<string, string | null> {
+  return resolveQualifiedProjectTitlesV1(facts, options).titles;
+}
+
+/** A Machine qualifier carries the baseline identity selected by the title owner. */
+export function resolveQualifiedProjectTitlesV1(
+  facts: ReadonlyMap<string, ProjectDisplayTitleFactsV1>,
+  { compact = false }: Readonly<{ compact?: boolean }> = {},
+): Readonly<{ titles: ReadonlyMap<string, string | null>; qualifiedMachineIds: ReadonlyMap<string, string> }> {
   const titles = new Map<string, string | null>();
+  const qualifiedMachineIds = new Map<string, string>();
   const byTitle = new Map<string, string[]>();
   for (const [key, { title }] of facts) {
     titles.set(key, title);
@@ -74,7 +84,7 @@ export function qualifyCollidingProjectTitlesV1(
     const counts = new Map<string, number>();
     const shortPlaceCounts = new Map<string, number>();
     const candidates = keys.map(key => {
-      const { machineName: machine, rootPath } = facts.get(key)!;
+      const { machineName: machine, machineId, rootPath } = facts.get(key)!;
       const path = compact ? rootPath?.replace(/[\\/]+$/, '') ?? '' : rootPath;
       const details = [machine, path, machine && path ? `${machine} · ${path}` : undefined];
       for (const detail of new Set(details)) if (detail) counts.set(detail, (counts.get(detail) ?? 0) + 1);
@@ -84,16 +94,20 @@ export function qualifyCollidingProjectTitlesV1(
       // A numeric parent alone looks like an ordinal. Keep its checkout segment so it reads as a place.
       const shortPlace = parent && /^\d+$/.test(parent.trim()) ? `${parent}/${root.slice(parentEnd + 1)}` : parent;
       if (shortPlace) shortPlaceCounts.set(shortPlace, (shortPlaceCounts.get(shortPlace) ?? 0) + 1);
-      return { key, details, shortPlace };
+      return { key, details, shortPlace, machineId };
     });
     // If human facts coincide, assign a stable ordinal without printing the Project identities.
     candidates.sort((left, right) => compareKeys(left.key, right.key));
-    for (const [index, { key, details, shortPlace }] of candidates.entries()) {
-      const [machine, ...paths] = details;
+    for (const [index, { key, details, shortPlace, machineId }] of candidates.entries()) {
+      const [machine, path, machinePath] = details;
       const uniqueShortPlace = shortPlace && shortPlaceCounts.get(shortPlace) === 1 && !counts.has(shortPlace);
-      const qualifier = machine && counts.get(machine) === 1 ? machine
-        : uniqueShortPlace ? shortPlace : paths.find(candidate => candidate && counts.get(candidate) === 1) ?? String(index + 1);
-      titles.set(key, `${title} · ${qualifier}`);
+      const qualifier = machine && counts.get(machine) === 1 ? { text: machine, machineId }
+        : uniqueShortPlace ? { text: shortPlace }
+        : path && counts.get(path) === 1 ? { text: path }
+        : machinePath && counts.get(machinePath) === 1 ? { text: machinePath, machineId }
+        : { text: String(index + 1) };
+      titles.set(key, `${title} · ${qualifier.text}`);
+      if (qualifier.machineId) qualifiedMachineIds.set(key, qualifier.machineId);
     }
   }
 
@@ -124,10 +138,11 @@ export function qualifyCollidingProjectTitlesV1(
         nextOrdinal.set(base, ordinal + 1);
         occupied.add(candidate);
         titles.set(key, candidate);
+        qualifiedMachineIds.delete(key);
       }
     }
   }
-  return titles;
+  return { titles, qualifiedMachineIds };
 }
 
 /** Comparable target-platform spelling only; never expands a remote home on this machine. */

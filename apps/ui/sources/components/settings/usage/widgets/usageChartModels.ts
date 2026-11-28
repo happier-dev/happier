@@ -121,17 +121,20 @@ export function projectUsageSkyModel(
         : leader.status === 'tied' && leader.agentIds.length >= 2 ? { kind: 'tie', agentIds: [leader.agentIds[0]!, leader.agentIds[1]!, ...leader.agentIds.slice(2)] }
         : leader.status === 'unattributed' || (leader.status === 'tied' && leader.agentIds.length < 2) ? { kind: 'unknown' } : null };
   });
-  // Streak lengths come from the shared day-streak owner; their positions are the matching runs of active days.
+  // Streak lengths come from the shared day-streak owner; their positions are the matching runs of active days. Both
+  // read the days as drawn, so a bracket never spans a day the sky draws as not recorded (USAGE-DESIGN-PASS-57 #15).
   const streaks = resolveUsageDayStreaks({ referenceMs, timeZoneOffsetMinutes: calendar.timeZoneOffsetMinutes,
-    range: calendar.period, days: dates.map((date) => { const bucket = byDate.get(date); return { date, eventCount: bucket ? bucket.totals.eventCount : 0 }; }) });
+    range: calendar.period, days: days.map(({ date, state }) => ({
+      date, eventCount: state === 'active' ? 1 : state === 'inactive' ? 0 : null,
+    })) });
   const runs: { startDate: string; endDate: string; days: number }[] = [];
   let start: number | null = null;
-  dates.forEach((date, index) => {
-    const active = (byDate.get(date)?.totals.eventCount ?? 0) > 0;
+  days.forEach((day, index) => {
+    const active = day.state === 'active';
     if (active && start === null) start = index;
-    if ((!active || index === dates.length - 1) && start !== null) {
+    if ((!active || index === days.length - 1) && start !== null) {
       const end = active ? index : index - 1;
-      runs.push({ startDate: dates[start]!, endDate: dates[end]!, days: end - start + 1 });
+      runs.push({ startDate: days[start]!.date, endDate: days[end]!.date, days: end - start + 1 });
       start = null;
     }
   });

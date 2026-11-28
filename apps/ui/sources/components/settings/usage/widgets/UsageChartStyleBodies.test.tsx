@@ -9,7 +9,10 @@ import {
   type UsageQueryResultSlice,
 } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { renderScreen } from '@/dev/testkit';
-import { UsageChartPending } from './UsageChartStyleBodies';
+import { UsageChartPending, UsageCrewBody } from './UsageChartStyleBodies';
+import { WidgetFrameBodyCaptionContext } from '@/components/widgets/frame/widgetFrameBodyCaption';
+import { WidgetFrame } from '@/components/widgets/frame/WidgetFrame';
+import type { UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { usageChartMetricName } from './usageChartHost';
 import { usageCrewLabels } from './usageChartLabels';
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
@@ -47,6 +50,50 @@ it.each(['en', 'fr'] as const)('keeps an unreported Crew share quiet in the real
     expect(screen.findByTestId('crew.agent.claude')?.props.accessibilityLabel).toBe(`${label} · Claude Code: 0%`);
     await screen.unmount();
   } finally { setPreferredLanguageFromSettings(previousLanguage); }
+});
+
+it('puts shared Crew coverage in the card caption and mixed coverage on the rows', async () => {
+  const startMs = Date.UTC(2026, 8, 7);
+  const endMs = startMs + 86_400_000;
+  const query = normalizeUsageQuery({ period: { startMs, endMs }, includeActivity: true, includeSessionEvidence: false });
+  const tokens = { input: 25, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 25 };
+  const cost = { reportedUsd: null, estimatedUsd: null, currency: 'USD' };
+  const contributions = ['codex', 'claude'].map(agentId => ({
+    id: agentId, agentId, source: 'runtime', sourceContext: { path: 'runtime' as const },
+    machineId: agentId, sessionId: agentId, turnId: null, modelId: null, projectKey: null, workspaceId: null,
+    observedAtMs: startMs + 1, eventCount: 1, tokens, cost,
+  }));
+  function Placement({ mixed }: { mixed: boolean }) {
+    const [caption, setCaption] = React.useState<string | null>(null);
+    const value: UsageAnalyticsQueryResponse = {
+      v: 1, contributions, totals: { eventCount: 2, tokens: { ...tokens, input: 50, total: 50 }, cost },
+      coverage: { status: 'partial', reasons: ['incomplete_history'], missingDimensions: [], ranked: [],
+        range: { startMs, endMs, complete: true },
+        sources: contributions.map(row => ({
+          source: row.source, machineId: row.machineId, path: 'runtime', status: 'available',
+          eventCount: 1, historyComplete: mixed && row.agentId === 'claude',
+        })),
+      },
+    };
+    const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'partial', value }] },
+      bundledUsageModelPriceCatalog).results[0]!;
+    return <WidgetFrameBodyCaptionContext.Provider value={setCaption}>
+      <WidgetFrame testID="frame" placement="home" frameStyle="card" title="Crew" mark="check-square" source={caption ?? undefined}
+        body={{ kind: 'content', children: <UsageCrewBody query={query} model={{ refresh: async () => {} }} slice={slice} serverId="home" id="usage_breakdowns" testID="crew-body" /> }} />
+    </WidgetFrameBodyCaptionContext.Provider>;
+  }
+  const partial = t('usage.board.charts.coveragePartialShort');
+  const caption = `${t('usage.board.charts.inputCrew')} · ${usageChartMetricName('tokens')}`;
+  const rowCaveat = t('usage.board.charts.coveragePartial');
+  const screen = await renderScreen(<Placement mixed={false} />);
+  expect(screen.findByTestId('crew-body.crewChart')).not.toBeNull();
+  expect(screen.getTextContent()).toContain(`${caption} · ${partial}`);
+  expect(screen.getTextContent()).not.toContain(rowCaveat);
+  await screen.update(<Placement mixed />);
+  expect(screen.getTextContent()).toContain(caption);
+  expect(screen.getTextContent()).not.toContain(`${caption} · ${partial}`);
+  expect(screen.getTextContent()).toContain(rowCaveat);
+  expect(screen.getTextContent()).toContain(t('usage.board.charts.coverageMeasured'));
 });
 
 describe('Usage chart bodies while activity is still being read', () => {

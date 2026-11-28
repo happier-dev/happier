@@ -4,6 +4,7 @@ import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentat
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ActionsSettingsV1Schema} from '@happier-dev/protocol/actions/actionSettings';
 import { UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { aggregateUsageContributionCosts } from '@happier-dev/protocol/usage/usageAggregation';
@@ -1208,12 +1209,17 @@ describe('mounted Usage page scope commands', () => {
         { layoutId: 'work', failures: ['scm_read_failed'], retryable: true },
         { layoutId: 'work', failures: [RPC_ERROR_CODES.FORBIDDEN], retryable: false, phone: true },
         { layoutId: 'work', failures: [RPC_ERROR_CODES.FORBIDDEN, 'scm_read_failed'], retryable: true },
+        { layoutId: 'work', failures: ['scm_read_failed'], retryable: true, targetFailure: 'no-linked-outcomes' },
+        { layoutId: 'work', failures: ['scm_read_failed', 'scm_read_failed'], retryable: true, targetFailure: 'overlapping' },
+        { layoutId: 'work', failures: [], retryable: true, targetFailure: 'initial-503' },
         { layoutId: 'work', failures: [], retryable: true, targetFailure: 'refresh-503' },
         { layoutId: 'work', failures: [], retryable: false, targetFailure: 'older-home' },
     ] as const)('shows settled Work recovery on $layoutId with Retry $retryable ($failures $targetFailure)', async test => {
         const { layoutId, failures, retryable } = test;
         const phone = 'phone' in test && test.phone;
         const targetFailure = 'targetFailure' in test ? test.targetFailure : undefined;
+        const overlapping = targetFailure === 'overlapping';
+        const noLinkedOutcomes = targetFailure === 'no-linked-outcomes' || overlapping;
         let targetRefreshFailed = false;
         if (phone) vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
         const [{ installSessionActionRpcBoundary }, { createHydratedPlainMachineFixture, createPlainMachineReadHttpResponseFixture },
@@ -1227,10 +1233,11 @@ describe('mounted Usage page scope commands', () => {
         const read = `gap-read-${layoutId}`;
         const unread = new Map(failures.map((code, index) => [`gap-unread-${index}`, code]));
         const sessions = [read, ...unread.keys()];
+        let layoutArtifact: ReturnType<typeof createLayoutArtifactHttpBoundary<WidgetAreaLayoutV1>> | undefined;
         // The daemon replies with one admitted link and the typed cause for each unread Session.
         installSessionActionRpcBoundary(request => ScmWorkEvidenceReadResponseSchema.parse({ sessions: ScmWorkEvidenceReadRequestSchema.parse(request.params)
             .sessions.map(session => unread.has(session.sessionId) ? { sessionId: session.sessionId, status: 'error', errorCode: unread.get(session.sessionId) }
-                : { sessionId: session.sessionId, status: 'partial', pullRequestsRead: true, branchEvidence: [], evidence: [{ sessionId: session.sessionId,
+                : { sessionId: session.sessionId, status: 'partial', pullRequestsRead: true, branchEvidence: [], evidence: noLinkedOutcomes ? [] : [{ sessionId: session.sessionId,
                     turnId: 'turn', repositoryKey: 'repo', checkpointRef: 'checkpoint', checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40),
                     attributionScope: 'no_happier_checkpoint_overlap_observed', pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge',
                         baseUrl: 'https://github.com', nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } }, number: 1, title: 'Linked',
@@ -1251,7 +1258,7 @@ describe('mounted Usage page scope commands', () => {
             route: async request => {
                 if (request.path === '/v2/sessions/read-batch') {
                     if (targetFailure === 'older-home') return Response.json({ error: 'not_found' }, { status: 404 });
-                    if (targetRefreshFailed) {
+                    if (targetRefreshFailed || targetFailure === 'initial-503') {
                         return Response.json({ code: 'database_transaction_timeout' }, { status: 503 });
                     }
                 }
@@ -1259,10 +1266,20 @@ describe('mounted Usage page scope commands', () => {
                 if (sessionAnswer) return sessionAnswer;
                 if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
                 if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
-                if (request.path === '/v2/usage/query') return Response.json({ ...accounting, contributions: sessions.map(sessionId => ({
-                    id: `cost-${sessionId}`, observedAtMs: nowMs - 60_000, sessionId, turnId: 'turn', agentId: null, modelId: null, machineId: null,
-                    projectKey: null, workspaceId: null, source: null, tokens: accounting.totals.tokens, cost: accounting.totals.cost })) });
+                if (request.path === '/v2/usage/query') {
+                    const selected = overlapping ? UsageAnalyticsQueryRequestSchema.parse(request.body).filters?.sessionIds : undefined;
+                    const contributions = sessions.filter(id => !selected || selected.includes(id)).map(sessionId => ({
+                        id: `cost-${sessionId}`, observedAtMs: nowMs - 60_000, sessionId, turnId: 'turn' as string | null,
+                        agentId: null, modelId: null, machineId: null, projectKey: null, workspaceId: null, source: null,
+                        tokens: accounting.totals.tokens, cost: accounting.totals.cost,
+                    }));
+                    if (noLinkedOutcomes) contributions.push({ ...contributions[0]!, id: 'no-turn-cost', turnId: null });
+                    return Response.json({ ...accounting, contributions });
+                }
                 if (request.path === '/v2/usage/query-batch') return undefined;
+                if (request.path.startsWith('/v1/artifacts') && layoutArtifact) return layoutArtifact.request(request.url, {
+                    method: request.method, body: request.body === undefined ? undefined : JSON.stringify(request.body),
+                });
                 return createPlainMachineReadHttpResponseFixture(request.path, { method: request.method,
                     ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) }, 'account-a', { activeAt: nowMs, presenceProtocolVersion: 1 })
                     ?? artifacts.handle(request.url.toString(), { method: request.method })
@@ -1271,6 +1288,23 @@ describe('mounted Usage page scope commands', () => {
         const server = home.homes.a!;
         const scope = { serverId: server.id, accountId: 'account-a' };
         publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        if (overlapping) {
+            publishAppliedActiveServerRuntimeAvailability(true);
+            const surface: WidgetSurfaceRefV1 = { ...scope, owner: { kind: 'corePage', pageId: 'usage', area: 'main', layoutId } };
+            const followed = Object.fromEntries(['period', 'agents', 'machines', 'projects', 'sources', 'session', 'costBasis']
+                .map(slot => [slot, { kind: 'context' as const, slot }]));
+            const layout = WidgetAreaLayoutV1Schema.parse({ v: 1, surface, items: [
+                { kind: 'widget', instance: { v: 1, id: 'all-work', definition: { kind: 'builtin', id: 'usage_project_ledger' },
+                    bindings: { ...followed, metric: { kind: 'value', value: 'tokens' } } } },
+                { kind: 'widget', instance: { v: 1, id: 'selected-work', definition: { kind: 'builtin', id: 'usage_project_ledger' },
+                    bindings: { ...followed, metric: { kind: 'value', value: 'tokens' },
+                        session: { kind: 'value', value: sessions.slice(0, 2) } } } },
+            ] });
+            layoutArtifact = createLayoutArtifactHttpBoundary('account-a', { artifactId: buildWidgetSurfaceArtifactIdV1(surface),
+                kind: WIDGET_SURFACE_ARTIFACT_KIND_V1, defaultLayout: layout, parseLayout: value => WidgetAreaLayoutV1Schema.parse(value),
+                buildHeader: buildWidgetSurfaceArtifactHeaderV1 });
+            layoutArtifact.seed(layout);
+        }
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
         await publishMachineInventoryForTest(scope, [createHydratedPlainMachineFixture({ id: machineId, accountId: 'account-a',
@@ -1283,10 +1317,63 @@ describe('mounted Usage page scope commands', () => {
         // Every visible Work Retry, by test ID: the header's, or one at a ledger total.
         const retries = () => [...new Set(screen.findAll(node => typeof node.props?.testID === 'string'
             && (node.props.testID === 'usage-page.header.retry' || node.props.testID.endsWith('.workRetry'))).map(node => node.props.testID as string))];
+        if (overlapping) {
+            const details = 'usage-page.header.failed.detail';
+            await waitForHomeGovernance(() => {
+                const ledgers = screen.findAllByType(UsageProjectLedgerWidget);
+                const failedCounts = ledgers.map(ledger => {
+                    const { sources }: UsageQueryResultSlice = ledger.props.slice;
+                    return sources.find(source => source.source === 'work')?.unreadSessions?.failed;
+                });
+                expect(failedCounts.sort(), screen.getTextContent()).toEqual([1, 2]);
+                expect(screen.findHostByTestId(details)).not.toBeNull();
+            });
+            expect(retries()).toEqual(['usage-page.header.retry']);
+            await screen.pressByTestIdAsync(details);
+            const expanded = screen.findHostByTestId('usage-page.header.failed-text')?.props.accessibilityLabel;
+            const missingTurn = t('usage.board.work.reason_missing_turn');
+            expect(expanded?.split(missingTurn)).toHaveLength(2);
+            for (const count of [1, 2]) {
+                expect.soft(expanded).not.toContain(t('usage.board.work.workUnreadOther', { count, formattedCount: String(count) }));
+            }
+            expect(expanded).toContain(t('usage.board.work.workUnreadOtherSome'));
+            return;
+        }
         if (targetFailure === 'older-home') {
             const newer = t('usage.board.page.coverageNeedsNewerServer', { sources: usageSourceTitle('work') });
             await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(newer));
             expect(retries()).toEqual([]);
+            return;
+        }
+        if (targetFailure === 'initial-503' || noLinkedOutcomes) {
+            const { UsageOutcomesWidget } = await import('./widgets/UsageOutcomesWidget');
+            const ledger = () => screen.findAllByType(UsageProjectLedgerWidget)[0];
+            const outcomes = () => screen.findAllByType(UsageOutcomesWidget)[0];
+            await waitForHomeGovernance(() => {
+                expect(ledger()?.props.slice.sources).toContainEqual(expect.objectContaining({
+                    source: 'work', status: noLinkedOutcomes ? 'partial' : 'error',
+                }));
+                expect(outcomes()).toBeDefined();
+            });
+            expect(retries()).toEqual(['usage-page.header.retry']);
+            const outcomesLine = screen.findAllByType(SurfaceStateCard)
+                .find(node => node.props.testID === `${outcomes()!.props.testID}.workUnavailable`);
+            const total = screen.findByTestId(`${ledger()!.props.testID}.conservation`)?.props.accessibilityLabel;
+            if (!noLinkedOutcomes) {
+                expect(ledger()!.props.slice.workSummary).toBeUndefined();
+                expect(total).toContain(t('usage.board.page.notReadTitle'));
+                expect(outcomesLine?.props.title).toBe(t('usage.board.page.notReadTitle'));
+                return;
+            }
+            const missingTurn = t('usage.board.work.reason_missing_turn');
+            expect(ledger()!.props.slice.work?.allocations.map(row => row.reason)).toContain('missing_turn');
+            expect(total).toContain(t('usage.board.charts.coveragePartialShort'));
+            expect.soft(outcomesLine?.props.title).toBe(t('usage.board.charts.coveragePartialShort'));
+            expect(screen.getTextContent()).not.toContain(missingTurn);
+            expect(screen.findByTestId('usage-page.header.failed.detail')).not.toBeNull();
+            await screen.pressByTestIdAsync('usage-page.header.failed.detail');
+            expect(screen.getTextContent()).toContain(missingTurn);
+            expect(screen.getTextContent()).toContain(t('usage.board.work.workUnreadOther', { count: 1, formattedCount: '1' }));
             return;
         }
         if (targetFailure === 'refresh-503') {
@@ -1516,17 +1603,19 @@ describe('mounted Usage page scope commands', () => {
             </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
         </InjectedAuthProvider>);
         const retryControls = () => screen.findAll(node => typeof node.type === 'string' && node.props.accessibilityLabel === t('common.retry'));
+        const retryIds = () => retryControls().map(node => node.props.testID);
+        const expectedRetries = ['usage-page.header.retry', 'usage-area.widget.plans:group:0:widget:0.body.state.reason-action'];
         const noticeId = 'usage-page.header.failed';
         if (viewsFail) {
-            // The ownership refusal's Retry is the page's one Retry, which rereads the saved Views too (acceptance 11-22 #20).
+            // The page-wide Retry rereads the saved Views too (acceptance 11-22 #20).
             await waitForHomeGovernance(() => {
                 expect(reader!.readCurrentUiContext()!.commands.map(command => command.title)).toContain(t('usage.board.page.retryRead'));
                 // Retry and each read's diagnosis can publish independently. The one notice must disclose both failures (J-B8).
                 const both = screen.findHostByTestId(`${noticeId}-text`)?.props.accessibilityLabel;
                 expect(both).toContain(t('connectedServices.errors.quotaOwnershipUnproven', {}));
                 expect(both).toContain(t('usage.board.page.viewsReadFailed'));
+                expect(retryIds()).toEqual(expectedRetries);
             });
-            expect(retryControls().map(node => node.props.testID)).toEqual(['usage-page.header.retry']);
             const readsBeforeRetry = savedViewsReads;
             savedViewsFailed = false;
             await screen.pressByTestIdAsync('usage-page.header.retry');
@@ -1542,14 +1631,15 @@ describe('mounted Usage page scope commands', () => {
             expect(diagnosis).toContain(ownershipRefused ? t('connectedServices.errors.quotaOwnershipUnproven', {}) : usageSourceTitle('quota'));
             if (accountingFails) expect(diagnosis).toContain(usageSourceTitle('accounting'));
             if (viewsFail) expect(diagnosis).not.toContain(t('usage.board.page.viewsReadFailed'));
+            expect(retryIds()).toEqual(expectedRetries);
         });
-        // An ownership refusal holds the switching order back and offers the page's one Retry too (acceptance 11-22 #20).
-        expect(retryControls().map(node => node.props.testID)).toEqual(['usage-page.header.retry']);
         if (ownershipRefused) return;
         failed = false;
         await screen.pressByTestIdAsync('usage-page.header.retry');
-        await waitForHomeGovernance(() => expect(screen.findHostByTestId(`${noticeId}-text`)?.props.accessibilityLabel).toBeUndefined());
-        expect(retryControls()).toHaveLength(0);
+        await waitForHomeGovernance(() => {
+            expect(screen.findHostByTestId(`${noticeId}-text`)?.props.accessibilityLabel).toBeUndefined();
+            expect(retryIds()).toHaveLength(0);
+        });
     });
 
     it('keeps populated Usage values through an offline refresh and warm return, then refreshes on recovery', async () => {

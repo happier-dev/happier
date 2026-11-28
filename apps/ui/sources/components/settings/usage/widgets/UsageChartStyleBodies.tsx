@@ -12,9 +12,9 @@ import { useWidgetFrameBodyCaption, useWidgetFrameBodyIdentity } from '@/compone
 import { usageCrewLabels, usageOrbitLabels, usagePlanetLabels, usageShippedLabels, usageSkyLabels } from './usageChartLabels';
 import { formatUsageDuration } from './usageHowYouWorkPresentation';
 import {
-  UsageBodyInsufficient, UsageBodyNothingYet, UsageBodyReadFailed, UsageBodyReading, UsageCoverageLine, isUsageReadFailed, isUsageReadOutstanding, usageAdmittedAccountingCoverage, usagePeriodPhrase, type UsageBodyProps,
+  UsageBodyInsufficient, UsageBodyNothingYet, UsageBodyPageLine, UsageBodyReadFailed, UsageBodyReading, UsageCoverageLine, isUsageReadFailed, isUsageReadOutstanding, usageAdmittedAccountingCoverage, usagePeriodPhrase, type UsageBodyProps,
 } from './usageBodyKit';
-import { useUsageWidgetPageNothingRecorded } from './usageWidgetBatch';
+import { useUsageWidgetPageHasCoverageDetail, useUsageWidgetPageNothingRecorded } from './usageWidgetBatch';
 import {
   formatUsageChartMetric, usageChartClock, usageChartDateLabels, usageChartMetricName, usageChartPercent, usageChartValuesLabels,
   usageChartWeekdays, useUsageChartHost, type UsageChartMetric,
@@ -27,7 +27,7 @@ import {
 } from './usageChartModels';
 import { readUsageChartSources } from './usageSourceSelection';
 import { readUsageWorkOutcomesEvidence } from './usageWorkPresentation';
-import { UsageWorkPendingNotice, UsageWorkReading, usageWorkLinksNotice } from './UsageWorkParts';
+import { UsageWorkPendingNotice, UsageWorkReading, usageWorkLinksNotice, usageWorkPageReadLabel } from './UsageWorkParts';
 
 export type UsageChartStyleBodyProps = UsageBodyProps;
 
@@ -253,11 +253,26 @@ function usageCrewCoverageLabel(status: UsageAgentCalendarCoverage['accounting']
     : undefined;
 }
 
+/**
+ * Where the Crew says its coverage. A caveat every row shares is one indicator in the card's header ("Partial"), never the
+ * same sentence on each row; rows carry their own only when they differ (USAGE-DESIGN-PASS-57 #17).
+ */
+function resolveUsageCrewCoverage(statuses: readonly UsageAgentCalendarCoverage['accounting'][]): Readonly<{
+  rows: typeof usageCrewCoverageLabel | undefined; header: string | null }> {
+  const shared = statuses.length > 0 && statuses.every(status => status === statuses[0]);
+  if (!shared) return { rows: usageCrewCoverageLabel, header: null };
+  return { rows: undefined, header: statuses[0] === 'partial' ? t('usage.board.charts.coveragePartialShort') : null };
+}
+
 export function UsageCrewBody(props: UsageChartStyleBodyProps) {
   const host = useUsageChartHost(props.serverId);
   const metric = resolveUsageChartMetric(props.query.metric, 'tokens');
-  const { calendar, shares } = useAgentShares(props, metric, usageCrewCoverageLabel);
-  useStyleCaption(t('usage.board.charts.inputCrew'), usageChartMetricName(metric, calendar?.periodSummary.totals.tokensFromParts));
+  const calendar = React.useMemo(() => readUsageAgentAccountingCalendar(props.slice), [props.slice]);
+  const coverage = React.useMemo(() => resolveUsageCrewCoverage((calendar?.periodSummary.agents ?? []).map(entry => entry.coverage.accounting)),
+    [calendar]);
+  const shares = React.useMemo(() => calendar ? projectUsageAgentShares(calendar, metric, coverage.rows) : null, [calendar, metric, coverage.rows]);
+  useStyleCaption(t('usage.board.charts.inputCrew'), [usageChartMetricName(metric, calendar?.periodSummary.totals.tokensFromParts),
+    coverage.header].filter(Boolean).join(' · '));
   const agents = React.useMemo(() => (shares ?? []).flatMap((share) => share.agentId === null ? [] : [host.agent(share.agentId)]), [shares, host.agent]);
   if (!shares || shares.length === 0) return <UsageChartPending slice={props.slice} onRetry={props.model.refresh} testID={props.testID} title={t('usage.board.charts.needsDataTitle')} reason={t('usage.board.charts.needsCalendarReason')} />;
   const activeDays = calendar?.days.filter((day) => (day.totals.eventCount ?? 0) > 0).length ?? null;
@@ -295,6 +310,7 @@ export function UsageRiverStyleBody(props: UsageChartStyleBodyProps) {
 
 export function UsageShippedStyleBody(props: UsageChartStyleBodyProps) {
   const host = useUsageChartHost(props.serverId);
+  const pageHasDetail = useUsageWidgetPageHasCoverageDetail();
   const title = t('usage.board.charts.inputShipped');
   useStyleCaption(title);
   const model = React.useMemo(() => projectUsageShippedModel(props.slice), [props.slice]);
@@ -306,7 +322,8 @@ export function UsageShippedStyleBody(props: UsageChartStyleBodyProps) {
     if (evidence === 'reading') return <UsageWorkReading slice={props.slice} testID={props.testID} />;
     const { cause } = notice;
     if (evidence === 'unavailable' || evidence === 'partial')
-      return <UsageBodyInsufficient testID={`${props.testID}.unavailable`} title={t('usage.board.charts.shippedUnavailableTitle')} reason={cause ?? undefined} />;
+      return pageHasDetail ? <UsageBodyPageLine testID={`${props.testID}.unavailable`} title={usageWorkPageReadLabel(evidence)} />
+        : <UsageBodyInsufficient testID={`${props.testID}.unavailable`} title={t('usage.board.charts.shippedUnavailableTitle')} reason={cause ?? undefined} />;
     return <UsageBodyInsufficient testID={`${props.testID}.empty`} title={t('usage.board.charts.shippedEmptyTitle')} reason={cause ?? t('usage.board.charts.shippedEmptyReason')} />;
   }
   return <View style={{ gap: 12 }} testID={`${props.testID}.shipped`}>

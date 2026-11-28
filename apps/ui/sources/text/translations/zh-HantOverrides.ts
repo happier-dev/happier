@@ -13991,6 +13991,7 @@ settingsSession: {
             noMergeDate: "沒有合併日期",
         }, work: {
             funnelMerged: "連結到已合併的 PR",
+            workUnreadOtherSome: "部分工作階段無法讀取",
         }, recap: {
             deliveryUnconfirmed: "系統分享面板已開啟，但無法確認是否完成。重試前請檢查所選應用程式。",
             statMergedPrs: "已連結的已合併 PR",

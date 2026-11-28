@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import {
   allocateUsageOutcomes,
   type UsageWorkContribution,
   type UsageWorkEvidence,
 } from '@happier-dev/protocol/usage/usageOutcomeAllocation';
-import { projectUsageSessionValuePlots, summarizeUsageWork, summarizeUsageWorkSession, usageWorkContributionAmount } from './usageWorkPresentation';
+import { t } from '@/text';
+import { projectUsageSessionValuePlots, readUsagePageWorkCauses, summarizeUsageWork, summarizeUsageWorkSession, usageWorkContributionAmount,
+  usageWorkCauseLabel, usageWorkLinksNotice } from './usageWorkPresentation';
 
 function allocate(input: Parameters<typeof allocateUsageOutcomes>[0]) {
   return { ...allocateUsageOutcomes(input), fixtureContributions: input.contributions };
@@ -82,6 +86,58 @@ function evidence(
     },
   };
 }
+
+describe('Work coverage details', () => {
+  it('keeps a single displayed scope exact and avoids a page-wide count for separately scoped Sessions', () => {
+    const scope = (session: string): UsageQueryResultSlice => {
+      const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, session, includeWorkEvidence: true });
+      return { key: getUsageQueryKey(query), requestedQuery: query, shownQuery: query, pending: false,
+        sources: [{ source: 'work', status: 'partial', unreadSessions: { machine_unavailable: 1, failed: 1 } }] };
+    };
+    const first = scope('first');
+    const second = scope('second');
+    const exact = { count: 1, formattedCount: '1' };
+    expect(readUsagePageWorkCauses([first]).map(usageWorkCauseLabel)).toEqual([
+      t('usage.board.work.workUnreadUnreachable', exact), t('usage.board.work.workUnreadOther', exact),
+    ]);
+    expect(readUsagePageWorkCauses([first, second]).map(usageWorkCauseLabel)).toEqual([
+      t('usage.board.work.workUnreadUnreachableSome'), t('usage.board.work.workUnreadOtherSome'),
+    ]);
+  });
+
+  it('reuses the settled allocation reasons for cards and sibling-only batch publications', () => {
+    // Same real Account scale as the Work grouping measurement below.
+    const contributions = Array.from({ length: 3_800 }, (_, index) => contribution(`usage-${index}`, `session-${index}`, 'turn'));
+    const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeWorkEvidence: true });
+    const siblingQuery = normalizeUsageQuery({ ...query, includeWorkEvidence: false });
+    let reasonReads = 0;
+    const graph = (withMissingTurn: boolean) => {
+      const rows = withMissingTurn ? [{ ...contributions[0]!, turnId: null }, ...contributions.slice(1)] : contributions;
+      const work = allocateUsageOutcomes({ contributions: rows, evidence: [] });
+      return { ...work, allocations: work.allocations.map(allocation => ({
+        ...allocation,
+        get reason() { reasonReads++; return allocation.reason; },
+      })) };
+    };
+    const work = graph(true);
+    const slice: UsageQueryResultSlice = { key: getUsageQueryKey(query), requestedQuery: query, shownQuery: query,
+      sources: [{ source: 'work', status: 'partial' }], pending: false, work };
+    const sibling: UsageQueryResultSlice = { key: getUsageQueryKey(siblingQuery), requestedQuery: siblingQuery, shownQuery: siblingQuery,
+      sources: [{ source: 'accounting', status: 'pending' }], pending: true };
+    expect(usageWorkLinksNotice(slice).cause).toContain(t('usage.board.work.reason_missing_turn'));
+    expect(reasonReads).toBe(contributions.length);
+
+    reasonReads = 0;
+    const published = { ...sibling, sources: [{ source: 'accounting', status: 'available' as const }], pending: false };
+    const originalCauses = readUsagePageWorkCauses([{ ...slice }, sibling]);
+    expect(originalCauses).toHaveLength(1);
+    expect(readUsagePageWorkCauses([{ ...slice }, published])).toEqual(originalCauses);
+    expect(reasonReads, 'sibling-only publications reuse the allocation reasons already projected for the card').toBe(0);
+
+    expect(readUsagePageWorkCauses([{ ...slice, work: graph(false) }, published])).toHaveLength(0);
+    expect(reasonReads).toBe(contributions.length);
+  });
+});
 
 describe('Work display grouping of the canonical allocation', () => {
   it('carries measured-floor provenance beside reported totals through Work groups and turns', () => {

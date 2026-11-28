@@ -414,6 +414,19 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
   const extraReading = trailingReading && trailingReading.id !== latest?.id ? describe(trailingReading) : '';
   const exact = props.decorative ? '' : latest ? extraReading : readingBuckets.map(describe).join('; ');
   const reference = props.reference && Number.isFinite(props.reference.value) ? props.reference : null;
+  const showScaleValues = props.showScaleValues && !props.pending;
+  const referenceLabelY = showScaleValues && reference && props.scaleGutter && geometry.buckets.length
+    ? geometry.yAt(reference.value) : null;
+  const scaleLabelClearance = (text.caption.lineHeight ?? props.theme.typography.caption.lineHeight) * 1.5;
+  // Only labels clear of the reference compete for a place on the scale.
+  const scaleLabels = showScaleValues
+    ? (props.mirrored ? [geometry.max, 0, geometry.min] : [geometry.min, geometry.min / 2 + geometry.max / 2, geometry.max]).map(value => {
+      const y = geometry.yAt(value);
+      return referenceLabelY !== null && Math.abs(y - referenceLabelY) < scaleLabelClearance ? null : { y, label: format(value) };
+    })
+    : [];
+  const [firstScaleLabel, , lastScaleLabel] = scaleLabels;
+  const pairedScaleEnds = props.mirrored && geometry.min < 0 && geometry.max > 0;
   const shading = new Map((props.bucketShading ?? []).map(entry => [entry.bucketId, entry]));
   const barRanges = props.variant === 'bar' ? (props.barRanges ?? []).filter(range => Number.isFinite(range.lower)
     && Number.isFinite(range.upper) && range.lower < range.upper && range.lower >= geometry.min && range.upper <= geometry.max
@@ -802,13 +815,14 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
         style={{ position: 'absolute', left: 0, right: props.scaleGutter ?? 0, top: peakInset + thresholdY, borderTopWidth: 1, borderStyle: 'dashed', borderTopColor: thresholdColor }}>
         <HappierText style={{ ...text.caption, color: thresholdColor, position: 'absolute', left: 0, bottom: HAPPIER_DATA_METRICS.axisGapPx }}>{threshold.label}</HappierText>
       </View> : null}
-      {/* Baseline, middle and top each carry their value, so the scale's reach reads without hovering (USAGE-ACCEPT 1121 #16).
-          The reference label shares the scale gutter: a scale value it would print over steps aside for it. */}
-      {props.showScaleValues && !props.pending ? (props.mirrored ? [geometry.max, 0, geometry.min] : [geometry.min, geometry.min / 2 + geometry.max / 2, geometry.max]).map((value, index) =>
-        reference && props.scaleGutter && geometry.buckets.length
-          && Math.abs(geometry.yAt(value) - geometry.yAt(reference.value)) < (text.caption.lineHeight ?? props.theme.typography.caption.lineHeight) * 1.5 ? null
-          : <HappierText key={index} testID={props.testID ? `${props.testID}-scale-${index}` : undefined}
-            style={{ ...text.caption, position: 'absolute', right: 4, top: Math.max(0, peakInset + geometry.yAt(value) - 16) }} tabularNumbers>{format(value)}</HappierText>) : null}
+      {scaleLabels.map((tick, index) => {
+        if (!tick) return null;
+        // Endpoints convey the range first. Mirrored endpoints can say the same magnitude on opposite sides of zero.
+        if (index === 1 && (tick.label === firstScaleLabel?.label || tick.label === lastScaleLabel?.label)) return null;
+        if (index === 2 && !pairedScaleEnds && tick.label === firstScaleLabel?.label) return null;
+        return <HappierText key={index} testID={props.testID ? `${props.testID}-scale-${index}` : undefined}
+          style={{ ...text.caption, position: 'absolute', right: 4, top: Math.max(0, peakInset + tick.y - 16) }} tabularNumbers>{tick.label}</HappierText>;
+      })}
       {props.scaleTicks?.map((tick) => <HappierText key={tick.value} style={{ ...text.caption, position: 'absolute', right: 0, top: Math.max(0, Math.min(height - 14, inset + geometry.yAt(tick.value) - 7)) }} tabularNumbers>{tick.label}</HappierText>)}
     </View>
     {selected && (props.showReadout ?? !inline) ? <View testID={props.testID ? `${props.testID}-readout` : undefined} accessibilityLiveRegion="polite">
