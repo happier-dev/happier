@@ -475,6 +475,47 @@ describe('createActionExecutor (review.start)', () => {
     expect(records.readMetadata(round.reviewId)).toMatchObject({ subjectKind: 'pull_request' });
     expect((await records.read(round.reviewId))?.rounds[0]?.comparisonId).toBe(composed ? comparisonId : undefined);
   });
+  it.each([false, true])('names a direct PR review from the captured change (composed: %s)', async composed => {
+    const records = createInMemoryReviewRecordPortV1();
+    let binding: unknown;
+    const source = { kind: 'pullRequest', locator: { providerId: 'github', repository: 'example/repository', number: 42 } } as const;
+    const baseOid = '1'.repeat(40);
+    const headOid = '2'.repeat(40);
+    const title = 'Fix reconciliation after reconnect';
+    let workflowTitle: string | undefined;
+    const executor = createCoreActionExecutor({
+      reviewRecords: () => records,
+      executionRunCheckProtocolV2: async () => ({ ok: true }),
+      reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
+      sessionStatusGet: async ({ sessionId }) => ({ session: { id: sessionId, createdAt: 1, updatedAt: 1,
+        active: true, activeAt: 1, encryption: null, path: '/repo', machineId: 'machine-1' } }),
+      scmActionExecute: async () => ({ success: true, comparison: { id: comparisonId, source,
+        repository: { rootPath: '/repo' }, endpoints: { before: baseOid, after: headOid },
+        pullRequest: { baseOid, title }, inventory: { state: 'complete', files: [], reasons: [] },
+        freshness: 'current' }, metadata: { source, sourceKey: comparisonId } }),
+      workflowAction: async invocation => {
+        if (invocation.actionId !== 'workflow.run.start') throw new Error('Unexpected Workflow operation');
+        const request = WorkflowRunStartRequestV1Schema.parse(invocation.input);
+        binding = request.inputs?.reviewRound;
+        workflowTitle = request.metadata?.title;
+        return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+      },
+      executionRunStart: async (_sessionId, input) => {
+        binding = (input.intentInput as Readonly<Record<string, unknown>>).reviewRound;
+        return { runId: 'pr-review-run', callId: 'call', sidechainId: 'call' };
+      },
+    } as ActionExecutorDeps);
+    const result = await executor.execute('review.start', {
+      sessionId: 's1', cwd: '/repo', instructions: 'Review the selected pull request.',
+      reviewers: [{ kind: 'engine', engineId: 'codex' },
+        ...(composed ? [{ kind: 'engine', engineId: 'codex', modelId: 'second-model' }] : [])], source,
+    }, { surface: 'ui' });
+    expect(result, JSON.stringify(result)).toMatchObject(composed ? { ok: false, errorCode: 'content_unavailable' } : { ok: true });
+    const round = ReviewRoundBindingV1Schema.parse(binding);
+    expect((await records.read(round.reviewId))?.title).toBe(title);
+    if (composed) expect(workflowTitle).toBe(title);
+  });
+
   it.each(['roster', 'steps', 'people-only'] as const)('refuses an unavailable human request from %s before starting executable reviewers', async selectionSource => {
     let workflowStarts = 0;
     const records = createInMemoryReviewRecordPortV1();

@@ -22,7 +22,7 @@ const PageSchema = z.looseObject({
     ])), truncated: z.optional(z.boolean()) })),
   omittedRowCount: z.number().check(z.int(), z.nonnegative()), projectionTruncated: z.boolean(),
   incomplete: z.optional(z.enum(['ceiling', 'pagination'])), continuation: z.optional(z.string().check(z.minLength(1))),
-  comparison: z.looseObject({ url: z.optional(z.string().check(z.url())), beforeOid: z.string().check(z.regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/)),
+  comparison: z.looseObject({ title: z.optional(z.string().check(z.minLength(1))), url: z.optional(z.string().check(z.url())), beforeOid: z.string().check(z.regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/)),
     baseOid: z.string().check(z.regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/)), headOid: z.string().check(z.regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/)),
     locator: z.optional(z.strictObject({ providerId: z.string().check(z.minLength(1)), repository: z.string().check(z.minLength(1)), number: z.number().check(z.int(), z.positive()) })),
     totalFileCount: z.nullable(z.number().check(z.int(), z.nonnegative())), enumeratedFileCount: z.number().check(z.int(), z.nonnegative()),
@@ -90,7 +90,8 @@ export async function readPullRequestComparison(input: Readonly<{
       }
       if (!before) {
         before = facts.beforeOid; after = facts.headOid; totalFileCount = facts.totalFileCount;
-        pullRequest = { baseOid: facts.baseOid, ...(facts.url ? { url: facts.url } : {}) };
+        pullRequest = { baseOid: facts.baseOid, ...(facts.url ? { url: facts.url } : {}),
+          ...(facts.title ? { title: facts.title } : {}) };
         if ((input.source.locator.baseOid && input.source.locator.baseOid !== pullRequest.baseOid)
           || (input.source.locator.headOid && input.source.locator.headOid !== after)) {
           reasons.push('Selected pull-request endpoint no longer matches the source'); freshness = 'stale'; break;

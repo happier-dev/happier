@@ -555,7 +555,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             parent: { actionId, input: parsed.data as JsonObject }, context: workflowContext,
             child: { action: 'workflow.run.start', role: 'workflow.run.start', input: {
               runId: composedRunId, source: { kind: 'inline', definition: built.definition }, inputs: built.inputs,
-              metadata: { title: preparedReviewTitleV1(reviewInput, initialComparison?.source ?? comparisonCapture?.input.source) },
+              metadata: { title: preparedReviewTitleV1(reviewInput, initialComparison, comparisonCapture?.input.source) },
             } as JsonObject },
             execute: (input, context, childId) => executeHostChild(childId, input, context),
           });

@@ -72,6 +72,7 @@ export function readGitlabMergeRequestReviewRevision(
 
 export type GitlabComparisonEndpoints = Readonly<{
   url?: string;
+  title?: string;
   beforeOid: string;
   baseOid: string;
   headOid: string;
@@ -89,7 +90,9 @@ export function readGitlabComparisonEndpoints(row: unknown): GitlabComparisonEnd
   // asynchronously. Neither shape is an exact total, including on an empty page.
   const count = typeof record.changes_count === 'string' && /^(0|[1-9][0-9]*)$/.test(record.changes_count)
     ? Number(record.changes_count) : null;
+  const title = readNonEmptyString(record.title);
   return { beforeOid: revision.baseSha, baseOid, headOid: revision.headSha,
+    ...(title ? { title } : {}),
     ...(typeof record.web_url === 'string' && /^https?:\/\//i.test(record.web_url) ? { url: record.web_url } : {}),
     totalFileCount: count !== null && Number.isSafeInteger(count) ? count : null };
 }

@@ -394,6 +394,7 @@ export type GithubPatchEvidenceV1 = ReturnType<typeof GithubPatchEvidenceV1Schem
 
 export const GithubComparisonEvidenceV1Schema = defineProtocolObject({
   url: LocationSchema.optional(),
+  title: defineProtocolString({ minLength: 1 }).optional(),
   locator: defineProtocolObject({
     providerId: defineProtocolLiteral('github'),
     repository: defineProtocolString({ minLength: 1 }),

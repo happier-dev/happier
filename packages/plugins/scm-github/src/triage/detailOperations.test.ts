@@ -881,7 +881,7 @@ describe('GitHub changed-files plane', () => {
     if (first.kind !== 'changedFiles') return;
     expect(first.rows[0]).toMatchObject({ evidence: { state: 'available', patch } });
     expect(first.rows).toHaveLength(100);
-    expect(first.comparison).toMatchObject({ url: GITHUB_PULL_REQUEST_RESPONSE.html_url, beforeOid: mergeBaseOid, baseOid: '1b0847af63d5c1e299f2c1a7d4b6e08f3a5c9d2e', headOid: HEAD_SHA, freshness: 'current', inventory: 'incomplete', content: 'complete', totalFileCount: 101 });
+    expect(first.comparison).toMatchObject({ title: GITHUB_PULL_REQUEST_RESPONSE.title, url: GITHUB_PULL_REQUEST_RESPONSE.html_url, beforeOid: mergeBaseOid, baseOid: '1b0847af63d5c1e299f2c1a7d4b6e08f3a5c9d2e', headOid: HEAD_SHA, freshness: 'current', inventory: 'incomplete', content: 'complete', totalFileCount: 101 });
     expect(first.comparison).toMatchObject({ locator: { providerId: 'github', repository: REPOSITORY_KEY, number: 1284 } });
     const second = GithubChangedFilesResultV1Schema.parse(await listGithubChangedFiles(planeInput({ comparison: true, limit: 100, continuation: first.continuation }), stub.context));
     expect(second.kind).toBe('changedFiles');

@@ -38,7 +38,9 @@ export async function readGitlabComparisonPage(
   const locator = { providerId: 'gitlab' as const,
     repository: buildGitlabComparisonRepositoryKey(admitted.route.origin, admitted.route.repositoryKey), number };
   const base: ComparisonPage = { kind: 'changedFiles', rows: [], omittedRowCount: 0, projectionTruncated: false,
-    comparison: { locator, ...(captured.value.url ? { url: captured.value.url } : {}), beforeOid: endpoints.beforeOid, baseOid: endpoints.baseOid, headOid: endpoints.headOid,
+    comparison: { locator, ...(captured.value.url ? { url: captured.value.url } : {}),
+      ...(captured.value.title ? { title: captured.value.title } : {}),
+      beforeOid: endpoints.beforeOid, baseOid: endpoints.baseOid, headOid: endpoints.headOid,
       totalFileCount: endpoints.totalFileCount, enumeratedFileCount: previous?.enumeratedFileCount ?? 0,
       freshness: 'current', inventory: 'incomplete', content: previous?.contentIncomplete ? 'incomplete' : 'complete', reasons: [] } };
   if (!sameEndpoints(endpoints, captured.value)) return { ...base,

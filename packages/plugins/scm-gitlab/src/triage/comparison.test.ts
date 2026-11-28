@@ -142,7 +142,8 @@ describe('merge request comparison evidence', () => {
     if (entry.kind !== 'present' || entry.comparisonSource?.kind !== 'pullRequest') throw new Error('comparison source missing');
     const captured = await readPullRequestComparison({ source: entry.comparisonSource,
       readPage: ({ sourceAction }) => listGitlabChanges(sourceAction.input, stub.context) });
-    expect(captured).toMatchObject({ state: 'incomplete', freshness: 'current', files: [{ path: 'retained.ts' }] });
+    expect(captured).toMatchObject({ state: 'incomplete', freshness: 'current',
+      pullRequest: { title: metadata.title }, files: [{ path: 'retained.ts' }] });
     expect(captured.reasons).toContain('file_count_unavailable');
   });
 
