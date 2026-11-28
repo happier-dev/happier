@@ -420,10 +420,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         return { hints: resolvePluginProjectedActionPresentation({ pluginId: optionsInput.action.pluginId,
             presentation: action, projection: presentation.projection, localize: localizeActionText }).inputHints ?? undefined, missing: false };
     }, [optionsInput, presentation.projection, localizeActionText]);
-    // The declared options input names what a person authors; launch may also require native-derived facts.
+    // Presets author the complete launch declaration; native discovery retains its own options-query form.
     const optionHints = React.useMemo(() => props.presetOnly
-        ? deriveActionInputHints(optionsInput.kind === 'ready' ? optionsInput.schema
-            : optionsInput.kind === 'none' ? provisioner?.descriptor.launchSchema : undefined, optionPresentation.hints)
+        ? deriveActionInputHints(provisioner?.descriptor.launchSchema, optionPresentation.hints)
         : optionPresentation.hints,
     [props.presetOnly, optionsInput, provisioner?.descriptor.launchSchema, optionPresentation.hints]);
     const launchPresentationPending = !delegatedPreset && !optionHints && !presentation.projectionReady && !presentation.projectionFailed;
