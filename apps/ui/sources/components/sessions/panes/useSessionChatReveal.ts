@@ -30,7 +30,10 @@ export function useSessionChatReveal(scopeId: string): () => void {
         const readingDockedBesideSession = !fullPageReading && current != null && current.effectiveDetailsOpen
             && !current.mainHidden && current.layout.main === 'docked' && current.layout.details === 'docked';
         if (!readingDockedBesideSession) closeDetails();
-        if (!readingDockedBesideSession || current?.layout.right === 'overlay') closeRight();
+        // The side pane closes only when it covers the Session (an overlay, or main hidden behind it); docked
+        // beside the visible Session it stays. Without a measured layout (a full page) it gives way too.
+        const rightCoversSession = current == null || current.mainHidden || current.layout.right === 'overlay';
+        if (rightCoversSession) closeRight();
         cockpitNavigation?.switchSurface('chat');
         if (fullPageReading && session) {
             router.replace(resolveSessionRoutePathForSurface(session.sessionId, 'chat', { serverId: session.address?.serverId }));

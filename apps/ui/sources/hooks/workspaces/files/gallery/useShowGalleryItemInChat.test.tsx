@@ -63,7 +63,7 @@ it('brings the chat forward on a phone before the transcript jumps to the pictur
   expect(result).toEqual({ ok: true, query: { jumpSeq: 7 } });
 });
 
-it('closes a Details drawer that covers the chat on a desktop before the transcript jumps (round 2 B2)', async () => {
+it('closes a Details drawer that covers the chat on a desktop and keeps the docked Files pane beside it open (rounds 2-3 B2)', async () => {
   const home = await account.restore({
     accountId: 'chat-account',
     currentAccount: true,
@@ -81,12 +81,15 @@ it('closes a Details drawer that covers the chat on a desktop before the transcr
     layout: { kind: 'twoPane', main: 'docked', right: 'docked', details: 'overlay' },
   };
   let detailsOpen: boolean | undefined;
+  let filesOpen: boolean | undefined;
   let show!: ReturnType<typeof useShowGalleryItemInChat>;
   function Test() {
     const context = useAppPaneContext();
     detailsOpen = context.state.scopes[scopeId]?.details.isOpen;
+    filesOpen = context.state.scopes[scopeId]?.right.isOpen;
     React.useEffect(() => {
       context.dispatch({ type: 'activateScope', scopeId });
+      context.dispatch({ type: 'openRight', scopeId, tabId: 'files' });
       context.dispatch({ type: 'openDetailsTab', scopeId, tab: { key: 'session-media', kind: 'session-gallery', title: 'Media', resource: {} }, openAs: 'pinned' });
     }, [context.dispatch]);
     const lifetime = useActiveServerAccountScopeLifetime(true);
@@ -103,10 +106,13 @@ it('closes a Details drawer that covers the chat on a desktop before the transcr
     </InjectedAuthProvider>,
   );
   expect(detailsOpen).toBe(true);
+  expect(filesOpen).toBe(true);
   let result: Awaited<ReturnType<typeof show>> | undefined;
   await act(async () => {
     result = await show({ messageLocalId: 'shots' });
   });
   expect(result).toEqual({ ok: true, query: { jumpSeq: 7 } });
   expect(detailsOpen).toBe(false);
+  // The docked Files pane never covered the chat: it stays, with the Media grid and its ringed tile in it.
+  expect(filesOpen).toBe(true);
 });
