@@ -1369,10 +1369,18 @@ describe("workflowRunService (integration)", () => {
             await expect(resolveAutomationWorkflowAcceptedSnapshotOwner({ ...request, originSessionId }))
                 .rejects.toMatchObject({ code: "currentness_conflict" });
         }
-        await expect(resolveAutomationWorkflowAcceptedSnapshotOwner(request)).resolves.toMatchObject({
+        const created = await resolveAutomationWorkflowAcceptedSnapshotOwner(request);
+        expect(created).toMatchObject({
             disposition: "created", run: { automationScopeSessionId: scoped ? seeded.sessionId : null,
                 originDeliveryAckRevision: 0, origin: { kind: "automation", originSessionId: source.id, cause } },
         });
+        // The worker opens the Run from this committed key projection instead of reading it back.
+        expect(created).toMatchObject({ keyCensus: { runId, ownerAccountId: seeded.accountId } });
+        // Same projection as a read-back; only the Account change counter, which
+        // is not content identity, advances with this resolution's publication.
+        const readBack = (await getWorkflowRun({ accountId: seeded.accountId, runId })).keyCensus;
+        expect((created as { keyCensus?: unknown }).keyCensus).toEqual({ ...readBack,
+            ownerAccountCurrentness: { ...readBack.ownerAccountCurrentness, version: expect.any(Number) } });
         await db.automation.update({ where: { id: automation.id }, data: { scopeSessionId: source.id } });
         await expect(resolveAutomationWorkflowAcceptedSnapshotOwner(request)).resolves.toMatchObject({
             disposition: "existing", run: { origin: { originSessionId: source.id } },

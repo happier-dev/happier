@@ -740,12 +740,16 @@ export async function resolveAutomationWorkflowAcceptedSnapshot(params: Readonly
             actorAccountId: params.accountId, runId: params.runId, sourceArtifactId: params.sourceArtifactId ?? null,
             visibleTeamId, encryptionMode: mode, recipientKeyEnvelopes: params.recipientKeyEnvelopes ?? [],
         }));
-        const row = await tx.automationRun.findUniqueOrThrow({ where: { id: params.runId }, select: workflowRunSelect });
+        // The worker's first read after resolution needs only this committed key
+        // projection: the checkpoint, result and root are still absent.
+        const { run: row, keyCensus } = await withWorkflowRunAccess(() => readWorkflowRunWithKeyProjectionInTx(tx,
+            { actorAccountId: params.accountId, runId: params.runId }, workflowRunSelect));
         await markWorkflowRunChangedTx(tx, params.accountId, params.runId);
         return {
             disposition: "created" as const,
             acceptedEnvelope: row.workflowAcceptedSnapshotEnvelope!,
             run: await projectRunInTx(tx, row as WorkflowRunProjectionRow, params.accountId),
+            keyCensus,
         };
     }, {
         // Ordered publication locks/replay and mode/control/row predicates fence this mutation.

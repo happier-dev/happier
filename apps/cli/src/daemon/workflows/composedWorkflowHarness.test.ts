@@ -3830,6 +3830,11 @@ describe('composed Automation workflow claim and optional receipt', () => {
     } finally { worker.stop(); }
     expect(kit.run()).toMatchObject({ state: 'succeeded' });
     expect(sessionInput.enqueue).toHaveBeenCalledWith(expect.objectContaining({ sessionId: retainedSessionId, text: expect.stringContaining('Review the release') }));
+    // Resolution returns the Run's committed key projection and initialization
+    // opens the root running: no read-back, census or running transition between.
+    const operations = kit.operations();
+    expect(operations.slice(operations.indexOf('accepted-snapshot.resolve') + 1, operations.indexOf('invocations.admit'))
+      .filter(operation => operation === 'get' || operation === 'run-key.census' || operation === 'transition')).toEqual([]);
     const resolved = resolveWorkflowRunDataKeyV1({ encryption, census: WorkflowRunRecipientCensusResponseV1Schema.parse(
       await kit.execute({ operation: 'run-key.census', runId })) });
     if (resolved.kind !== 'available') throw new Error(resolved.reason);

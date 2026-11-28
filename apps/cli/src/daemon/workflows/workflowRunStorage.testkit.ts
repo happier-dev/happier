@@ -220,7 +220,7 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
           acceptedEnvelope = String(operation.acceptedEnvelope);
           revision += 1;
         }
-        return { disposition, acceptedEnvelope, run: summary() };
+        return { disposition, acceptedEnvelope, run: summary(), ...(disposition === 'created' ? { keyCensus } : {}) };
       }
       case 'get': {
         if (acceptedEnvelope === null) {

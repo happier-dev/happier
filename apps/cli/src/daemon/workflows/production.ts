@@ -1514,6 +1514,9 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         : refuseWorkflowTriggerAdmission('content_unavailable');
     }
     let resolvedAcceptedEnvelope = claim.acceptedEnvelope;
+    // A freshly resolved Automation snapshot already carries the Run's key
+    // projection; its checkpoint, result and root do not exist yet.
+    let resolvedSnapshot: RunStorageSnapshot | undefined;
     let workspaceSource: import('@/workspaces/source/workspaceSource').WorkspaceSource | undefined;
     let postSummaryRequest: Readonly<{ enabled: boolean; occurrence: WorkflowPostSummaryEventOccurrence }> | undefined;
     // Admission happens once. A reclaim/Continue uses the same immutable
@@ -1853,8 +1856,13 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       }, { ...(claim.signal ? { signal: claim.signal } : {}) }));
       if (typeof resolution.acceptedEnvelope !== 'string') throw new Error('workflow_storage_response_invalid');
       resolvedAcceptedEnvelope = resolution.acceptedEnvelope;
+      if (resolution.disposition === 'created') {
+        resolvedSnapshot = parseRunSnapshot({ run: resolution.run, acceptedEnvelope: resolution.acceptedEnvelope,
+          checkpointEnvelope: null, resultEnvelope: null, keyCensus: resolution.keyCensus });
+      }
     }
-    const initial = parseRunSnapshot(await storage.execute({ operation: 'get', runId: claim.runId }, { ...(claim.signal ? { signal: claim.signal } : {}) }));
+    const initial = resolvedSnapshot
+      ?? parseRunSnapshot(await storage.execute({ operation: 'get', runId: claim.runId }, { ...(claim.signal ? { signal: claim.signal } : {}) }));
     const resolved = resolveWorkflowRunDataKeyV1({ encryption: accountEncryption, census: initial.keyCensus });
     if (resolved.kind !== 'available' || initial.keyCensus.ownerAccountId !== params.accountId) {
       logger.debug('[WORKFLOW] Run key unavailable before initialization', { runId: claim.runId, attempt: claim.attempt,
