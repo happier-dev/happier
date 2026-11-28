@@ -23,6 +23,9 @@ import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachi
 import { sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { PROJECT_SETUP_ARTIFACT_KIND_V1, ProjectSetupContentV1Schema, projectSetupSelectionV1, projectSharedSetupDigestV1 } from '@happier-dev/protocol/projects/projectSetupV1';
+import { ProjectManifestV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { ApprovalRequestV2Schema, resolveApprovalExecutor } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeSchema, ExternalActionRequestEnvelopeV1Schema,
@@ -173,6 +176,8 @@ const socketBoundary = vi.hoisted(() => ({ create: vi.fn() }));
 export function resetFilesystemApprovalSocketBoundary() { socketBoundary.create.mockReset(); }
 const createHomeSocket = syncClient.createHappierSocket;
 const bytes = Buffer.from([0, 255, 128, 10]);
+const acceptedProjectSetupId = 'accepted-project-setup';
+export const acceptedProjectSetupPath = `/v1/artifacts/${acceptedProjectSetupId}`;
 const repository = { provider: { id: 'github', kind: 'github' as const, displayName: 'GitHub', baseUrl: 'https://github.com' },
   repository: { nameWithOwner: 'happier-dev/happier', cloneUrl: 'https://github.com/happier-dev/happier.git' }, protocol: 'https' as const };
 
@@ -190,6 +195,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
   cliPolicy?: Readonly<{ authentication: 'account' | 'terminal'; askWithUiWaiver?: boolean; hostOnlyAsk?: 'waived' | 'unavailable';
     requireMoveChild?: true; approvalDecisionActorAccountId?: string; machineCustodianAccountId?: string; machineRole?: 'manage' | 'use';
     deploymentRuntimeMachine?: true; waiveDeploymentChild?: true; additionalActionIds?: readonly ActionId[];
+    acceptedProjectSetup?: true;
     /** Allowed on every surface, as the Actions settings page writes it. */
     allowedActionIds?: readonly ActionId[];
     workspaceReturn?: Readonly<{
@@ -287,10 +293,28 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     contentPolicy: { ...basePolicy, policyDigest: computeWorkspaceSyncPolicyDigest(basePolicy) }, createdAtMs: 1, updatedAtMs: 1 });
   const refKey = { kind: 'workspace-ref' as const, serverId: homeId, id: ref.id };
   const organizationKey = { kind: 'project-organization' as const, serverId: homeId, projectKey: 'project' };
+  const acceptedSetup = cliPolicy?.acceptedProjectSetup ? (() => {
+    const manifest = ProjectManifestV1Schema.parse({ version: 1,
+      workspace: { setup: [{ kind: 'command', command: 'echo setup-reviewed' }] },
+      environmentVariables: [{ name: 'PROJECT_API_TOKEN', kind: 'secret', required: false }] });
+    const revision = { headerVersion: 1, bodyVersion: 1 };
+    const acceptedSharedSetup = { manifest, sourceId: 'source', contentRevision: revision, digest: projectSharedSetupDigestV1(manifest) };
+    const content = ProjectSetupContentV1Schema.parse({ kind: PROJECT_SETUP_ARTIFACT_KIND_V1, acceptedSharedSetup });
+    return {
+      selection: projectSetupSelectionV1(acceptedSharedSetup),
+      pointer: { artifactId: acceptedProjectSetupId, ...revision },
+      artifact: { id: acceptedProjectSetupId, ...revision, ownerAccountId: 'account', access: 'owner', encryptionMode: 'plain',
+        publicAudience: 'none', seq: 1, createdAt: 1, updatedAt: 1,
+        dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+        header: encodePlainArtifactStoredContent({ kind: PROJECT_SETUP_ARTIFACT_KIND_V1, title: 'Accepted Setup' }),
+        body: encodePlainArtifactStoredContent({ body: JSON.stringify(content) }) },
+    };
+  })() : undefined;
   const rows: ProjectAccountRowV1[] = [
     { key: refKey, revision: 2, content: { t: 'plain', v: { key: refKey, value: ref } } },
     { key: organizationKey, revision: 2, content: { t: 'plain', v: { key: organizationKey, value: { hidden: false, pinned: false,
-      promptStack: [{ id: 'context-entry', enabled: true, placement: 'system_append', ref: { kind: 'doc', artifactId: 'context-doc' } }] } } } },
+      promptStack: [{ id: 'context-entry', enabled: true, placement: 'system_append', ref: { kind: 'doc', artifactId: 'context-doc' } }],
+      ...(acceptedSetup ? { setupContent: acceptedSetup.pointer, setupSelection: acceptedSetup.selection } : {}) } } } },
   ].map(row => ProjectAccountRowV1Schema.parse(row));
   if (worker) {
     const key = { kind: 'workspace-ref' as const, serverId: homeId, id: workerRef.id };
@@ -432,6 +456,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     if (path === '/v2/changes') return { status: 200, data: { changes: [], nextCursor: 0 } };
     if (path === '/v1/account/saved-secrets/resources/materials') return { status: 200,
       data: SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: [] }) };
+    if (acceptedSetup && path === acceptedProjectSetupPath) return { status: 200, data: acceptedSetup.artifact };
     if (path === '/v1/artifacts') return { status: 200, data: artifact ? [artifact] : [] };
     if (artifact && path === '/v1/artifacts/' + artifact.id) return foreignReviewerToken
       && options?.headers?.Authorization === `Bearer ${foreignReviewerToken}`
