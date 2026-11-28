@@ -566,6 +566,13 @@ after it releases, and every reader of a generation-managed tree prunes on exit
 A plain `pnpm install` would rewrite the live tree in place (and write through
 root links into the current generation), so forced repairs (UI patch restore,
 pkgroll) install into a generation too.
+The borrowed-tree detector in `dependency_refresh.mjs` also recognizes a real
+`node_modules` containing scope symlinks into another checkout. Such copies
+cannot acquire a dependency writer: they receive
+`HAPPIER_DEPENDENCIES_BORROWED` before installation. Use the owning checkout or
+an independent installation. pnpm imports pristine scoped packages before its
+workspace-link step; a failure there can otherwise leave the lender's published
+generation without its patch overlays.
 `pnpm install --lockfile-only` still works. Windows directory junctions can't
 be replaced atomically, so adoption refuses on Windows.
 

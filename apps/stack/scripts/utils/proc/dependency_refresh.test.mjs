@@ -237,7 +237,7 @@ test('fresh provisioner adoption removes installation quarantine while warm and 
   }
 });
 
-async function borrowedTree(t, { matching = false } = {}) {
+async function borrowedTree(t, { matching = false, scopeLinked = false } = {}) {
   const fixture = await createTempFixture(t, { prefix: 'hstack-borrowed-dependencies-' });
   const owner = fixture.path('owner');
   const borrower = fixture.path('borrower');
@@ -252,7 +252,11 @@ async function borrowedTree(t, { matching = false } = {}) {
   }
   await writeFile(join(owner, 'node_modules', '.modules.yaml'), 'owner installation\n');
   await withDependencyRefresh({ installDir: owner, env }, async () => {});
-  await symlink(join(owner, 'node_modules'), join(borrower, 'node_modules'), 'junction');
+  if (scopeLinked) {
+    await mkdir(join(owner, 'node_modules', '@fixture'));
+    await mkdir(join(borrower, 'node_modules'));
+    await symlink(join(owner, 'node_modules', '@fixture'), join(borrower, 'node_modules', '@fixture'), 'junction');
+  } else await symlink(join(owner, 'node_modules'), join(borrower, 'node_modules'), 'junction');
   const paths = [owner, borrower, join(owner, 'node_modules'),
     resolveDependencyRefreshMarkerPath(owner), join(owner, 'node_modules', '.modules.yaml'),
     ...[owner, borrower].flatMap(installDir => {
@@ -301,8 +305,11 @@ test('borrowed dependency admission is read-only and requires a completed matchi
 });
 
 test('every borrowed dependency writer refuses before lock, generation, adoption or postinstall writes', async t => {
-  for (const matching of [false, true]) {
-    const { borrower, env, snapshot } = await borrowedTree(t, { matching });
+  for (const { matching, scopeLinked } of [
+    { matching: false, scopeLinked: false }, { matching: true, scopeLinked: false },
+    { matching: false, scopeLinked: true }, { matching: true, scopeLinked: true },
+  ]) {
+    const { borrower, env, snapshot } = await borrowedTree(t, { matching, scopeLinked });
     const before = await snapshot();
     const write = async () => assert.fail('a borrowed-tree mutation callback must not run');
     const options = { installDir: borrower, env };

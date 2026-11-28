@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { execFile, spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, readFileSync } from 'node:fs';
-import { mkdir, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -76,6 +76,50 @@ const refreshWithPnpm = ({ installDir, env }) => dependencies.withDependencyRefr
     await pnpmAsync(['install', '--frozen-lockfile', '--offline', '--reporter=silent'], installCwd, installEnv);
     await publishInstallation();
   });
+
+test('a scope-linked temporary checkout refuses installation before replacing published patched packages', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-borrowed-patched-scope-' });
+  const owner = fixture.path('owner');
+  const borrower = fixture.path('borrower');
+  const vendor = fixture.path('vendor');
+  const env = { ...process.env, HAPPIER_STACK_HOME_DIR: fixture.path('home'),
+    HAPPIER_STACK_SKIP_REFRESH_DEPS: '0', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '0' };
+  for (const dir of [owner, borrower, vendor]) await mkdir(dir);
+  await writeFile(join(vendor, 'package.json'), JSON.stringify({ name: '@fixture/patched', version: '1.0.0', main: 'index.js' }));
+  await writeFile(join(vendor, 'index.js'), "module.exports = 'pristine';\n");
+  pnpm(['pack', '--out', fixture.path('dep.tgz')], vendor, env);
+  for (const dir of [owner, borrower]) {
+    await writeFile(join(dir, 'package.json'), JSON.stringify({ private: true, packageManager: rootPackage.packageManager,
+      dependencies: { '@fixture/patched': `file:${fixture.path('dep.tgz')}` } }));
+    await mkdir(join(dir, 'packages', 'workspace'), { recursive: true });
+    await writeFile(join(dir, 'packages', 'workspace', 'package.json'), JSON.stringify({ name: '@happier-dev/fixture', version: '1.0.0' }));
+    await mkdir(join(dir, 'patches'));
+    await writeFile(join(dir, 'patches', 'dep.patch'), 'diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n@@ -1 +1 @@\n-module.exports = \'pristine\';\n+module.exports = \'patched\';\n');
+    await writeFile(join(dir, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\nnodeLinker: hoisted\nverifyDepsBeforeRun: false\npatchedDependencies:\n  "@fixture/patched@1.0.0": patches/dep.patch\n');
+    pnpm(['install', '--lockfile-only', '--offline', '--ignore-scripts'], dir, env);
+  }
+  await dependencies.withDependencyRefresh({ installDir: owner, env }, async () => {
+    pnpm(['install', '--frozen-lockfile', '--offline', '--ignore-scripts'], owner, env);
+  });
+  await dependencies.adoptDependencyGenerations({ installDir: owner, env });
+  const file = join(owner, 'node_modules', '@fixture', 'patched', 'index.js');
+  const before = readFileSync(file, 'utf8');
+  assert.equal(before, "module.exports = 'patched';\n");
+  const inode = lstatSync(file).ino;
+  await mkdir(join(borrower, 'node_modules'));
+  await symlink(join(owner, 'node_modules', '@fixture'), join(borrower, 'node_modules', '@fixture'), 'junction');
+  await symlink(join(owner, 'node_modules', '.pnpm'), join(borrower, 'node_modules', '.pnpm'), 'junction');
+  await symlink(join(owner, 'node_modules', '@happier-dev'), join(borrower, 'node_modules', '@happier-dev'), 'junction');
+  await assert.rejects(dependencies.withDependencyRefresh({ installDir: borrower, env, force: true, generationInstall: true }, async () => {
+    try {
+      pnpm(['install', '--prod=false', '--frozen-lockfile', '--offline', '--ignore-scripts'], borrower, env);
+    } finally {
+      t.diagnostic(`borrowed installer left published bytes: ${readFileSync(file, 'utf8').trim()}; inode ${inode} -> ${lstatSync(file).ino}`);
+    }
+  }), { code: 'HAPPIER_DEPENDENCIES_BORROWED' });
+  assert.equal(readFileSync(file, 'utf8'), before);
+  assert.equal(lstatSync(file).ino, inode, 'published files must not be replaced');
+});
 
 test('an adopted tree keeps pnpm run and exec working, and readers resolve through a real pnpm generation switch', async t => {
   const { env, installDir, write } = await setup(t);

@@ -302,13 +302,27 @@ function isPathInside(rootPath, candidatePath) {
   return path === '' || (!isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`));
 }
 
-/** The lender's node_modules path when `installDir` borrows another checkout's tree, else null. */
+/** The lender's node_modules path when the root or a scope borrows another tree, else null. */
 export async function inspectBorrowedNodeModulesLink(installDir) {
   const nodeModules = join(installDir, 'node_modules');
   try {
-    if (!(await lstat(nodeModules)).isSymbolicLink()) return null;
-    const [root, target] = await Promise.all([realpath(installDir), realpath(nodeModules)]);
-    return isPathInside(root, target) ? null : target;
+    const root = await realpath(installDir);
+    if ((await lstat(nodeModules)).isSymbolicLink()) {
+      const target = await realpath(nodeModules);
+      if (!isPathInside(root, target)) return target;
+    }
+    // A real root can still lend writable scope directories to pnpm's hoisted
+    // linker. It imports pristine packages before linking workspaces; if that
+    // later step fails, patch overlays never run (DEP-PATCH-LOSS-ROOT-1128).
+    // Ordinary package/workspace links are leaves, not shared scope containers.
+    for (const entry of await readdir(nodeModules, { withFileTypes: true })) {
+      if (!entry.name.startsWith('@') || !entry.isSymbolicLink()) continue;
+      const scope = join(nodeModules, entry.name);
+      if (!isPathInside(root, await realpath(scope))) {
+        return dirname(resolve(nodeModules, await readlink(scope)));
+      }
+    }
+    return null;
   } catch (error) {
     if (['ENOENT', 'ENOTDIR', 'ELOOP'].includes(error.code)) return null;
     throw error;
