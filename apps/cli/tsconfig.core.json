@@ -746,6 +746,7 @@
     "src/daemon/agentIsolation/memberBindings.ts",
     "src/daemon/agentIsolation/naturalBoundary.ts",
     "src/daemon/agentIsolation/provisioning.ts",
+    "src/daemon/agentIsolation/reconcileIsolatedWorkerWorkspaceAccess.ts",
     "src/daemon/agentIsolation/sessionPreparation.ts",
     "src/daemon/agentIsolation/supersedeRetirement.ts",
     "src/daemon/agentIsolation/unixAgentIdentityAdapter.ts",

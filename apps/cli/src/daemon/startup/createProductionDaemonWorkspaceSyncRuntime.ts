@@ -88,6 +88,7 @@ import type { StoredCredentials } from '@/persistence';
 import { preparePrivateProjectOpenCheckout, recoverPrivateProjectSyncCheckout, retainPrivateSyncCapture, type PrivateProjectCheckoutOpenRuntime } from '@/workspaces/activation/privateProjectOpenCheckout';
 import { selectHostRequesterExecutionIdentity, resolveHostRequesterAgentExecutionIdentity,
   resolveHostRequesterAgentPlacementForHost, type HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { createIsolatedWorkerWorkspaceAccessReconciler } from '@/daemon/agentIsolation/reconcileIsolatedWorkerWorkspaceAccess';
 import { resolveMachineRpcWorkingDirectory } from '@/api/machine/resolveMachineRpcWorkingDirectory';
 import { buildActionExecutorContextForRpc, projectWorkspaceSyncPhysicalContextFromActionContext, type RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import type { WorkspaceSyncRequesterAvailabilityV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
@@ -742,6 +743,15 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     const identity = selectRequesterIdentity(context);
     return identity.kind !== 'unknown' && identity.requester.accountId === installedAccountId
       && isHostRequesterUnrestrictedOwner(identity);
+  };
+  const isolatedWorkerAccessReconciler = createIsolatedWorkerWorkspaceAccessReconciler();
+  const isCustodianIsolatedWorkerRequester = (context?: RpcHandlerContext): boolean => {
+    if (!installedAccountId) return false;
+    if (!context) return true;
+    const identity = selectRequesterIdentity(context);
+    return identity.kind !== 'unknown'
+      && identity.requester.accountId === installedAccountId
+      && (!('separationRequired' in identity) || !identity.separationRequired);
   };
   const assertInstalledRelationshipOwner = (context?: RpcHandlerContext) => {
     if (!canUseInstalledRelationshipOwner(context)) {
@@ -2332,7 +2342,79 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         }
       },
     },
-    handoffPrepareBetween,
+    handoffPrepareBetween: async (...args) => {
+      const [request, signal, context, admittedRoute] = args;
+      const result = await handoffPrepareBetween(
+        request,
+        signal,
+        context,
+        admittedRoute
+          ? {
+              ...admittedRoute,
+              workspaceRefs: [...admittedRoute.workspaceRefs],
+            }
+          : undefined,
+      );
+      if (
+        result.ok
+        && result.traversed.length > 0
+        && input.agentIsolation
+        && isCustodianIsolatedWorkerRequester(context)
+        && !result.traversed.some(entry => Boolean(executionRegistry()?.findByRelationshipId(entry.relationshipId)))
+      ) {
+        const isolationSnapshot = input.agentIsolation.read();
+        if (isolationSnapshot?.enabled) {
+          const workspaceRefs = admittedRoute?.workspaceRefs
+            ?? factories.getProjectSnapshot()?.workspaceRefs
+            ?? (await readHandoffProjectSnapshot(signal, context).catch(() => null))?.workspaceRefs;
+          const targetWorkspace = workspaceRefs
+            ? resolveWorkspaceRefById(workspaceRefs, request.targetWorkspaceRefId, semanticServerId)
+            : null;
+          if (
+            targetWorkspace
+            && !isManagedWorkspaceRefV2(targetWorkspace)
+            && resolveWorkspaceSyncExecutionMachineIdV1(targetWorkspace) === input.localMachineId
+          ) {
+            try {
+              await isolatedWorkerAccessReconciler.reconcile({
+                rootPath: targetWorkspace.rootPath,
+                snapshot: isolationSnapshot,
+                isCustodianRequester: true,
+                resolveOwnerMemberUid: async () => {
+                  if (!input.agentIsolation?.readMember || !installedAccountId || !installation) return null;
+                  try {
+                    const member = await input.agentIsolation.readMember({
+                      requesterIdentity: {
+                        kind: 'isolated',
+                        separationRequired: false,
+                        homeServerIdentityId: semanticServerId,
+                        requester: {
+                          serverId: semanticServerId,
+                          accountId: installedAccountId,
+                          machineId: input.localMachineId,
+                          installationId: installation.installationId,
+                        },
+                      },
+                      ...(context ? { rpcContext: context } : {}),
+                      ...(signal ? { signal } : {}),
+                    });
+                    return member.identity.agentUid;
+                  } catch (error) {
+                    if (signal?.aborted) throw error;
+                    return null;
+                  }
+                },
+                ...(signal ? { signal } : {}),
+              });
+            } catch (error) {
+              if (signal?.aborted) throw error;
+              factories.warn('[workspace-sync] Failed to reconcile isolated worker workspace access', error);
+            }
+          }
+        }
+      }
+      return result;
+    },
     resolveHandoffExecutionInput,
     bootstrap: async (bootstrapInput, admittedInput, authority, context, targetPreflight) => {
       const basis = await readHandoffExecutionBasis(authority && admittedInput
@@ -3818,6 +3900,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     stop: () => {
       if (stopPromise) return stopPromise;
       stopPromise = (async () => {
+        isolatedWorkerAccessReconciler.dispose();
         unsubscribe?.();
         await authorityTail.catch(() => undefined);
         const failures: unknown[] = [];
