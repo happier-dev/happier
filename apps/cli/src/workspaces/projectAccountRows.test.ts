@@ -4,7 +4,7 @@ import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/ac
 import { ProjectAccountRowMutationRequestV1Schema, type ProjectAccountRowMutationRequestV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { createProjectAccountSnapshotMutation, readProjectAccountRows, readProjectAccountRowsObservation, mutateProjectAccountOrganization,
-  getActiveProjectAccountRowsSnapshot, subscribeActiveProjectAccountRowsSnapshot, withdrawActiveProjectAccountRowsSnapshot } from './projectAccountRows';
+  getActiveProjectAccountRowsSnapshot, holdSessionProjectAccountRows, subscribeActiveProjectAccountRowsSnapshot, withdrawActiveProjectAccountRowsSnapshot } from './projectAccountRows';
 import { updatePersonalProjectContextV1, ProjectContextUpdateInputV1Schema, type ProjectContextActionOwnerDepsV1 } from '@happier-dev/protocol/projects/projectContextV1';
 import { PromptStackEntryV1Schema } from '@happier-dev/protocol/prompts/library/promptStacksV1';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
@@ -643,6 +643,108 @@ describe('Project checkout retirement', () => {
     expect(rows).toEqual([row()]);
   });
 });
+describe('Session Project association bursts', () => {
+  it('shares one workspace-ref list across ten concurrent Sessions and re-reads once after a Project change', async () => {
+    const rows: unknown[] = [];
+    const post = boundary(rows);
+    const serverId = configuration.activeServerId;
+    const account = { accountId: 'burst-account', serverHttpBaseUrl: 'http://localhost:3005' };
+    const owners = Array.from({ length: 10 }, () => holdSessionProjectAccountRows(account));
+    const read = () => readProjectAccountRows({
+      credentials, serverId, selection: { kinds: ['workspace-ref'], serverId },
+      sessionCustody: { ...account, serverId, isCurrent: async () => true },
+    });
+    const burst = () => Promise.all(owners.map(read));
+    const lists = () => post.mock.calls.filter(([url]) => url.endsWith('/list')).length;
+    try {
+      expect((await burst()).every(snapshot => snapshot.workspaceRefs.length === 0)).toBe(true);
+      const first = lists();
+      rows.push(createPlainProjectAccountRefRow({ ...ref, serverId }));
+      owners[0]!.invalidate();
+      expect((await burst()).every(snapshot => snapshot.workspaceRefs[0]?.id === ref.id)).toBe(true);
+      const changed = lists();
+      await burst();
+      expect([first, changed - first, lists() - changed]).toEqual([1, 1, 0]);
+    } finally {
+      for (const owner of owners) owner.release();
+    }
+  });
+
+  it('keeps a shared list alive for another Session after its first caller aborts', async () => {
+    const post = boundary([]);
+    const reply = post.getMockImplementation()!;
+    const started = deferred();
+    const release = deferred();
+    post.mockImplementation(async (url, body, config) => {
+      started.resolve();
+      await release.promise;
+      if (config?.signal?.aborted) throw new Error('shared request was aborted');
+      return reply(url, body, config);
+    });
+    const serverId = configuration.activeServerId;
+    const account = { accountId: 'abort-account', serverHttpBaseUrl: 'http://localhost:3005' };
+    const owner = holdSessionProjectAccountRows(account);
+    const read = (signal?: AbortSignal) => readProjectAccountRows({
+      credentials, serverId, signal, selection: { kinds: ['workspace-ref'], serverId },
+      sessionCustody: { ...account, serverId, isCurrent: async () => true },
+    });
+    try {
+      const controller = new AbortController();
+      const first = read(controller.signal);
+      const peer = read();
+      await started.promise;
+      await new Promise<void>(resolve => setImmediate(resolve));
+      const reason = new Error('stopped Session turn');
+      const cancelled = expect(first).rejects.toBe(reason);
+      controller.abort(reason);
+      await cancelled;
+      release.resolve();
+      expect((await peer).workspaceRefs).toEqual([]);
+      expect(post.mock.calls.filter(([url]) => url.endsWith('/list'))).toHaveLength(1);
+    } finally {
+      release.resolve();
+      owner.release();
+    }
+  });
+
+  it('starts a new list on a Project wake while a previous list is still in flight', async () => {
+    const rows: unknown[] = [];
+    const post = boundary(rows);
+    const reply = post.getMockImplementation()!;
+    const started = deferred();
+    const release = deferred();
+    post.mockImplementationOnce(async (url, body, config) => {
+      const oldResponse = await reply(url, body, config);
+      started.resolve();
+      await release.promise;
+      return oldResponse;
+    });
+    const serverId = configuration.activeServerId;
+    const account = { accountId: 'wake-account', serverHttpBaseUrl: 'http://localhost:3005' };
+    const owner = holdSessionProjectAccountRows(account);
+    const read = () => readProjectAccountRows({
+      credentials, serverId, selection: { kinds: ['workspace-ref'], serverId },
+      sessionCustody: { ...account, serverId, isCurrent: async () => true },
+    });
+    try {
+      const oldRead = read();
+      await started.promise;
+      rows.push(createPlainProjectAccountRefRow({ ...ref, serverId }));
+      owner.invalidate();
+      const currentRead = read();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      release.resolve();
+      await oldRead;
+      expect((await currentRead).workspaceRefs[0]?.id).toBe(ref.id);
+      expect((await read()).workspaceRefs[0]?.id).toBe(ref.id);
+      expect(post.mock.calls.filter(([url]) => url.endsWith('/list'))).toHaveLength(2);
+    } finally {
+      release.resolve();
+      owner.release();
+    }
+  });
+});
+
 describe('Project Account row transport', () => {
   it.each(['empty', 'foreign'] as const)('keeps a private observation current without publishing over an %s installed scope', async installedScope => {
     boundary([]);

@@ -1,5 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import type { AxiosResponse } from 'axios';
+import { raceWithAbort } from '@happier-dev/cli-common/plugins/http';
 import axios from '@/api/client/credentialAxios';
 
 import {
@@ -363,9 +365,11 @@ export async function mutateProjectAccountRows(input: ReadInput & Readonly<{
 async function fetchRows(input: ReadInput, mode: 'plain' | 'e2ee', selection: ProjectAccountRowListRequestV1 | Readonly<{ key: ProjectAccountRowKeyV1 }>): Promise<readonly OpenedProjectAccountRow[]> {
   const path = `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/${'key' in selection ? 'read' : 'list'}`;
   const admittedHeaders = await timeWebLatencyPhase('projectRows.requestAdmission', () => requestHeaders(input, path, selection));
-  const response = await timeWebLatencyPhase('projectRows.http', () => axios.post<unknown>(`${baseUrl(input)}${path}`, selection, {
-    headers: admittedHeaders, validateStatus: () => true, ...(input.signal ? { signal: input.signal } : {}),
-  }));
+  const send = (signal?: AbortSignal) => axios.post<unknown>(`${baseUrl(input)}${path}`, selection, {
+    headers: admittedHeaders, validateStatus: () => true, ...(signal ? { signal } : {}),
+  });
+  const response = await timeWebLatencyPhase('projectRows.http', () => 'key' in selection
+    ? send(input.signal) : readHeldSessionProjectRowList(input, selection, send));
   // The predecessor Home has no Project-row route. Keep unsupported distinct
   // from an empty census; explicit accepted Project addresses must still refuse.
   if (response.status === 404) throw rowError('project_account_rows_unsupported');
@@ -464,20 +468,67 @@ function applyAcknowledgedRows(snapshot: ActiveProjectAccountRowsSnapshot, rows:
  * on a wake naming a project row (or a coarse wake) and on disconnect; with no owner every read goes
  * to the Home as before. Held reads never publish into the daemon's Active Account projection.
  */
-type HeldSessionProjectRows = { owners: number; generation: number; reads: Map<string, ActiveProjectAccountRowsSnapshot> };
+type PendingProjectRowList = {
+  controller: AbortController;
+  response: Promise<AxiosResponse<unknown>>;
+  consumers: number;
+};
+type HeldSessionProjectRows = {
+  owners: number;
+  generation: number;
+  reads: Map<string, ActiveProjectAccountRowsSnapshot>;
+  pendingLists: Map<string, PendingProjectRowList>;
+};
 const heldSessionProjectRows = new Map<string, HeldSessionProjectRows>();
 const heldSessionScopeKey = (custody: Readonly<{ serverHttpBaseUrl: string; accountId: string }>) =>
   JSON.stringify([normalizeServerHttpBaseUrl(custody.serverHttpBaseUrl), custody.accountId]);
 const heldSelectionKey = (serverId: string, selection: unknown) => JSON.stringify([serverId, selection]);
 
+function invalidateHeldSessionProjectRows(held: HeldSessionProjectRows): void {
+  held.generation++;
+  held.reads.clear();
+  held.pendingLists.clear();
+}
+
+/** Share the wire result. Each Session still admits the request and opens the rows under its own custody. */
+async function readHeldSessionProjectRowList(input: ReadInput, selection: ProjectAccountRowListRequestV1,
+  send: (signal?: AbortSignal) => Promise<AxiosResponse<unknown>>): Promise<AxiosResponse<unknown>> {
+  const held = input.sessionCustody && heldSessionProjectRows.get(heldSessionScopeKey(input.sessionCustody));
+  if (!held || !input.credentials) return send(input.signal);
+
+  input.signal?.throwIfAborted();
+  const key = JSON.stringify([input.credentials.token, input.serverId, selection]);
+  let pending = held.pendingLists.get(key);
+  if (!pending) {
+    const controller = new AbortController();
+    // One stalled Home reply must release all callers within the Session HTTP budget.
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(configuration.sessionControlHttpTimeoutMs)]);
+    pending = { controller, response: send(signal), consumers: 0 };
+    held.pendingLists.set(key, pending);
+  }
+  pending.consumers++;
+  try {
+    return await raceWithAbort(pending.response, input.signal);
+  } catch (error) {
+    input.signal?.throwIfAborted();
+    throw error;
+  } finally {
+    if (--pending.consumers === 0) {
+      if (held.pendingLists.get(key) === pending) held.pendingLists.delete(key);
+      pending.controller.abort();
+    }
+  }
+}
+
 export type SessionProjectAccountRowsHold = Readonly<{ invalidate(): void; release(): void }>;
 export function holdSessionProjectAccountRows(custody: Readonly<{ serverHttpBaseUrl: string; accountId: string }>): SessionProjectAccountRowsHold {
   const key = heldSessionScopeKey(custody);
-  const held = heldSessionProjectRows.get(key) ?? { owners: 0, generation: 0, reads: new Map() };
+  const held = heldSessionProjectRows.get(key)
+    ?? { owners: 0, generation: 0, reads: new Map(), pendingLists: new Map() };
   heldSessionProjectRows.set(key, held);
   held.owners++;
   let released = false;
-  const invalidate = () => { held.generation++; held.reads.clear(); };
+  const invalidate = () => invalidateHeldSessionProjectRows(held);
   return {
     invalidate,
     release() {
@@ -505,7 +556,7 @@ function heldSessionReadSlot(input: ReadInput, serverId: string, selection: unkn
   return {
     read: () => held.reads.get(key) ?? null,
     store(snapshot: ActiveProjectAccountRowsSnapshot) { if (held.generation === generation) held.reads.set(key, snapshot); },
-    invalidate() { held.generation++; held.reads.clear(); },
+    invalidate() { invalidateHeldSessionProjectRows(held); },
     current: (snapshot: ActiveProjectAccountRowsSnapshot) => held.reads.get(key) === snapshot,
   };
 }
