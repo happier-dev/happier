@@ -369,7 +369,12 @@ describe('createActionExecutor (prompt library actions)', () => {
     expect(approvals).toBe(0);
     expect(artifacts.get('memory')!.revision).toEqual(input.expectedRevision);
     const saved = await executor.execute('memory.remember', { ...input, duplicateChoice: { kind: 'replace', factId: 'old', expectedRevision: input.expectedRevision } }, context);
-    expect(saved).toMatchObject({ ok: true, result: { ok: true, factId: 'new', revision: artifacts.get('memory')!.revision } });
+    expect(saved).toMatchObject({ ok: true, result: { ok: true, factId: 'new', revision: artifacts.get('memory')!.revision,
+      receipt: { changes: [{ kind: 'changed', factId: 'new', previousFactId: 'old' }],
+        undo: { artifactId: 'memory', bodyVersion: input.expectedRevision.bodyVersion, expectedRevision: artifacts.get('memory')!.revision } },
+    } });
+    if (!saved.ok) throw new Error('Expected a committed Memory revision');
+    expect(getActionSpec('memory.remember').outputSchema.parse(saved.result)).toEqual(saved.result);
     expect(MemoryDocBodyV1Schema.parse(JSON.parse(artifacts.get('memory')!.body!))).toMatchObject({
       index: [{ id: 'new', supersedes: 'old' }], topics: [{ title: 'archive', facts: [original] }],
     });

@@ -32,7 +32,7 @@ import { MemoryDocArtifactHeaderV1Schema, MemoryDocArtifactHeaderV1StoredSchema,
   MEMORY_ARCHIVE_TOPIC_TITLE_V1, MEMORY_ARCHIVE_TOPIC_SUMMARY_V1, projectMemoryDocIndexV1, readMemoryDocTopicV1,
   type MemoryDocBodyV1, type MemoryDocIndexV1, type MemoryFactV1, type MemoryTopicReadV1 } from './memoryDocV1.js';
 import type { PromptDocArtifactRefV1 } from './promptArtifactRefsV1.js';
-import type { MemoryUpdateInputV1, MemoryDuplicateChoiceV1, MemorySemanticMutationResultV1 } from './memoryActionsV1.js';
+import type { MemoryChangeV1, MemoryMutationResultV1, MemoryUpdateInputV1, MemoryDuplicateChoiceV1, MemorySemanticMutationResultV1 } from './memoryActionsV1.js';
 import { findMemoryFactCandidatesV1, reviewMemoryFactWriteV1 } from './memoryFactCandidatesV1.js';
 import { redactBugReportSensitiveText } from '../../bugs/reports/redaction.js';
 import type { ReadOnlySkillV1 } from './skills/firstPartySkillsV1.js';
@@ -241,7 +241,7 @@ export async function readReviewedMemoryDocInLibrary(params: MemoryMutationParam
 }
 
 async function writeMemory(params: MemoryMutationParams, read: Awaited<ReturnType<typeof readReviewedMemory>>, body: MemoryDocBodyV1,
-  memoryDecisionSource?: CoordinationMessageRefV1) {
+  factId: string, changes: MemoryChangeV1[], memoryDecisionSource?: CoordinationMessageRefV1): Promise<MemoryMutationResultV1> {
   throwIfAborted(params.signal);
   let revision: PromptLibraryStoredArtifact['revision'] | undefined;
   try {
@@ -258,7 +258,13 @@ async function writeMemory(params: MemoryMutationParams, read: Awaited<ReturnTyp
     }
     throw error;
   }
-  return { ok: true as const, artifactId: read.artifact.id, ...(revision ? { revision } : {}) };
+  const artifactId = read.artifact.id;
+  if (!revision) return { ok: true, artifactId, factId };
+  const bodyVersion = read.artifact.revision.bodyVersion;
+  return {
+    ok: true, artifactId, factId, revision,
+    receipt: { changes, ...(bodyVersion > 0 ? { undo: { artifactId, bodyVersion, expectedRevision: revision } } : {}) },
+  };
 }
 
 function appendMemoryFact(body: MemoryDocBodyV1, fact: MemoryFactV1, title?: string): MemoryDocBodyV1 {
@@ -287,7 +293,7 @@ export async function createMemoryDocInLibrary(params: MemoryFactAuthorParams & 
   store: PromptLibraryArtifactStore; request: Readonly<{ title: string; text: string; topic?: string; expiresAtMs?: number }>;
   creationSource?: string;
   signal?: AbortSignal;
-}>): Promise<Readonly<{ ok: true; artifactId: string; factId: string; revision?: PromptLibraryStoredArtifact['revision'] }>> {
+}>): Promise<MemoryMutationResultV1> {
   throwIfAborted(params.signal);
   if (!params.store.create) throw memoryFailure('memory_doc_create_unavailable');
   const fact = authorMemoryFact(params, params.request);
@@ -299,8 +305,12 @@ export async function createMemoryDocInLibrary(params: MemoryFactAuthorParams & 
     ...(params.decision ? { memoryDecisionSource: params.decision.sourceMessageRef } : {}),
     ...(params.signal ? { signal: params.signal } : {}) });
   const artifactId = typeof created === 'string' ? created : created.artifactId;
+  const receipt = (factId: string): MemoryMutationResultV1 => ({
+    ok: true, artifactId, factId,
+    ...(typeof created === 'string' ? {} : { revision: created.revision, receipt: { changes: [{ kind: 'added', factId }] } }),
+  });
   if (!params.creationSource) {
-    return { ok: true, artifactId, factId: fact.id, ...(typeof created === 'string' ? {} : { revision: created.revision }) };
+    return receipt(fact.id);
   }
   if (typeof created === 'string' || typeof created.acknowledgedBody !== 'string') throw memoryFailure('memory_doc_invalid');
   const acknowledged = parseArtifactBody(created.acknowledgedBody, value => {
@@ -311,7 +321,7 @@ export async function createMemoryDocInLibrary(params: MemoryFactAuthorParams & 
   const acknowledgedFact = topic === undefined ? acknowledged?.index[0]
     : acknowledged?.topics.find(candidate => candidate.title === topic)?.facts[0];
   if (!acknowledgedFact) throw memoryFailure('memory_doc_invalid');
-  return { ok: true, artifactId, factId: acknowledgedFact.id, revision: created.revision };
+  return receipt(acknowledgedFact.id);
 }
 
 export async function rememberMemoryFactInLibrary(params: MemoryMutationParams & MemoryFactAuthorParams & Readonly<{
@@ -327,8 +337,8 @@ export async function rememberMemoryFactInLibrary(params: MemoryMutationParams &
       duplicateChoice: choice }, });
   }
   const fact = authorMemoryFact(params, params.request);
-  const result = await writeMemory(params, read, appendMemoryFact(read.body, fact, params.request.topic), fact.decision?.sourceMessageRef);
-  return { ...result, factId: fact.id };
+  return writeMemory(params, read, appendMemoryFact(read.body, fact, params.request.topic),
+    fact.id, [{ kind: 'added', factId: fact.id }], fact.decision?.sourceMessageRef);
 }
 
 /** Admission and mutation resolve the same restore source without breaking an existing supersedes link. */
@@ -361,8 +371,8 @@ export async function updateMemoryFactInLibrary(params: MemoryMutationParams & M
     }
     const body = { ...read.body, topics: read.body.topics.map(topic => topic.title === MEMORY_ARCHIVE_TOPIC_TITLE_V1
       ? { ...topic, facts: topic.facts.filter(fact => fact.id !== original.id) } : topic) };
-    const result = await writeMemory(params, read, appendMemoryFact(body, original, request.restoreTopic), original.decision?.sourceMessageRef);
-    return { ...result, factId: original.id };
+    return writeMemory(params, read, appendMemoryFact(body, original, request.restoreTopic),
+      original.id, [{ kind: 'added', factId: original.id }], original.decision?.sourceMessageRef);
   }
   const activeFacts = [...read.body.index, ...read.body.topics.filter(topic => topic.title !== MEMORY_ARCHIVE_TOPIC_TITLE_V1).flatMap(topic => topic.facts)];
   const previous = activeFacts.find(fact => fact.id === params.request.factId);
@@ -381,8 +391,9 @@ export async function updateMemoryFactInLibrary(params: MemoryMutationParams & M
   const target = updatingCandidate ? selected : previous;
   const expiresAtMs = params.request.expiresAtMs === undefined ? target.expiresAtMs : params.request.expiresAtMs;
   const text = redactBugReportSensitiveText(params.request.text);
+  const previousFactId = choice?.kind === 'replace' ? selected.id : target.id;
   const next: MemoryFactV1 = { id: params.randomId(), text,
-    createdAtMs: (params.nowMs ?? Date.now)(), sourceSessionRef: params.sourceSessionRef, supersedes: choice?.kind === 'replace' ? selected.id : target.id,
+    createdAtMs: (params.nowMs ?? Date.now)(), sourceSessionRef: params.sourceSessionRef, supersedes: previousFactId,
     // New wording cannot inherit a person's approval. Keep the admitted source/reason and historical approval in archive.
     ...(params.decision ? { decision: params.decision } : target.decision && choice?.kind !== 'replace'
       ? { decision: { ...target.decision, approvedBy: text === target.text ? target.decision.approvedBy : params.approvedBy ?? null } } : {}),
@@ -404,13 +415,16 @@ export async function updateMemoryFactInLibrary(params: MemoryMutationParams & M
     topics: read.body.topics.map(topic => ({ ...topic, facts: replace(topic.facts, topic.title) })) };
   if (!replaced) body = appendMemoryFact(body, next, destination);
   for (const original of archived) body = appendMemoryFact(body, original, MEMORY_ARCHIVE_TOPIC_TITLE_V1);
-  const result = await writeMemory(params, read, body, next.decision?.sourceMessageRef);
-  return { ...result, factId: next.id };
+  const changes: MemoryChangeV1[] = [{ kind: 'changed', factId: next.id, previousFactId }];
+  for (const original of archived) {
+    if (original.id !== previousFactId) changes.push({ kind: 'removed', factId: original.id });
+  }
+  return writeMemory(params, read, body, next.id, changes, next.decision?.sourceMessageRef);
 }
 
 export async function forgetMemoryFactInLibrary(params: MemoryMutationParams & Readonly<{
   request: MemoryDocMutationTargetV1 & Readonly<{ factId: string }>;
-}>): Promise<Readonly<{ ok: true; artifactId: string; factId: string }>> {
+}>): Promise<MemoryMutationResultV1> {
   const read = await readReviewedMemory(params);
   const title = params.request.topic;
   const facts = title === undefined ? read.body.index
@@ -419,8 +433,8 @@ export async function forgetMemoryFactInLibrary(params: MemoryMutationParams & R
   if (!previous) throw memoryFailure('memory_fact_not_found');
   const body = { ...read.body, index: title === undefined ? read.body.index.filter(fact => fact.id !== previous.id) : read.body.index,
     topics: read.body.topics.map(topic => topic.title === title ? { ...topic, facts: topic.facts.filter(fact => fact.id !== previous.id) } : topic) };
-  const result = await writeMemory(params, read, appendMemoryFact(body, previous, MEMORY_ARCHIVE_TOPIC_TITLE_V1));
-  return { ...result, factId: previous.id };
+  return writeMemory(params, read, appendMemoryFact(body, previous, MEMORY_ARCHIVE_TOPIC_TITLE_V1),
+    previous.id, [{ kind: 'removed', factId: previous.id }]);
 }
 
 /** Inventory is the existing paged Artifact inventory, not a separate memory catalog. */

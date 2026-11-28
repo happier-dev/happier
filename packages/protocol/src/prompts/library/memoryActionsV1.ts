@@ -6,6 +6,7 @@ import { QualifiedProjectKeyV1Schema } from '../../workspaces/workspaceRefV1.js'
 import { CoordinationMessageRefV1Schema } from '../../discussions/messageRefs.js';
 import { ProjectSourcesFailureV1Schema } from '../../projects/sources/projectSourceV1.js';
 import { HomeDomainConfirmedRollbackErrorCodeV1Schema } from '../../actions/homeDomainHttpBinding.js';
+import { ArtifactRestoreInputV1Schema } from '../../artifacts/artifactActionsV1.js';
 
 export const MEMORY_DOCUMENT_ACTION_IDS_V1 = ['memory.remember', 'memory.decision.save', 'memory.update', 'memory.forget', 'memory.read', 'memory.list'] as const;
 export type MemoryDocumentActionIdV1 = typeof MEMORY_DOCUMENT_ACTION_IDS_V1[number];
@@ -67,11 +68,22 @@ export const MemoryAttachmentFailureV1Schema = lazyZodSchema(() => z.strictObjec
     'outcome_unknown', 'home_unreachable', 'memory_target_unavailable']),
 ]) }));
 export type MemoryAttachmentFailureV1 = z.infer<typeof MemoryAttachmentFailureV1Schema>;
+const memoryChange = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('added'), factId: text() }),
+  z.strictObject({ kind: z.literal('changed'), factId: text(), previousFactId: text() }),
+  z.strictObject({ kind: z.literal('removed'), factId: text() }),
+]));
+export type MemoryChangeV1 = z.infer<typeof memoryChange>;
 export const MemoryMutationResultV1Schema = lazyZodSchema(() => z.strictObject({
   ok: z.literal(true), artifactId: z.string().check(z.minLength(1)), factId: z.string().check(z.minLength(1)),
   revision: z.optional(revision), ref: z.optional(PromptDocArtifactRefV1Schema), attachment: z.optional(z.enum(['attached', 'conflict'])),
   attachmentFailure: z.optional(MemoryAttachmentFailureV1Schema),
+  receipt: z.optional(z.strictObject({
+    changes: z.array(memoryChange).check(z.minLength(1)),
+    undo: z.optional(ArtifactRestoreInputV1Schema),
+  })),
 }));
+export type MemoryMutationResultV1 = z.infer<typeof MemoryMutationResultV1Schema>;
 export const MemoryDuplicateChoiceRequiredV1Schema = lazyZodSchema(() => z.strictObject({
   ok: z.literal(false), errorCode: z.literal('memory_duplicate_choice_required'), ref: PromptDocArtifactRefV1Schema, revision,
   candidates: z.array(z.strictObject({ factId: text(), topic: topic(), text: text(), decision: z.optional(MemoryDecisionV1Schema), match: z.enum(['exact', 'related']) })),

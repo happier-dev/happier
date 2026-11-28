@@ -1066,6 +1066,7 @@ describe('createAccountArtifactStore', () => {
       body: encodePlainArtifactStoredContent({ body: JSON.stringify({ v: 1, index: [
         { id: 'original', text: 'Verify payment webhook signatures before acknowledgement.', createdAtMs: 1, sourceSessionRef: null },
       ], topics: [] }) }), headerVersion: 2, bodyVersion: 2, dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, seq: 1, createdAt: 1, updatedAt: 2 };
+    const priorBody = stored.body;
     const reads: string[] = [];
     mockGet.mockImplementation(async (url: string) => {
       const path = new URL(url).pathname;
@@ -1074,6 +1075,10 @@ describe('createAccountArtifactStore', () => {
       if (path === '/v1/account/profile') return { status: 200, data: { id: 'owner' } };
       if (path === '/v2/account/settings') return { status: 200, data: { version: 1, content: { t: 'plain', v: {} } } };
       if (path === `/v1/artifacts/${artifactId}`) return { status: 200, data: stored };
+      if (path === `/v1/artifacts/${artifactId}/revisions`) return { status: 200, data: {
+        revisions: [{ bodyVersion: 2, body: priorBody, createdAt: 1, sizeBytes: Buffer.byteLength(priorBody) }],
+        retentionCount: 10,
+      } };
       if (path === `/v1/artifacts/${artifactId}/access/grants`) return { status: 200, data: {
         artifactId, ownerAccountId: 'owner', access: 'owner', grants: [{ principal: { kind: 'team', teamId: 'team' },
           accessLevel: 'view', createdByAccountId: 'owner', createdAt: 1, display: { name: 'Payments' } }],
@@ -1098,8 +1103,13 @@ describe('createAccountArtifactStore', () => {
     expect(mockPost).not.toHaveBeenCalled();
     const selected = { ...request, duplicateChoice: { kind, expectedRevision: request.expectedRevision,
       ...(kind === 'keep_both' ? {} : { factId: 'original' }) } };
-    expect(await executor.execute('memory.remember', selected, context)).toMatchObject({ ok: true,
-      result: { revision: { headerVersion: 3, bodyVersion: 3 } } });
+    const saved = await executor.execute('memory.remember', selected, context);
+    expect(saved).toMatchObject({ ok: true, result: { revision: { headerVersion: 3, bodyVersion: 3 },
+      receipt: { undo: { artifactId, bodyVersion: 2, expectedRevision: { headerVersion: 3, bodyVersion: 3 } } } } });
+    if (!saved.ok) throw new Error(saved.errorCode);
+    const { MemoryMutationResultV1Schema } = await import('@happier-dev/protocol/prompts/library/memoryActionsV1');
+    const undo = MemoryMutationResultV1Schema.parse(saved.result).receipt?.undo;
+    if (!undo) throw new Error('Expected the committed Memory receipt to allow Undo');
     const { MemoryDocBodyV1Schema } = await import('@happier-dev/protocol/prompts/library/memoryDocV1');
     const envelope = decodePlainArtifactStoredContent(stored.body) as { body: string };
     const body = MemoryDocBodyV1Schema.parse(JSON.parse(envelope.body));
@@ -1110,7 +1120,21 @@ describe('createAccountArtifactStore', () => {
     }
     expect(reads).toContain(`/v1/artifacts/${artifactId}/access/grants`);
     expect(await executor.execute('memory.remember', selected, context)).toMatchObject({ ok: false, errorCode: 'version_mismatch' });
-    expect(mockPost).toHaveBeenCalledTimes(1);
+    if (kind === 'replace') {
+      mockPost.mockImplementationOnce(async (url: string, wire: unknown) => {
+        expect(new URL(url).pathname).toBe(`/v1/artifacts/${artifactId}/revisions/2/restore`);
+        expect(wire).toMatchObject({ expectedHeaderVersion: 3, expectedBodyVersion: 3 });
+        stored = { ...stored, body: priorBody, headerVersion: 4, bodyVersion: 4 };
+        return { status: 200, data: { success: true, headerVersion: 4, bodyVersion: 4 } };
+      });
+      expect(await executor.execute('artifact.revisions.restore', undo, context)).toMatchObject({ ok: true,
+        result: { artifactId, revision: { headerVersion: 4, bodyVersion: 4 } } });
+      expect(stored.body).toBe(priorBody);
+    } else {
+      stored = { ...stored, headerVersion: 4, bodyVersion: 4 };
+    }
+    expect(await executor.execute('artifact.revisions.restore', undo, context)).toMatchObject({ ok: false, errorCode: 'version_mismatch' });
+    expect(mockPost).toHaveBeenCalledTimes(kind === 'replace' ? 2 : 1);
   });
 
   it.each(['plain', 'e2ee'] as const)('seals prepared Doc decisions through the existing %s Artifact codec and rejoins without rewriting', async (mode) => {

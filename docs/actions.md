@@ -10437,11 +10437,19 @@ Document-targeted `memory.remember`, `memory.update` and `memory.forget` require
 a reviewed Artifact revision and accept optional `topic`. Remember reviews active facts before insertion; update identifies the fact
 by id and names its destination (omission means index); forget selects that
 section (omission means index). Topic detail stays in the same Artifact.
-Updating archives the prior fact and records a supersedes link; forgetting archives
-the fact. Undo uses `memory.update` with `topic: 'archive'`, the original `factId`,
-and `restore: true`; optional `restoreTopic` names its destination (omission means
-index). Restore moves the archived fact unchanged, preserving its identity, text,
-dates and provenance, and refuses a fact still referenced by a replacement.
+Updating archives the prior fact and records a supersedes link. Forgetting
+archives the fact. A committed write returns the Artifact revision and
+`receipt.changes`, which identifies the facts added, changed or removed. When
+the write has a prior body revision, `receipt.undo` contains the input for
+`artifact.revisions.restore`. Call it in the same Home using the receipt's
+`expectedRevision`. A subsequent edit causes `version_mismatch` and leaves that
+edit intact. An initial write has no prior revision to restore.
+
+To bring back an individual archived fact, call `memory.update` with
+`topic: 'archive'`, the original `factId` and `restore: true`. Optional
+`restoreTopic` names the destination and defaults to the index. This preserves
+the fact's identity, text, dates and provenance. A fact still referenced by a
+replacement cannot be restored this way.
 Neither operation erases searchable history. Fact identities, dates and source
 Session references are host-derived, and the existing redaction owner scrubs text
 before approval custody and before persistence.
