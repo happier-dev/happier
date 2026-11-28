@@ -23,6 +23,7 @@ import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { projectMachineRecipeReadTarget } from '@/machines/setup/machineRecipeActionDeps';
 import { buildActionExecutorContextForRpc } from './_actionDispatchAdapter';
 import { isAgentCaller } from '@happier-dev/protocol/actions/executor/callerContext';
+import { isDelegatedActionRequesterV1 } from '@happier-dev/protocol/actions/delegatedRequesterV1';
 import { createDaemonHostResourceRead, readDaemonHostResourceActionFailure } from './daemonHostResourceRead';
 import { openDaemonActionReadWatch } from './actionReadWatch';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
@@ -3305,6 +3306,10 @@ export function registerDaemonContributionRegistryProjectionHandler(
             const accountClientAction = invocation.kind === 'clientPluginAction'
                 && mountedCaller.status === 'available' && mountedCaller.approvalInputCustody === 'live_only';
             const relayedUiPress = accountClientAction && invocationSurface === 'ui';
+            // The Account connection carries the child of the admitted Client Action.
+            // An Agent or MCP origin can only lower the transport's authority.
+            const delegatedClientAction = invocation.kind === 'clientPluginAction' && mountedCaller.status === 'available'
+                && isDelegatedActionRequesterV1({ surface: invocationSurface });
             const rpcApprovalContext = buildActionExecutorContextForRpc({ ...context, actionId: 'action.invoke',
                 ...(defaultSessionId ? { defaultSessionId } : {}) });
             // Native action.invoke supplies this port through the Action executor. This ingress joins
@@ -3318,9 +3323,9 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 ...context?.localActionContext,
                 ...rpcApprovalContext,
                 ...(relayedUiPress && rpcApprovalContext.surface === 'rpc' ? { surface: 'ui' as const } : {}),
+                ...(delegatedClientAction ? { surface: invocationSurface, authority: 'account_automation' as const } : {}),
                 ...(context?.machineAdmission ? { runtimeAccountId: context.machineAdmission.actorAccountId } : {}),
                 ...(context && opts?.createFileDownloadPublisher ? { prepareFileDownload: opts.createFileDownloadPublisher(context) } : {}),
-                authority: context?.callerAuthority ?? context?.localActionContext?.authority ?? 'account_automation',
                 ...(context?.localActionContext?.actionRequestId ?? context?.transportRequestId
                     ? { actionRequestId: context?.localActionContext?.actionRequestId ?? context?.transportRequestId } : {}),
             };

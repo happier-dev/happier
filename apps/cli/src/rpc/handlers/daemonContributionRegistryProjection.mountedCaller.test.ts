@@ -34,6 +34,49 @@ import type { ActionSettlementV1 } from '@happier-dev/protocol/actions/executor/
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 
 describe('mounted caller admission through the real contributed Action RPC', () => {
+    it('keeps an Agent client Action delegated when its nested Machine read uses the Account transport', async () => {
+        const pluginId = 'acme.requester';
+        const machineId = 'machine-1';
+        const fixture = await createAuthoredAdmittedPluginRuntimeFixture({
+            plugins: [{
+                manifest: createPluginManifestV2Fixture({ id: pluginId, contributes: { actions: [
+                    { id: 'read', title: 'Read protected content', scopes: ['global'], surfaces: ['ui', 'plugin'],
+                        placementBindings: [], dangerLevel: 'safe', readOnly: true, execution: { target: 'daemon' } },
+                    { id: 'invoke', title: 'Invoke protected read', scopes: ['global'], surfaces: ['ui', 'agent'],
+                        placementBindings: [], dangerLevel: 'safe', execution: { target: 'client',
+                            client: { artifactId: 'client', exportName: 'activate' }, platforms: ['web'] } },
+                ] } }),
+                files: { 'daemon.mjs': `export function activate(api) {
+                    api.actions.register('read', (_input, context) => context.agentCaller || context.authority === 'account_automation'
+                        ? { status: 'refused' } : { status: 'ready', content: 'protected draft' });
+                }` },
+            }],
+            runtimeOptions: { resolveCurrentMachineId: () => machineId },
+        });
+        try {
+            const handlers = new Map<string, RpcHandler>();
+            registerDaemonContributionRegistryProjectionHandler({ registerHandler(method, handler) { handlers.set(method, handler); } }, {
+                resolveRuntimeRegistry: async () => fixture.registry,
+                resolveInstalledPackages: async () => [],
+                resolvePluginProjectionExecutionOriginContext: () => ({ serverIdentityId: 'srv_requester-home', machineId }),
+            });
+            const handler = handlers.get(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE);
+            if (!handler) throw new Error('Expected contributed Action RPC');
+            const occurrenceId = fixture.registry.readPluginOccurrenceId?.(pluginId);
+            const sourceCustody = fixture.registry.readPluginSourceCustody?.(pluginId);
+            const materializationRef = fixture.registry.resolveCurrentPluginMaterializationRef?.(pluginId);
+            if (!occurrenceId || !sourceCustody || !materializationRef) throw new Error('Expected admitted Client Action');
+            const run = (executionSurface: 'ui' | 'agent') => handler({
+                machineId, qualifiedActionId: `${pluginId}/read`, expectedContributorOccurrenceId: occurrenceId,
+                executionSurface, input: {}, invocation: { kind: 'clientPluginAction', clientActionBinding: {
+                    pluginId, contributionLocalId: 'invoke', occurrenceId, sourceCustody, materializationRef,
+                } },
+            }, { signal: new AbortController().signal, callerAuthority: 'present_user' });
+            expect(await run('ui')).toEqual({ ok: true, result: { status: 'ready', content: 'protected draft' } });
+            expect(await run('agent')).toEqual({ ok: true, result: { status: 'refused' } });
+        } finally { await fixture.dispose(); }
+    });
+
     it.each(['succeeded', 'failed'] as const)('keeps confirmed live-only Channels consent in the mount when its Before Run %s', async state => {
         const pluginId = 'happier.channels';
         const localId = 'binding/set-enabled-v1';
