@@ -67,6 +67,9 @@ describe('FIN selected Muse Review and convergence through public Actions', () =
   let sliceAuditPath: string;
   let nativeHoldPath: string;
   async function createSourceSession(account = owner) {
+    // Paired-device credentials open a Session DEK, never content encrypted
+    // directly with the Account recovery secret.
+    const dataKey = randomBytes(32);
     const source = await createSessionWithCiphertexts({ baseUrl: fixture!.server.baseUrl, token: account.auth.token,
       metadataCiphertextBase64: encryptDataKeyBase64({ path: machine.workspaceDir }, dataKey),
       dataEncryptionKeyBase64: Buffer.from(sealEncryptedDataKeyEnvelopeV1({ dataKey,
@@ -82,9 +85,6 @@ describe('FIN selected Muse Review and convergence through public Actions', () =
     // Schema-derived model output inside the existing sanitized native capture.
     // Request/response framing and lifecycle remain the captured MSP protocol.
     await writeFile(recordingPath, JSON.stringify(recording).replaceAll('"PEBBLE"', JSON.stringify(JSON.stringify(value))));
-    // Paired-device credentials open a Session DEK, never content encrypted
-    // directly with the Account recovery secret.
-    const dataKey = randomBytes(32);
   }
   beforeEach(async () => {
     const testDir = run.testDir(`fin-review-model-${randomUUID()}`);
