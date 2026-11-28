@@ -388,6 +388,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
               throw createManagedProviderAuthorityError('gateway_shared_custody');
             }
             const deployment = basis.deployment;
+            const gatewayRuntime = created.sharedGatewayRuntime;
             const lifetimeScope = createProviderLaunchResourceScope();
             lifetimeScope.register(created.cleanup);
             let currentLaunchScope: ReturnType<typeof createProviderLaunchResourceScope> | null = null;
@@ -410,12 +411,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                     connectionRevision: metadata.connectionRevision,
                     endpointTemplateIds: deployment.managedRuntime.endpointTemplateIds,
                   },
-                  acquireRuntime: async identity => {
-                    const runtime = await lease.registry.acquireManagedProviderRuntime?.(identity);
-                    return runtime && runtime.activationOccurrenceId === created.bootstrap.occurrenceId
-                      && pluginSourceCustodyV1Equal(runtime.sourceCustody, created.bootstrap.sourceCustody)
-                      ? runtime : null;
-                  },
+                  acquireRuntime: async () => gatewayRuntime,
                   connectedAccounts: created.connectedAccounts,
                   custody: {
                     ...created,

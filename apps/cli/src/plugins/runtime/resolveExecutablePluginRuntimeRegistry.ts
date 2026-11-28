@@ -5803,14 +5803,21 @@ export async function resolveExecutablePluginRuntimeRegistry(
         const qualifiedRequestAuthUses = qualifyManagedProviderRequestAuthUses(input.identity, declaration);
         const declaredSharingEligible = input.sharedGateway !== undefined
             && isSharedProviderAdmission(declaration, purposeBindings, qualifiedRequestAuthUses);
-        const runtime = input.retained
+        // A shared Gateway is supervised by this daemon. A retained claim
+        // can keep its old occurrence only as the consumer's identity.
+        const activeRuntime = !input.retained || declaredSharingEligible
+            ? await acquireManagedProviderRuntime(input.identity)
+            : null;
+        if (declaredSharingEligible && (!activeRuntime || (
+            input.retained && !pluginSourceCustodyEqual(activeRuntime.sourceCustody, input.retained.sourceCustody)
+        ))) return null;
+        const runtime = activeRuntime ?? (input.retained
             ? Object.freeze({
-                activationOccurrenceId:
-                    input.retained.occurrenceId,
+                activationOccurrenceId: input.retained.occurrenceId,
                 sourceCustody: input.retained.sourceCustody,
                 isCurrent: input.isCurrent,
             })
-            : await acquireManagedProviderRuntime(input.identity);
+            : null);
         if (!runtime) return null;
         const activeProviderRegistration = input.retained
             ? null
@@ -6033,9 +6040,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
         let cleanupPromise: Promise<void> | null = null;
         let lifetimeCompleted = false;
         let operationAuthorityCleaned = operationAuthority === null;
-        return Object.freeze({
+        const invocation = {
             ...services,
-            ...(sharedGateway ? { lifetime: 'sharedConsumer' as const } : {}),
             materializeManagedProviderAgentBinding:
                 (sharedGateway ? projectManagedServicesOwner : daemonManagedServicesOwner).materializeManagedProviderAgentBinding,
             bootstrap: Object.freeze({
@@ -6075,7 +6081,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     }
                 }
             },
-        });
+        };
+        return Object.freeze(sharedGateway && activeRuntime
+            ? { ...invocation, lifetime: 'sharedConsumer' as const, sharedGatewayRuntime: activeRuntime }
+            : invocation);
     }
 
     async function createManagedProviderRuntimeInvocationServices(

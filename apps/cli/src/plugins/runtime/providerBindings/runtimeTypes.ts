@@ -8,6 +8,7 @@ import type { StablePluginConnectedAccountsOwner } from '../invocation/services/
 import type { createManagedServicesOwner, ManagedProviderExplicitStartOperationInput, ManagedProviderExplicitStartOperationResult } from '../invocation/services/managedServicesOwner';
 import type { ManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
 import type { PluginContributionRef } from '@happier-dev/plugin-sdk';
+import type { ResolvedManagedProviderRuntime } from '@/plugins/projection/registry/types';
 
 export type ResolvedManagedProviderRuntimeInvocationServices =
     ManagedProviderRuntimeInvocationServices & Readonly<{
@@ -23,13 +24,15 @@ export type ResolvedManagedProviderRuntimeInvocationServices =
                     readonly ConnectedAccountRequestAuthUseV1[];
             }> | null;
         }>;
-        lifetime?: 'sharedConsumer';
         materializeManagedProviderAgentBinding?: ReturnType<
             typeof createManagedServicesOwner
         >['materializeManagedProviderAgentBinding'];
         adoptService?(serviceId: string): Promise<void>;
         cleanup(): void | Promise<void>;
-    }>;
+    }> & Readonly<
+        | { lifetime: 'sharedConsumer'; sharedGatewayRuntime: ResolvedManagedProviderRuntime }
+        | { lifetime?: undefined; sharedGatewayRuntime?: undefined }
+    >;
 
 export type ManagedProviderSessionCustodyBinding = Readonly<{
     managedServices:
