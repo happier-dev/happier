@@ -5,7 +5,6 @@ import { PERSONAL_HOME_SYSTEM_TASK_KIND_IDS, SystemTaskExecutionError } from '@h
 
 import { type Capability } from '../service';
 import { DISCOVER_CONFIGURED_SSH_HOSTS_SYSTEM_TASK_KIND } from '../systemTasks/ssh/discoverConfiguredSshHosts/task';
-import { getLiveSystemTasksRunnerAdapter } from '../systemTasks/liveSystemTasksRunner';
 import { CLI_UPDATE_SYSTEM_TASK_KIND } from '../systemTasks/kinds/cliUpdateRemote';
 import { readCliUpdateFactsForThisCli } from '@/cli/runtime/update/cliUpdateFacts';
 import { ManagedInstallationResponseV1Schema, readManagedInstallationPurposeV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -212,4 +211,14 @@ export function createSystemTasksCapability(
   };
 }
 
-export const systemTasksCapability: Capability = createSystemTasksCapability(getLiveSystemTasksRunnerAdapter());
+async function loadLiveSystemTasksRunner(): Promise<SystemTasksRunnerAdapter> {
+  const { getLiveSystemTasksRunnerAdapter } = await import('../systemTasks/liveSystemTasksRunner');
+  return getLiveSystemTasksRunnerAdapter();
+}
+
+export const systemTasksCapability: Capability = createSystemTasksCapability({
+  start: async input => (await loadLiveSystemTasksRunner()).start(input),
+  poll: async input => (await loadLiveSystemTasksRunner()).poll(input),
+  wait: async input => (await loadLiveSystemTasksRunner()).wait(input),
+  respond: async input => (await loadLiveSystemTasksRunner()).respond(input),
+});

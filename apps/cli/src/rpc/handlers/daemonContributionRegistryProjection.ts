@@ -89,15 +89,6 @@ import type {
     ResolvedContributionRegistry,
 } from '@/plugins/projection/registry/types';
 import {
-    buildAgentsById,
-    buildResourcesById,
-    buildPluginConnectedAccountAdmissionProjectionV2,
-    buildPluginSettingsProjectionV2,
-    buildPluginWorkflowMaterializationProjectionV2,
-    buildPluginMountedActionsProjectionV2,
-    buildPluginProjectionV2,
-} from '@/plugins/projection/registry/projection/v2';
-import {
     projectDaemonEmbeddedPluginUiRenderer,
     projectDaemonComposerSurfaceCatalog,
 } from '@/plugins/projection/registry/composer';
@@ -1469,6 +1460,7 @@ async function withProjectionBuild<T>(
         const changedKeyParts = changedProjectionBuildKeyParts(initial.parts);
         const startedAtMs = Date.now();
         const started = (async () => {
+            const projectionBuilders = await import('@/plugins/projection/registry/projection/v2');
             const installedPackages = full || admission
                 ? await resolveInstalledPackagesForProjection(opts, lease.runtimeRegistry) : [];
             const prepared = capture({ ...baseInputs, installedPackages,
@@ -1480,7 +1472,7 @@ async function withProjectionBuild<T>(
             // Initial-key callers already share preparation. From this exact
             // snapshot, build/store is synchronous; joining another build's
             // initial witness here can form a cycle after authority recovery.
-            const content = buildSelectedProjection(prepared.lease, prepared.inputs);
+            const content = buildSelectedProjection(prepared.lease, prepared.inputs, projectionBuilders);
             // Hash the complete full output once, alongside its existing
             // immutable build. Generation alone omits live authority/context
             // changes, and the projection omits the response's catalog siblings.
@@ -1559,7 +1551,14 @@ function projectActivationIntrospectionRuntimeSnapshot(
 function buildSelectedProjection(
     lease: ProjectionLease,
     inputs: ProjectionBuildInputs,
+    builders: typeof import('@/plugins/projection/registry/projection/v2'),
 ): DaemonContributionRegistryProjectionDescribeResponse {
+    const {
+        buildAgentsById,
+        buildPluginConnectedAccountAdmissionProjectionV2,
+        buildPluginSettingsProjectionV2,
+        buildPluginWorkflowMaterializationProjectionV2,
+    } = builders;
     if (inputs.selection === 'settings') return { protocolVersion: 1,
         projection: buildPluginSettingsProjectionV2({ registry: lease.registry, generation: inputs.generation }) };
     if (inputs.selection === 'agents') return { protocolVersion: 1, projection: {
@@ -1591,12 +1590,13 @@ function buildSelectedProjection(
             introspectionRuntimeSnapshot: projectActivationIntrospectionRuntimeSnapshot(lease, inputs.generation),
         }),
     };
-    return buildProjection(lease, inputs);
+    return buildProjection(lease, inputs, builders.buildPluginProjectionV2);
 }
 
 function buildProjection(
     lease: ProjectionLease,
     buildInputs: ProjectionBuildInputs,
+    buildPluginProjectionV2: typeof import('@/plugins/projection/registry/projection/v2').buildPluginProjectionV2,
 ): DaemonContributionRegistryProjectionDescribeResponse {
     const {
         generation,
@@ -1776,6 +1776,7 @@ async function describeProjection(
     | ReturnType<typeof buildDeferredDaemonProjectionSections>['manifest']
     | NonNullable<ReturnType<ReturnType<typeof buildDeferredDaemonProjectionSections>['read']>>> {
     if (request.selection === 'mountedActions') {
+        const { buildPluginMountedActionsProjectionV2 } = await import('@/plugins/projection/registry/projection/v2');
         const lease = await acquireProjectionContributionRegistryLease(opts, true);
         try {
             const generation = await (opts?.resolveGeneration ?? defaultResolveGeneration)();
@@ -2018,6 +2019,7 @@ async function readTargetedContributions(
                 [...resourcePluginIds].map((pluginId) => [pluginId, {}]),
             );
             if (resourceRegistry.resources.length > 0) {
+                const { buildResourcesById } = await import('@/plugins/projection/registry/projection/v2');
                 const resourcesById = buildResourcesById(resourceRegistry,
                     deriveRegistryConnectedAccountPurposeAuthorizations(resourceRegistry), pluginExecutionOriginsByPluginId);
                 for (const [key, resource] of Object.entries(resourcesById)) {

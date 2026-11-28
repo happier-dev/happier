@@ -53,7 +53,6 @@ import {
 import { controlDaemonPluginDevelopment } from '@/daemon/controlClient';
 import { readCurrentDaemonPluginCatalog } from '@/plugins/daemon/currentCatalog';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
-import { scaffoldLocalPlugin } from '@/plugins/scaffold/scaffold';
 import { resolveInvokerName } from '@/cli/runtime/resolveInvokerName';
 import { ManagedInstallationServerOriginV1Schema } from '@happier-dev/protocol/machines/managed/managedInstallationV1';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
@@ -264,6 +263,7 @@ async function invokePluginDevelopmentAction(
                 },
             };
         }
+        const { scaffoldLocalPlugin } = await import('@/plugins/scaffold/scaffold');
         const result = await scaffoldLocalPlugin({
             targetDir,
             pluginId,

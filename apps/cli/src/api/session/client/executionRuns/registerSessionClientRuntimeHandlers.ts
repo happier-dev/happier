@@ -4,7 +4,6 @@ import { mapSessionUpdatePostRpcRequest } from '@/session/services/cliMetadataAc
 import { registerDiscussionAgentPublisher } from '@/discussions/discussionAgentPublisher';
 import { registerSessionMessageReplyObservation } from '@/rpc/handlers/sessionMessageReply';
 import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
-import { createRunnerExecutionRunSnapshotResolver } from '@/agent/runtime/session/process/runnerExecutionRunSnapshot';
 import { createRunnerReviewHostPluginAuthorityReader } from '@/agent/executionRuns/profiles/review/pluginAuthority';
 import { projectExecutionRunSessionUpdateState } from '@/agent/runtime/bridges/executionRun/publicState';
 import type { ExecutionRunSessionUpdateState } from '@happier-dev/protocol/execution/runs/responseSchemas';
@@ -1148,8 +1147,6 @@ export function registerSessionClientRuntimeHandlers(
         },
     };
 
-    const resolveExecutionRunProfileCatalog = createRunnerExecutionRunSnapshotResolver({ sessionId: params.sessionId,
-        ...(sessionMachineId ? { machineId: sessionMachineId } : {}) });
     const executionRunHandlersRegistration = registerExecutionRunHandlers(params.rpcHandlerManager, {
         sessionId: params.sessionId,
         resolveExecutionRunProfileCatalog: async (...input) => {
@@ -1163,6 +1160,12 @@ export function registerSessionClientRuntimeHandlers(
                 void sessionInteractionHost.permissionHandler;
             }
             if (disposed) throw permissionOwnerUnavailable();
+            const { createRunnerExecutionRunSnapshotResolver } = await import('@/agent/runtime/session/process/runnerExecutionRunSnapshot');
+            if (disposed) throw permissionOwnerUnavailable();
+            const resolveExecutionRunProfileCatalog = createRunnerExecutionRunSnapshotResolver({
+                sessionId: params.sessionId,
+                ...(sessionMachineId ? { machineId: sessionMachineId } : {}),
+            });
             return await resolveExecutionRunProfileCatalog(...input);
         },
         readPromptCredentials: readOwnerAccountCredentials,
