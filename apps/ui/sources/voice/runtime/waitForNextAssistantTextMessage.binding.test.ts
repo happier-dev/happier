@@ -29,13 +29,14 @@ function turns(turnId: string, status: 'in_progress' | 'completed' | 'cancelled'
   };
 }
 
-function publish(projection: NonNullable<Session['sessionTurns']>, messages: Message[]) {
+function publish(projection: NonNullable<Session['sessionTurns']>, messages: Message[], overrides?: Partial<Session>) {
   const latest = projection.turns.find((turn) => turn.turnId === projection.latestTurnId)!;
   const now = Date.now();
   storage.setState({
     sessions: { s1: createSessionFixture({
       id: 's1', active: true, activeAt: now, sessionTurns: projection,
       latestTurnId: latest.turnId, latestTurnStatus: latest.status, latestTurnStatusObservedAt: now,
+      ...overrides,
     }) },
     sessionMessages: { s1: createSessionMessagesFixture({
       messageIdsOldestFirst: messages.map((message) => message.id),
@@ -188,6 +189,21 @@ describe('voice reply binding through the real transcript store', () => {
     expect(settled).toBeUndefined();
     publish(turns('turn-voice', 'completed', [12], 13), messages);
     await expect(waiting).resolves.toBe('Your answer.');
+  });
+
+  it.each(['cancelled', 'failed'] as const)('ends native Pi voice playback without speaking a %s turn', async (status) => {
+    const nativePi = {
+      metadata: { ...createSessionFixture().metadata!, flavor: 'pi' },
+      agentState: { localControl: { attached: true, topology: 'shared', remoteWritable: true, canAttach: false, canDetach: false } },
+    } satisfies Partial<Session>;
+    publish(turns('turn-0', 'completed', [1], 2), [], nativePi);
+    const waiting = waitForTurnFinalAssistantText({
+      sessionId: 's1', baseline: captureSessionTurnBaseline('s1'), signal: abort.signal, submittedUserLocalId: 'voice-input',
+    });
+    publish(turns('native-turn', status, [10], 11), [
+      user('native-user', 'pi-input', 10), agent('partial', 'A partial answer.', 11),
+    ], nativePi);
+    await expect(waiting).resolves.toBeNull();
   });
 
   it.each(['cancelled', 'failed'] as const)('does not speak another turn after an unbounded %s turn', async status => {

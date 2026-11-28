@@ -8,9 +8,10 @@ const listeners = new Set<() => void>();
 
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    const { settingsDefaults } = await import('@/sync/domains/settings/settings');
     return createStorageModuleStub({
     storage: {
-    getState: () => state.current,
+    getState: () => ({ settings: settingsDefaults, ...state.current }),
     subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);

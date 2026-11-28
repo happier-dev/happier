@@ -249,7 +249,8 @@ export async function waitForTurnFinalAssistantText(params: Readonly<{
   let submittedReply: SubmittedReplyBoundary | undefined;
   const ended = await waitForStorageCondition(() => {
     const session = getSession(sessionId);
-    if (submittedUserLocalId && !usesSessionLevelVoiceReplies(session)) {
+    const sessionLevelReply = usesSessionLevelVoiceReplies(session);
+    if (submittedUserLocalId && !sessionLevelReply) {
       const submitted = getSessionMessages(sessionId).find((message) => message.kind === 'user-text' && message.localId === submittedUserLocalId);
       // Submission acknowledgement and transcript materialization are independent. Do not speak
       // another client's reply while our admitted input is still pending or being materialized.
@@ -292,7 +293,8 @@ export async function waitForTurnFinalAssistantText(params: Readonly<{
         ? current?.latestTurnId !== (baseline.turnMarker?.latestTurnId ?? null)
         : current?.latestTurnStatusObservedAt !== (baseline.turnMarker?.latestTurnStatusObservedAt ?? null);
       const isTerminal = isTerminalPrimaryTurnStatus(session.latestTurnStatus ?? null);
-      return isNewTurn && isTerminal ? { done: true, value: 'ended' } : { done: false };
+      if (!isNewTurn || !isTerminal) return { done: false };
+      return { done: true, value: sessionLevelReply && session.latestTurnStatus !== 'completed' ? null : 'ended' };
     }
     if (isSessionTurnWorking(session)) {
       sawWorking = true;
