@@ -262,7 +262,7 @@ function WorkbenchLayout(props: Readonly<{ targetKey: string; scope: WorkbenchLa
       preferredListRatio={0.24}
       // A phone opens on the rail (lab tablesp) and pushes the page it picks; the host's Back returns to the rail.
       stackedPane={props.root ? 'list' : 'detail'}
-      list={<WorkbenchRail targetKey={props.targetKey} />}
+      list={(layout) => <WorkbenchRail targetKey={props.targetKey} pushes={layout?.mode === 'stacked'} />}
       detail={<WorkbenchMain targetKey={props.targetKey} scope={props.scope} onForgot={forget} />}
     />
   );

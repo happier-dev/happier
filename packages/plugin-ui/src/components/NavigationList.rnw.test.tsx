@@ -6,6 +6,8 @@ import type { HappierUiPalette } from '../environment/types.js';
 import type { PluginUiPresentationHost } from '../presentationHost/context.js';
 import { COLLECTION_RAIL_MIN_WIDTH_PX, HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_COLLECTION_LIST_TEXT, resolveHappierCollectionListRowPadding } from '../presentation/collection/CollectionList.js';
 import { HAPPIER_COLLECTION_RAIL_WIDTH_PX } from '../presentation/layout/pageMetrics.js';
+import { HappierListDetailLayout } from '../presentation/collection/ListDetailLayout.js';
+import type { HappierLayoutChangeEvent } from '../presentation/portableTypes.js';
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
 import { NavigationList } from './NavigationList.js';
@@ -165,6 +167,34 @@ describe('NavigationList (public plugin column anatomy)', () => {
     act(() => other.click());
     expect(onOpen).toHaveBeenCalledWith('other');
     view.unmount();
+  });
+
+  it('pushes from a list pane that is the whole page: rows end with the chevron and none stays selected', () => {
+    const view = mount(
+      <HappierListDetailLayout testID="split" stackedPane="list" minListWidth={232} minDetailWidth={360} preferredListRatio={0.24}
+        list={<NavigationList title="Database">
+          <NavigationList.Row testID="row-open" title="Overview" selected onPress={() => undefined} />
+          <NavigationList.Row testID="row-other" title="Console" onPress={() => undefined} />
+        </NavigationList>}
+        detail={<View />} />,
+    );
+    const measure = (width: number) => {
+      const box = view.container.querySelector('[data-testid="split"]') as unknown as
+        { __reactLayoutHandler: (event: HappierLayoutChangeEvent) => void };
+      act(() => box.__reactLayoutHandler({ nativeEvent: { layout: { x: 0, y: 0, width, height: 800 } } }));
+    };
+    try {
+      // Beside the page it opens, the open row keeps the chip and no row pushes.
+      measure(1280);
+      expect(byTestId(view.container, 'row-open').getAttribute('aria-current')).toBe('page');
+      expect(view.container.querySelector('[data-testid="row-other-chevron"]')).toBeNull();
+      // A phone: the column is the page, so every row pushes and nothing reads as already open.
+      measure(390);
+      expect(byTestId(view.container, 'row-open').getAttribute('aria-current')).toBeNull();
+      expect(['', 'rgba(0, 0, 0, 0)', 'transparent']).toContain(getComputedStyle(byTestId(view.container, 'row-open')).backgroundColor);
+      expect(view.container.querySelector('[data-testid="row-open-chevron"]')).not.toBeNull();
+      expect(view.container.querySelector('[data-testid="row-other-chevron"]')).not.toBeNull();
+    } finally { view.unmount(); }
   });
 
   it('lets a row, a group and the column foot speak for a state without restyling the anatomy', () => {

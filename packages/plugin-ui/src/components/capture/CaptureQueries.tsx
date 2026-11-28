@@ -4,7 +4,7 @@ import { captureSummaryFailed, type DatabaseCaptureSummaryV1 } from '@happier-de
 import { useHappierCollection } from '../../presentation/collection/useCollection.js';
 import { formatHappierDuration } from '../../presentation/data/dataModel.js';
 import { Button } from '../Button.js';
-import { Collection, type CollectionAnatomy, type CollectionDetailRenderContext, type CollectionRowActions } from '../Collection.js';
+import { Collection, type CollectionAnatomy, type CollectionDetailHeader, type CollectionDetailRenderContext, type CollectionRowActions } from '../Collection.js';
 import { Stack } from '../Layout.js';
 import { usePluginTranslation } from '../PluginUiProvider.js';
 import { Text } from '../Text.js';
@@ -91,9 +91,14 @@ export function CaptureList<Item>(
      */
     tableMinWidth?: number;
     detail?: CaptureListDetail<Item>;
+    /**
+     * The open row's title band. Given it, the detail stands on the platform's body edge beside the list and pushed,
+     * and a pushed detail is named by it; without it the detail draws its own edge (Traces).
+     */
+    detailHeader?: (item: Item) => CollectionDetailHeader;
   }>,
 ) {
-  const { items, keyOf, onOpen, detail } = props;
+  const { items, keyOf, onOpen, detail, detailHeader } = props;
   const byKey = React.useMemo(
     () => new Map(items.map((item) => [keyOf(item), item])),
     [items, keyOf],
@@ -127,6 +132,13 @@ export function CaptureList<Item>(
     },
     [byKey, detail],
   );
+  const headerOf = React.useCallback(
+    (key: string) => {
+      const item = byKey.get(key);
+      return item && detailHeader ? detailHeader(item) : { title: props.label };
+    },
+    [byKey, detailHeader, props.label],
+  );
   return (
     <Stack gap="medium">
       <Collection
@@ -148,6 +160,7 @@ export function CaptureList<Item>(
               detailBackLabel: props.label,
               detailOpenIntent: picked === null ? ('landing' as const) : ('explicit' as const),
               renderDetail,
+              ...(detailHeader ? { detailHeader: headerOf } : {}),
               minListWidth: CAPTURE_SPLIT.minListWidthPx,
               minDetailWidth: CAPTURE_SPLIT.minDetailWidthPx,
               preferredListRatio: CAPTURE_SPLIT.preferredListRatio,
@@ -180,20 +193,24 @@ export function CaptureQueries(
 ) {
   const text = usePluginTranslation();
   const { locale } = props;
-  const anatomy = React.useMemo<
-    CollectionAnatomy<DatabaseCaptureSummaryV1>
-  >(() => {
+  const { facts, shape } = React.useMemo(() => {
     const time = new Intl.DateTimeFormat(locale, {
       hour: 'numeric',
       minute: '2-digit',
       second: '2-digit',
     });
-    const facts = (item: DatabaseCaptureSummaryV1) =>
-      [item.serviceName || null, time.format(item.at)]
-        .filter((part): part is string => part !== null)
-        .join(' · ');
-    const shape = (item: DatabaseCaptureSummaryV1) =>
-      item.shape ?? text('plugins.telemetry.capture.unnamedQuery', 'Statement');
+    return {
+      facts: (item: DatabaseCaptureSummaryV1) =>
+        [item.serviceName || null, time.format(item.at)]
+          .filter((part): part is string => part !== null)
+          .join(' · '),
+      shape: (item: DatabaseCaptureSummaryV1) =>
+        item.shape ?? text('plugins.telemetry.capture.unnamedQuery', 'Statement'),
+    };
+  }, [locale, text]);
+  const anatomy = React.useMemo<
+    CollectionAnatomy<DatabaseCaptureSummaryV1>
+  >(() => {
     return {
       glyph: () => null,
       loadingGlyph: false,
@@ -214,7 +231,12 @@ export function CaptureQueries(
         title: text('plugins.telemetry.capture.statement', 'Statement'),
       },
     };
-  }, [locale, text]);
+  }, [facts, locale, shape, text]);
+  // The open statement is named by its shape, with where and when under it; its full SQL is the body.
+  const detailHeader = React.useCallback(
+    (item: DatabaseCaptureSummaryV1) => ({ title: shape(item), subtitle: facts(item) }),
+    [facts, shape],
+  );
   return (
     <CaptureList
       testID="telemetry.capture.queries"
@@ -228,6 +250,7 @@ export function CaptureQueries(
         'No queries in this window',
       )}
       {...(props.detail ? { detail: props.detail } : {})}
+      detailHeader={detailHeader}
       more={props.more ?? null}
     />
   );

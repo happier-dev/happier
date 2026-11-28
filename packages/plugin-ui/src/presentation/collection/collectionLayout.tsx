@@ -80,6 +80,19 @@ export function useHappierCollectionLayout(): HappierCollectionLayoutState | nul
 }
 
 /**
+ * The list pane is the whole page (a phone): a press pushes what it opens in the list's place, so a navigation row
+ * ends with the chevron and nothing on it reads as selected.
+ *
+ * @internal Provided only by the split geometry (`HappierListDetailLayout`) around its list pane.
+ */
+export const HappierListPanePushesContext = createContext(false);
+
+/** @internal */
+export function useHappierListPanePushes(): boolean {
+  return useContext(HappierListPanePushesContext);
+}
+
+/**
  * What a Collection's index route shows. Beside the list something is always open, so the index
  * `land`s on an item (and renders nothing of its own); where the list is not beside it — a narrow
  * screen, or outside a Collection — the index IS the list. Before the first measurement it shows

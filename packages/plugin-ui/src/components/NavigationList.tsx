@@ -12,7 +12,10 @@ import {
   type HappierCollectionListHost,
   type HappierCollectionListTextRole,
 } from '../presentation/collection/CollectionList.js';
+import { useHappierListPanePushes } from '../presentation/collection/collectionLayout.js';
+import { HappierChevron } from '../presentation/collection/DisclosureChevron.js';
 import { HappierListItem } from '../presentation/collection/List.js';
+import { resolveHappierIconSize } from '../presentation/content/Icon.js';
 import { HappierTextField } from '../presentation/form/Fields.js';
 import { HAPPIER_SEARCH_FIELD_METRICS } from '../presentation/form/FieldBox.js';
 import { resolveHappierTextStepStyle } from '../presentation/layout/pageText.js';
@@ -338,6 +341,10 @@ function NavigationListGroup(props: NavigationListGroupProps): ReactElement {
 function NavigationListRow(props: NavigationListRowProps): ReactElement {
   const host = useOptionalPluginUiPresentationHost();
   const translate = usePluginTranslation();
+  const theme = usePluginTheme();
+  // The column is the whole page (a phone): the row pushes what it opens, so it ends with the chevron and nothing
+  // stays selected under the page it opened (lab dbBrowse/tablesp, phone lists).
+  const pushes = useHappierListPanePushes();
   const title = resolveAuthorText(translate, props.title, props.titleKey) ?? '';
   const status = props.status === undefined ? undefined : STATUS_ICON[props.status.kind];
   const accessibilityLabel = props.status === undefined
@@ -350,8 +357,11 @@ function NavigationListRow(props: NavigationListRowProps): ReactElement {
       titleNumberOfLines={1}
       icon={props.icon !== undefined ? <Icon name={props.icon} tone="secondary" /> : props.mark}
       detail={props.detail}
-      {...(status === undefined ? {} : { accessory: <Icon name={status.name} size="small" tone={status.tone} /> })}
-      selected={props.selected === true}
+      {...(status !== undefined ? { accessory: <Icon name={status.name} size="small" tone={status.tone} /> }
+        : pushes ? { accessory: <HappierChevron direction="right" color={theme.colors.secondaryText} size={resolveHappierIconSize('small')}
+          {...(props.testID === undefined ? {} : { testID: `${props.testID}-chevron` })} /> }
+          : {})}
+      selected={props.selected === true && !pushes}
       accessibilityRole="button"
       onPress={() => props.onPress()}
       showDivider={false}

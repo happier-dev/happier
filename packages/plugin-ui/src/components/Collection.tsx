@@ -523,7 +523,11 @@ export type CollectionProps<Item> = HappierCollectionRailSizingProps & Readonly<
   /** An explicit domain projection; omitted keeps the responsive column pager. */
   boardLayout?: 'columns' | 'stacked';
   detail?: HappierCollectionDetailContainer;
-  /** A logical automatic landing previews only beside the list, never as a narrow push. Explicit opens remain open on resize. */
+  /**
+   * A logical automatic landing previews only beside the list in the page, never as a narrow push and never in the
+   * app's details pane: that pane narrows the page that chose the landing, which would close and reopen it in a loop.
+   * Explicit opens remain open on resize.
+   */
   detailOpenIntent?: 'explicit' | 'landing';
   /**
    * Offer the person the Columns choice for this table kind: the host's Columns menu shows, hides and orders the
@@ -2514,11 +2518,11 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     preferredListRatio: props.preferredListRatio,
     gap: 0,
   });
-  const openKey = props.detailOpenIntent === 'landing' && geometry?.mode !== 'split' ? null : model.openKey;
-  const openRowReveal = useMemo(() => openKey === null ? undefined : { key: openKey }, [openKey]);
   // Choose the container on open and retain it across resizing. A fresh phone open pushes in-page;
   // an already-open app pane fills the viewport without reparenting the detail's local owners.
   const paneHost = useDetailsPaneHostInstalled() && detail === 'auto' && props.renderDetail !== undefined;
+  const openKey = props.detailOpenIntent === 'landing' && (geometry?.mode !== 'split' || paneHost) ? null : model.openKey;
+  const openRowReveal = useMemo(() => openKey === null ? undefined : { key: openKey }, [openKey]);
   const panePlacement = useDetailsPanePlacement(paneHost && openKey !== null);
   const pane = panePlacement.inPane && paneHost;
   // The table fits where it clears the list minimum AND can still show a column beside the title: a table that

@@ -16,6 +16,7 @@ import {
   Select,
   Stack,
   Text,
+  useHappierPageChrome,
   usePluginTranslation,
   type PluginTranslate,
 } from '@happier-dev/plugin-ui';
@@ -187,20 +188,25 @@ export function DatabaseIdentity(
     descriptor: DatabaseDescriptorV1;
     /** Inside another control (the rail tab's picker) the access word is said, not pressed. */
     accessAsText?: boolean;
+    /** The navigation bar above already names the database (a phone's root): the facts and access stand alone. */
+    nameInChrome?: boolean;
   }>,
 ) {
   const translate = usePluginTranslation();
   const access = props.descriptor.access;
   return (
-    <Row gap="small" align="flex-start">
+    // It takes the column's width and no more, so a long name or facts line ellipsizes inside the rail.
+    <Row gap="small" align="flex-start" grow>
       {/* The database's mark leads its name; the facts and access stand under the name (lab dbRail). */}
       <Icon name="database" tone="secondary" />
       <Stack gap="xsmall" grow>
-      <Text
-        variant="heading"
-        value={props.descriptor.label}
-        numberOfLines={1}
-      />
+      {props.nameInChrome ? null : (
+        <Text
+          variant="heading"
+          value={props.descriptor.label}
+          numberOfLines={1}
+        />
+      )}
       <Text
         variant="meta"
         tone="secondary"
@@ -440,10 +446,16 @@ export function WorkbenchRailList(
 }
 
 /** The page's rail: identity, then the list; presses navigate the page in place. */
-export function WorkbenchRail(props: Readonly<{ targetKey: string }>) {
+export function WorkbenchRail(props: Readonly<{
+  targetKey: string;
+  /** The rail is the whole page (a phone): its presses push, and a navigation bar that shows the title names it. */
+  pushes?: boolean;
+}>) {
   const instance = useWorkbenchInstance();
   const location = useWorkbenchLocation();
   const descriptor = instance.target(props.targetKey);
+  const chromeShowsTitle = useHappierPageChrome()?.showsTitle === true;
+  const nameInChrome = props.pushes === true && chromeShowsTitle;
   const open = React.useCallback(
     (intent: RailIntent) => {
       void location.navigate(
@@ -466,7 +478,7 @@ export function WorkbenchRail(props: Readonly<{ targetKey: string }>) {
   return (
     <WorkbenchRailList
       targetKey={props.targetKey}
-      header={<DatabaseIdentity descriptor={descriptor} />}
+      header={<DatabaseIdentity descriptor={descriptor} nameInChrome={nameInChrome} />}
       selected={selected}
       onOpen={open}
       showOverview

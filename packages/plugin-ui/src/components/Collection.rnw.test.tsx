@@ -436,6 +436,7 @@ type HarnessOptions = Readonly<{
   listWidthPx?: number;
   onListWidthCommit?: (widthPx: number) => void;
   resizeKey?: string;
+  detailOpenIntent?: CollectionProps<Entry>['detailOpenIntent'];
 }>;
 
 type HarnessProps = HarnessOptions &
@@ -468,6 +469,7 @@ function Harness(props: HarnessProps): ReactElement {
       presentation={props.presentation ?? 'table'}
       boardLayout={props.boardLayout}
       detail={props.detail ?? 'auto'}
+      {...(props.detailOpenIntent === undefined ? {} : { detailOpenIntent: props.detailOpenIntent })}
       useRowItem={props.useRowItem}
       {...(props.useRowActions === undefined
         ? {}
@@ -3293,6 +3295,23 @@ describe('detail auto', () => {
 });
 
 describe('detail auto beside the host details pane', () => {
+  it('opens a landing row only beside the list in the page, never in the host pane that would narrow the page', async () => {
+    // A Capture list lands on its first row. In the host pane that landing narrowed the page that chose it, which
+    // closed it, which widened the page again: the Workbench rail beside it flickered and squeezed (cut 58, Queries).
+    const pane = createPaneHost();
+    const view = mount({ pane, openKey: 'a', detailOpenIntent: 'landing' });
+    view.measure(1440);
+    await act(async () => { await Promise.resolve(); });
+    expect(view.query('host-pane')).toBeNull();
+    // A row the person picks opens in the host pane as before.
+    view.unmount();
+    const picked = mount({ pane, openKey: 'a', detailOpenIntent: 'explicit' });
+    picked.measure(1440);
+    await act(async () => { await Promise.resolve(); });
+    expect(picked.query('host-pane')).not.toBeNull();
+    picked.unmount();
+  });
+
   it('keeps the selected identity and its working action in the host header as selection changes', async () => {
     const pane = createPaneHost();
     const acted: string[] = [];
@@ -4599,6 +4618,30 @@ describe('the table sheet', () => {
         + Number.parseFloat(style.columnGap || style.gap || '0');
       expect(titleStartPx).toBe(HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx + HAPPIER_PAGE_METRICS.rowLeadingColumnPx
         + HAPPIER_PAGE_METRICS.rowLeadingGapPx);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  // Cut 58 axe (Using the most at 390): the totals and their "5 in Processes" link sat inside the grid, which owns only
+  // rows (`aria-required-children`). They close the same sheet beside the collection, as the wide table's do.
+  it.each([false, true])("keeps a page list's totals on its sheet but outside the collection its rows belong to (windowed %s)", async (windowed) => {
+    const view = mount({
+      presentation: 'list', scroll: 'page', grouped: false, detail: 'none',
+      anatomy: { ...anatomy, peek: undefined },
+      summaryRows: [{ key: 'total', title: 'Total', cells: {}, testID: 'total' }],
+      enclosingSheet: {},
+      ...(windowed ? { scrollTracker: pageTracker() } : {}),
+    });
+    try {
+      view.measure(360);
+      await act(async () => {});
+      const total = view.query('total')!;
+      const collection = view.query('row:a')!.closest('[role="grid"], [role="treegrid"], [role="listbox"], [role="list"]');
+      expect(collection).not.toBeNull();
+      expect(collection!.contains(view.query('row:c'))).toBe(true);
+      expect(collection!.contains(total)).toBe(false);
+      expect(sheetAround(view, 'a')!.contains(total)).toBe(true);
     } finally {
       view.unmount();
     }

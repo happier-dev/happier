@@ -659,8 +659,10 @@ export function TelemetryRequestDetail(props: Readonly<{
   const { reads, lifetime, active, request, locale, onAddCheck } = props;
   const { serviceName, endpointMethod, endpointRoute } = request;
   const traceId = request.traceId ?? null;
-  // The header's text stands on the sheet edge like the sections below it: the column may draw part of that edge.
-  const headerInsetPx = Math.max(0, PAGE_LIST_METRICS.sheetInsetPx - React.useContext(HappierColumnEdgeContext));
+  // The whole detail stands on the sheet edge, its header and its sections alike (lab dbCapture-traces): beside the
+  // list the column draws none of that edge, so the detail insets itself and its sections read it as their edge.
+  const columnEdgePx = React.useContext(HappierColumnEdgeContext);
+  const detailInsetPx = Math.max(0, PAGE_LIST_METRICS.sheetInsetPx - columnEdgePx);
   const [read, setRead] = React.useState<RequestRead>({ kind: 'loading' });
   const [attempt, setAttempt] = React.useState(0);
   React.useEffect(() => {
@@ -704,8 +706,9 @@ export function TelemetryRequestDetail(props: Readonly<{
     new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit', second: '2-digit' }).format(request.at),
   ].filter((part): part is string => part !== null && part.length > 0);
   return (
-    <View style={styles.detail} testID="project-deployments.telemetry.request">
-      <View style={[styles.detailHeader, { paddingHorizontal: headerInsetPx }]}>
+    <HappierColumnEdgeContext.Provider value={columnEdgePx + detailInsetPx}>
+    <View style={[styles.detail, { paddingHorizontal: detailInsetPx }]} testID="project-deployments.telemetry.request">
+      <View style={styles.detailHeader}>
         {props.onBack ? (
           <TextLinkButton testID="project-deployments.telemetry.request.back" label={props.backLabel ?? t('deploymentTelemetry.request.back')}
             onPress={props.onBack} tone="quiet" size="meta" />
@@ -757,6 +760,7 @@ export function TelemetryRequestDetail(props: Readonly<{
         </>
       )}
     </View>
+    </HappierColumnEdgeContext.Provider>
   );
 }
 

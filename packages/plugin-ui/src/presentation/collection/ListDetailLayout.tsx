@@ -7,6 +7,7 @@ import type { HappierLayoutChangeEvent, HappierStyleProp } from '../portableType
 import {
   HappierCollectionDetailWidthContext,
   HappierCollectionLayoutContext,
+  HappierListPanePushesContext,
   resolveHappierCollectionLayoutState,
 } from './collectionLayout.js';
 import {
@@ -107,7 +108,9 @@ export function HappierListDetailLayout({
           importantForAccessibility={listVisible ? 'auto' : 'no-hide-descendants'}
           style={[fillStyle, listStyle, { flex: split?.listRatio ?? 1 }, !listVisible && hiddenStyle]}
         >
-          {typeof list === 'function' ? list(layout) : list}
+          <HappierListPanePushesContext.Provider value={layout?.mode === 'stacked'}>
+            {typeof list === 'function' ? list(layout) : list}
+          </HappierListPanePushesContext.Provider>
         </View>
         {split && resize.canResize && labels && availableWidth !== null ? <HappierResizeHandle
           // It resizes the list's trailing edge and its target reaches past that seam over the detail, so it sits in this
