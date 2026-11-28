@@ -1,5 +1,5 @@
 import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
-import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { readAccountAttentionDeliveryPolicy } from '@happier-dev/protocol/account/settings/attentionPolicyIngress';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { deriveSessionFollowOriginalOccurrenceKeyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
@@ -7,12 +7,12 @@ import { readActionErrorCodeV1, readUnexpectedActionErrorDiagnosticV1 } from '@h
 import { isPluginError } from '@happier-dev/protocol/plugins/errors';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { guardStopWarningNotificationIdV1 } from '@happier-dev/protocol/activity/webhookPayload';
-import { isUsageQuotaNotificationEnabled } from '@happier-dev/protocol/account/settings/usagePacingPreferencesV1';
+import { DEFAULT_USAGE_QUOTA_NOTIFICATIONS_V1, isUsageQuotaNotificationEnabled } from '@happier-dev/protocol/account/settings/usagePacingPreferencesV1';
 import { AccountNoticeArtifactHeaderV1Schema, AccountNoticeArtifactBodyV1Schema, ACCOUNT_NOTICE_ARTIFACT_KIND_V1,
   ServiceHealthNoticeNotificationV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import type { createAccountArtifactStore, AccountNoticeWriteReceipt } from '@/api/artifacts/accountArtifactStore';
 import type { HealthCheckSourceConfigV1, HealthCheckAlertChannelV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
-import type { AttentionDeliveryDecision, PluginNotificationChannelKindV1, AccountSettings } from '@happier-dev/protocol';
+import type { AttentionDeliveryDecision, AttentionDeliveryPolicyV1, PluginNotificationChannelKindV1, AccountSettings } from '@happier-dev/protocol';
 import type { NotificationChannelCatalogSnapshotV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { isPushNotificationBundledSoundId, resolveExpoNotificationSoundName } from '@happier-dev/protocol/push/pushNotificationActions';
 import { resolveAttentionDeliveryPolicyDecision, resolveAttentionPushSoundId } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicyDecision';
@@ -199,14 +199,14 @@ export function resolveActivityNotificationPolicyEvent(
 }
 
 function resolveChannelDecision(params: Readonly<{
-  settings: AccountSettings;
+  policy: AttentionDeliveryPolicyV1;
   channel: PluginNotificationChannelKindV1;
   event: ActivityNotificationEvent;
   now: Date;
   follow?: ResolveFollowDeliveryV1Params;
 }>): AttentionDeliveryDecision {
   return resolveAttentionDeliveryPolicyDecision({
-    policy: params.settings.attentionDeliveryPolicyV1,
+    policy: params.policy,
     event: resolveActivityNotificationPolicyEvent(params.event),
     channel: params.channel,
     now: params.now,
@@ -247,14 +247,14 @@ export async function listActivityNotificationChannels(params: Readonly<{
   pushTokenReader?: Pick<PushNotificationClient, 'fetchPushTokens'>;
 }>): Promise<readonly Readonly<{ value: string; label: string; disabled: boolean; destinationSetup?: PluginContributionRef }>[]> {
   const runtime = await readRuntimeNotificationCatalog(params);
-  const settings = accountSettingsParse(runtime.settings ?? {});
+  const policy = runtime.settings?.attentionDeliveryPolicyV1 ?? readAccountAttentionDeliveryPolicy(runtime.settings);
   const { channels, savedSecretMaterializer, assertCurrent } = runtime;
   await assertCurrent();
   const pluginNotifications = params.pluginNotifications === undefined
     ? createHostPluginNotificationChannels()
     : params.pluginNotifications;
   const configuredForNotifyMe = (kind: PluginNotificationChannelKindV1) => {
-    const decision = resolveChannelDecision({ settings, channel: kind,
+    const decision = resolveChannelDecision({ policy, channel: kind,
       event: { topic: 'notify_me', message: '' }, now: new Date() });
     // Quiet hours apply when the future occurrence delivers, not when its intent
     // is registered. Disabled channels/events remain unavailable in the catalog.
@@ -437,12 +437,12 @@ async function dispatchActivityNotification(params: Readonly<{
       return { attemptedChannels: 0, deliveredChannels: 0 };
   }
   if (params.event.topic === 'connected_service_usage'
-    && !isUsageQuotaNotificationEnabled(accountSettingsParse(params.operationContext?.readSnapshot()?.settings
-      ?? params.settings ?? {}).usageQuotaNotificationsV1, params.event.kind)) {
+    && !isUsageQuotaNotificationEnabled((params.operationContext?.readSnapshot()?.settings
+      ?? params.settings)?.usageQuotaNotificationsV1 ?? DEFAULT_USAGE_QUOTA_NOTIFICATIONS_V1, params.event.kind)) {
     return { attemptedChannels: 0, deliveredChannels: 0 };
   }
   const runtime = await readRuntimeCatalog();
-  const settings = accountSettingsParse(runtime.settings ?? {});
+  const policy = runtime.settings?.attentionDeliveryPolicyV1 ?? readAccountAttentionDeliveryPolicy(runtime.settings);
   // Plugin-native events use only the host push bridge, including during signing preflight.
   const channels = params.event.topic === 'plugin_notification'
     ? runtime.channels.filter(channel => channel.kind === 'expo_push') : runtime.channels;
@@ -458,7 +458,7 @@ async function dispatchActivityNotification(params: Readonly<{
   }
   const policyNow = new Date(nowMs);
   const channelDecision = (channel: PluginNotificationChannelKindV1) => resolveChannelDecision({
-    settings, channel, event: params.event, now: policyNow,
+    policy, channel, event: params.event, now: policyNow,
     follow: params.event.topic === 'follow_update' ? admission.follow : params.follow ?? admission.follow,
   });
   const recordChannel = (channelId: string, kind: NotificationChannelOutcome['kind'], cause?: NotificationChannelOutcome['cause']) => {

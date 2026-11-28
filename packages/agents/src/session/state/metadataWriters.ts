@@ -2,7 +2,7 @@ import { z } from 'zod/mini';
 import { ApprovalProfileIdV1Schema } from '@happier-dev/protocol/actions/approvalProfiles';
 import { SessionIdentityAdditionsV1Schema, type SessionIdentityAdditions } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { SessionAttestedContextV1Schema, type SessionAttestedContextV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
-import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { ACCOUNT_SETTING_DEFINITIONS } from '@happier-dev/protocol/account/settings/accountSettings';
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { SessionPromptStackV1Schema, type SessionPromptStackV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
 import { PluginUiNewSessionSeedOriginV1Schema, type PluginUiNewSessionSeedOriginV1 } from '@happier-dev/protocol/plugins/ui/newSessionSeedOrigin';
@@ -438,7 +438,11 @@ export function applyInitialSessionCreationFactsToMetadata<TMetadata extends Ses
         : z.nullable(ApprovalProfileIdV1Schema).parse(facts.approvalProfileId);
     const approvalProfileTeamOrGroupDerived = facts.approvalProfileTeamOrGroupDerived
         ?? (facts.approvalProfileId === undefined ? inheritedApprovalProfileTeamOrGroupDerived : false);
-    const settings = accountSettingsParse(facts.accountSettings ?? {});
+    const memorySetting = identity?.bot?.kind === 'bot' ? 'memoryUseInNewBots' : 'memoryUseInNewSessions';
+    const memoryEnabled = facts.memoryEnabled ?? ACCOUNT_SETTING_DEFINITIONS[memorySetting].schema.parse(
+        facts.accountSettings && Object.prototype.propertyIsEnumerable.call(facts.accountSettings, memorySetting)
+            ? facts.accountSettings[memorySetting] : undefined,
+    );
     return {
         ...base,
         ...identity,
@@ -452,8 +456,7 @@ export function applyInitialSessionCreationFactsToMetadata<TMetadata extends Ses
         work: { ...work,
             ...(facts.authoringOrigin === undefined ? {} : { authoringOriginV1: PluginUiNewSessionSeedOriginV1Schema.parse(facts.authoringOrigin) }),
             ...(facts.promptStack === undefined ? {} : { promptStack: SessionPromptStackV1Schema.parse(facts.promptStack) }),
-            memoryEnabled: facts.memoryEnabled ?? (identity?.bot?.kind === 'bot'
-                ? settings.memoryUseInNewBots : settings.memoryUseInNewSessions) },
+            memoryEnabled },
     };
 }
 

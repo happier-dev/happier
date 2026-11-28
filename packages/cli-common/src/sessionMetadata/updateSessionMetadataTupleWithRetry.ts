@@ -609,36 +609,35 @@ async function prepareTupleMutation<M, A>(params: Readonly<{
     }
   }
 
-  const createdOwnerMetadata = createSessionOwnerMetadataV1({
-    metadata: updatedMetadata,
-  });
-  if (!createdOwnerMetadata.ok) {
-    throw createTupleMutationError(
-      `Unsupported owner Session metadata: ${
-        createdOwnerMetadata.unsupportedFields.join(', ')
-      }`,
-      'metadata_privacy_upgrade_required',
-      createdOwnerMetadata.unsupportedFields,
+  let ownerMetadata = current.value.ownerMetadata;
+  let ownerMetadataChanged = false;
+  if (mutation.kind === 'metadata') {
+    const createdOwnerMetadata = createSessionOwnerMetadataV1({ metadata: updatedMetadata });
+    if (!createdOwnerMetadata.ok) {
+      throw createTupleMutationError(
+        `Unsupported owner Session metadata: ${createdOwnerMetadata.unsupportedFields.join(', ')}`,
+        'metadata_privacy_upgrade_required',
+        createdOwnerMetadata.unsupportedFields,
+      );
+    }
+    const previousProjectedOwnerMetadata = createSessionOwnerMetadataV1({ metadata: current.value.metadata });
+    if (!previousProjectedOwnerMetadata.ok) {
+      throw createTupleMutationError(
+        'Current owner Session metadata cannot be projected safely',
+        'metadata_privacy_upgrade_required',
+        previousProjectedOwnerMetadata.unsupportedFields,
+      );
+    }
+    ownerMetadataChanged = !tupleValuesEqual(
+      createdOwnerMetadata.ownerMetadata,
+      previousProjectedOwnerMetadata.ownerMetadata,
     );
-  }
-  const previousProjectedOwnerMetadata = createSessionOwnerMetadataV1({
-    metadata: current.value.metadata,
-  });
-  if (!previousProjectedOwnerMetadata.ok) {
-    throw createTupleMutationError(
-      'Current owner Session metadata cannot be projected safely',
-      'metadata_privacy_upgrade_required',
-      previousProjectedOwnerMetadata.unsupportedFields,
-    );
+    if (ownerMetadataChanged) ownerMetadata = createdOwnerMetadata.ownerMetadata;
   }
   const sharedMetadata = projectSessionSharedMetadataV1({
     metadata: updatedMetadata,
     agentState: updatedAgentState,
   });
-  const ownerMetadataChanged = !tupleValuesEqual(
-    createdOwnerMetadata.ownerMetadata,
-    previousProjectedOwnerMetadata.ownerMetadata,
-  );
   // The view compared above carries view-only compatibility aliases that a field
   // producer never writes. A write is a change only when a persisted leaf changes.
   if (
@@ -649,9 +648,6 @@ async function prepareTupleMutation<M, A>(params: Readonly<{
   ) {
     return null;
   }
-  const ownerMetadata = ownerMetadataChanged
-    ? createdOwnerMetadata.ownerMetadata
-    : current.value.ownerMetadata;
   const canonicalMetadata = projectSessionOwnerCompatibilityViewV1({
     sharedMetadata,
     ownerMetadata,

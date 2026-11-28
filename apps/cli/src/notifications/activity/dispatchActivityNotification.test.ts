@@ -82,6 +82,23 @@ vi.mock('@/ui/logger', () => ({
 }));
 
 describe('dispatchActivityNotificationAsync', () => {
+  it('dispatches from the admitted notification policy without rebuilding unrelated Account Settings', async () => {
+    let unrelatedSettingReads = 0;
+    const settings = { ...accountSettingsParse({}), get themePreference() {
+      unrelatedSettingReads += 1;
+      return 'dark' as const;
+    } };
+    const sendToAllDevicesAsync = vi.fn(async () => true);
+    await expect(dispatchActivityNotification({
+      settings, event: { topic: 'notify_me', message: 'Ready' }, pluginNotifications: null,
+      notificationChannelCatalog: { status: 'ready', revision: 1, diagnostics: [], channels: [
+        NotificationChannelRecordV1Schema.parse({ v: 1, id: 'push', kind: 'expo_push', enabled: true, topics: {} }),
+      ] },
+      expoPushSender: { sendToAllDevicesAsync }, dedupeWindowMs: 0,
+    })).resolves.toMatchObject({ attemptedChannels: 1, deliveredChannels: 1 });
+    expect(unrelatedSettingReads).toBe(0);
+  });
+
   it('prepares admitted content once across selected delivery channels', async () => {
     const event = { topic: 'connected_service_credential_health' as const, sessionId: 'lazy-health-content',
       serviceId: 'acme.example/service', profileId: 'account', status: 'reconnect_required' as const,

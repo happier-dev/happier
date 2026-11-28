@@ -62,7 +62,7 @@ import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { createSessionFollowActionDeps } from '@/api/sessionFollowActionDeps';
 import { createSessionFollowSourceKeyPreparationAfterSet } from '@/agent/runtime/session/follow/createSessionFollowSourceKeyPreparationAfterSet';
 import { createSessionAccountActionExecutor, sessionActionTargetUnavailable } from '@/mcp/runtime/createSessionAccountActionExecutor';
-import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { bindToHostedSessionScope, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { readCurrentRunnerAgentStartPolicyV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceAuthorityClient';
 import { createNativeAgentSessionEffectBoundaryError } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
 import { readSessionMemoryEnabledV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
@@ -625,7 +625,10 @@ export function createHappierMcpServer(
     },
   );
 
-  const harness = createHarness();
+  // Tool inventory requests share this server composition without executing an
+  // Action. Build the executor only when dispatch needs its bound ports.
+  let harness: ReturnType<typeof createHarness> | undefined;
+  const readHarness = bindToHostedSessionScope(() => harness ??= createHarness());
   const scopedPluginRuntimeRegistryLease = opts?.pluginRuntimeRegistryLease;
   const boundCallerSessionId = client.sessionId.trim();
   const unavailableInitiatingCaller = (reason: Parameters<typeof sessionActionTargetUnavailable>[0]) => ({
@@ -668,7 +671,7 @@ export function createHappierMcpServer(
     execute: async (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => {
       const admission = resolveInitiatingActionCaller();
       if (!admission.ok) return admission.result;
-      return await harness.executor.execute(actionId, input, { ...context, actionCaller: admission.caller });
+      return await readHarness().executor.execute(actionId, input, { ...context, actionCaller: admission.caller });
     },
   };
   const executeInCurrentProcess: NonNullable<Parameters<typeof createDaemonPluginActionExecutor>[0]['executeInCurrentProcess']> =
@@ -676,10 +679,11 @@ export function createHappierMcpServer(
       if (!credentials) return { matched: false };
       const admission = resolveInitiatingActionCaller();
       if (!admission.ok) return { matched: true, result: admission.result };
+      const { deps, resolveContext } = readHarness();
       return await executeAccountPluginAction({
           host: { ...cryptoContext, credentials,
             serverId, serverHttpBaseUrl, isCredentialCurrent },
-          deps: harness.deps, resolveContext: harness.resolveContext, actionId, input,
+          deps, resolveContext, actionId, input,
           context: { ...context, actionCaller: admission.caller },
           ...(scopedPluginRuntimeRegistryLease?.accountRuntime
             ? { accountRuntime: scopedPluginRuntimeRegistryLease.accountRuntime } : {}),

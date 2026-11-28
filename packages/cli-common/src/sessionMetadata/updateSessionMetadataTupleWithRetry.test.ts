@@ -149,6 +149,22 @@ function legacyOwnerSnapshot(params: Readonly<{
 }
 
 describe('updateSessionMetadataTupleWithRetry', () => {
+  it('does not revisit private metadata fields to commit an Agent-state change', async () => {
+    const current = ownerSnapshot();
+    let ownerPathReads = 0;
+    const metadata = { ...current.value.metadata, get path() {
+      ownerPathReads += 1;
+      return current.value.metadata.path;
+    } };
+    const result = await prepareSessionMetadataTuplePatchV1({
+      current: { ...current, value: { ...current.value, metadata } },
+      mutation: { kind: 'agentState', update: state => ({ ...state, privateHeartbeat: 1 }) },
+      crypto: cryptoAdapter(),
+    });
+    expect(result?.mode === 'owner' && result.ownerMetadata).toBe(current.ownerMetadataEnvelope);
+    expect(ownerPathReads).toBe(0);
+  });
+
   it('publishes timing from the winning state attempt without disclosing request content', async () => {
     const initialSnapshot = ownerSnapshot({ agentState: { requests: { privateId: { tool: 'Private tool',
       arguments: { secret: 'Private arguments' }, createdAt: 10 } } } });

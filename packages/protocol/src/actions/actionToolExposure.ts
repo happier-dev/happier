@@ -1,10 +1,9 @@
 import type { ActionId } from './actionIds.js';
 import type { ActionsSettingsV1 } from './actionSettings.js';
 import type { ActionSpec, ActionSurfaces, ActionToolExposureMode, ActionToolExposureSurface } from './actionSpecs.js';
-import { SignedRootActionIdSchema } from './actionSpecs.js';
+import { findActionSpec, SignedRootActionIdSchema } from './actionSpecs.js';
 import {
   ACTION_TOOL_EXPOSURE_SURFACES,
-  getDefaultActionToolExposureMode,
   resolveActionSurfaceAvailability,
   resolveActionToolExposureModeForSurface,
 } from './actionSurfaceAvailability.js';
@@ -35,16 +34,17 @@ export function isActionDirectToolExposedOn(
   surface: keyof ActionSurfaces,
   context?: ActionToolExposureResolutionContext | null,
 ): boolean {
-  const availability = resolveActionSurfaceAvailability({
-    actionId: spec.id as ActionId,
+  const canonical = findActionSpec(spec.id);
+  const settings = context?.settings ?? null;
+  if (!canonical || resolveActionToolExposureModeForSurface(canonical, surface, settings) !== 'direct') return false;
+  return resolveActionSurfaceAvailability({
+    actionId: canonical.id,
     surface,
-    settings: context?.settings ?? null,
+    settings,
     isActionEnabled: context?.isActionEnabled ?? null,
     sessionMemoryEnabled: context?.sessionMemoryEnabled,
     requireToolBinding: true,
-  });
-  return availability.available
-    && (availability.effectiveToolExposureMode ?? getDefaultActionToolExposureMode(spec, surface)) === 'direct';
+  }).available;
 }
 
 export function isActionDiscoverableOnToolSurface(

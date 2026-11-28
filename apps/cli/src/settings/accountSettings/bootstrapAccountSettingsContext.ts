@@ -878,8 +878,9 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
       // Reuse only the current Account owner's already-admitted projection.
       // Fresh HTTP/decryption and publication still run; changed raw content or
       // a different Account/Home scope must go through the canonical parser.
-      const active = getActiveAccountSettingsSnapshot();
+      const { snapshot: active } = readIncumbent();
       return active?.scopeKey === scopeKey && active.rawSettings !== undefined
+        && isDeepStrictEqual(active.settingsSecretsReadKeys, settingsSecretsReadKeys)
         && isDeepStrictEqual(active.rawSettings, raw)
         ? active.settings
         : parseBootstrapAccountSettings(raw);
@@ -889,9 +890,10 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
       throw new AccountSettingsContentInvalidError(new Error('account_settings_mode_mismatch'));
     }
     if (!content) {
+      const rawSettings = {};
       return {
-        rawSettings: {},
-        settings: accountSettingsParse({}),
+        rawSettings,
+        settings: parseSettings(rawSettings),
       };
     }
     if (content.t === 'plain') {

@@ -82,6 +82,24 @@ describe('actionToolExposure', () => {
     }
   });
 
+  it('checks runtime policy for direct tools without checking discoverable-only tools', () => {
+    const spec = getActionSpec('settings.get');
+    let enablementReads = 0;
+    const isActionEnabled = () => {
+      enablementReads++;
+      return false;
+    };
+    expect(isActionDirectToolExposedOn(spec, 'agent', { isActionEnabled })).toBe(false);
+    expect(enablementReads).toBe(0);
+
+    const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: {
+      'settings.get': { toolExposureModes: { agent: 'direct' } },
+    } });
+    expect(isActionDirectToolExposedOn(spec, 'agent', { settings, isActionEnabled })).toBe(false);
+    expect(enablementReads).toBe(1);
+    expect(isActionDirectToolExposedOn(spec, 'agent', { settings, isActionEnabled: () => true })).toBe(true);
+  });
+
   it('delivers resource guidance through the same closed Action definition agents discover', () => {
     const definition = projectActionDefinitionForExternalDiscovery(actionSpecToActionDefinitionV1(getActionSpec('machines.storage.trash.move')));
     expect(definition.prompting).toMatchObject({ agentGuidance: expect.any(String) });

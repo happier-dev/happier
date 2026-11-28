@@ -4,6 +4,33 @@ import * as metadataWriters from './metadataWriters.js';
 import { createSessionOwnerMetadataV1, projectSessionOwnerCompatibilityViewV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 describe('metadataWriters', () => {
+  it('reads only the applicable Account preference for Session birth memory', () => {
+    let unrelatedReads = 0;
+    let memoryReads = 0;
+    const accountSettings = {
+      get themePreference() {
+        unrelatedReads++;
+        return 'dark';
+      },
+      get memoryUseInNewSessions() {
+        memoryReads++;
+        return true;
+      },
+    };
+    expect(metadataWriters.applyInitialSessionCreationFactsToMetadata({}, {
+      accountSettings, memoryEnabled: false,
+    }).work.memoryEnabled).toBe(false);
+    expect(memoryReads).toBe(0);
+    expect(metadataWriters.applyInitialSessionCreationFactsToMetadata({}, {
+      accountSettings,
+    }).work.memoryEnabled).toBe(true);
+    expect(memoryReads).toBe(1);
+    expect(unrelatedReads).toBe(0);
+    expect(metadataWriters.applyInitialSessionCreationFactsToMetadata({}, {
+      accountSettings: { memoryUseInNewSessions: 'true' },
+    }).work.memoryEnabled).toBe(false);
+  });
+
   it('keeps the selected Team model source intact at Session birth', () => {
     const modelSelection = { v: 2 as const, updatedAt: 17, ref: { source: 'team_resource' as const,
       teamId: 'team-model-owner', resourceId: 'model-resource', expectedResourceRevision: 3,

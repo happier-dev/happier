@@ -1,4 +1,5 @@
 import { accountSettingsParse, type AccountSettings } from '@happier-dev/protocol';
+import * as accountSettingsSchema from '@happier-dev/protocol/account/settings/accountSettings';
 import { deriveAccountMachineKeyFromRecoverySecret, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { readSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -110,6 +111,43 @@ describe('bootstrapAccountSettingsContext active Account scope fence', () => {
         refreshed: { settingsVersion: 3 }, active: { settingsVersion: 3 }, includeCoAuthors: '1',
       });
     }
+  });
+
+  it('reuses the admitted Settings projection on a later hosted Open with equal content', async () => {
+    const parse = vi.spyOn(accountSettingsSchema, 'accountSettingsParse');
+    const open = (account: string, settingsVersion: number, themePreference: 'light' | 'dark' | null) => (
+      runAddedHostedSession({ environment: {}, workingDirectory: serverDir, end() {} }, () =>
+        bootstrapAccountSettingsContext({
+          credentials: { token: accountToken(account, settingsVersion), encryption: null },
+          mode: 'blocking', refresh: 'force', expectedAccountEncryptionMode: 'plain',
+          deps: { readCache: async () => null, fetchFromServer: async () => ({
+            settingsContent: themePreference === null ? null : { t: 'plain', v: { themePreference } },
+            settingsVersion,
+          }) },
+        }))
+    );
+    const first = await open('same-settings', 1, 'dark');
+    expect(parse).toHaveBeenCalled();
+    parse.mockClear();
+    const same = await open('same-settings', 2, 'dark');
+    expect(same.settingsVersion).toBe(2);
+    expect(same.settings).toBe(first.settings);
+    expect(parse).not.toHaveBeenCalled();
+
+    const changed = await open('same-settings', 3, 'light');
+    expect(changed.settings.themePreference).toBe('light');
+    expect(changed.settings).not.toBe(first.settings);
+    expect(parse).toHaveBeenCalled();
+    parse.mockClear();
+    const other = await open('different-account', 1, 'dark');
+    expect(other.settings).not.toBe(first.settings);
+    expect(parse).toHaveBeenCalled();
+
+    const defaultSettings = await open('no-settings', 1, null);
+    parse.mockClear();
+    const sameDefaults = await open('no-settings', 2, null);
+    expect(sameDefaults.settings).toBe(defaultSettings.settings);
+    expect(parse).not.toHaveBeenCalled();
   });
 
   it.each(['same canonical key', 'rotated canonical key'] as const)(

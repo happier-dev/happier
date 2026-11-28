@@ -1641,9 +1641,10 @@ describe('createHappierMcpServer real host admission', () => {
     vi.spyOn(daemonControlClient, 'readDaemonPluginCatalog').mockResolvedValue({ kind: 'available', plugins: [], tools: [] });
     const daemon = await installAccountCatalogDaemonTransport({ sessionId, readMetadata: () => createTestMetadata() });
     const committed: unknown[] = [];
+    let runtimeMachineReads = 0;
     // Home HTTP and the durable transcript append are the system boundaries.
     // MCP registration, discovery, Action policy and the publication owner stay real.
-    const runtime = createHappierMcpServer(hostClient(sessionId, {
+    const session = hostClient(sessionId, {
       getPermissionMode: () => 'default',
       getServerFeaturesSnapshot: () => ({ status: 'ready', provenance: 'authenticated',
         features: FeaturesResponseSchema.parse({ features: { sessions: { enabled: true } }, capabilities: {} }) }),
@@ -1651,7 +1652,12 @@ describe('createHappierMcpServer real host admission', () => {
         committed.push(event);
         return { persisted: true, delivered: true, localId: 'session-update-original' };
       },
-    }), {
+    });
+    // The field is needed to construct the Action runtime, not to register or list tools.
+    Object.defineProperty(session, 'runtimeActionMachineId', {
+      get: () => { runtimeMachineReads += 1; return 'test-machine'; },
+    });
+    const runtime = createHappierMcpServer(session, {
       authorityScope: 'session', sessionCredentials: { token: 'session-token', encryption: null },
       actionsSettingsProvider: createActionSettingsProvider({ allowEnvironmentOverride: false,
         accountSettings: accountSettingsParse({ actionsSettingsV1: { v: 1, actions: {},
@@ -1660,6 +1666,9 @@ describe('createHappierMcpServer real host admission', () => {
     });
     try {
       await withMcpClient(runtime, async client => {
+        const listing = await client.listTools();
+        expect(listing.tools.map(tool => tool.name)).toContain('action_spec_search');
+        expect(runtimeMachineReads).toBe(0);
         const read = async (name: string, args: Record<string, unknown>) => {
           const response = CallToolResultSchema.parse(await client.callTool({ name, arguments: args }));
           const text = response.content.find(item => item.type === 'text');
@@ -1671,7 +1680,11 @@ describe('createHappierMcpServer real host admission', () => {
         expect(discovery.actionSpecs).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'session.update.post' })]));
         const result = await read('action_execute', { actionId: 'session.update.post', input: { summary: 'Ready for review' } });
         expect(result).toEqual({ sessionId, localId: 'session-update-original', persisted: true });
-        expect(committed).toEqual([{ type: 'worker-report', summary: 'Ready for review' }]);
+        const firstActionMachineReads = runtimeMachineReads;
+        expect(firstActionMachineReads).toBeGreaterThan(0);
+        await read('action_execute', { actionId: 'session.update.post', input: { summary: 'Review done' } });
+        expect(runtimeMachineReads).toBe(firstActionMachineReads);
+        expect(committed).toEqual([{ type: 'worker-report', summary: 'Ready for review' }, { type: 'worker-report', summary: 'Review done' }]);
       });
     } finally {
       await daemon.close();
@@ -1988,6 +2001,15 @@ describe('createHappierMcpServer', () => {
   });
   afterEach(unmockCaseModules);
 
+  async function requestActionFromHarness(runtime: ReturnType<typeof createHappierMcpServer>) {
+    try {
+      await expect(runtime.executeTool({ toolName: 'action_spec_get', args: { id: 'settings.get' } }))
+        .resolves.toMatchObject({ ok: true });
+    } finally {
+      await runtime.mcp.close();
+    }
+  }
+
   it('wires Account-server, Pool, and Follow owners into the authenticated in-session Agent host', async () => {
     const captured: { params?: Record<string, unknown>; overrides?: Record<string, unknown> } = {};
     const accountInputs: Array<Record<string, unknown>> = [];
@@ -2026,8 +2048,9 @@ describe('createHappierMcpServer', () => {
 
     const { createHappierMcpServer } = await import('@/mcp/createHappierMcpServer');
     const credentials = { token: 'agent-account-token', encryption: null } as const;
-    createHappierMcpServer({
+    await requestActionFromHarness(createHappierMcpServer({
       sessionId: 'sess_account_actions_1',
+      ...catalogHostTurn,
       rpcHandlerManager: { invokeLocal: async () => ({}) },
       updateMetadata: () => {},
       getServerBinding: () => ({
@@ -2035,7 +2058,7 @@ describe('createHappierMcpServer', () => {
         serverUrl: 'https://session-home-b.example.test',
       }),
       getServerFeaturesSnapshot: resolveServerFeaturesSnapshot,
-    } as any, { credentials });
+    } as any, { credentials }));
 
     expect(accountInputs).toHaveLength(1);
     expect(followInputs).toHaveLength(1);
@@ -2087,8 +2110,9 @@ describe('createHappierMcpServer', () => {
 
     const { createHappierMcpServer } = await import('@/mcp/createHappierMcpServer');
     const sessionCredentials = { token: 'restricted-session-token', encryption: null } as const;
-    createHappierMcpServer({
+    await requestActionFromHarness(createHappierMcpServer({
       sessionId: 'restricted-session',
+      ...catalogHostTurn,
       getServerBinding: getTestServerBinding,
       rpcHandlerManager: { invokeLocal: async () => ({}) },
       updateMetadata: () => {},
@@ -2097,7 +2121,7 @@ describe('createHappierMcpServer', () => {
       credentials: null,
       authorityScope: 'session',
       sessionList,
-    });
+    }));
 
     expect(accountOwner).not.toHaveBeenCalled();
     expect(followOwner).not.toHaveBeenCalled();
@@ -2412,8 +2436,9 @@ describe('createHappierMcpServer', () => {
 
     const { createHappierMcpServer } = await import('@/mcp/createHappierMcpServer');
 
-    createHappierMcpServer({
+    await requestActionFromHarness(createHappierMcpServer({
       sessionId: 'sess_mcp_live_backend_target_1',
+      ...catalogHostTurn,
       getServerBinding: getTestServerBinding,
       rpcHandlerManager: { invokeLocal: async () => ({}) },
       updateMetadata: () => {},
@@ -2424,7 +2449,7 @@ describe('createHappierMcpServer', () => {
         sourceKind: 'configured',
         configuredBackendId: 'review-bot',
       }),
-    } as any);
+    } as any));
 
     expect(captured.params).toBeDefined();
     expect(captured.params.getCurrentSessionBackendTarget()).toEqual({
@@ -2445,8 +2470,9 @@ describe('createHappierMcpServer', () => {
     }));
 
     const { createHappierMcpServer } = await import('@/mcp/createHappierMcpServer');
-    createHappierMcpServer({
+    await requestActionFromHarness(createHappierMcpServer({
       sessionId: 'bound-session',
+      ...catalogHostTurn,
       getServerBinding: getTestServerBinding,
       rpcHandlerManager: {
         invokeLocal: async () => ({
@@ -2475,7 +2501,7 @@ describe('createHappierMcpServer', () => {
         }),
       },
       updateMetadata: () => {},
-    } as any, { credentials: null } as any);
+    } as any, { credentials: null } as any));
 
     await expect(captured.overrides.daemonMemorySearch({
       query: { v: 1, query: 'retained', scope: { type: 'global' }, mode: 'hints' },
@@ -2496,12 +2522,13 @@ describe('createHappierMcpServer', () => {
     }));
 
     const { createHappierMcpServer } = await import('@/mcp/createHappierMcpServer');
-    createHappierMcpServer({
+    await requestActionFromHarness(createHappierMcpServer({
       sessionId: 'bound-session',
+      ...catalogHostTurn,
       getServerBinding: getTestServerBinding,
       rpcHandlerManager: { invokeLocal },
       updateMetadata: () => {},
-    } as any, { credentials: null } as any);
+    } as any, { credentials: null } as any));
 
     await expect(captured.overrides.daemonMemoryGetWindow({
       sessionId: 'other-session',
@@ -2527,8 +2554,9 @@ describe('createHappierMcpServer', () => {
 
     const { createHappierMcpServer } = await import('@/mcp/createHappierMcpServer');
 
-    createHappierMcpServer({
+    await requestActionFromHarness(createHappierMcpServer({
       sessionId: 'sess_mcp_live_location_1',
+      ...catalogHostTurn,
       getServerBinding: getTestServerBinding,
       rpcHandlerManager: { invokeLocal: async () => ({}) },
       updateMetadata: () => {},
@@ -2541,7 +2569,7 @@ describe('createHappierMcpServer', () => {
         host: 'leeroy-mbp',
         machineId: 'machine-1',
       }),
-    } as any);
+    } as any));
 
     expect(captured.params).toBeDefined();
     expect(captured.params.rawSession).toEqual({
