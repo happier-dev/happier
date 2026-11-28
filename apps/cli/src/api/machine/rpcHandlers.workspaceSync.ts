@@ -133,8 +133,13 @@ export function resolvePrivateWorkspaceSyncTargetExecution(
   admission: PrivateWorkspaceSyncTargetAdmission,
 ): PrivateWorkspaceSyncTargetExecutionResolution {
   const { routing } = admission;
-  const capture = adapter.resolvePrivateExecution?.(routing.phase === 'recover'
-    ? { relationshipId: routing.relationshipId } : { operationId: routing.operationId });
+  const capture = routing.phase === 'recover'
+    ? adapter.resolvePrivateExecution?.({ relationshipId: routing.relationshipId })
+    : adapter.resolvePrivateExecution?.({ operationId: routing.operationId })
+      ?? adapter.resolvePrivateExecution?.({ relationshipId: routing.operationId })
+      ?? (admission.sourceOperationId !== undefined
+        && deriveWorkspaceSyncRelationshipId(admission.sourceOperationId) === routing.operationId
+        ? adapter.resolvePrivateExecution?.({ operationId: admission.sourceOperationId }) : null);
   if (!capture) {
     if (routing.phase === 'recover' && adapter.hasRetainedRecoveryAdmission?.({ request: routing,
       accountServerId: routing.accountServerId, actorAccountId: admission.context.actorAccountId,
@@ -170,6 +175,14 @@ export function resolvePrivateWorkspaceSyncTargetExecution(
     if (!admittedRelationship || capture.relationshipId !== routing.relationshipId
       || input.targetWorkspaceRefId !== routing.targetWorkspaceRefId) return { kind: 'private_unavailable' };
   }
+  if (routing.phase === 'preflight' && routing.operationId !== input.operationId) {
+    return { kind: 'private_unavailable' };
+  }
+  if (routing.phase === 'release'
+    && routing.operationId !== input.operationId
+    && !(input.action.kind !== 'copy_once' && routing.operationId === deriveWorkspaceSyncRelationshipId(input.operationId))) {
+    return { kind: 'private_unavailable' };
+  }
   if (routing.phase === 'prepare') {
     const request = WorkspaceSyncTargetBootstrapPrepareV1Schema.parse(admission.request);
     const operation = request.owner.kind === 'copy_once' ? request.owner.operation : request.transientRelationship;
@@ -179,7 +192,9 @@ export function resolvePrivateWorkspaceSyncTargetExecution(
     if (request.owner.kind === 'relationship'
       && request.owner.relationshipId !== deriveWorkspaceSyncRelationshipId(input.operationId)) return { kind: 'private_unavailable' };
     if (request.owner.kind === 'copy_once'
-      && request.owner.operation.operationId !== input.operationId) return { kind: 'private_unavailable' };
+      && (request.owner.operation.operationId !== input.operationId
+        || request.bootstrapOperationId !== input.operationId
+        || routing.operationId !== input.operationId)) return { kind: 'private_unavailable' };
   }
   return { kind: 'matched', capture };
 }

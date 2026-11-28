@@ -545,6 +545,7 @@ export type PrivateWorkspaceSyncTargetAdmission = Readonly<{
   routing: WorkspaceSyncSourceWriterTargetRoutingV1['target'] | Readonly<{
     phase: 'recover'; accountServerId: string;
   } & WorkspaceSyncTargetConflictRecoverV1>;
+  sourceOperationId?: string;
   targetWorkspaceRefId?: string;
 }>;
 
@@ -1231,6 +1232,7 @@ export function admitSameMachineWorkspaceSyncTargetPhase(input: Readonly<{
   if (requiresRequesterWorkspaceCapture(source)) {
     const body = routing.target.phase === 'prepare' ? WorkspaceSyncTargetBootstrapPrepareV1Schema.safeParse(input.request) : null;
     const lookup = input.resolvePrivateCapture?.({ context: source, request: input.request, routing: routing.target,
+      sourceOperationId: routing.source.operationId,
       receivingMachine: { machineId: source.machineId, installationId: source.installationId },
       ...(body?.success ? { targetWorkspaceRefId: body.data.targetWorkspaceRefId } : {}) });
     if (lookup?.kind !== 'matched') return requesterWorkspaceCaptureRequired();
@@ -2033,6 +2035,7 @@ export async function authorizeMachineRpcRequest(
       const privateSyncLookup = workspaceTargetPhase && privateTargetRouting !== undefined
         ? machine.resolvePrivateWorkspaceSyncTargetExecution?.({ context,
           receivingMachine: { machineId: machine.machineId, installationId }, routing: privateTargetRouting,
+          ...(writerTargetRouting ? { sourceOperationId: writerTargetRouting.source.operationId } : {}),
           ...(privateTargetBody ? { targetWorkspaceRefId: privateTargetBody.targetWorkspaceRefId } : {}),
           request: request.params,
         }) ?? null : privateRecovery?.success && recoveryHome
