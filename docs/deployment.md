@@ -4845,6 +4845,13 @@ name. A failed preparation or stale revision applies neither half. Saving this
 review changes desired configuration; the person then runs the ordinary Deploy
 to apply it. The original service remains running until that Deploy.
 
+A Receipt for `stateful_service_multi_machine` opens database recovery for the
+Compose service named in the refusal. A supported PostgreSQL service opens the
+same Move review. If the source still has several configured servers, the review
+links to Servers and build and waits for a supported source before copying. The
+managed alternative opens the existing Create or Link review. Existing managed
+import restrictions still apply.
+
 The Project deployment read controller opens Environment collection content and
 visible history receipt content through the existing Account Artifact reader.
 Compact Environment rows expose optional `backupConfigured`, derived from that

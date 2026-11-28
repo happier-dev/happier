@@ -50,7 +50,7 @@ it.each([
 // These codes reach people through Deploy, Domain review, and Store preparation.
 const reachableFailures = [
     ['build_platform_unsupported', 'buildMachineSetup'],
-    ['stateful_service_multi_machine', 'settings'],
+    ['stateful_service_multi_machine', 'databaseRecovery'],
     ['native_build_failed', 'logs'],
     ['deployment_out_of_memory', 'machines'],
     ['deployment_disk_full', 'machines'],

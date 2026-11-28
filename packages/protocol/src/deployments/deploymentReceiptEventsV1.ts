@@ -61,6 +61,7 @@ export const DeploymentReceiptFailureV1Schema = lazyZodSchema(() => z.strictObje
   failureCause: z.optional(ActionFailureCauseV1Schema),
   nativeCompose: DeploymentFailureRecoveryV1Schema.shape.nativeCompose,
   nativeActivation: DeploymentFailureRecoveryV1Schema.shape.nativeActivation,
+  statefulService: DeploymentFailureRecoveryV1Schema.shape.statefulService,
   nativeCleanupWarnings: z.optional(z.array(receiptResult.DeploymentNativeCleanupWarningV1Schema)),
   effectAttempted: z.optional(z.boolean()),
 }));

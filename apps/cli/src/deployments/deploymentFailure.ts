@@ -63,11 +63,12 @@ export function projectDeploymentReceiptFailure(result: ActionExecuteFailure,
     const sourceAdmission = DeploymentSourceAdmissionFailureV1Schema.safeParse(authorDetails);
     const validation = readDeploymentOutputValidation(result);
     const recovery = DeploymentFailureRecoveryV1Schema.safeParse(result.details).data;
-    const commandRecovery = recovery?.nativeCompose || recovery?.nativeActivation || result.failureCause?.errorCode === 'deployment_docker_socket_access_denied'
+    const retainedRecovery = recovery?.nativeCompose || recovery?.nativeActivation || recovery?.statefulService
+        || result.failureCause?.errorCode === 'deployment_docker_socket_access_denied'
         ? recovery : undefined;
     return DeploymentReceiptFailureV1Schema.parse(projectDeploymentFailureRecoveryV1({ code: result.errorCode,
         phase: phase.success ? phase.data : fallbackPhase,
-        ...commandRecovery,
+        ...retainedRecovery,
         ...(validation ? { validation } : {}),
         ...(sourceAdmission.success ? { sourceAdmission: sourceAdmission.data } : {}),
         failureCause: result.failureCause ?? normalizeActionExecutorThrownError(result, `deployment.${fallbackPhase}`).failureCause,
@@ -160,7 +161,11 @@ function readAuthoredDeploymentFailure(errorCode: string, error: unknown, phase:
         ? DeploymentFailureRecoveryV1Schema.safeParse(normalizedDetails).data : undefined;
     const commandRecovery = recovery?.nativeCompose || recovery?.nativeActivation || thrownCause?.errorCode === 'deployment_docker_socket_access_denied'
         ? recovery : undefined;
-    const retainedDetails = commandRecovery ?? readDeploymentBackupMaintenanceFailureEvidenceV1(error)
+    const statefulService = errorCode === 'stateful_service_multi_machine' && reason && typeof reason === 'object' && 'service' in reason
+        ? DeploymentFailureRecoveryV1Schema.shape.statefulService.safeParse(reason.service).data : undefined;
+    const retainedDetails = commandRecovery
+        ?? (statefulService ? projectDeploymentFailureRecoveryV1({ statefulService }, errorCode) : undefined)
+        ?? readDeploymentBackupMaintenanceFailureEvidenceV1(error)
         ?? (error instanceof MachineNativeEffectAdmissionError && error.code === errorCode ? error.details : undefined)
         ?? (error instanceof ManagedMachineControllerError && error.code === errorCode && error.details?.kind === 'managedNative'
             ? error.details : undefined)

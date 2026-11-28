@@ -11047,6 +11047,13 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 native deployment failures retain an optional `statefulService`
+in the private Receipt when storage admission refuses a multi-Machine deployment.
+It identifies the Compose service for database recovery and confers no placement
+or mutation authority. Existing Receipts omit the field and still open recovery.
+Use matching Protocol, CLI and UI sources on the 0.3 direct cut for the closed
+Receipt format. Structural Events keep their existing projection.
+
 Unreleased 0.3 database teardown previews and approval reviews may include
 `providerScope` with the provider's project and environment display names.
 A removal result can carry `volume` with its name and provider label in the

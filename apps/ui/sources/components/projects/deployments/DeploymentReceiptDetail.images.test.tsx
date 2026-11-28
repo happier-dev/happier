@@ -300,7 +300,7 @@ describe('Receipt → failed', () => {
         expect(String(banner?.props.description)).toMatch(/web.*78.*FIELD_NOTES_SECRET_KEY/);
         expect(String(banner?.props.description)).not.toMatch(/read (the )?deployment logs/i);
         expect(opened).toEqual([['variables']]);
-      } else expect(opened).toEqual([code === 'stateful_service_multi_machine' ? ['settings']
+      } else expect(opened).toEqual([code === 'stateful_service_multi_machine' ? ['databaseRecovery']
         : [readDeploymentFailureRecoveryV1(failure.code, failure).nextAction.destination, { machineId: 'builder-c' }]]);
     } finally { await screen.unmount(); controller.retire(); }
   });

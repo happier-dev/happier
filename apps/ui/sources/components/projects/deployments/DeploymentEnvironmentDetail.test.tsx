@@ -629,6 +629,62 @@ it.each([true, false])('shows app-controlled telemetry only for a serving member
   } finally { await screen.unmount(); controller.retire(); }
 });
 
+it.each(['move', 'managed'] as const)('opens the existing database %s review from a failed stateful Receipt', async remedy => {
+  const { ModalProvider } = await import('@/modal');
+  const base = environmentDetailForHome();
+  const targetLinks = base.targetLinks.map(link => ({
+    ...link, targetLink: { ...link.targetLink,
+      predecessorTargetLinkId: 'incumbent-target',
+      machines: [...link.targetLink.machines, 'second'],
+      members: [...link.targetLink.members, { machineId: 'second', installationId: 'second-install', state: 'joining' as const }],
+    },
+  }));
+  const detail = { ...base, targetLinks, content: { ...base.content,
+    template: {
+      templateRef: { sourceId: 'apps', itemId: 'postgres', version: '17', ref: { kind: 'content' as const, digest: `sha256:${'a'.repeat(64)}` } },
+      definition: { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` },
+      services: ['database', 'other'], data: [
+        { engine: 'postgres' as const, service: 'database', port: 5432 },
+        { engine: 'postgres' as const, service: 'other', port: 5432 },
+      ],
+    },
+    backup: {
+      configRevision: 1, occurrenceId: 'backup:repository', destinationRef: { pluginId: 'happier.backup.destinations', localId: 'local' },
+      config: { path: '/fixture/backup' }, credentialBindings: [], ownership: { environmentId: base.environment.id, prefix: 'fixture' },
+      sources: [{ kind: 'dump' as const, sourceId: 'database', service: 'database', consistency: 'logical' as const }],
+      retention: { kind: 'keepEverything' as const },
+    },
+  } };
+  const failed = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({
+    id: 'stateful-refusal', targetLinkId: detail.environment.runtimeTargetLinkId!, state: 'failed',
+  }) });
+  const receipt = { ...failed, content: DeploymentOwnServerContentV1Schema.parse({ ...failed.content,
+    failure: { code: 'stateful_service_multi_machine', phase: 'activate', statefulService: 'database' },
+  }) };
+  const { controller } = controllerFor({ detail, history: [receipt] });
+  const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+  routerMock.module.router.setParams({ deploymentEnvironment: detail.environment.id, deployment: receipt.deployment.id });
+  const screen = await renderScreen(<ModalProvider><ProjectDeploymentsView controller={controller}
+    demand={shown} accountId={scope.accountId} serverId={scope.serverId} sourceId={scope.projectSourceId} lifetime={lifetime} />
+  </ModalProvider>);
+  try {
+    const recover = 'project-deployments.receipt.outcome.failed.recovery';
+    await waitForContent(screen, recover);
+    await screen.pressByTestIdAsync(recover);
+    const id = remedy === 'move' ? 'project-deployments.environment.databaseRecovery.move:database'
+      : 'project-deployments.environment.databaseRecovery.managed';
+    await waitForContent(screen, id);
+    expect(screen.findByTestId('project-deployments.environment.databaseRecovery.move:other')).toBeNull();
+    await screen.pressByTestIdAsync(id);
+    if (remedy === 'move') {
+      await waitForContent(screen, 'project-deployments.move.source.servers');
+      expect(screen.findByTestId('project-deployments.move.copy')?.props.disabled).toBe(true);
+    } else {
+      await waitForContent(screen, 'managed-data');
+    }
+  } finally { await screen.unmount(); controller.retire(); }
+});
+
 // ENV-REINSTALL-1123 (owner 11-23): a reinstalled Machine keeps its Environment. The read's `runtimeReinstall` is the
 // trigger; the Overview offers one "Reinstall on this Machine", or says why it can't when someone else controls it.
 it.each([true, false])('offers Reinstall on this Machine from the read, with what stays and which secrets re-seal (available: %s)', async available => {

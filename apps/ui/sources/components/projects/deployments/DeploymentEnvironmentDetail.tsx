@@ -137,7 +137,8 @@ import { DeploymentTabState } from './DeploymentTabState';
 import { DeploymentVariablesPanel } from './DeploymentVariablesPanel';
 import { DeploymentDataCard } from './DeploymentDataCard';
 import { showDeploymentAddSheet, showDeploymentTemplateUpdateSheet,
-  showDeploymentAppSourcesSheet } from './DeploymentDatabasePage';
+  showDeploymentAppSourcesSheet, showManagedDataSheet } from './DeploymentDatabasePage';
+import { deploymentDatabaseMoveReview } from './DeploymentDatabaseMoveSheet';
 import { describeRegistrySourceFailure } from '@/registries/describeRegistrySourceStatus';
 import { useRegistryAppUpdate } from '@/registries/useRegistryUpdateCheck';
 import { showDeploymentDispositionSheet } from './DeploymentDispositionSheet';
@@ -404,7 +405,7 @@ export const DeploymentEnvironmentDetail = React.memo(
     [backupConfigured, props.serverId, props.environmentId]);
     const [ownDestination, setOwnDestination] =
       React.useState<DeploymentEnvironmentDestinationV1>(OVERVIEW);
-    const { tab, section: settingsSection } =
+    const { tab, section: settingsSection, statefulService } =
       props.destination ?? ownDestination;
     const overview = tab === 'overview';
     const catalogUpdate = useRegistryAppUpdate(detail,
@@ -1092,7 +1093,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                   : t('projects.deployments.overviewStatus.latestFailedTitle')}
               description={latest ? deploymentHistoryLead(latest, failure)?.text : undefined}
               action={fix ? { label: fix.label, onPress: () => banner.openRecovery?.(fix.destination,
-                fix.openProject ? { openProject: fix.openProject } : { deploymentId: failedId }) }
+                fix.openProject ? { openProject: fix.openProject } : { deploymentId: failedId, statefulService: fix.statefulService }) }
                 : { label: t('projects.deployments.overviewStatus.openReceipt'), onPress: () => props.onOpenReceipt(failedId) }}
             />
           );
@@ -1237,6 +1238,20 @@ export const DeploymentEnvironmentDetail = React.memo(
           {attentionNotice}
           {tab === 'overview' ? (
             <>
+              {settingsSection === 'databaseRecovery' && lifetime && previewActions && detail.environment.capabilities.manage ? (
+                <ItemGroup testID="project-deployments.environment.databaseRecovery" title={t('projects.deployments.dataTitle')}>
+                  {detail.content.template?.data?.map(data => {
+                    if (statefulService && data.service !== statefulService) return null;
+                    const move = deploymentDatabaseMoveReview({ source: detail, data, actions: previewActions, review, lifetime }, true);
+                    return move ? <Item key={data.service}
+                      testID={`project-deployments.environment.databaseRecovery.move:${data.service}`}
+                      title={t('projects.deployments.databaseMoveTitle')} subtitle={data.service} onPress={move} /> : null;
+                  })}
+                  <Item testID="project-deployments.environment.databaseRecovery.managed"
+                    title={t('projects.deployments.managedData.add')} subtitle={t('projects.deployments.managedData.addDescription')}
+                    onPress={() => showManagedDataSheet({ detail, lifetime, actions: previewActions, onApproval: review.request })} />
+                </ItemGroup>
+              ) : null}
               {deploymentAttentionLeaves(attention, 'secretWithdrawn') ? (
                 <DeploymentSecretBindingsNotice secretScope={detail.secretScope} canManageBindings={detail.environment.capabilities.manageBindings}
                   refresh={environment.refresh}
@@ -1817,6 +1832,7 @@ export function DeployOutcomeBanner(
         : recovery && openRecovery ? { action: { label: recovery.nextAction.label,
           onPress: () => openRecovery(recovery.nextAction.destination,
             recovery.nextAction.openProject ? { openProject: recovery.nextAction.openProject }
+              : recovery.nextAction.statefulService ? { statefulService: recovery.nextAction.statefulService }
               : failedDeploymentId ? { deploymentId: failedDeploymentId }
                 : recoveryMachineId ? { machineId: recoveryMachineId } : undefined) } } : {})}
       // The typed code is for support; the sentence says what it left. When the typed remedy is the sentence, the

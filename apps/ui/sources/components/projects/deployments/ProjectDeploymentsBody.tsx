@@ -248,9 +248,14 @@ const ProjectDeploymentsPage = React.memo(
     const routeDefaults = readProjectRouteStringParam(params.deploymentSettings) === 'defaults';
     const routeTab = readProjectRouteStringParam(params.deploymentTab);
     const routeSection = readProjectRouteStringParam(params.deploymentSection);
+    const [databaseRecovery, setDatabaseRecovery] = React.useState<Readonly<{
+      serverId: string; accountId: string; environmentId: string | null; service: string;
+    }>>();
+    const statefulService = databaseRecovery?.serverId === props.serverId && databaseRecovery.accountId === props.accountId
+      && databaseRecovery.environmentId === routeEnvironmentId ? databaseRecovery.service : undefined;
     const destination = React.useMemo(
-      () => resolveDeploymentEnvironmentDestinationV1({ tab: routeTab, section: routeSection }),
-      [routeSection, routeTab],
+      () => resolveDeploymentEnvironmentDestinationV1({ tab: routeTab, section: routeSection, statefulService }),
+      [routeSection, routeTab, statefulService],
     );
     const routeNewDefinition = readProjectRouteStringParam(params.newDefinition);
     const newDefinition = routeNewDefinition === 'compose' || routeNewDefinition === 'image' ? routeNewDefinition : null;
@@ -308,11 +313,13 @@ const ProjectDeploymentsPage = React.memo(
       });
     }, [router]);
     const navigateEnvironment = React.useCallback((next: DeploymentEnvironmentDestinationV1) => {
+      setDatabaseRecovery(next.statefulService ? { serverId: props.serverId, accountId: props.accountId,
+        environmentId: selectionRef.current.environmentId, service: next.statefulService } : undefined);
       router.setParams({
         deploymentTab: next.tab === 'overview' ? undefined : next.tab,
         deploymentSection: next.section ?? undefined,
       });
-    }, [router]);
+    }, [props.accountId, props.serverId, router]);
     const items = collection.snapshot.value?.items ?? [];
     const status = collection.snapshot.status;
     const readFailure = collection.snapshot.failure;

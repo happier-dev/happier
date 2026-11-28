@@ -11,8 +11,10 @@ describe('Environment navigation destinations', () => {
     it('owns exactly seven tabs, the Settings sections and the Overview sections, in page order', () => {
         expect(DEPLOYMENT_ENVIRONMENT_TABS_V1).toEqual(['overview', 'history', 'variables', 'domains', 'telemetry', 'permissions', 'settings']);
         expect(DEPLOYMENT_ENVIRONMENT_SETTINGS_SECTIONS_V1)
-            .toEqual(['servers-build', 'registry', 'sharing', 'controller', 'rollout', 'checks-alerts', 'backups', 'previews']);
-        expect(DEPLOYMENT_ENVIRONMENT_OVERVIEW_SECTIONS_V1).toEqual(['automations']);
+            .toEqual(['servers-build', 'registry', 'sharing', 'controller', 'rollout', 'checks-alerts', 'database-access', 'backups', 'previews']);
+        expect(DEPLOYMENT_ENVIRONMENT_OVERVIEW_SECTIONS_V1).toEqual(['databaseRecovery', 'automations']);
+        expect(resolveDeploymentEnvironmentDestinationV1({ tab: 'overview', section: 'databaseRecovery' }))
+            .toEqual({ tab: 'overview', section: 'databaseRecovery' });
         // A link to the Automations lands on the Overview that holds them; on another tab the section drops.
         expect(resolveDeploymentEnvironmentDestinationV1({ tab: 'overview', section: 'automations' }))
             .toEqual({ tab: 'overview', section: 'automations' });

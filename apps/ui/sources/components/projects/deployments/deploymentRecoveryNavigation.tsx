@@ -36,6 +36,8 @@ export function useOpenDeploymentRecoveryDestination(input: Readonly<{
     switch (destination) {
       case 'history': case 'variables': case 'domains': case 'permissions': case 'settings':
         openEnvironmentTab({ tab: destination, section: null }); return;
+      case 'databaseRecovery':
+        openEnvironmentTab({ tab: 'overview', section: destination, ...(at?.statefulService ? { statefulService: at.statefulService } : {}) }); return;
       case 'logs':
         if (at?.deploymentId) { openReceipt(at.deploymentId); return; }
         openEnvironmentTab({ tab: 'overview', section: null }); return;
@@ -94,9 +96,15 @@ function ResolvedDeploymentRecoveryButton(props: OperationRecoveryProps & Readon
         loading={projectSourceId === null}
         disabled={projectSourceId === null}
         onPress={() => {
+            if (action.destination === 'databaseRecovery' && address.kind === 'deployment') {
+                openReceipt(address.deploymentId);
+                onOpened();
+                return;
+            }
             openRecovery(action.destination, {
                 machineId: action.machineId,
                 openProject: action.openProject,
+                statefulService: action.statefulService,
                 deploymentId: address.kind === 'deployment' ? address.deploymentId : undefined,
             });
             onOpened();

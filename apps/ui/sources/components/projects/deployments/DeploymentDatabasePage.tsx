@@ -63,7 +63,7 @@ import { StoreMachineScopeContext } from '@/components/settings/plugins/model/us
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { DeploymentEnvironmentChooser } from './DeploymentEnvironmentCollection';
-import { showDeploymentDatabaseMoveSheet } from './DeploymentDatabaseMoveSheet';
+import { deploymentDatabaseMoveReview } from './DeploymentDatabaseMoveSheet';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
 import { isPrivateServiceExport, privateServiceExportAuthoring } from './privateServiceExport';
 import { privateServiceExportReachLabel, privateServiceExportUnavailableReason } from './DeploymentPrivateServiceExports';
@@ -457,9 +457,9 @@ export function DeploymentDatabasePage(
     title: t('projects.deployments.databaseConnectTitle'),
     testID: 'project-deployments.connect.modal',
   }) : null;
-  const openMove = database.kind === 'selfHosted' && database.data.engine === 'postgres' && controller && actions && factsInput && lifetime
-    && detail.environment.capabilities.manage ? () => showDeploymentDatabaseMoveSheet({
-      source: detail, data: database.data, actions, backupTarget: factsInput,
+  const openMove = database.kind === 'selfHosted' && controller && actions && lifetime
+    ? deploymentDatabaseMoveReview({
+      source: detail, data: database.data, actions,
       review: props.review, lifetime,
     }) : null;
   const openManaged = database.kind === 'managed' && lifetime && actions && detail.environment.capabilities.manage
@@ -694,7 +694,7 @@ type AddSheetProps = DeploymentAddSheetInput & CustomModalInjectedProps & Readon
   /** The managed-database way in: one more choice on the chooser step, gone once an app is chosen. */
   managedEntry?: React.ReactNode;
 }>;
-function showManagedDataSheet(input: DeploymentManagedDataInput): void {
+export function showManagedDataSheet(input: DeploymentManagedDataInput): void {
   showDeploymentSheet({ component: DeploymentManagedDataSheet, props: input,
     title: t('projects.deployments.managedData.title'), testID: 'project-deployments.managed.modal' });
 }

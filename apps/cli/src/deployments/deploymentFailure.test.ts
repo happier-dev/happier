@@ -17,6 +17,20 @@ import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/execut
 import { settleActionOutput } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 describe('deployment failure diagnostics', () => {
+    it('keeps the emitting service when native storage refuses before activation', async () => {
+        const refusal = await inspectNativeComposeStorage({
+            model: { services: { app: {}, database: {} } },
+            imageConfigs: new Map([['app', { config: {} }], ['database', { config: { Volumes: { '/data': {} } } }]]),
+            runtimeMachineCount: 2,
+            isUnchangedManifestSource: async () => false,
+        }).catch(projectDeploymentException);
+        expect(refusal).toMatchObject({ ok: false, errorCode: 'stateful_service_multi_machine' });
+        if (!('ok' in refusal)) throw new Error('Expected native storage refusal');
+        const receipt = projectDeploymentReceiptFailure(refusal, 'activate');
+        expect(receipt).toMatchObject({ code: 'stateful_service_multi_machine', statefulService: 'database' });
+        expect(readDeploymentFailureRecoveryV1(receipt.code, receipt).nextAction.destination).toBe('databaseRecovery');
+    });
+
     it('keeps an authored prerequisite refusal public shape while logging its closed cause', () => {
         const warn = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
         try {

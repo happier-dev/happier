@@ -36,10 +36,12 @@ export function describeDeploymentImageResolutionFailureV1(failure: z.infer<type
  */
 export type DeploymentFailureRecoveryDestinationV1 =
     | 'source' | 'domains' | 'variables' | 'permissions' | 'settings' | 'history' | 'logs'
-    | 'machines' | 'machineAdminAccess' | 'buildMachineSetup' | 'connectedAccounts' | 'registryCredentials' | 'store' | 'review' | 'deploy' | 'reinstall';
+    | 'machines' | 'machineAdminAccess' | 'buildMachineSetup' | 'connectedAccounts' | 'registryCredentials' | 'store' | 'review' | 'deploy' | 'reinstall'
+    | 'databaseRecovery';
 export type DeploymentFailureRecoveryNextActionV1 = Readonly<{
     kind: 'navigate'; destination: DeploymentFailureRecoveryDestinationV1; label: string; machineId?: string;
     openProject?: OpenProjectInputV1;
+    statefulService?: string;
 }>;
 export type DeploymentFailureRecoveryPresentationV1 = Readonly<{
     requiredFact: string; remedy: string; nextAction: DeploymentFailureRecoveryNextActionV1;
@@ -61,7 +63,7 @@ function dockerSocketAccessRecovery(endpoint?: string) {
 const recoveries = {
     deployment_docker_socket_access_denied: dockerSocketAccessRecovery(),
     restore_snapshot_not_confirmed: recovery('The Machine snapshot was not confirmed. Data has not been replaced. Stop here, or reopen Restore and review continuing without a confirmed snapshot. An agent can review the original restore input with snapshot disabled.', 'settings', 'Review restore'),
-    stateful_service_multi_machine: recovery('A service keeps data on its server, so this Environment cannot run on several servers. Keep one server, or ask an agent to move the data service into a separate Environment and connect this app to it before adding servers.', 'settings', 'Review servers and data'),
+    stateful_service_multi_machine: recovery('A service keeps data on its server, so this Environment needs one server. To run the app on several servers, move its database to a separate Environment or review creating or linking a managed database. Managed setup does not import existing data.', 'databaseRecovery', 'Review database options'),
     deployment_start_first_unavailable: recovery('Start First runs the new release beside the current one, so every service needs a health check and must not keep data on the server, publish a fixed host port, or set a container name or fixed address. Switch the rollout to Recreate in Environment Settings, or change the Compose file.', 'settings', 'Review rollout'),
     build_platform_unsupported: recovery('The build Machine could not execute a platform required by this build. Open its Setup and check Build emulation, or choose a capable build Machine in Environment Settings. Emulated builds are slower.', 'buildMachineSetup', 'Open build Machine Setup'),
     deployment_out_of_memory: recovery('The native process reported that it ran out of memory. Review memory use on the executing Machine, reduce the build or app memory demand, or choose a Machine with more memory before trying again.', 'machines', 'Review Machine memory'),
@@ -264,6 +266,7 @@ const legacyGenericRemedy = 'Inspect the reported deployment phase and current t
 const fallback = recovery('Happier could not complete this change. Check deployment history and the running app before trying again.', 'history', 'Review deployment');
 // This owner's earlier wordings, saved into receipts; they read as the current remedy for their code.
 const supersededRemedies: ReadonlySet<string> = new Set([legacyGenericRemedy,
+    'A service keeps data on its server, so this Environment cannot run on several servers. Keep one server, or ask an agent to move the data service into a separate Environment and connect this app to it before adding servers.',
     'A machine operation failed. Open the deployment logs to find the failed step before trying again.',
     fallback.remedy,
     'Open Source details and set the Repository address and default branch or revision. Then open or accept its checkout on the selected Machine. Choose a revision containing your Compose file, then review the deployment again.',
@@ -401,6 +404,12 @@ function recoveryFor(details: Record<string, unknown>, errorCode?: string, reque
         diagnostic?.reason, details.reason, details.code, errorCode];
     const code = codes.find((candidate): candidate is keyof typeof recoveries =>
         typeof candidate === 'string' && Object.hasOwn(recoveries, candidate));
+    if (code === 'stateful_service_multi_machine') {
+        const selected = recoveries.stateful_service_multi_machine;
+        const statefulService = DeploymentFailureRecoveryV1Schema.shape.statefulService.safeParse(
+            failure?.statefulService ?? details.statefulService).data;
+        return statefulService ? { ...selected, nextAction: { ...selected.nextAction, statefulService } } : selected;
+    }
     if (code === 'deployment_docker_socket_access_denied' && typeof details.dockerEndpoint === 'string'
         && /^(?:unix:\/\/\/[a-z0-9_./-]+\.sock|npipe:\/\/\/\/\.\/pipe\/[a-z0-9_-]+)$/iu.test(details.dockerEndpoint)) {
         return dockerSocketAccessRecovery(details.dockerEndpoint);

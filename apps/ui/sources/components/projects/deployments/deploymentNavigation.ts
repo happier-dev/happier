@@ -1,4 +1,4 @@
-import type { DeploymentEnvironmentDestinationV1, DeploymentEnvironmentSettingsSectionV1, DeploymentEnvironmentTabV1 } from '@happier-dev/deployments';
+import type { DeploymentEnvironmentDestinationV1, DeploymentEnvironmentTabV1 } from '@happier-dev/deployments';
 import type { SettingsCollectionFilter } from '@/components/settings/shell/settingsCollectionAdapter';
 
 /**
@@ -36,8 +36,8 @@ export function readServiceCheckRouteParams(params: Readonly<Record<string, stri
 
 type DeploymentEnvironmentAddress = Readonly<{
     serverId: string; projectSourceId: string; environmentId: string; deploymentId?: string; tab?: DeploymentEnvironmentTabV1;
-    /** A Settings section, opened in place on the Settings tab. */
-    section?: DeploymentEnvironmentSettingsSectionV1;
+    /** An in-page section on the selected Environment tab. */
+    section?: NonNullable<DeploymentEnvironmentDestinationV1['section']>;
     /** Open the incumbent native setup sheet for this exact Environment. */
     setup?: 'backups';
     /** One of the Environment's databases, opened in place like a receipt (P9). */

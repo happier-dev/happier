@@ -570,7 +570,8 @@ export const DeploymentReceiptDetail = React.memo(
       // The build Machine's setup, or the one Machine the cause is fixed on.
       onPress: () => {
         const destination = recovery.nextAction.destination;
-        const at = destination === 'buildMachineSetup' && content.buildMachineId ? { machineId: content.buildMachineId }
+        const at = recovery.nextAction.statefulService ? { statefulService: recovery.nextAction.statefulService }
+          : destination === 'buildMachineSetup' && content.buildMachineId ? { machineId: content.buildMachineId }
           : destination === 'machines' && content.machines.length === 1 ? { machineId: content.machines[0]! } : null;
         if (at) props.onOpenRecoveryDestination?.(destination, at);
         else props.onOpenRecoveryDestination?.(destination);

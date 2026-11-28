@@ -11,7 +11,7 @@ import { HappyError } from '@/utils/errors/errors';
 import { readActionApprovalRequestCreatedError } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
 /** The exact target of an existing recovery surface. */
-export type DeploymentRecoveryTarget = Readonly<{ machineId?: string; deploymentId?: string; openProject?: OpenProjectInputV1 }>;
+export type DeploymentRecoveryTarget = Readonly<{ machineId?: string; deploymentId?: string; openProject?: OpenProjectInputV1; statefulService?: string }>;
 
 type DeploymentPressReview = Readonly<{
   request: (artifactId: string) => void;

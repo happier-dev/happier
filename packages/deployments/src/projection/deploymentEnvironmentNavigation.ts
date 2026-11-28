@@ -12,14 +12,15 @@ export const DEPLOYMENT_ENVIRONMENT_SETTINGS_SECTIONS_V1 = [
 ] as const;
 export type DeploymentEnvironmentSettingsSectionV1 = (typeof DEPLOYMENT_ENVIRONMENT_SETTINGS_SECTIONS_V1)[number];
 
-/** The Overview's linked sections: its Automations (triggers and push setup) close the page (dEnvOv KEEP). */
-export const DEPLOYMENT_ENVIRONMENT_OVERVIEW_SECTIONS_V1 = ['automations'] as const;
+/** The Overview holds stateful database recovery and closes with Automations. */
+export const DEPLOYMENT_ENVIRONMENT_OVERVIEW_SECTIONS_V1 = ['databaseRecovery', 'automations'] as const;
 export type DeploymentEnvironmentOverviewSectionV1 = (typeof DEPLOYMENT_ENVIRONMENT_OVERVIEW_SECTIONS_V1)[number];
 
 export type DeploymentEnvironmentDestinationV1 = Readonly<{
     tab: DeploymentEnvironmentTabV1;
     /** A Settings section on the Settings tab, an Overview section on the Overview; null elsewhere. */
     section: DeploymentEnvironmentSettingsSectionV1 | DeploymentEnvironmentOverviewSectionV1 | null;
+    statefulService?: string;
 }>;
 
 const TABS: ReadonlySet<string> = new Set(DEPLOYMENT_ENVIRONMENT_TABS_V1);
@@ -32,11 +33,12 @@ export function isDeploymentEnvironmentSettingsSectionV1(section: unknown): sect
 }
 
 /** Canonicalizes an untrusted tab/section pair: unknown tabs open Overview, unknown sections the Settings landing. */
-export function resolveDeploymentEnvironmentDestinationV1(input: Readonly<{ tab?: unknown; section?: unknown }>): DeploymentEnvironmentDestinationV1 {
+export function resolveDeploymentEnvironmentDestinationV1(input: Readonly<{ tab?: unknown; section?: unknown; statefulService?: unknown }>): DeploymentEnvironmentDestinationV1 {
     const tab = typeof input.tab === 'string' && TABS.has(input.tab) ? input.tab as DeploymentEnvironmentTabV1 : 'overview';
     const section = typeof input.section !== 'string' ? null
         : tab === 'settings' && SECTIONS.has(input.section) ? input.section as DeploymentEnvironmentSettingsSectionV1
         : tab === 'overview' && OVERVIEW_SECTIONS.has(input.section) ? input.section as DeploymentEnvironmentOverviewSectionV1
         : null;
-    return { tab, section };
+    return section === 'databaseRecovery' && typeof input.statefulService === 'string' && input.statefulService
+        ? { tab, section, statefulService: input.statefulService } : { tab, section };
 }

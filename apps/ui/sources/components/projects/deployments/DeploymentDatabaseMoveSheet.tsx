@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useRouter } from 'expo-router';
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployments/contracts/v1';
-import { deploymentDataTargetOperands, isDeploymentDatabaseMoveCandidateV1, type DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
+import { deploymentBackupTargetOperands, deploymentDataTargetOperands, isDeploymentDatabaseMoveCandidateV1, type DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 import { Item } from '@/components/ui/lists/Item';
@@ -44,13 +44,18 @@ type Input = Readonly<{
   source: Detail;
   data: Data;
   actions: Actions;
-  backupTarget: Parameters<Actions['runBackup']>[0];
+  backupTarget: Parameters<Actions['runBackup']>[0] | null;
   review: DeploymentReviewHandle;
   lifetime: ServerAccountScopeLifetime;
 }>;
 
-export function showDeploymentDatabaseMoveSheet(input: Input): void {
-  showDeploymentSheet({ component: DeploymentDatabaseMoveSheet, props: input,
+export function deploymentDatabaseMoveReview(input: Omit<Input, 'backupTarget'>, fromStatefulRefusal = false): (() => void) | null {
+  const { source, data } = input;
+  if (!source.environment.capabilities.manage || data.engine !== 'postgres') return null;
+  const backup = source.content.backup;
+  const backupTarget = backup && 'configRevision' in backup ? deploymentBackupTargetOperands(source, backup) : null;
+  if (!backupTarget && !(fromStatefulRefusal && (source.runtimeTargetLink?.members.length ?? 0) > 1)) return null;
+  return () => showDeploymentSheet({ component: DeploymentDatabaseMoveSheet, props: { ...input, backupTarget },
     title: t('projects.deployments.databaseMoveTitle'), testID: 'project-deployments.move.modal', closeOnBackdrop: false });
 }
 
@@ -101,7 +106,7 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
     if (busy || !destination || !selection) return;
     setBusy(true); setRefusal(null);
     try {
-      const sourceTarget = deploymentDataTargetOperands(props.source);
+      const sourceTarget = props.backupTarget;
       const destinationTarget = deploymentDataTargetOperands(destination);
       const controllerMachineId = props.source.environment.controllerMachineId;
       const destinationDeploymentId = destination.runtimeTargetLink?.activeDeploymentId;
@@ -118,7 +123,7 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
         environmentId: props.source.environment.id });
       const writers = prepareDatabaseMoveWriters(props.source.content, props.source.environment.id, props.data.service,
         [{ machineId: sourceTarget.machineId, installationId: sourceTarget.installationId,
-          deploymentId: props.backupTarget.deploymentId, result: inventory }]);
+          deploymentId: sourceTarget.deploymentId, result: inventory }]);
       if (writers.kind !== 'ready') { setRefusal({ code: writers.reason }); return; }
       const serverId = props.lifetime.scope.serverId;
       const primary = prepared.patch.definition.primaryService;
@@ -126,10 +131,10 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
       const environment = props.source.environment;
       const input: MoveInput = { kind: 'stateful', serverId,
         writers: writers.writers.map(({ machineId, serviceId, expectedGeneration }) => ({ machineId, serviceId, expectedGeneration })),
-        backupTarget: { ...props.backupTarget, serverId }, sourceId: dump.sourceId,
+        backupTarget: { ...sourceTarget, serverId }, sourceId: dump.sourceId,
         origin: { environmentId: environment.id, targetLinkId: sourceTarget.targetLinkId },
         // Cross-Environment restore reads the source capture receipt; destination health names its own receipt.
-        restoreTarget: { ...destinationTarget, serverId, deploymentId: props.backupTarget.deploymentId,
+        restoreTarget: { ...destinationTarget, serverId, deploymentId: sourceTarget.deploymentId,
           destination: { kind: 'database', service: selection.sourceService, database: selection.database } },
         cutover: { serverId, environmentId: environment.id, expectedRevision: environment.revision,
           contentArtifactId: environment.contentArtifactId, contentHeaderVersion: environment.contentHeaderVersion,
@@ -179,7 +184,7 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
     } } : {})} /> : null;
   const footer = <ModalCardFooterActions cancel={{ onPress: props.onClose, disabled: busy }}>
     <RoundButton testID="project-deployments.move.copy" size="normal" title={t('projects.deployments.databaseMoveReview')}
-      disabled={busy || !selection} loading={busy} onPress={() => { void reviewDestination(); }} />
+      disabled={busy || !selection || !props.backupTarget} loading={busy} onPress={() => { void reviewDestination(); }} />
   </ModalCardFooterActions>;
   const { setChrome } = props;
   React.useEffect(() => { setChrome?.({ kind: 'card', footer }); });
@@ -187,6 +192,15 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
   return <ListPresentationProvider value="page" pageInsets="contained">
     <View testID="project-deployments.move" style={deploymentSheetStyles.body}>
       <Text style={deploymentSheetStyles.lead}>{t('projects.deployments.databaseMoveLead')}</Text>
+      {!props.backupTarget ? <SurfaceStateCard testID="project-deployments.move.source.servers" size="line" kind="unavailable"
+        title={t('projects.deployments.databaseAvailabilityOneServer')}
+        reason={t('projects.deployments.databaseAvailabilityDetail')}
+        action={{ label: t('projects.deployments.sectionServersBuild'), onPress: () => {
+          const environment = props.source.environment;
+          props.onClose();
+          router.push(deploymentEnvironmentRoute({ serverId: environment.serverId, projectSourceId: environment.projectSourceId,
+            environmentId: environment.id, tab: 'settings', section: 'servers-build' }) as never);
+        } }} /> : null}
       <DeploymentEnvironmentChooser controller={controller} testID="project-deployments.move.destination" includeDatabaseMoveCandidates
         title={t('projects.deployments.databaseMoveDestination')} selectedId={selectedId} onSelect={select} disabled={busy}
         lifetime={props.lifetime} rowStatus={rowStatus} selectedNotice={selectedNotice}

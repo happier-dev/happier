@@ -35,5 +35,6 @@ export const DeploymentFailureRecoveryV1Schema = lazyZodSchema(() => z.strictObj
     requiredFact: z.literal('deploymentActionResult'),
     nativeCompose: z.optional(DeploymentNativeComposeFailureV1Schema),
     nativeActivation: z.optional(DeploymentNativeActivationFailureV1Schema),
+    statefulService: z.optional(DeploymentImageResolutionFailureV1Schema.shape.service),
     remedy: z.string().check(z.trim(), z.minLength(1)),
 }));
