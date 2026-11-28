@@ -121,7 +121,14 @@ function observeIndex(input: Readonly<{
 
 /** Mounted Inbox demand only. Unrelated Account/store arrivals do not enter this Resource path. */
 export function useInboxPluginSessionRows(): Source & Readonly<{ invokeControl: InboxPluginSessionControlInvoker }> {
-    const runtime = useAppShellPluginUiProjection();
+    const runtime = useAppShellPluginUiProjection(value => ({
+        accountLifetime: value.accountLifetime,
+        pluginUiProjection: value.pluginUiProjection,
+        phase: value.phase,
+        interactionEnabled: value.interactionEnabled,
+        machineId: value.machineId,
+        serverId: value.serverId,
+    }));
     const presentedSignal = useLayoutPresentationSignal();
     const [source, setSource] = React.useState<Source>(EMPTY);
     const handles = React.useRef(new Map<string, { index: PluginUiResourceProjection; detail: PluginUiResourceProjection;

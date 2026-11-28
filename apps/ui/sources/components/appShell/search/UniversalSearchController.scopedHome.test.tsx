@@ -281,7 +281,7 @@ async function prepareControllerFixture() {
     }
 }
 function AmbientPluginProjectionProbe() {
-    fixture.observedAmbientProjection = useAppShellPluginUiProjection().pluginUiProjection;
+    fixture.observedAmbientProjection = useAppShellPluginUiProjection(value => value.pluginUiProjection);
     return null;
 }
 function SearchCredentialBindingProbe(props: Readonly<{ observe(current: boolean): void }>) {

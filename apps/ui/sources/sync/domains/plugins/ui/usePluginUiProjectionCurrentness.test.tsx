@@ -1,3 +1,4 @@
+import type { AppShellPluginUiProjectionValue } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, onTestFailed, vi } from 'vitest';
@@ -1158,8 +1159,8 @@ describe('usePluginUiProjectionCurrentness', () => {
             throw new Error(`Unexpected Inbox fixture RPC: ${request.method}`);
         });
         let inbox: ReturnType<typeof useInboxWorkProjection>;
-        let shell: ReturnType<typeof useAppShellPluginUiProjection> | undefined;
-        function Probe() { inbox = useInboxWorkProjection(); shell = useAppShellPluginUiProjection(); return null; }
+        let shell: AppShellPluginUiProjectionValue | undefined;
+        function Probe() { inbox = useInboxWorkProjection(); shell = useAppShellPluginUiProjection(value => value); return null; }
         const view = (presented: boolean, mounted = true) => <AppShellPluginUiProjectionProvider>
             <PluginSurfaceFocusEligibilityProvider active={presented}>
                 {mounted ? <InboxWorkProjectionBoundary><Probe /></InboxWorkProjectionBoundary> : null}
@@ -1943,8 +1944,8 @@ describe('usePluginUiProjectionCurrentness', () => {
         replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1, intentReads: [],
             materializations: [materialization], snapshots: [{ serverIdentityId, machineId: 'machine-1', materializations: [materialization] }] } });
         setMachine({ active: false });
-        const snapshot: { current: ReturnType<typeof useAppShellPluginUiProjection> | null } = { current: null };
-        function Probe() { snapshot.current = useAppShellPluginUiProjection(); return null; }
+        const snapshot: { current: AppShellPluginUiProjectionValue | null } = { current: null };
+        function Probe() { snapshot.current = useAppShellPluginUiProjection(value => value); return null; }
         const rendered = await renderWithAppProviders(<AppShellPluginUiProjectionProvider><Probe /></AppShellPluginUiProjectionProvider>);
         try {
             await flushHookEffects();
@@ -1969,10 +1970,10 @@ describe('usePluginUiProjectionCurrentness', () => {
             snapshots: [{ serverIdentityId, machineId: 'machine-1', materializations: [materialization] }],
         } });
         projectionRuntime.describe.mockResolvedValue(supportedProjection('Stable catalog'));
-        const snapshot: { current: ReturnType<typeof useAppShellPluginUiProjection> | null } = { current: null };
+        const snapshot: { current: AppShellPluginUiProjectionValue | null } = { current: null };
         function Probe() {
             usePluginUiProjectionCurrentness({ machineId: 'machine-1', serverId: serverIdentityId });
-            snapshot.current = useAppShellPluginUiProjection();
+            snapshot.current = useAppShellPluginUiProjection(value => value);
             return null;
         }
         const rendered = await renderWithAppProviders(<AppShellPluginUiProjectionProvider><Probe /></AppShellPluginUiProjectionProvider>);
@@ -2029,8 +2030,8 @@ describe('usePluginUiProjectionCurrentness', () => {
         publishAvailability(0);
         projectionRuntime.describe.mockResolvedValue(supportedProjection('Fleet catalog'));
         const snapshots = new Map<string, ReturnType<typeof usePluginUiProjectionCurrentness>>();
-        const shell: { current: ReturnType<typeof useAppShellPluginUiProjection> | null } = { current: null };
-        function ShellProbe() { shell.current = useAppShellPluginUiProjection(); return null; }
+        const shell: { current: AppShellPluginUiProjectionValue | null } = { current: null };
+        function ShellProbe() { shell.current = useAppShellPluginUiProjection(value => value); return null; }
         function MachineProbe({ machineId }: { machineId: string }) {
             snapshots.set(machineId, usePluginUiProjectionCurrentness({ machineId, serverId: serverIdentityId }));
             return null;
@@ -2154,10 +2155,10 @@ describe('usePluginUiProjectionCurrentness', () => {
         // Observe real computation without replacing internal domain decisions.
         const membershipWork = vi.spyOn(presence, 'isMachineOnline');
         const unionFactory = vi.spyOn(unions, 'createPluginUiProjectionUnionPublication');
-        const snapshots: ReturnType<typeof useAppShellPluginUiProjection>[] = [];
+        const snapshots: AppShellPluginUiProjectionValue[] = [];
         function Probe() {
             usePluginUiProjectionCurrentness({ machineId: 'machine-1', serverId: serverIdentityId });
-            snapshots.push(useAppShellPluginUiProjection());
+            snapshots.push(useAppShellPluginUiProjection(value => value));
             return null;
         }
         let typeDraft: (value: string) => void = () => { throw new Error('Editor is not mounted'); };
@@ -2224,10 +2225,10 @@ describe('usePluginUiProjectionCurrentness', () => {
             return null;
         }
         let renders = 0;
-        let triage: ReturnType<typeof useAppShellPluginUiProjection>['pluginUiProjection'] = null;
+        let triage: AppShellPluginUiProjectionValue['pluginUiProjection'] = null;
         function Triage() {
             renders++;
-            triage = useAppShellPluginUiProjection().pluginUiProjection;
+            triage = useAppShellPluginUiProjection(value => value.pluginUiProjection);
             return null;
         }
         let selectSession: (sessionId: string) => void = () => { throw new Error('Session route is not mounted'); };
@@ -2862,7 +2863,7 @@ describe('usePluginUiProjectionCurrentness', () => {
                 initialEventRef={event.event.identity}
                 onComplete={() => {}} onCancel={() => {}} />;
             if (eventPicker) return <EventPicker />;
-            const shell = useAppShellPluginUiProjection();
+            const shell = useAppShellPluginUiProjection(value => value);
             execution = usePluginSurfaceExecutionOrigin({ pluginId, projection: shell.pluginUiProjection,
                 enabled: presented, surfaceTarget: project });
             selection = execution.selection;
@@ -3107,7 +3108,7 @@ describe('usePluginUiProjectionCurrentness', () => {
         }
         phase = 'mount real AppShell';
         const rendered = await renderHook(() => {
-            const currentness = useAppShellPluginUiProjection();
+            const currentness = useAppShellPluginUiProjection(value => value);
             const selected = usePluginSurfaceExecutionOrigin({ pluginId, projection: currentness.pluginUiProjection,
                 entry: currentness.pluginUiProjection?.surfacePlacementsById[entryId], enabled: true,
                 includeMachineCandidates: false });
@@ -3439,8 +3440,8 @@ describe('usePluginUiProjectionCurrentness', () => {
         }
         clearPluginAccountAvailabilityProjection();
         const pending = sync.refreshPluginAccountAvailability();
-        const snapshot: { current: ReturnType<typeof useAppShellPluginUiProjection> | null } = { current: null };
-        function Probe() { snapshot.current = useAppShellPluginUiProjection(); return null; }
+        const snapshot: { current: AppShellPluginUiProjectionValue | null } = { current: null };
+        function Probe() { snapshot.current = useAppShellPluginUiProjection(value => value); return null; }
         const rendered = await renderWithAppProviders(<AppShellPluginUiProjectionProvider><Probe /></AppShellPluginUiProjectionProvider>);
         try {
             await flushHookEffects();

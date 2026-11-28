@@ -213,11 +213,15 @@ function useCreateInboxModel(
     }, [openAccountNotices, profileScope?.serverId]);
     const { names: reviewRequesterNames } = useSharePrincipalNames(reviewRequesterPrincipals, profileScope?.serverId ?? null);
     const profilesGeneration = useServerProfilesGeneration();
-    const appPlugins = useAppShellPluginUiProjection();
+    const appPlugins = useAppShellPluginUiProjection(value => ({
+        accountLifetime: value.accountLifetime,
+        phase: value.phase,
+        installedPackagesById: value.pluginUiProjection?.installedPackagesById,
+    }));
     const pluginPackages = appPlugins.accountLifetime?.isCurrent()
         && areServerAccountScopesEqual(appPlugins.accountLifetime.scope, profileScope)
         && (appPlugins.phase === 'current' || appPlugins.phase === 'retainedOffline')
-        ? appPlugins.pluginUiProjection?.installedPackagesById : null;
+        ? appPlugins.installedPackagesById : null;
     const pluginDisplayNames = React.useMemo(() => new Map(Object.values(pluginPackages ?? {})
         .map(plugin => [plugin.id, plugin.displayName] as const)), [pluginPackages]);
     const discussionAttention = useInboxDiscussionSource(profileScope?.serverId ?? null);

@@ -54,9 +54,9 @@ export function DiscussionComposerPluginContributions(props: Omit<SharedProps, '
     composer: DiscussionComposer | null;
     children(slots: Slots): React.ReactElement;
 }>): React.ReactElement {
-    const shell = useAppShellPluginUiProjection();
+    const pluginUiProjection = useAppShellPluginUiProjection(value => value.pluginUiProjection);
     const active = useLayoutPresentationActive();
-    const projection = shell.pluginUiProjection;
+    const projection = pluginUiProjection;
     const presented = props.composer !== null && props.enabled && active && props.lifetime.isCurrent();
     const availability = usePluginAccountAvailabilityReader(props.lifetime.scope, undefined, { enabled: presented });
     const installed = availability?.readInstalledPlugins() ?? null;

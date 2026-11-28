@@ -50,7 +50,7 @@ import { useMountedTargetedContributions } from '@/components/plugins/surfaces/m
 import { useBoundPluginSurfaceController } from '@/components/plugins/surfaces/boundPluginSurfaceController';
 import { useManagedProvisionerPresentation } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
 import { unloadAppShellProjectedClientExecutables } from './appShellClientExecutableActivation';
-import { AppShellPluginUiProjectionProvider, useAppShellPluginUiProjection } from './AppShellPluginUiProjection';
+import { type AppShellPluginUiProjectionValue, AppShellPluginUiProjectionProvider, useAppShellPluginUiProjection } from './AppShellPluginUiProjection';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { getVoiceAdapterRegistry } from '@/voice/session/voiceAdapterRegistry';
 import { getVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleControllerStore';
@@ -388,8 +388,8 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
     replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot });
     const reader = readPluginAccountAvailability(lifetime.scope);
     if (!options.managedRepair) expect(reader.readCurrentArtifact({ pluginId, contributionId: actionId, tier: 'reactNative', platform })).toMatchObject({ kind: 'unavailable' });
-    let observed: ReturnType<typeof useAppShellPluginUiProjection> | null = null;
-    const readObserved = (): ReturnType<typeof useAppShellPluginUiProjection> | null => observed;
+    let observed: AppShellPluginUiProjectionValue | null = null;
+    const readObserved = (): AppShellPluginUiProjectionValue | null => observed;
     let mountedState: ReturnType<typeof useMountedTargetedContributions> | null = null;
     const readMounted = (): ReturnType<typeof useMountedTargetedContributions> | null => mountedState;
     let mountedController: ReturnType<typeof useBoundPluginSurfaceController> | null = null;
@@ -409,7 +409,7 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
         points: [],
     });
     function MountedDemand() {
-        const owner = useAppShellPluginUiProjection();
+        const owner = useAppShellPluginUiProjection(value => value);
         mountedLifetime = useServerCredentialAccountScopeBinding(serverId).binding;
         mountedState = useMountedTargetedContributions({ accountLifetime: mountedLifetime, machineId: machine.id, serverId,
             pluginId, mountedOccurrenceId: occurrenceId, enabled: true,
@@ -433,7 +433,7 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
     }
     let observedAt: number | undefined;
     function Probe() {
-        observed = useAppShellPluginUiProjection();
+        observed = useAppShellPluginUiProjection(value => value);
         const inventory = useActivePluginAccountAvailabilityReader()?.readMaterializations();
         observedAt = inventory?.kind === 'available' ? inventory.materializations[0]?.observedAt : undefined;
         return null;
@@ -591,10 +591,10 @@ it.each(['selected', 'presented-local-picker', 'settings-artifact'] as const)('d
     const registry = createDefaultVoiceProviderRegistry();
     expect(registry.get(providerId)).toBeNull();
     let demand: ReadonlySet<string> = new Set();
-    let activation: ReturnType<typeof useAppShellPluginUiProjection>['clientExecutableActivation'] | undefined;
+    let activation: AppShellPluginUiProjectionValue['clientExecutableActivation'] | undefined;
     function Probe() {
         demand = useVoiceProviderRuntimeDemand();
-        activation = useAppShellPluginUiProjection().clientExecutableActivation;
+        activation = useAppShellPluginUiProjection(value => value.clientExecutableActivation);
         return null;
     }
     let pickerOpen = false;

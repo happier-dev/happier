@@ -146,7 +146,8 @@ vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', async () => 
       })),
     }),
     useProjectedPluginLocalizedTextResolver: () => localizationSpies.resolve,
-    useAppShellPluginUiProjection: () => ({ reloadConnectedAccountProjection: descriptorReload }),
+    useAppShellPluginUiProjection: (select: (value: { reloadConnectedAccountProjection: typeof descriptorReload }) => unknown) =>
+        select({ reloadConnectedAccountProjection: descriptorReload }),
   };
 });
 vi.mock('@/sync/domains/features/featureDecisionRuntime', async importOriginal => {

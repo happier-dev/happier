@@ -290,7 +290,7 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
   const registry = props.registry ?? focusedRegistry;
   // Refresh also re-reads the descriptors of the registry this chooser follows; an explicit
   // registry is another scope's snapshot and is never reloaded as a substitute.
-  const { reloadConnectedAccountProjection } = useAppShellPluginUiProjection();
+  const reloadConnectedAccountProjection = useAppShellPluginUiProjection(value => value.reloadConnectedAccountProjection);
   const reloadDescriptors = props.registry ? undefined : reloadConnectedAccountProjection;
   const localizePluginText = useProjectedPluginLocalizedTextResolver();
   const serverFeatures = useServerFeaturesRuntimeSnapshot({ enabled: true });

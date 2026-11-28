@@ -3398,7 +3398,7 @@ describe('Account Action placement through the executable dispatcher', () => {
                 React.createElement(AppShellPluginUiProjectionValueProvider, { value }, props.children));
         }
         const hook = await renderHook((candidate: boolean) => {
-            const owner = useAppShellPluginUiProjection();
+            const owner = useAppShellPluginUiProjection(value => value);
             const selectedAction = currentAction;
             const facts = { pluginId: CALLER_PLUGIN_ID, contributionId: 'panel', surfaceId: 'cold-account-executable',
                 placement: 'appSurface' as const, platform: 'web' as const, channel: 'internal' as const,

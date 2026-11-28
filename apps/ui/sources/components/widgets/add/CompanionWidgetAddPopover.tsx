@@ -81,8 +81,8 @@ function OpenCompanionWidgetAddPopover(props: React.ComponentProps<typeof Compan
             ? { serverId: session.ref.serverId, accountId: account.accountId, owner: { kind: 'companion', sessionId: session.ref.sessionId } }
             : null
     ), [account, session]);
-    const appRuntime = useAppShellPluginUiProjection();
-    const { candidates: yours, status, retry } = useYourWidgetCandidatesState(scope, pluginRuntime?.pluginUiProjection ?? appRuntime.pluginUiProjection);
+    const pluginUiProjection = useAppShellPluginUiProjection(value => value.pluginUiProjection);
+    const { candidates: yours, status, retry } = useYourWidgetCandidatesState(scope, pluginRuntime?.pluginUiProjection ?? pluginUiProjection);
     const pendingSections = useYourWidgetPendingSections(status, retry);
     const candidates = React.useMemo(() => yours.length ? [...glanceCandidates, ...yours] : glanceCandidates, [glanceCandidates, yours]);
     const sections = React.useMemo(() => buildCompanionWidgetAddSections({

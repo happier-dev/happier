@@ -774,7 +774,7 @@ function PluginSettingsPageHostFocusProbe(props: Readonly<{ props: unknown }>): 
 
 /** Mirrors the app-shell's one target binding for route-level navigation tests. */
 function SettingsTargetNavigationScope(props: React.PropsWithChildren): React.ReactElement {
-    const projection = useAppShellPluginUiProjection().pluginUiProjection;
+    const projection = useAppShellPluginUiProjection(value => value.pluginUiProjection);
     const binding = usePluginSurfaceDestinationNavigationBindingForScope({
         placements: projection
             ? Object.values(projection.surfacePlacementsById).filter(

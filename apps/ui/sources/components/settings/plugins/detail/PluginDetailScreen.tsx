@@ -77,9 +77,9 @@ function PluginDetailCurrentContent(props: Readonly<{
     accountSettingsDeclaration: PluginPortableReleaseManifestV1 | null;
     accountAvailability: PluginAccountAvailabilityReader | null;
 }>) {
-    const appProjection = useAppShellPluginUiProjection();
+    const pluginUiProjection = useAppShellPluginUiProjection(value => value.pluginUiProjection);
     const { selection } = usePluginSurfaceExecutionOrigin({
-        pluginId: props.pluginId, projection: appProjection.pluginUiProjection, enabled: true,
+        pluginId: props.pluginId, projection: pluginUiProjection, enabled: true,
     });
     const { installed, state } = props;
     const host = usePluginsSurfaceHost();

@@ -50,10 +50,10 @@ export type WidgetCopyAttempt = {
  * so every destination can host it.
  */
 export function useWidgetCopyTarget(instance: WidgetInstanceV1 | null, current: WidgetSurfaceRefV1) {
-    const runtime = useAppShellPluginUiProjection();
-    const localize = usePluginLocalizedTextResolver({ projection: runtime.pluginUiProjection });
-    const installed = React.useMemo(() => instance ? readWidgetDescriptor(runtime.pluginUiProjection, instance.definition, instance.displayName ? undefined : localize) : null,
-        [runtime.pluginUiProjection, instance, localize]);
+    const pluginUiProjection = useAppShellPluginUiProjection(value => value.pluginUiProjection);
+    const localize = usePluginLocalizedTextResolver({ projection: pluginUiProjection });
+    const installed = React.useMemo(() => instance ? readWidgetDescriptor(pluginUiProjection, instance.definition, instance.displayName ? undefined : localize) : null,
+        [pluginUiProjection, instance, localize]);
     const candidate = useWidgetInstanceDescriptor(current, instance, installed);
     const refs = useWorkspaceRefs();
     const publicProfile = useFeatureDecision('account.publicProfiles', { scopeKind: 'spawn', serverId: current.serverId });

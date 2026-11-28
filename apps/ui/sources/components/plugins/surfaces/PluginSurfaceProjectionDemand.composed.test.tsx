@@ -34,7 +34,7 @@ import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePres
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { PluginPagePresentation } from '@/components/plugins/pages/PluginPagePresentation';
-import { AppShellPluginUiProjectionProvider, AppShellPluginUiProjectionValueProvider, useAppShellPluginUiProjection,
+import { type AppShellPluginUiProjectionValue, AppShellPluginUiProjectionProvider, AppShellPluginUiProjectionValueProvider, useAppShellPluginUiProjection,
     useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { useConnectedServicesAgents } from '@/components/settings/connectedServices/model/useConnectedServicesAgents';
 import PluginStoreKindSurface from '@/components/store/StorePluginKindSurface';
@@ -321,7 +321,7 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
         requests.length = 0;
         let current: ReturnType<typeof usePluginUiProjectionCurrentness> | undefined;
         function DeclaredDirectoryKinds() {
-            const projection = useAppShellPluginUiProjection();
+            const projection = useAppShellPluginUiProjection(value => value);
             return <>{listStoreKindContributions(projection.pluginUiProjection).filter(kind => kind.key === storeKind.id)
                 .map(kind => React.createElement('StoreKind', { key: kind.key, testID: kind.key }))}</>;
         }
@@ -685,11 +685,11 @@ it('discovers a Machine-only source from the presented Connect target with no Ac
         expect(readPluginAccountAvailability(captureActiveServerAccountScopeLifetime()!.scope)?.readInstalledPlugins())
             .toMatchObject({ kind: 'available', plugins: [] });
         const target = { serverIdentityId: 'srv_source_fleet', machineId: machines[0]!.id };
-        let current: ReturnType<typeof useAppShellPluginUiProjection> | undefined;
+        let current: AppShellPluginUiProjectionValue | undefined;
         let registry: ReturnType<typeof useProjectedConnectedServicesRegistry> | undefined;
         function PresentedConnect() {
             useConnectedServicesAgents({ agents: 'load', initialMachineTarget: target });
-            current = useAppShellPluginUiProjection();
+            current = useAppShellPluginUiProjection(value => value);
             registry = useProjectedConnectedServicesRegistry();
             return null;
         }
@@ -894,11 +894,11 @@ it('repopulates the shipped Channels Settings catalog from a restored stale orig
         requestsByMachineId.clear();
         manifestReadsByMachineId.clear();
         let facts: ReturnType<typeof readCurrentAppShellPluginUiExecutionOriginCandidates> | undefined;
-        let current: ReturnType<typeof useAppShellPluginUiProjection> | undefined;
+        let current: AppShellPluginUiProjectionValue | undefined;
         function PublishedSource() {
             const read = React.useCallback(() => readCurrentAppShellPluginUiExecutionOriginCandidates(pluginId), []);
             facts = React.useSyncExternalStore(subscribeCommittedAppShellPluginUiProjection, read, read);
-            current = useAppShellPluginUiProjection();
+            current = useAppShellPluginUiProjection(value => value);
             const router = useRouter();
             return <SettingsCatalogOverviewGroup groupId="groupSessionsBehavior" router={router} />;
         }
@@ -953,7 +953,7 @@ it('keeps Channels pending through held inventory HTTP until named origins popul
         const { sync } = await import('@/sync/sync');
         await sync.refreshPluginAccountAvailability();
         function PresentedChannels() {
-            const projection = useAppShellPluginUiProjection();
+            const projection = useAppShellPluginUiProjection(value => value);
             execution = usePluginSurfaceExecutionOrigin({ pluginId, projection: projection.pluginUiProjection,
                 enabled: true, includeMachineCandidates: true });
             const router = useRouter();

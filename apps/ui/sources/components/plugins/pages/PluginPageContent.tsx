@@ -35,6 +35,7 @@ import { usePluginDetailNavigation } from './pluginDetailNavigation';
 import { PluginPageNavigationContext } from './pluginPageNavigationContext';
 
 import type { PluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
+import type { AppShellPluginUiPageProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { isAppShellPluginCatalogPending } from '@/components/appShell/plugins/projectionAvailability';
 import { resolvePluginPageView, type PluginPage } from './pluginPages';
 import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
@@ -121,7 +122,7 @@ export function PluginPageContent(props: Readonly<{
      * (`replacePageLocation` `view`) finds that view's title. Absent: the chrome names the mounted page.
      */
     views?: readonly PluginPage[];
-    projection: PluginUiProjectionCurrentness;
+    projection: AppShellPluginUiPageProjection;
     routePathFor: (subPath: string, view: string | null) => string;
     /** The declared view the route names (`?view=`): the chrome titles it from the first frame of a cold load. */
     initialView?: string | null;

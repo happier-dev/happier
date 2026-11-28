@@ -936,7 +936,7 @@ describe('VoiceSessionRuntime', () => {
     const { AppShellPluginUiProjectionValueProvider, useAppShellPluginUiProjection } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
     const { VoiceSessionRuntime } = await import('./VoiceSessionRuntime');
     function EstablishingDeclarations() {
-      const value = useAppShellPluginUiProjection();
+      const value = useAppShellPluginUiProjection(value => value);
       return <AppShellPluginUiProjectionValueProvider value={value} declarationReady={false}><VoiceSessionRuntime /></AppShellPluginUiProjectionValueProvider>;
     }
     const screen = await renderRuntimeScreen(<EstablishingDeclarations />);

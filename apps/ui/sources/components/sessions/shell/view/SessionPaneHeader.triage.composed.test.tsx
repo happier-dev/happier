@@ -1,3 +1,4 @@
+import type { AppShellPluginUiProjectionValue } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -221,8 +222,8 @@ it.each([false, true])('exposes the linked Task on the direct Session route (dif
             router: { push: () => {}, navigate: () => {} }, actionIconColor: '#000', headerTintColor: '#000',
             statusErrorColor: '#f00', externalSessionRuntime: null,
         });
-        let projection: ReturnType<typeof useAppShellPluginUiProjection> | undefined;
-        function ProjectionProbe() { projection = useAppShellPluginUiProjection(); return null; }
+        let projection: AppShellPluginUiProjectionValue | undefined;
+        function ProjectionProbe() { projection = useAppShellPluginUiProjection(value => value); return null; }
         const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
             <AppShellPluginUiProjectionProvider>
                 <ProjectionProbe />

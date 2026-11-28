@@ -197,11 +197,11 @@ export function useAccountWidgetAddSections(input: Readonly<{
     /** Local sections are ready independently; only these remote sections are still unresolved. */
     pendingSections: readonly (Pick<WidgetAddSection, 'id' | 'title'> & Readonly<{ retry?: () => void }>)[];
 }> {
-    const appRuntime = useAppShellPluginUiProjection();
-    const localize = usePluginLocalizedTextResolver({ projection: appRuntime.pluginUiProjection });
+    const pluginUiProjection = useAppShellPluginUiProjection(value => value.pluginUiProjection);
+    const localize = usePluginLocalizedTextResolver({ projection: pluginUiProjection });
     const installed = useHomeWidgetCandidates(localize, input.context?.projectContext?.policyContext);
     const { scope, instances, addInstance, labels, context, testID } = input;
-    const { candidates: yours, status: yoursStatus, retry: retryYours } = useYourWidgetCandidatesState(scope ? { serverId: scope.serverId, accountId: scope.accountId } : null, appRuntime.pluginUiProjection);
+    const { candidates: yours, status: yoursStatus, retry: retryYours } = useYourWidgetCandidatesState(scope ? { serverId: scope.serverId, accountId: scope.accountId } : null, pluginUiProjection);
     const candidates = React.useMemo(() => (yours.length > 0 ? [...installed, ...yours] : installed), [installed, yours]);
     const phone = useDeviceType() === 'phone';
     // Saved groups only where groups can be placed (Home, Project, plugin and core-page areas).

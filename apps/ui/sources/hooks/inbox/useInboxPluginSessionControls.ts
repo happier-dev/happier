@@ -28,7 +28,12 @@ export function useInboxPluginSessionControls(rows: readonly InboxPluginSessionR
     invokeControl: InboxPluginSessionControlInvoker;
 }> {
     const router = useRouter();
-    const runtime = useAppShellPluginUiProjection();
+    const runtime = useAppShellPluginUiProjection(value => ({
+        accountLifetime: value.accountLifetime,
+        pluginUiProjection: value.pluginUiProjection,
+        phase: value.phase,
+        interactionEnabled: value.interactionEnabled,
+    }));
     const presented = useLayoutPresentationActive();
     const lifetime = runtime.accountLifetime;
     const projection = runtime.pluginUiProjection;

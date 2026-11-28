@@ -4,7 +4,7 @@ import { PluginPageContent } from '@/components/plugins/pages/PluginPageContent'
 import { resolvePluginPageForRoute, usePluginPages, selectPluginPagePlacements } from '@/components/plugins/pages/pluginPages';
 import { buildPluginAppPageRoutePath, pluginAppPageRouteSelectsEntry, readPluginAppPageLocation } from '@/components/plugins/pages/pluginPageRoute';
 import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
-import { useAppShellPluginUiProjection, useProjectedPluginLocalizedTextResolver } from './AppShellPluginUiProjection';
+import { useAppShellPluginUiPageProjection, useProjectedPluginLocalizedTextResolver } from './AppShellPluginUiProjection';
 import { t } from '@/text';
 import {
     isAppliedActiveServerRuntimeAvailable,
@@ -19,7 +19,7 @@ export function PluginAppPageScreen(props: Readonly<{
     /** The declared view the route names (`?view=`), or `null` for the page itself. */
     view?: string | null;
 }>): React.ReactElement {
-    const projection = useAppShellPluginUiProjection();
+    const projection = useAppShellPluginUiPageProjection();
     const coldAccountRestorePending = React.useSyncExternalStore(
         subscribeColdActiveServerRestore,
         isColdActiveServerRestorePending,

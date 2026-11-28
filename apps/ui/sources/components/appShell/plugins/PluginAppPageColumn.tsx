@@ -30,7 +30,12 @@ export const PluginAppPageColumn = React.memo(function PluginAppPageColumn(props
     /** Peeked over another page: its own page is not there to state an offline machine, so the column does. */
     peeked: boolean;
 }>) {
-    const projection = useAppShellPluginUiProjection();
+    const projection = useAppShellPluginUiProjection(value => ({
+        pluginUiProjection: value.pluginUiProjection,
+        machineId: value.machineId,
+        serverId: value.serverId,
+        platform: value.platform,
+    }));
     const localize = useProjectedPluginLocalizedTextResolver();
     const pathname = usePathname();
     const shell = useAppShellPeek();

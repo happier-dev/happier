@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { PluginUiReviewContextV1 } from '@happier-dev/protocol/plugins/ui';
-import { useAppShellPluginUiProjection, useAppShellPluginUiProjectionCurrentness, useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useAppShellPluginUiPageProjection, useAppShellPluginUiProjectionCurrentness, useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { DetailsPaneSlotHost } from '@/components/appShell/panes/details/DetailsPaneSlot';
 import { PluginPageContent } from '@/components/plugins/pages/PluginPageContent';
 import { resolvePluginPageForRoute, selectPluginPagePlacements, usePluginPages, type PluginPage } from '@/components/plugins/pages/pluginPages';
@@ -46,7 +46,7 @@ type ReviewPageProps = Readonly<{
 
 /** The opened Artifact lends its identity; the ordinary page owner retains navigation and companions. */
 export function ReviewPagePluginContent(props: ReviewPageProps) {
-  const projection = useAppShellPluginUiProjection();
+  const projection = useAppShellPluginUiPageProjection();
   const localize = useProjectedPluginLocalizedTextResolver();
   const serverId = projection.accountLifetime?.scope.serverId;
   const target = React.useMemo(() => ({ kind: 'app' as const,
@@ -62,7 +62,7 @@ export function ReviewPagePluginContent(props: ReviewPageProps) {
 }
 
 function ReviewPageNavigation(props: ReviewPageProps & Readonly<{
-  target: PluginPageTarget; pages: readonly PluginPage[]; projection: ReturnType<typeof useAppShellPluginUiProjection>;
+  target: PluginPageTarget; pages: readonly PluginPage[]; projection: ReturnType<typeof useAppShellPluginUiPageProjection>;
 }>) {
   const enclosing = usePluginSurfaceDestinationNavigationBinding();
   const placements = React.useMemo(() => props.pages.map(page => page.placement), [props.pages]);

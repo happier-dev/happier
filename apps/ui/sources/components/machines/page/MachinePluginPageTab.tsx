@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useAppShellPluginUiPageProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { PluginPageContent } from '@/components/plugins/pages/PluginPageContent';
 import { buildPluginMachinePageRoutePath } from '@/components/plugins/pages/pluginPageRoute';
 import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
@@ -19,7 +19,7 @@ export function MachinePluginPageTab(props: MachinePageTabBodyProps) {
     const params = props.params.id === 'plugin' ? props.params : null;
     const pages = useMachinePagePluginPages();
     const phone = useDeviceType() === 'phone';
-    const projection = useAppShellPluginUiProjection();
+    const projection = useAppShellPluginUiPageProjection();
     const pluginId = params?.pluginId ?? '';
     const localId = params?.localId ?? '';
     const page = pages.find(candidate => candidate.pluginId === pluginId && candidate.localId === localId) ?? null;

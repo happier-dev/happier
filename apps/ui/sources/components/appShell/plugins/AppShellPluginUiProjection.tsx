@@ -1082,8 +1082,6 @@ const AppShellPluginExecutionOriginSelection = React.memo(function AppShellPlugi
     return null;
 });
 
-const readAppShellPluginUiProjection = (value: AppShellPluginUiProjectionValue) => value;
-
 /** Imperative dispatch reads the same current owner without subscribing presentation to its whole snapshot. */
 export function useAppShellPluginUiProjectionReader(): () => AppShellPluginUiProjectionValue {
     return React.useContext(AppShellPluginUiProjectionContext).getSnapshot;
@@ -1094,11 +1092,9 @@ export function useAppShellPluginUiProjectionSubscription(): AppShellPluginUiPro
     return React.useContext(AppShellPluginUiProjectionContext);
 }
 
-export function useAppShellPluginUiProjection<T>(selector: (value: AppShellPluginUiProjectionValue) => T, enabled?: boolean): T;
-export function useAppShellPluginUiProjection(selector?: undefined, enabled?: boolean): AppShellPluginUiProjectionValue;
-export function useAppShellPluginUiProjection<T>(selector?: (value: AppShellPluginUiProjectionValue) => T, enabled = true): AppShellPluginUiProjectionValue | T {
+export function useAppShellPluginUiProjection<T>(selector: (value: AppShellPluginUiProjectionValue) => T, enabled = true): T {
     const context = React.useContext(AppShellPluginUiProjectionContext);
-    const select = useShallow<AppShellPluginUiProjectionValue, AppShellPluginUiProjectionValue | T>(selector ?? readAppShellPluginUiProjection);
+    const select = useShallow(selector);
     const getSnapshot = React.useCallback(() => select(context.getSnapshot()), [context, select]);
     return React.useSyncExternalStore(enabled ? context.subscribe : noProjectionSubscription, getSnapshot, getSnapshot);
 }
@@ -1124,6 +1120,16 @@ function selectAppShellPluginUiProjectionCurrentness(value: AppShellPluginUiProj
 
 export function useAppShellPluginUiProjectionCurrentness(): PluginUiProjectionCurrentness {
     return useAppShellPluginUiProjection(selectAppShellPluginUiProjectionCurrentness);
+}
+
+export type AppShellPluginUiPageProjection =
+    PluginUiProjectionCurrentness & Pick<AppShellPluginUiProjectionValue, 'hasEstablishingMembers'>;
+
+export function useAppShellPluginUiPageProjection(): AppShellPluginUiPageProjection {
+    return useAppShellPluginUiProjection(value => ({
+        ...selectAppShellPluginUiProjectionCurrentness(value),
+        ...(value.hasEstablishingMembers !== undefined ? { hasEstablishingMembers: value.hasEstablishingMembers } : {}),
+    }));
 }
 
 const selectAppShellPluginUiProjectionModel = (value: AppShellPluginUiProjectionValue) => value.pluginUiProjection;

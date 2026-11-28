@@ -3,7 +3,7 @@ import { usePublishRightSidebarActions } from '@/components/appShell/rightSideba
 import { AppPaneScopeHost, type AppPaneScopeHostProps } from '@/components/appShell/panes/AppPaneScopeHost';
 import { useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import type { PaneDriver } from '@/components/appShell/panes/types';
-import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useAppShellPluginUiPageProjection, useAppShellPluginUiProjectionModel } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { PluginPageContent } from '@/components/plugins/pages/PluginPageContent';
 import { PluginPageLaunchInputScope, usePluginPageDestinationHandler } from '@/components/plugins/pages/pluginPageNavigation';
 import { buildPluginProjectPageRoutePath } from '@/components/plugins/pages/pluginPageRoute';
@@ -32,7 +32,7 @@ export function ProjectPagePaneScopeHost(props: AppPaneScopeHostProps) {
         bottomPaneBuiltinAdapter, detailsPaneBuiltinAdapter, detailsPaneEnabled, ...hostProps } = props;
     const registerDriver = useAppPaneContext(value => value.registerDriver);
     const catalog = useProjectPageCatalog();
-    const projection = useAppShellPluginUiProjection();
+    const pluginUiProjection = useAppShellPluginUiProjectionModel();
     const pages = React.useMemo(() => catalog.routePages.flatMap(page => page.pluginPage ? [page.pluginPage] : []), [catalog.routePages]);
     const placements = React.useMemo(() => pages.map(page => page.placement), [pages]);
     const surfaceScope = React.useMemo(() => suppliedSurfaceScope?.targetKind === 'project' ? {
@@ -52,7 +52,7 @@ export function ProjectPagePaneScopeHost(props: AppPaneScopeHostProps) {
             {props.wrapScopeContent ? props.wrapScopeContent(content) : content}
         </ProjectPageNavigationRegistration>
     ), [pages, props.wrapScopeContent]);
-    return <PluginPageLaunchInputScope pluginUiProjection={projection.pluginUiProjection} target={catalog.target} pages={pages}>
+    return <PluginPageLaunchInputScope pluginUiProjection={pluginUiProjection} target={catalog.target} pages={pages}>
         <AppPaneScopeHost {...hostProps} pageDestinationPlacements={placements} destinationPolicyContext={catalog.context.policyContext}
             wrapScopeContent={wrapScopeContent} />
     </PluginPageLaunchInputScope>;
@@ -61,7 +61,7 @@ export function ProjectPagePaneScopeHost(props: AppPaneScopeHostProps) {
 /** Project identity/chrome stay in their existing shell; the shared page owner supplies only content. */
 export function PluginProjectPageBody(props: Readonly<{ selection: Extract<ProjectPageSelection, { kind: 'plugin' }> }>) {
     const catalog = useProjectPageCatalog();
-    const projection = useAppShellPluginUiProjection();
+    const projection = useAppShellPluginUiPageProjection();
     const { pluginId, localId } = props.selection.destination;
     const page = catalog.routePages.find(candidate => candidate.kind === 'plugin'
         && candidate.destination?.pluginId === pluginId && candidate.destination.localId === localId)?.pluginPage ?? null;

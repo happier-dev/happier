@@ -1250,7 +1250,7 @@ describe('current UI context Voice tool port', () => {
         let projection: PluginUiProjectionModel | null = installed.projection;
         let published = false;
         function AppShell() {
-            const defaults = useAppShellPluginUiProjection();
+            const defaults = useAppShellPluginUiProjection(value => value);
             return React.createElement(AppShellPluginUiProjectionValueProvider, { declarationReady: true,
                 value: { ...defaults, pluginUiProjection: projection, phase: 'current',
                     clientExecutableActivation: { status: published ? 'ready' : 'establishing' },
@@ -1337,7 +1337,7 @@ describe('current UI context Voice tool port', () => {
             });
         }
         function Shell() {
-            const defaults = useAppShellPluginUiProjection();
+            const defaults = useAppShellPluginUiProjection(value => value);
             return React.createElement(AppShellPluginUiProjectionValueProvider, { declarationReady: true,
                 value: { ...defaults, pluginUiProjection: fixture.projection, phase: 'current',
                     clientExecutableActivation: { status: establishing ? 'establishing' : 'ready' },
@@ -1447,7 +1447,7 @@ describe('current UI context Voice tool port', () => {
         const reader = { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} };
         function Probe() { port = useCurrentUiContextVoiceToolPort(); return null; }
         function AppShell() {
-            const defaults = useAppShellPluginUiProjection();
+            const defaults = useAppShellPluginUiProjection(value => value);
             return React.createElement(AppShellPluginUiProjectionValueProvider, { declarationReady: true,
                 value: { ...defaults, pluginUiProjection: replacing ? projection : published && installs ? installed.projection : null,
                     // Keep the Account's cold publication distinct from passive Machine discovery.
@@ -1788,7 +1788,7 @@ describe('current UI context Voice tool port', () => {
             },
         }));
         function Runtime({ projection }: Readonly<{ projection: PluginUiProjectionModel | null }>) {
-            const defaults = useAppShellPluginUiProjection();
+            const defaults = useAppShellPluginUiProjection(value => value);
             return React.createElement(AppShellPluginUiProjectionValueProvider, { value: { ...defaults,
                 pluginUiProjection: projection, phase: projection ? 'current' : 'unavailable',
                 interactionEnabled: projection !== null, serverId: answeringServerId,

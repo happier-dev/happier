@@ -168,7 +168,11 @@ export function WidgetSetupStep(props: Readonly<{
     const discoveryContext = React.useMemo(() => setup.optionsContext?.(draft), [draft, setup]);
     const consumer = discoveryContext?.consumer;
     const selectedSession = consumer?.kind === 'widget' ? consumer.selectedSession : undefined;
-    const appRuntime = useAppShellPluginUiProjection();
+    const appRuntime = useAppShellPluginUiProjection(value => ({
+        machineId: value.machineId,
+        pluginUiProjection: value.pluginUiProjection,
+        accountLifetime: value.accountLifetime,
+    }));
     const optionServerId = selectedSession?.serverId ?? props.serverId;
     const requests = React.useMemo<InputFieldOptionsRequest[]>(() => setup.fields.map(({ field, viewer }) => ({
         ...setup.optionsContext?.(draft, field),

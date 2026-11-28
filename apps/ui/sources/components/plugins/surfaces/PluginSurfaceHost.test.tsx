@@ -17780,7 +17780,7 @@ describe('installed Session widget through the mounted plugin controller', () =>
             return null;
         }
         function Page() {
-            const shell = useAppShellPluginUiProjection();
+            const shell = useAppShellPluginUiProjection(value => value);
             lastProjection = shell.pluginUiProjection;
             const placement = shell.pluginUiProjection?.surfacePlacementsById[`surfacePlacement:${pluginId}:ci-page`];
             if (!placement) return null;

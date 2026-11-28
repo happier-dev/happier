@@ -1379,7 +1379,7 @@ it('renders a cold bundled Account page with shared state across navigation chro
         availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [],
     } });
     function Page() {
-        const shell = useAppShellPluginUiProjection();
+        const shell = useAppShellPluginUiProjection(value => value);
         const placement = shell.pluginUiProjection?.surfacePlacementsById['surfacePlacement:happier.fixture:account-page'];
         return placement ? <PluginSurfacePlacementHost placement={{ ...placement,
             renderer: { ...placement.renderer, requiredHostMethods: ['executeAction', 'publishCurrentUiContext'] },
@@ -1499,7 +1499,7 @@ it('keeps the Account page usable when its optional contribution points belong t
     const offline = unionPluginUiProjections([{ machineId, serverId: account.serverId,
         serverIdentityId: 'srv_bundled_account_page', projection: runtime, phase: 'retainedOffline', interactionEnabled: false }]);
     function Page() {
-        const shell = useAppShellPluginUiProjection();
+        const shell = useAppShellPluginUiProjection(value => value);
         const projection = mergeInstalledPluginUiProjections(shell.pluginUiProjection ? [shell.pluginUiProjection] : [], offline.pluginUiProjection);
         const placement = projection?.surfacePlacementsById['surfacePlacement:happier.fixture:account-page'];
         if (placement) expect(projection?.installedPackagesById['happier.fixture']?.declaresContributionPoints).toBe(true);

@@ -47,7 +47,16 @@ export const PluginSettingsPageScreen = React.memo(function PluginSettingsPageSc
 }>): React.ReactElement {
     const isFocused = useIsFocused();
     const router = useRouter();
-    const appShell = useAppShellPluginUiProjection();
+    const appShell = useAppShellPluginUiProjection(value => ({
+        pluginUiProjection: value.pluginUiProjection,
+        accountLifetime: value.accountLifetime,
+        phase: value.phase,
+        hasEstablishingMembers: value.hasEstablishingMembers,
+        machineId: value.machineId,
+        serverId: value.serverId,
+        platform: value.platform,
+        interactionEnabled: value.interactionEnabled,
+    }));
     // Settings writes retain the canonical administration target independently
     // of the page's execution origin; Account fields do not imply machine administration.
     const administration = useScopedPluginSettingsDaemonTargetBinding(

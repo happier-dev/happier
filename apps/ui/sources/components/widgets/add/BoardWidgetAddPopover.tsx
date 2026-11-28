@@ -57,7 +57,7 @@ export function BoardWidgetAddPopover(props: Readonly<{
 function OpenBoardWidgetAddPopover(props: React.ComponentProps<typeof BoardWidgetAddPopover>): React.ReactElement {
     const router = useRouter();
     const { controller, candidates, pluginRuntime, sessionId, session, testID } = props;
-    const appRuntime = useAppShellPluginUiProjection();
+    const pluginUiProjection = useAppShellPluginUiProjection(value => value.pluginUiProjection);
     const localize = usePluginLocalizedTextResolver({ projection: pluginRuntime?.pluginUiProjection });
     const localizedCandidates = React.useMemo(() => candidates.map(candidate => candidate.surface
         ? readWidgetDescriptor(pluginRuntime?.pluginUiProjection, candidate.surface, localize) ?? candidate : candidate),
@@ -70,7 +70,7 @@ function OpenBoardWidgetAddPopover(props: React.ComponentProps<typeof BoardWidge
     // on its own: its Session, named for people.
     const { scope, context } = useSessionWidgetSurface({ owner: 'sessionBoard', serverId, sessionId, session: session ?? null });
     const canPublish = scope !== null && controller.supports('item.addWidget');
-    const { candidates: yours, status, retry } = useYourWidgetCandidatesState(canPublish ? scope : null, pluginRuntime?.pluginUiProjection ?? appRuntime.pluginUiProjection);
+    const { candidates: yours, status, retry } = useYourWidgetCandidatesState(canPublish ? scope : null, pluginRuntime?.pluginUiProjection ?? pluginUiProjection);
     const pendingSections = useYourWidgetPendingSections(status, retry);
     const allCandidates = React.useMemo(() => yours.length ? [...localizedCandidates, ...yours] : localizedCandidates, [localizedCandidates, yours]);
     const content = React.useMemo(() => buildBoardWidgetAddContent({

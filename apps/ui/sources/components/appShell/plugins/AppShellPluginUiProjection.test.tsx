@@ -315,7 +315,7 @@ describe('AppShell declaration subscriptions', () => {
             return null;
         });
         function ExecutableProbe() {
-            executableRevision = useAppShellPluginUiProjection().connectedAccountProjectionRevision;
+            executableRevision = useAppShellPluginUiProjection(value => value.connectedAccountProjectionRevision);
             return null;
         }
         const value: AppShellPluginUiProjectionValue = {
@@ -811,12 +811,12 @@ function PresentedFixturePluginOrigin({ pluginId }: Readonly<{ pluginId: string 
 }
 
 function ProjectionProbe() {
-    const value = useAppShellPluginUiProjection();
+    const value = useAppShellPluginUiProjection(value => value);
     return React.createElement('ProjectionProbe', { value });
 }
 
 function SourceExecutionProbe(props: Readonly<{ pluginId: string }>) {
-    const { pluginUiProjection } = useAppShellPluginUiProjection();
+    const { pluginUiProjection } = useAppShellPluginUiProjection(value => value);
     const execution = usePluginSurfaceExecutionOrigin({ pluginId: props.pluginId, projection: pluginUiProjection,
         entry: Object.values<PluginUiPhysicalSurfacePlacementProjection>(pluginUiProjection?.surfacePlacementsById ?? {})
             .find(entry => entry.pluginId === props.pluginId), enabled: true });
@@ -824,7 +824,7 @@ function SourceExecutionProbe(props: Readonly<{ pluginId: string }>) {
 }
 
 function PendingSourceExecutionProbe(props: Readonly<{ pluginId: string }>) {
-    const { pluginUiProjection, accountLifetime } = useAppShellPluginUiProjection();
+    const { pluginUiProjection, accountLifetime } = useAppShellPluginUiProjection(value => value);
     const execution = usePluginSurfaceExecutionOrigin({ pluginId: props.pluginId, projection: pluginUiProjection,
         entry: Object.values(pluginUiProjection?.surfacePlacementsById ?? {})
             .find(entry => entry.pluginId === props.pluginId), enabled: true });
@@ -842,7 +842,7 @@ function ClientActionHeaderPresentationProbe(props: Readonly<{
     page: PluginPage;
     actionAuthority: PluginSurfaceLaunchAuthority;
 }>) {
-    const { pluginUiProjection } = useAppShellPluginUiProjection();
+    const { pluginUiProjection } = useAppShellPluginUiProjection(value => value);
     return (
         <PluginAppPageHeaderActions
             actions={[props.action]}
@@ -1695,7 +1695,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
         const session: { binding: ReturnType<typeof usePluginSurfaceDestinationNavigationBinding> } = { binding: null };
         function SessionResolver() {
             const enclosing = usePluginSurfaceDestinationNavigationBinding();
-            const projection = useAppShellPluginUiProjection();
+            const projection = useAppShellPluginUiProjection(value => value);
             session.binding = usePluginSurfaceDestinationNavigationBindingForScope({
                 targetKind: 'session', placements: selectPluginPagePlacements(projection.pluginUiProjection, { container: 'appPage', targetKind: 'app' }),
                 accountLifetime: captureActiveServerAccountScopeLifetime(),
@@ -1743,7 +1743,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
         let browsePlacements: ReturnType<typeof selectPluginPagePlacements> = [];
         function SessionResolver() {
             const enclosing = usePluginSurfaceDestinationNavigationBinding();
-            const projection = useAppShellPluginUiProjection();
+            const projection = useAppShellPluginUiProjection(value => value);
             browsePlacements = selectPluginPagePlacements(projection.pluginUiProjection, { container: 'appPage', targetKind: 'app' });
             session.binding = usePluginSurfaceDestinationNavigationBindingForScope({
                 targetKind: 'session', placements: browsePlacements,
@@ -3071,7 +3071,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
         const { AppShellPluginUiProjectionProvider } = await import('./AppShellPluginUiProjection');
         const projectionRenders = vi.fn();
         function MeasuredProjectionProbe() {
-            const value = useAppShellPluginUiProjection();
+            const value = useAppShellPluginUiProjection(value => value);
             projectionRenders();
             return React.createElement('ProjectionProbe', { value });
         }
@@ -3539,7 +3539,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
             onTestFinished(() => { unsubscribe(); createRuntime.mockRestore(); createReader.mockRestore(); });
             function MeasuredProjectionProbe() {
                 useRenderCommitCounter(renders);
-                const value = useAppShellPluginUiProjection();
+                const value = useAppShellPluginUiProjection(value => value);
                 return React.createElement('ProjectionProbe', { value });
             }
             const { AppShellPluginUiProjectionProvider } = await import('./AppShellPluginUiProjection');

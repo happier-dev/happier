@@ -1815,7 +1815,7 @@ describe('UI Workflow Action front door', () => {
             const reader = { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} };
             let published = false;
             function AppShell({ children }: React.PropsWithChildren) {
-                const defaults = useAppShellPluginUiProjection();
+                const defaults = useAppShellPluginUiProjection(value => value);
                 return React.createElement(AppShellPluginUiProjectionValueProvider, {
                     declarationReady: published, value: { ...defaults,
                         pluginUiProjection: published ? settledProjection : null,

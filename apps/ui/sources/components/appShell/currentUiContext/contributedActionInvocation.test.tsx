@@ -65,7 +65,7 @@ it.each([
     const reader = { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} };
     const serverId = lifetime.scope.serverId;
     function Shell() {
-        const defaults = useAppShellPluginUiProjection();
+        const defaults = useAppShellPluginUiProjection(value => value);
         return <AppShellPluginUiProjectionValueProvider declarationReady value={{ ...defaults,
             pluginUiProjection: projection, phase: unavailable === 'unknown-action' ? 'establishing' : 'current',
             hasEstablishingMembers: true,

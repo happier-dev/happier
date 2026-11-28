@@ -280,7 +280,7 @@ let bundledRuntimes: Awaited<ReturnType<typeof createBundledConversationRuntimes
 function ProjectionReader() {
   // Present the Machine source whose admitted descriptor AppShell observes.
   usePluginUiProjectionCurrentness({ machineId: descriptorMachineId, serverId: account!.scope.serverId });
-  reloadProjection = useAppShellPluginUiProjection().reloadConnectedAccountProjection;
+  reloadProjection = useAppShellPluginUiProjection(value => value.reloadConnectedAccountProjection);
   return null;
 }
 async function waitForDescriptorReply() {

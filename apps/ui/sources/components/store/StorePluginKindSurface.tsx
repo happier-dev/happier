@@ -15,7 +15,13 @@ import { resolveStoreKindContribution } from './catalog/storeKindContributions';
 import type { StoreKindSurfaceInput } from './StoreKindSurface';
 
 export default function PluginStoreKindSurface(props: Readonly<{ kind: string; input: StoreKindSurfaceInput }>) {
-    const projection = useAppShellPluginUiProjection();
+    const projection = useAppShellPluginUiProjection(value => ({
+        pluginUiProjection: value.pluginUiProjection,
+        machineId: value.machineId,
+        serverId: value.serverId,
+        platform: value.platform,
+        accountLifetime: value.accountLifetime,
+    }));
     const router = useRouter();
     const navigation = usePluginSurfaceDestinationNavigationBinding();
     const resolved = resolveStoreKindContribution(props.kind, projection.pluginUiProjection);

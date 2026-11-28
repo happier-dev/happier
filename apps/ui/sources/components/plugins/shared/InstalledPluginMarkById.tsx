@@ -12,8 +12,13 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
  * The adjacent title names the plugin.
  */
 export function InstalledPluginMarkById(props: Readonly<{ pluginId: string; size: number; testID?: string }>): React.ReactElement {
-    const app = useAppShellPluginUiProjection();
-    const installed = app.pluginUiProjection?.installedPackagesById[props.pluginId] ?? null;
+    const app = useAppShellPluginUiProjection(value => ({
+        phase: value.phase,
+        machineId: value.machineId,
+        serverId: value.serverId,
+        installed: value.pluginUiProjection?.installedPackagesById[props.pluginId] ?? null,
+    }));
+    const installed = app.installed;
     const installedPackage = app.phase === 'current' && installed?.brand ? installed : null;
     const scope = React.useMemo(() => new AbortController(), [installedPackage, app.machineId, app.serverId]);
     React.useEffect(() => () => scope.abort(), [scope]);

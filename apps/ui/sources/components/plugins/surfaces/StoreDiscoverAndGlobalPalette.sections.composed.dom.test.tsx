@@ -25,7 +25,7 @@ import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/prompt
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { AppShellPluginUiProjectionProvider, useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { type AppShellPluginUiProjectionValue, AppShellPluginUiProjectionProvider, useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { CommandPaletteProvider } from '@/components/appShell/commandPalette/CommandPaletteProvider';
 import { useUniversalSearchRuntime, type UniversalSearchRuntime } from '@/components/appShell/search/UniversalSearchRuntimeContext';
@@ -228,7 +228,7 @@ it.each(['desktop Store Discover', 'global command palette'] as const)('cold %s 
         }
 
         let search: UniversalSearchRuntime;
-        let projection: ReturnType<typeof useAppShellPluginUiProjection>;
+        let projection: AppShellPluginUiProjectionValue;
         const push = vi.fn();
         const navigation = { push, pushRetainingCurrent: push, replace: vi.fn(), back: vi.fn(), setParams: vi.fn() };
         function ReadRuntime() {
@@ -236,7 +236,7 @@ it.each(['desktop Store Discover', 'global command palette'] as const)('cold %s 
             return null;
         }
         function ReadProjection() {
-            projection = useAppShellPluginUiProjection();
+            projection = useAppShellPluginUiProjection(value => value);
             return null;
         }
         function Presented({ open }: { open: boolean }) {

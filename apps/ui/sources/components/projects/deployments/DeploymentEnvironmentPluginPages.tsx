@@ -2,7 +2,7 @@ import * as React from 'react';
 import type { PluginSurfaceTarget } from '@happier-dev/plugin-sdk/ui';
 import { normalizePluginUiSubPathV1, PluginUiDestinationReferenceV1Schema } from '@happier-dev/protocol/plugins/ui';
 
-import { useAppShellPluginUiProjectionCurrentness } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useAppShellPluginUiPageProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { useLocalSearchParams } from '@/components/appShell/workspace/destinationRoute';
 import { PluginPageContent } from '@/components/plugins/pages/PluginPageContent';
 import { usePluginPageCatalogActivationHandler } from '@/components/plugins/pages/pluginPageNavigation';
@@ -28,7 +28,7 @@ export function DeploymentEnvironmentPluginPages(props: Readonly<{
     const { target, lifetime } = props;
     const params = useLocalSearchParams<Record<string, string | string[] | undefined>>();
     const openPage = usePluginPageCatalogActivationHandler();
-    const projection = useAppShellPluginUiProjectionCurrentness();
+    const projection = useAppShellPluginUiPageProjection();
     const locale = usePreferredLanguage();
     const localize = usePluginLocalizedTextResolver({ locale, projection: projection.pluginUiProjection });
     const account = projection.accountLifetime;

@@ -100,7 +100,15 @@ function AppScopeRightSidebarModelProvider(props: React.PropsWithChildren<AppSco
 
 function useAppScopeRightSidebarModel(props: AppScopeRightSidebarProps) {
     const pane = useAppPaneScope(props.scopeId);
-    const runtime = useAppShellPluginUiProjection();
+    const runtime = useAppShellPluginUiProjection(value => ({
+        pluginUiProjection: value.pluginUiProjection,
+        phase: value.phase,
+        hasEstablishingMembers: value.hasEstablishingMembers,
+        machineId: value.machineId,
+        serverId: value.serverId,
+        platform: value.platform,
+        interactionEnabled: value.interactionEnabled,
+    }));
     const projection = props.pluginUiProjection !== undefined ? props.pluginUiProjection : runtime.pluginUiProjection;
     const projectionPhase = props.projectionPhase ?? runtime.phase;
     const hasEstablishingMembers = props.projectionPhase === undefined && runtime.hasEstablishingMembers === true;

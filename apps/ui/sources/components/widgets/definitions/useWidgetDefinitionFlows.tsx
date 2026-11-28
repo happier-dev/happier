@@ -6,7 +6,7 @@ import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { canPromoteSessionWidgetDefinitionSourceV1 } from '@happier-dev/protocol/widgets/widgetDefinitionPromotionV1';
 
-import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useAppShellPluginUiProjectionCurrentness } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/PluginSurfaceProjectionDemand';
 import { describeAuthoredWidgetDefinitionV1, readWidgetDescriptor, resolveWidgetInstanceTitle, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { useConfiguredWidgetTarget } from '@/sync/domains/widgets/useConfiguredWidgetTarget';
@@ -262,7 +262,7 @@ function AboutResolvedFlow(props: Parameters<typeof AboutFlow>[0] & Readonly<{
     definition: WidgetDefinitionV1 | null;
     placements: Parameters<typeof WidgetAboutPanel>[0]['placements'];
 }>): React.ReactElement {
-    const runtime = useAppShellPluginUiProjection();
+    const runtime = useAppShellPluginUiProjectionCurrentness();
     const definition = props.definition;
     const localize = usePluginLocalizedTextResolver({ projection: runtime.pluginUiProjection });
     const installed = definition && definition.body.kind !== 'installed' && definition.body.kind !== 'builtin' ? null : readWidgetDescriptor(runtime.pluginUiProjection,
@@ -288,7 +288,7 @@ function AboutResolvedFlow(props: Parameters<typeof AboutFlow>[0] & Readonly<{
 /** Only the open panel resolves target metadata; closed frame menus issue no read. */
 function AboutBoundFlow(props: Parameters<typeof AboutResolvedFlow>[0] & Readonly<{
     descriptor: WidgetCandidate | null;
-    runtime: ReturnType<typeof useAppShellPluginUiProjection>;
+    runtime: ReturnType<typeof useAppShellPluginUiProjectionCurrentness>;
     providedContext: Readonly<Record<string, readonly JsonValue[]>>;
     name: string;
 }>): React.ReactElement {

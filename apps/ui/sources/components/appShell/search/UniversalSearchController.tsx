@@ -397,7 +397,11 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
         serverId: canonicalScopeServerId ?? '',
         projection: sessionOrganizationProjection,
     }), [canonicalScopeServerId, sessionOrganizationProjection]);
-    const appShellPluginProjection = useAppShellPluginUiProjection();
+    const appShellPluginProjection = useAppShellPluginUiProjection(value => ({
+        serverId: value.serverId,
+        pluginUiProjection: value.pluginUiProjection,
+        interactionEnabled: value.interactionEnabled,
+    }));
     const scopedPluginProjectionEnabled = hasRemoteSearchQuery && canonicalScopeServerId !== null && scope.machineId !== null;
     const scopedPluginProjection = useScopedPluginUiProjection({
         serverId: canonicalScopeServerId,

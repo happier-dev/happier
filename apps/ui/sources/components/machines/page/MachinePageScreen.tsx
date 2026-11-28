@@ -326,9 +326,9 @@ function MachinePagePluginScope(props: Readonly<{
     target: ReturnType<typeof useMachinePagePluginCatalog>['target'];
     children: React.ReactNode;
 }>) {
-    const projection = useAppShellPluginUiProjection();
+    const pluginUiProjection = useAppShellPluginUiProjection(value => value.pluginUiProjection);
     return (
-        <PluginPageLaunchInputScope pluginUiProjection={projection.pluginUiProjection} target={props.target} pages={props.pages}>
+        <PluginPageLaunchInputScope pluginUiProjection={pluginUiProjection} target={props.target} pages={props.pages}>
             <MachinePageNavigationRegistration pages={props.pages}>
                 <MachinePagePluginPagesProvider value={props.pages}>{props.children}</MachinePagePluginPagesProvider>
             </MachinePageNavigationRegistration>

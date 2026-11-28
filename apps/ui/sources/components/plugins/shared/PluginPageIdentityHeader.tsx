@@ -64,10 +64,14 @@ export function PluginPageIdentityHeaderProvider(props: Readonly<{
     identityOwner?: 'page' | 'host';
     children: React.ReactNode;
 }>): React.ReactElement {
-    const app = useAppShellPluginUiProjection();
+    const app = useAppShellPluginUiProjection(value => ({
+        machineId: value.machineId,
+        serverId: value.serverId,
+        installedPackage: value.pluginUiProjection?.installedPackagesById[props.pluginId] ?? null,
+    }));
     // Where navigation chrome already shows the title (a phone) the page header is the one identity, as for every page.
     const chromeShowsTitle = useNavigationTitleChromeShowsTitle();
-    const installedPackage = app.pluginUiProjection?.installedPackagesById[props.pluginId] ?? null;
+    const installedPackage = app.installedPackage;
     const identity = React.useMemo<PluginSurfacePageIdentity | null>(() => {
         if (props.identityOwner === 'host') return null;
         const entryLoading = props.entryDetail ? {
