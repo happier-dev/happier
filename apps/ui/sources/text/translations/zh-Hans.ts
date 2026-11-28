@@ -2736,6 +2736,14 @@ export const zhHans: TranslationStructure = {
   },
 
   connectedServices: {
+    accountStatusConsent: {
+      sectionTitle: "账号状态",
+      toggleTitle: "显示配额和账号状态",
+      toggleSubtitle: "读取此代理已连接账号的用量上限和验证状态。池会为其成员开启此功能。",
+      noticeTitle: "关于账号状态",
+      noticeBody: "从 Google 的账号服务读取用量。Google 并未正式支持第三方访问这些服务；是否启用由你自行决定。",
+      learnMore: "了解更多",
+    },
     importAccounts: {
         unknownResult: "导入结果未知。请刷新账户列表并检查此配置后再重试。",
         title: "导入已有登录",
@@ -5727,6 +5735,8 @@ export const zhHans: TranslationStructure = {
           targetUnavailable: ({ agent }: { agent: string }) => `${agent} 在这台机器上不可用。尚未发送任何内容。`,
           sourceNotIdle: ({ agent }: { agent: string }) => `${agent} 仍在工作。尚未发送任何内容，请在它完成后重试。`,
           sourceStopFailed: ({ agent }: { agent: string }) => `无法停止 ${agent}，因此没有任何变化。尚未发送任何内容。`,
+          connectedAccountUnsupported: ({ agent }: { agent: string }) => `该账户无法用于 ${agent}。尚未发送任何内容——请选择其他账户后重试。`,
+          connectedAccountMissing: ({ account }: { account: string }) => `所选账户“${account}”已不存在。切换未开始，当前会话保持不变。请选择其他账户后重试。`,
         },
         conflictingDestination: ({ agent }: { agent: string }) => `尚未发送任何内容。这条消息已经有另一个目标，因此不能同时把此会话切换到 ${agent}。请去掉其中之一后重新发送。`,
         sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} 已停止，但切换到 ${agent} 未完成。你的消息未发送。`,

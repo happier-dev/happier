@@ -47,7 +47,8 @@ auth: {
   clientType: "user-scoped" | "session-scoped" | "machine-scoped",
   sessionId?: "<session id>",
   machineId?: "<machine id>",
-  sessionUpdateInterest?: "<session id>"
+  sessionUpdateInterest?: "<session id>",
+  liveTranscriptDisabled?: true
 }
 ```
 
@@ -68,6 +69,14 @@ Session. The declaration only narrows delivery within the authenticated account.
 Omitted or malformed declarations keep the broad audience, and older relays
 ignore the optional field. During a rolling relay upgrade, older publishers can
 still send the broad audience the pre-upgrade payloads.
+
+In 0.2 development, user-scoped RPC and concurrent-server cache connections send
+`liveTranscriptDisabled: true` because they do not consume live transcript frames.
+The relay excludes these connections from hosted stream segments and deltas and
+Direct transcript deltas. Durable session updates and other ephemeral events
+still follow their existing routes. The main UI sync connection omits the field.
+Missing or malformed values preserve the usual audience. Older relays ignore the
+field, and older publishers can still send frames during a rolling relay upgrade.
 
 ### Server -> client events
 The server emits two event types:

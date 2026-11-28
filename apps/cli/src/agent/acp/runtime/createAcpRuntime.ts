@@ -276,7 +276,8 @@ function stringifySessionConfigOptionValue(value: string | number | boolean | nu
 export type AcpRuntime = Readonly<{
   getSessionId: () => string | null;
   /**
-   * Whether this runtime supports "steering" additional user input into an already running turn.
+   * Whether this runtime can "steer" additional user input into an already running turn now; false while
+   * the backend's running prompt waits on a provider permission or question answer.
    */
   supportsInFlightSteer: () => boolean;
   /**
@@ -324,6 +325,8 @@ export type AcpRuntime = Readonly<{
 
 export type AcpRuntimeSteerPromptOptions = InFlightSteerPromptOptions & Readonly<{
   onProviderPromptAccepted?: () => void;
+  /** The provider refused this steer before it took effect; the running turn continues without it. */
+  onProviderPromptRejected?: () => void;
 }>;
 
 export type AcpRuntimeBackend = Omit<AgentBackend, 'waitForResponseComplete' | 'dispose'> & {
@@ -367,6 +370,8 @@ export type AcpRuntimeBackend = Omit<AgentBackend, 'waitForResponseComplete' | '
     prompt: string,
     options?: AcpRuntimeSteerPromptOptions,
   ) => Promise<AcpPromptSubmissionEvidence>;
+  /** Optional: false while a steer prompt cannot reach the running turn (see AcpBackend). */
+  isInFlightSteerWindowOpen?: () => boolean;
   setPlanStatePublisher?: (
     publisher: (snapshot: NormalizedAcpPlanSnapshot) => Promise<void>,
   ) => void;
@@ -2545,7 +2550,7 @@ export function createAcpRuntime(params: {
 
   return {
     getSessionId: () => sessionId,
-    supportsInFlightSteer: () => inFlightSteerEnabled,
+    supportsInFlightSteer: () => inFlightSteerEnabled && backend?.isInFlightSteerWindowOpen?.() !== false,
     isTurnInFlight: () => turnState.turnInFlight,
 
     async isProviderNativeCommand(prompt: string): Promise<boolean> {
@@ -2840,7 +2845,7 @@ export function createAcpRuntime(params: {
       if (!b.sendSteerPrompt && !b.sendSteerPromptWithEvidence) {
         throw new Error(`${params.provider} ACP backend does not support in-flight steer`);
       }
-      const { onProviderPromptAccepted, ...deliveryIdentity } = options ?? {};
+      const { onProviderPromptAccepted, onProviderPromptRejected, ...deliveryIdentity } = options ?? {};
       let submissionEvidence: AcpPromptSubmissionEvidence | null = null;
       if (b.sendSteerPromptWithEvidence) {
         submissionEvidence = await b.sendSteerPromptWithEvidence(
@@ -2856,7 +2861,11 @@ export function createAcpRuntime(params: {
       if (submissionEvidence?.kind === 'effect_may_have_occurred') {
         void submissionEvidence.finalResponseEvidence.then(
           () => onProviderPromptAccepted?.(),
-          () => undefined,
+          (error: unknown) => {
+            if (error instanceof AcpPromptSubmissionPhaseError && error.phase === 'rejected_before_effect') {
+              onProviderPromptRejected?.();
+            }
+          },
         );
       } else {
         onProviderPromptAccepted?.();

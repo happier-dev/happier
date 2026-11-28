@@ -23,6 +23,8 @@ const authGroupApiSpies = vi.hoisted(() => ({
 }));
 const modalSpies = vi.hoisted(() => ({
     prompt: vi.fn(async () => 'Created Team'),
+    consentAnswer: 'common.cancel',
+    alertAsync: vi.fn(),
 }));
 
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -33,7 +35,10 @@ vi.mock('@/sync/api/account/apiConnectedServiceAuthGroupsV3', () => authGroupApi
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({ spies: { prompt: modalSpies.prompt } }).module;
+    modalSpies.alertAsync.mockImplementation(async (_title: string, _message?: string, buttons?: Array<{ text: string; onPress?: () => void }>) => {
+        buttons?.find((button) => button.text === modalSpies.consentAnswer)?.onPress?.();
+    });
+    return createModalModuleMock({ spies: { prompt: modalSpies.prompt, alertAsync: modalSpies.alertAsync } }).module;
 });
 
 vi.mock('@/sync/sync', () => ({
@@ -257,5 +262,32 @@ describe('useConnectedServiceAuthGroups', () => {
                 displayName: 'Created Team',
             }),
         );
+    });
+
+    it.each([
+        { answer: 'common.cancel', creates: false },
+        { answer: 'common.continue', creates: true },
+    ])('asks account-status consent before creating a consent-gated pool ($answer)', async ({ answer, creates }) => {
+        modalSpies.consentAnswer = answer;
+        modalSpies.alertAsync.mockClear();
+        modalSpies.prompt.mockClear();
+        authGroupApiSpies.createConnectedServiceAuthGroupV3.mockClear();
+        authGroupApiSpies.createConnectedServiceAuthGroupV3.mockResolvedValue(
+            buildGroup({ serviceId: 'antigravity', groupId: 'created-team', displayName: 'Created Team' }),
+        );
+
+        const hook = await renderHook(() => useConnectedServiceAuthGroups({ ...defaultParams, serviceId: 'antigravity' }));
+        await act(async () => {
+            await hook.getCurrent().createPool();
+            await flushHookEffects({ cycles: 2, turns: 2 });
+        });
+
+        expect(modalSpies.alertAsync).toHaveBeenCalledWith(
+            'connectedServices.accountStatusConsent.noticeTitle',
+            'connectedServices.accountStatusConsent.noticeBody',
+            expect.any(Array),
+        );
+        expect(modalSpies.prompt).toHaveBeenCalledTimes(creates ? 1 : 0);
+        expect(authGroupApiSpies.createConnectedServiceAuthGroupV3).toHaveBeenCalledTimes(creates ? 1 : 0);
     });
 });

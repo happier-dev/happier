@@ -242,6 +242,7 @@ function normalizeMachineStopSessionResult(result: MachineStopSessionHandlerResu
 
 export type MachineRpcHandlers = {
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
+  connectedServiceAdmission?: NonNullable<Parameters<typeof runSessionAgentTransition>[0]['deps']>['connectedServiceAdmission'];
   spawnSessionForHandoff?: (
     options: SpawnSessionOptions,
     hooks: import('@/rpc/handlers/registerSessionHandlers').SpawnSessionRunnerAcceptanceHooks,
@@ -2211,7 +2212,9 @@ export function registerMachineRpcHandlers(params: Readonly<{
     if (!credentials) {
       return rejectUndispatchedSessionAgentTransition('forbidden');
     }
-    return await runSessionAgentTransition({ credentials, request: parsed.data });
+    return await runSessionAgentTransition({ credentials, request: parsed.data,
+      deps: { connectedServiceAdmission: handlers.connectedServiceAdmission },
+    });
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.SESSION_CONTINUATION_INSPECT, async (raw: unknown) => {

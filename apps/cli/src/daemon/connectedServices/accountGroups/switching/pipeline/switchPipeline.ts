@@ -25,6 +25,11 @@ export type ConnectedServiceAuthGroupSwitchState = Readonly<{
   activeProfileId: string | null;
   lastSwitchReason?: string | null;
   lastSwitchAt?: number | null;
+  /**
+   * Set when the user explicitly selected the active member after its last limiter failure; its
+   * remembered limiter cooldowns are already dropped from `memberStatesByProfileId`.
+   */
+  userSelectedActiveProfile?: Readonly<{ profileId: string; overriddenRetryAtMs: number | null }>;
   generation: number;
   runtimeStateRevision: number;
   /** Exact credential epoch for the active profile when the projection can resolve it. */

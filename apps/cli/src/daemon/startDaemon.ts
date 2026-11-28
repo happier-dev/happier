@@ -3053,6 +3053,53 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         };
 
             // Spawn a new session (sessionId reserved for future Happy session resume; vendor resume uses options.resume).
+        const connectedServiceAuthQuotaFreshnessMs = resolvePositiveIntEnv(
+          process.env.HAPPIER_CONNECTED_SERVICES_AUTH_GROUP_QUOTA_FRESHNESS_MS,
+          5 * 60_000,
+          { min: 1_000, max: 60 * 60_000 },
+        );
+        const createLaunchAuthGroupSwitchCoordinator = (sessionId: string) => createDaemonConnectedServiceAuthGroupSwitchCoordinator({
+          resolveProjectedCredentialHealth,
+          resolveRequiredModelIdsForGroup: (input) => resolveConnectedServiceAuthGroupRequiredModelIds({
+            ...input, targets: connectedServiceRuntimeRegistry.listTargets(), sessions: getCurrentChildren(),
+          }),
+          api,
+          consumeAvailableRecoveryCreditForProfile: async (input) => connectedServiceQuotasCoordinator
+            ? await connectedServiceQuotasCoordinator.consumeAvailableRecoveryCreditForProfile(input)
+            : { ok: false, errorCode: 'connected_service_quota_recovery_credit_unavailable', error: 'Quota coordinator unavailable' },
+          prepareCandidateForSwitch: prepareAuthGroupCandidateForSwitch,
+          resolveCredentialRevision: (serviceId, profileId) => profileId
+            ? latestConnectedServiceProjectionSnapshot?.resolveCredentialRevision(serviceId, profileId) ?? null
+            : null,
+          resolveCurrentCredentialRevision: resolveCurrentConnectedServiceCredentialRevision,
+          runtimeQuotaSnapshots: connectedServiceRuntimeQuotaSnapshots,
+          accountUsageStore: providerAccountUsageStore,
+          leases: connectedServiceAuthGroupSwitchLeases,
+          quotaFreshnessMs: connectedServiceAuthQuotaFreshnessMs,
+          nowMs: () => Date.now(),
+          restartSession: async () => {},
+          probeQuotaSnapshotsForGroup: async (input) => {
+            if (!connectedServiceQuotasCoordinator) return {
+              status: 'incomplete' as const,
+              requestedProfileCount: input.profileIds.length,
+              completedProfileCount: 0,
+              completedProfileIds: [],
+              reason: 'probe_unavailable' as const,
+            };
+            return await connectedServiceQuotasCoordinator.probeGroupQuotaSnapshots(input);
+          },
+          emitEvent: (event) => {
+            if (!event.success || event.resultStatus !== 'switched') return;
+            // Pre-turn/preemptive group switch — surface transcript event + notification
+            // through the single choke point. The committer no-ops on an unknown session,
+            // so the materialization-key fallback stays non-fatal when no session id exists.
+            surfaceConnectedServiceAccountSwitchOutcomeForSession({
+              sessionId,
+              event,
+            });
+          },
+        });
+
                 const spawnSessionNow = async (
                   options: SpawnSessionOptions,
                   acceptanceHooks?: SpawnSessionRunnerAcceptanceHooks,
@@ -3647,54 +3694,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     connectedServiceMaterializationIdentityV1,
                   };
                   try {
-                    const connectedServiceAuthQuotaFreshnessMs = resolvePositiveIntEnv(
-                      process.env.HAPPIER_CONNECTED_SERVICES_AUTH_GROUP_QUOTA_FRESHNESS_MS,
-                      5 * 60_000,
-                      { min: 1_000, max: 60 * 60_000 },
-                    );
                     const connectedServiceSpawnQuotaProbeDeadlineAtMs = Date.now()
                       + DEFAULT_CONNECTED_SERVICE_QUOTA_FETCH_TIMEOUT_MS;
-                    const preTurnSwitchCoordinator = createDaemonConnectedServiceAuthGroupSwitchCoordinator({
-                      resolveProjectedCredentialHealth,
-                      resolveRequiredModelIdsForGroup: (input) => resolveConnectedServiceAuthGroupRequiredModelIds({
-                        ...input, targets: connectedServiceRuntimeRegistry.listTargets(), sessions: getCurrentChildren(),
-                      }),
-                      api,
-                      consumeAvailableRecoveryCreditForProfile: async (input) => connectedServiceQuotasCoordinator
-                        ? await connectedServiceQuotasCoordinator.consumeAvailableRecoveryCreditForProfile(input)
-                        : { ok: false, errorCode: 'connected_service_quota_recovery_credit_unavailable', error: 'Quota coordinator unavailable' },
-                      prepareCandidateForSwitch: prepareAuthGroupCandidateForSwitch,
-                      resolveCredentialRevision: (serviceId, profileId) => profileId
-                        ? latestConnectedServiceProjectionSnapshot?.resolveCredentialRevision(serviceId, profileId) ?? null
-                        : null,
-                      resolveCurrentCredentialRevision: resolveCurrentConnectedServiceCredentialRevision,
-                      runtimeQuotaSnapshots: connectedServiceRuntimeQuotaSnapshots,
-                      accountUsageStore: providerAccountUsageStore,
-                      leases: connectedServiceAuthGroupSwitchLeases,
-                      quotaFreshnessMs: connectedServiceAuthQuotaFreshnessMs,
-                      nowMs: () => Date.now(),
-                      restartSession: async () => {},
-                      probeQuotaSnapshotsForGroup: async (input) => {
-                        if (!connectedServiceQuotasCoordinator) return {
-                          status: 'incomplete' as const,
-                          requestedProfileCount: input.profileIds.length,
-                          completedProfileCount: 0,
-                          completedProfileIds: [],
-                          reason: 'probe_unavailable' as const,
-                        };
-                        return await connectedServiceQuotasCoordinator.probeGroupQuotaSnapshots(input);
-                      },
-                      emitEvent: (event) => {
-                        if (!event.success || event.resultStatus !== 'switched') return;
-                        // Pre-turn/preemptive group switch — surface transcript event + notification
-                        // through the single choke point. The committer no-ops on an unknown session,
-                        // so the materialization-key fallback stays non-fatal when no session id exists.
-                        surfaceConnectedServiceAccountSwitchOutcomeForSession({
-                          sessionId: connectedServiceAuthSessionId ?? materializationKey,
-                          event,
-                        });
-                      },
-                    });
                     const activeAccountSettings = getActiveAccountSettingsSnapshot();
                     // K1 §2: only continuity-gate the spawn when shared-state continuity was requested
                     // for this agent. The gate proves the post-materialization target the vendor reads;
@@ -3710,7 +3711,10 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                       ).stateMode,
                       descriptor: await getConnectedServiceStateSharingDescriptor(catalogAgentId),
                     }) === 'shared';
+                    const admittedAuth = transitionLaunch?.admittedAuth;
                     connectedServiceAuth = await resolveConnectedServiceAuthForSpawn({
+                      ...(admittedAuth && admittedAuth.materializationId === connectedServiceMaterializationIdentityV1.id
+                        ? { admittedAuth: admittedAuth.credentials } : {}),
                       agentId: catalogAgentId,
                       sessionDirectory: resolvedDirectory,
                       connectedServicesBindingsRaw: normalizedOptions.connectedServices,
@@ -3725,7 +3729,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                       quotaFreshnessMs: connectedServiceAuthQuotaFreshnessMs,
                       nowMs: () => Date.now(),
                       sessionId: connectedServiceAuthSessionId,
-                      authGroupSwitchCoordinator: preTurnSwitchCoordinator,
+                      authGroupSwitchCoordinator: createLaunchAuthGroupSwitchCoordinator(connectedServiceAuthSessionId ?? materializationKey),
                       quotaProbeDeadlineAtMs: connectedServiceSpawnQuotaProbeDeadlineAtMs,
                       accountSettings: activeAccountSettings?.settings ?? null,
                       processEnv: process.env,
@@ -3733,6 +3737,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                       vendorResumeId: effectiveResume || null,
                       existingSessionMetadata: existingSessionPersistedMetadata,
                       resumeReachabilityRequired: spawnSharedStateContinuityRequested,
+                      userInitiated: normalizedOptions.executionAuthorization?.provenance === 'user_request',
                       sessionStateMode: normalizedOptions.handoffStateTransfer,
                       candidatePersistedSessionFile: normalizedOptions.handoffStateTransfer === 'existing'
                         ? null
@@ -8719,6 +8724,10 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               });
               connectedApiMachine.setRPCHandlers({
                 spawnSession,
+                connectedServiceAdmission: { api, credentialRefreshService: connectedServiceRefreshCoordinator,
+                  accountUsageStore: providerAccountUsageStore, runtimeQuotaSnapshots: connectedServiceRuntimeQuotaSnapshots,
+                  quotaFreshnessMs: connectedServiceAuthQuotaFreshnessMs,
+                  createAuthGroupSwitchCoordinator: createLaunchAuthGroupSwitchCoordinator },
                 spawnSessionForHandoff: spawnSession,
                 resolveSpawnSessionByNonce: resolveDaemonSpawnSessionByNonce,
                 abandonSpawnSessionByNonce: async (spawnNonce) => await abandonSpawnedSessionUntilCompleted({

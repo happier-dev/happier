@@ -19,7 +19,7 @@ import { machineTransferHandler } from "./socket/machineTransferHandler";
 import { artifactUpdateHandler } from "./socket/artifactUpdateHandler";
 import { accessKeyHandler } from "./socket/accessKeyHandler";
 import { getSocketRooms } from "./socketRooms";
-import { CONNECTED_SERVICE_READER_SUPPORT_SOCKET_AUTH_FIELD, readConnectedServiceReaderSupport, SESSION_UPDATE_INTEREST_SOCKET_AUTH_FIELD } from "@happier-dev/protocol";
+import { CONNECTED_SERVICE_READER_SUPPORT_SOCKET_AUTH_FIELD, readConnectedServiceReaderSupport, SESSION_UPDATE_INTEREST_SOCKET_AUTH_FIELD, LIVE_TRANSCRIPT_DISABLED_SOCKET_AUTH_FIELD } from "@happier-dev/protocol";
 import {
     SOCKET_RPC_DEFAULT_MAX_HTTP_BUFFER_BYTES,
     SOCKET_RPC_PING_INTERVAL_MS,
@@ -327,6 +327,9 @@ export function startSocket(app: Fastify) {
                 userId,
                 ...(clientType === 'user-scoped' && typeof interest === 'string' && interest.trim() && interest === interest.trim()
                     ? { sessionUpdateInterest: interest }
+                    : {}),
+                ...(clientType === 'user-scoped' && socket.handshake.auth[LIVE_TRANSCRIPT_DISABLED_SOCKET_AUTH_FIELD] === true
+                    ? { liveTranscriptDisabled: true }
                     : {}),
             };
         }

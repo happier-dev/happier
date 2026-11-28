@@ -14,6 +14,6 @@ export interface HappierSocketData {
 }
 
 /** The sole typed view of Socket.IO's application-owned per-socket data bag. */
-export function readHappierSocketData(socket: Socket): HappierSocketData {
+export function readHappierSocketData(socket: Pick<Socket, "data">): HappierSocketData {
     return socket.data as unknown as HappierSocketData;
 }

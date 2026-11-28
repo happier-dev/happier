@@ -26,6 +26,7 @@ export interface UserScopedConnection {
     socket: Socket;
     userId: string;
     sessionUpdateInterest?: string;
+    liveTranscriptDisabled?: true;
 }
 
 export interface MachineScopedConnection {

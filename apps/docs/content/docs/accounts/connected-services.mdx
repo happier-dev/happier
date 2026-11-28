@@ -91,18 +91,35 @@ copies of the same conversation are preserved as separate files. Antigravity
 continues to load the native shared copy under the original conversation ID; the
 imported `.happier-import-*` copy is not automatically merged or selected.
 
-Subscription meters use the selected account's Google quota response, including
-its returned windows and reset information. An account that has never run
-Antigravity has no Code Assist project yet; its first quota read completes the
-same free-tier setup the Antigravity CLI performs on its first run (a paid plan
-stays the account's plan), so the account's quota is known before its first
-session. When Google asks an account to verify its identity first, the failed
-turn adds a session message with Google's verification link (or, if the link
-cannot be read, a note to verify the account with Google) instead of a reply.
+In development builds Happier reads nothing about an Antigravity account from
+Google by default. Usage limits, reset times and verification requests come from
+the Antigravity CLI's own failure message in the session. Account status turns on
+in either of two ways, and neither needs the other:
+
+- **Settings → AI & Agents → AI backends → Antigravity → Show quota and account
+  status** (off by default) turns it on for every connected Antigravity account.
+- Adding accounts to an Antigravity **pool** turns it on for the pool's members.
+  Pools also use it to choose accounts and switch automatically.
+
+Both ask you to confirm first: Happier reads usage from Google's account service,
+which Google doesn't officially support for third-party apps, so turning it on is
+your choice. **Learn more** opens Google's page, **Cancel** leaves the setting off
+or doesn't create the pool, and **Continue** goes ahead. Pools created before this
+change keep working.
+
+When account status is on, Happier asks the installed Antigravity CLI itself for
+the account's usage (`agy -p /usage`, no model turn) on the existing quota
+interval, at most once per interval per account. Polling an account pauses after
+repeated failures and resumes when the account is next used or refreshed. The
+CLI onboards a never-used account on its own first run; Happier no longer does.
+If Google asks an account to verify its identity, the failed turn adds a session
+message. With account status on, it includes Google's verification link when one
+can be read; otherwise it asks you to sign in with that account in the
+Antigravity app or `agy` to complete verification, then resend.
 Context usage is a separate ACP signal. Real sign-in, refresh, quota attribution and A→B→A pool resume are still
 being validated; this section does not claim stable availability or completed
 authenticated/platform validation. The integration depends on Antigravity's OAuth
-client and an undocumented Google quota API, which Google may change.
+client and the CLI's `/usage` output, which Google may change.
 
 [Google's FAQ](https://www.antigravity.google/docs/faq/) says third-party access
 can lead to account suspension or termination, and consumer-plan account rotation
@@ -300,6 +317,10 @@ Supported methods:
 
 - paste redirect URL
 - in-app browser on native only
+
+In development builds Gemini quota reads follow the Antigravity rule: Happier reads
+a Gemini account's quota only when the Gemini backend's **Show quota and account
+status** setting is on or the account is in a Gemini pool.
 
 ### GitHub
 

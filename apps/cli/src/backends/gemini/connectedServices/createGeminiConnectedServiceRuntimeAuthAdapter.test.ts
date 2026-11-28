@@ -132,7 +132,7 @@ describe('createGeminiConnectedServiceRuntimeAuthAdapter', () => {
 
     await expect(adapter.probeQuota({
       target: { agentId: 'gemini' },
-      selection: { record: buildGeminiOauthRecord() },
+      selection: { groupId: 'group-gemini', record: buildGeminiOauthRecord() },
     })).resolves.toEqual({
       status: 'unsupported',
       reason: 'gemini_code_assist_project_unavailable',
@@ -154,11 +154,27 @@ describe('createGeminiConnectedServiceRuntimeAuthAdapter', () => {
 
     await expect(adapter.probeQuota({
       target: { agentId: 'gemini' },
-      selection: { record: buildGeminiOauthRecord() },
+      selection: { groupId: 'group-gemini', record: buildGeminiOauthRecord() },
     })).resolves.toEqual({
       status: 'unsupported',
       reason: 'gemini_code_assist_request_failed',
     });
+  });
+
+  it('makes no Code Assist request for an account outside every pool', async () => {
+    const requestedUrls: string[] = [];
+    const adapter = createGeminiConnectedServiceRuntimeAuthAdapter({
+      fetchRuntime: async (url) => {
+        requestedUrls.push(url);
+        return Response.json({});
+      },
+    });
+
+    await expect(adapter.probeQuota({
+      target: { agentId: 'gemini' },
+      selection: { record: buildGeminiOauthRecord() },
+    })).resolves.toEqual({ status: 'unsupported', reason: 'pool_consent_required' });
+    expect(requestedUrls).toEqual([]);
   });
 
   it('returns unsupported for native check-now contexts without connected-service OAuth records', async () => {

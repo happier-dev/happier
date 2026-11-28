@@ -3153,6 +3153,14 @@ export const it: TranslationStructure = {
   },
 
   connectedServices: {
+    accountStatusConsent: {
+      sectionTitle: "Stato dell’account",
+      toggleTitle: "Mostra quota e stato dell’account",
+      toggleSubtitle: "Legge i limiti di utilizzo e lo stato di verifica degli account collegati di questo agente. I pool lo attivano per i loro membri.",
+      noticeTitle: "Informazioni sullo stato dell’account",
+      noticeBody: "Legge l’utilizzo dal servizio account di Google. Google non supporta ufficialmente l’accesso di terze parti a questi servizi; l’attivazione è a tua discrezione.",
+      learnMore: "Scopri di più",
+    },
     importAccounts: {
         unknownResult: "Il risultato dell’importazione è sconosciuto. Aggiorna l’elenco degli account e verifica questo profilo prima di riprovare.",
         title: "Importa un accesso esistente",
@@ -6261,6 +6269,8 @@ export const it: TranslationStructure = {
           targetUnavailable: ({ agent }: { agent: string }) => `${agent} non è disponibile su questa macchina. Non è stato inviato nulla.`,
           sourceNotIdle: ({ agent }: { agent: string }) => `${agent} sta ancora lavorando. Non è stato inviato nulla: riprova quando ha finito.`,
           sourceStopFailed: ({ agent }: { agent: string }) => `Non è stato possibile arrestare ${agent}, quindi non è cambiato nulla. Non è stato inviato nulla.`,
+          connectedAccountUnsupported: ({ agent }: { agent: string }) => `Questo account non può essere usato con ${agent}. Non è stato inviato nulla: scegli un altro account e riprova.`,
+          connectedAccountMissing: ({ account }: { account: string }) => `L’account selezionato «${account}» non esiste più. Il cambio non è iniziato e la sessione corrente è invariata. Scegli un altro account e riprova.`,
         },
         conflictingDestination: ({ agent }: { agent: string }) => `Non è stato inviato nulla. Questo messaggio ha già un’altra destinazione, quindi non può anche passare questa sessione a ${agent}. Rimuovine uno dei due e invia di nuovo.`,
         sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} si è arrestato, ma il passaggio a ${agent} non è stato completato. Il messaggio non è stato inviato.`,

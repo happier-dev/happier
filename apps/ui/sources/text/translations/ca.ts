@@ -2673,6 +2673,14 @@ export const ca: TranslationStructure = {
     },
 
     connectedServices: {
+        accountStatusConsent: {
+            sectionTitle: "Estat del compte",
+            toggleTitle: "Mostra la quota i l’estat del compte",
+            toggleSubtitle: "Llegeix els límits d’ús i l’estat de verificació dels comptes connectats d’aquest agent. Els pools ho activen per als seus membres.",
+            noticeTitle: "Sobre l’estat del compte",
+            noticeBody: "Llegeix l’ús des del servei de comptes de Google. Google no admet oficialment l’accés de tercers a aquests serveis; activar-ho queda a criteri teu.",
+            learnMore: "Més informació",
+        },
         importAccounts: {
             unknownResult: "El resultat de la importació és desconegut. Actualitza la llista de comptes i revisa aquest perfil abans de tornar-ho a provar.",
             title: "Importa un inici de sessió existent",
@@ -5574,6 +5582,8 @@ deps: {
                     targetUnavailable: ({ agent }: { agent: string }) => `${agent} no està disponible en aquesta màquina. No s’ha enviat res.`,
                     sourceNotIdle: ({ agent }: { agent: string }) => `${agent} encara està treballant. No s’ha enviat res: torna-ho a provar quan acabi.`,
                     sourceStopFailed: ({ agent }: { agent: string }) => `No s’ha pogut aturar ${agent}, així que no ha canviat res. No s’ha enviat res.`,
+                    connectedAccountUnsupported: ({ agent }: { agent: string }) => `Aquest compte no es pot fer servir amb ${agent}. No s’ha enviat res: tria un altre compte i torna-ho a provar.`,
+                    connectedAccountMissing: ({ account }: { account: string }) => `El compte «${account}» ja no existeix. El canvi no ha començat i la sessió actual continua igual. Tria un altre compte i torna-ho a provar.`,
                 },
                 conflictingDestination: ({ agent }: { agent: string }) => `No s’ha enviat res. Aquest missatge ja té una altra destinació, així que no pot canviar també aquesta sessió a ${agent}. Treu-ne una de les dues i torna a enviar.`,
                 sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} s’ha aturat, però el canvi a ${agent} no s’ha completat. El teu missatge no s’ha enviat.`,

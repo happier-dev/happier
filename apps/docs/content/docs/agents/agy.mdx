@@ -44,6 +44,14 @@ titles are shared with the machine login, so a running session can switch betwee
 your own login and a connected account, or between accounts, and continue the
 same conversation. With isolated state, each account keeps its own history.
 
+### Quota and account status
+
+By default Happier makes no requests to Google about an Antigravity account; usage
+limits and verification requests come from the CLI's own message in the session.
+Turn on **Show quota and account status** in this backend's settings, or add the
+account to a pool, to let Happier read its usage by running `agy -p /usage` for
+that account. See [Connected services](/accounts/connected-services) for details.
+
 ## Start and resume sessions
 
 ```bash

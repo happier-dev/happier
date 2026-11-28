@@ -7,7 +7,8 @@ import {
   type ConnectedServiceCredentialApi,
   type ConnectedServiceAuthGroupApi,
 } from '@/api/connectedServices/connectedServiceCredentialApi';
-import { readClaudeCodeNativeCredential } from '@/backends/claude/connectedServices/nativeAuth/claudeCodeCredentialFile';
+import { readClaudeCodeNativeCatalogSignIn } from '@/backends/claude/connectedServices/nativeAuth/claudeCodeCredentialFile';
+import type { ClaudeCodeGatewayLogin } from '@/backends/claude/connectedServices/nativeAuth/claudeCodeNativeCredentialPayload';
 import { resolveConnectedServiceCredentialsWithRevisions } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 import type { Credentials } from '@/persistence';
 import { buildProfileEnvOverlay } from '@/settings/profiles/buildProfileEnvOverlay';
@@ -15,15 +16,26 @@ import { readProfilesFromAccountSettings } from '@/settings/profiles/readProfile
 import { resolveProfileForAgent } from '@/settings/profiles/resolveProfileForAgent';
 import { resolveConfiguredClaudeConfigDir } from '@/backends/claude/utils/resolveConfiguredClaudeConfigDir';
 import { resolveClaudeSettingSources } from '@/backends/claude/utils/resolveClaudeSettingSources';
-import type { CatalogProbeLifecycle, RegisterNativeCatalogCleanup } from '@/capabilities/probes/catalogProbeLifecycle';
+import {
+  withCatalogProbeLifecycle,
+  type CatalogProbeLifecycle,
+  type RegisterNativeCatalogCleanup,
+} from '@/capabilities/probes/catalogProbeLifecycle';
 import { DEFAULT_ANTHROPIC_BASE_URL } from './fetchAnthropicModels';
 import { readClaudeApiKeyHelperCredential } from './readClaudeApiKeyHelperCredential';
 
-export type ClaudeModelProbeCredential = Readonly<{
-  /** `api_key_helper`: output of Claude Code's `apiKeyHelper`, sent the way Claude Code sends it. */
-  kind: 'bearer' | 'api_key' | 'api_key_helper';
-  value: string;
-}>;
+export type ClaudeModelProbeCredential =
+  | Readonly<{
+    /** `api_key_helper`: output of Claude Code's `apiKeyHelper`, sent the way Claude Code sends it. */
+    kind: 'bearer' | 'api_key' | 'api_key_helper';
+    value: string;
+  }>
+  | Readonly<{
+    /** Claude Code's gateway sign-in: usable only over a connection presenting the pinned certificate. */
+    kind: 'gateway_login';
+    value: string;
+    tlsCertificateSha256: string;
+  }>;
 
 export type ClaudeModelProbeTarget = Readonly<{
   baseUrl: string | null;
@@ -96,6 +108,8 @@ function targetCacheIdentity(baseUrl: string | null, credential: ClaudeModelProb
     baseUrl ?? 'https://api.anthropic.com',
     credential.kind,
     createHash('sha256').update(credential.value).digest('hex'),
+    // Claude Code can re-pin a gateway without issuing a new token; the pin decides the result.
+    ...(credential.kind === 'gateway_login' ? [credential.tlsCertificateSha256] : []),
   ].join('|');
 }
 
@@ -255,19 +269,53 @@ export async function resolveClaudeModelProbeTarget(
     return { baseUrl, credential, cacheIdentity: targetCacheIdentity(baseUrl, credential) };
   }
 
-  // Never pair a native saved subscription token with an explicitly configured third-party
-  // endpoint. With the default endpoint, reading the native credential mirrors Claude Code login.
-  if (baseUrl !== null) return null;
+  // Saved logins come last, as in Claude Code. A claude.ai login only ever talks to the Anthropic
+  // API, so it is never paired with an explicitly configured endpoint.
+  const claudeConfigDir = resolveConfiguredClaudeConfigDir({ env: effectiveEnv });
   try {
-    const native = await readClaudeCodeNativeCredential({
-      claudeConfigDir: resolveConfiguredClaudeConfigDir({ env: effectiveEnv }),
-      signal: params.signal,
+    // Saved logins can wait on the macOS keychain, so they share the discovery deadline.
+    return await withCatalogProbeLifecycle(params, async ({ signal }) => {
+      const signIn = await readClaudeCodeNativeCatalogSignIn({ claudeConfigDir, signal });
+      if (signIn?.kind === 'gateway') {
+        if (!signIn.login) return null;
+        return resolveGatewayLoginTarget({
+          login: signIn.login,
+          baseUrl,
+          configuredEndpoint: readNonBlankString(effectiveEnv.ANTHROPIC_BASE_URL),
+          nowMs: (params.nowMs ?? Date.now)(),
+        });
+      }
+      if (!signIn || baseUrl !== null) return null;
+      const credential = { kind: 'bearer' as const, value: signIn.accessToken };
+      return { baseUrl: null, credential, cacheIdentity: targetCacheIdentity(null, credential) };
     });
-    const accessToken = readNonBlankString(native?.payload.claudeAiOauth.accessToken);
-    if (!accessToken) return null;
-    const credential = { kind: 'bearer' as const, value: accessToken };
-    return { baseUrl: null, credential, cacheIdentity: targetCacheIdentity(null, credential) };
   } catch {
     return null;
   }
+}
+
+/**
+ * A gateway sign-in belongs to the gateway that issued it: discovery uses that gateway's URL and
+ * never sends the token to another origin. Like the rest of this resolver it is passive, so an
+ * expired sign-in waits for Claude Code to refresh it instead of being refreshed here.
+ */
+function resolveGatewayLoginTarget(params: Readonly<{
+  login: ClaudeCodeGatewayLogin;
+  /** The normalized endpoint, `null` for both an unset and an explicit Anthropic API URL. */
+  baseUrl: string | null;
+  /** `ANTHROPIC_BASE_URL` as configured, so an explicit Anthropic API URL still counts as configured. */
+  configuredEndpoint: string | null;
+  nowMs: number;
+}>): ClaudeModelProbeTarget | null {
+  const { login } = params;
+  if (login.expiresAt !== null && login.expiresAt <= params.nowMs) return null;
+  if (params.configuredEndpoint !== null
+    && new URL(params.configuredEndpoint).origin !== new URL(login.url).origin) return null;
+  const baseUrl = params.baseUrl ?? login.url;
+  const credential = {
+    kind: 'gateway_login' as const,
+    value: login.accessToken,
+    tlsCertificateSha256: login.tlsCertificateSha256,
+  };
+  return { baseUrl, credential, cacheIdentity: targetCacheIdentity(baseUrl, credential) };
 }

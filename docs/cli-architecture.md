@@ -212,6 +212,10 @@ convergence, after the replacement socket settles its Runtime Activity publisher
 registration on relays that support the publisher fence. The writer waits for
 any in-flight attempt, then retries with the original local id and terminal state.
 Pending input materialization becomes eligible once the replay attempt settles.
+
+The writer batches live appends on a 100 ms default interval. Set
+`HAPPIER_STREAM_LIVE_INTERVAL_MS` to tune it. Opening snapshots and terminal
+publications bypass the batching window.
 The subscription ends when the snapshots settle or the writer is discarded.
 Retention lasts for the lifetime of the session client in the current process.
 
@@ -321,18 +325,17 @@ strip it during writeback; this addition does not provide lossless old-editor
 round trips. The successor line translates the preference into its native
 preferred-Agent model rather than adding another default field.
 
-### Profile restoration on resume (development)
+### Profile environment on daemon launch (development)
 
 The daemon runtime snapshot restores the session's persisted `profileId` when a
 resume or respawn caller omits it. An explicit empty identity selects no profile.
-Before launching an existing session, the child-environment owner uses the same
-profile lookup, target compatibility, template expansion and saved-secret
-resolver as `--profile`. Explicit session environment values win; a selected
-saved-secret binding wins over ambient daemon credentials. Missing profiles,
-unavailable account settings, and unavailable bound secrets fail spawn validation
-instead of silently launching with native authentication. Sessions without a
-profile retain their existing behavior. This correction requires the updated
-CLI daemon; it does not change the resume RPC or session metadata format.
+For fresh and resumed sessions with a profile ID, the child-environment owner
+uses the same profile lookup, target compatibility, template expansion and
+saved-secret resolver as `--profile`. Explicit session environment values take
+precedence over the profile. A selected saved-secret binding takes precedence
+over ambient daemon credentials. Missing profiles, unavailable account settings,
+and unavailable bound secrets fail spawn validation. This behavior requires an
+updated CLI daemon and uses the existing spawn RPC and session metadata format.
 
 ## Automated session targets and permissions (development)
 
@@ -1719,7 +1722,9 @@ the panes rather than creating separate Herdr servers.
 Claude unified reuses the existing composer parser and prompt-submission verifier;
 successful terminal writes are not provider acceptance acknowledgements.
 The development parser recognizes Claude's bordered `↑ N more` composer viewport
-when a small terminal hides the prompt marker. Submission verifies the visible
+when a small terminal hides the prompt marker. The parser accepts labels such as the
+session name or `↓ N more` in the horizontal rules. A scrolled viewport requires an
+`↑ N more` label delimited by rule glyphs in its top row. Submission verifies the visible
 prompt text through that same parser, without requiring a terminal attachment or
 resize; an unrelated visible draft remains protected.
 In development source, normal and shell prompts share one active-input selection and

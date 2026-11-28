@@ -367,6 +367,15 @@ const EXPLICIT_PROVIDER_PERMISSION_CONTEXT = { permissionMode: 'default', requir
 
 export type AcpPermissionCallContext = Readonly<{ permissionMode?: PermissionMode; requiresExplicitDecision?: boolean }>;
 
+/** Policies that may own the same provider request: identical admitted policies stand, anything else needs an explicit decision. */
+function mergeAdmittedPermissionContexts(
+  first: AcpPermissionCallContext | undefined,
+  second: AcpPermissionCallContext | undefined,
+): AcpPermissionCallContext {
+  if (!first || !second || first.requiresExplicitDecision || second.requiresExplicitDecision) return EXPLICIT_PROVIDER_PERMISSION_CONTEXT;
+  return first.permissionMode === second.permissionMode ? first : EXPLICIT_PROVIDER_PERMISSION_CONTEXT;
+}
+
 /**
  * Permission handler interface for ACP backends
  */
@@ -1034,6 +1043,8 @@ export class AcpBackend implements AgentBackend {
   private providerSourceLifetime: AbortController | null = null;
   private readonly providerToolContexts = new Map<string, AcpPermissionCallContext>();
   private readonly providerContinuations = new Map<string, AcpPermissionCallContext | null>();
+  /** The one policy every background command of this provider source was admitted under, or the explicit-decision policy when they differ. */
+  private providerBackgroundPermissionContext: AcpPermissionCallContext | null = null;
   private providerTurn: Readonly<{ generation: number; turnId: string; lifetime: AbortController }> | null = null;
   private activePermissionContext: AcpPermissionCallContext | undefined;
   private turnGeneration = 0;
@@ -1102,6 +1113,7 @@ export class AcpBackend implements AgentBackend {
     this.activePermissionContext = undefined;
     this.providerToolContexts.clear();
     this.providerContinuations.clear();
+    this.providerBackgroundPermissionContext = null;
     try {
       const outcome = await withGracefulTeardownBound(Promise.resolve().then(() => source?.dispose()));
       if (outcome === 'timed_out') {
@@ -1187,10 +1199,13 @@ export class AcpBackend implements AgentBackend {
     this.providerToolContexts.set(toolCallId, this.activePermissionContext);
   }
 
+  /**
+   * Unattributed provider work may belong to the foreground turn or to resumed background work, so it keeps
+   * a policy only when both were admitted under it; any difference requires an explicit decision.
+   */
   private getLivePermissionContext(): AcpPermissionCallContext | undefined {
-    return this.providerSource?.hasUnattributedWork?.() === true
-      ? EXPLICIT_PROVIDER_PERMISSION_CONTEXT
-      : this.activePermissionContext;
+    if (this.providerSource?.hasUnattributedWork?.() !== true) return this.activePermissionContext;
+    return mergeAdmittedPermissionContexts(this.activePermissionContext, this.providerBackgroundPermissionContext ?? undefined);
   }
 
   /**
@@ -1212,6 +1227,9 @@ export class AcpBackend implements AgentBackend {
         const context = this.providerToolContexts.get(parentToolCallId);
         if (!current() || !readNonBlankOpaqueIdentifier(id) || !context || this.providerContinuations.has(id)) return false;
         this.providerContinuations.set(id, context);
+        this.providerBackgroundPermissionContext = mergeAdmittedPermissionContexts(
+          this.providerBackgroundPermissionContext ?? context, context,
+        );
         if (keepToolCallOpen) this.toolCalls.detachFromTurn(parentToolCallId);
         return true;
       },
@@ -1859,7 +1877,7 @@ export class AcpBackend implements AgentBackend {
     });
 
     // Create client handlers. The generic connection owner registers these on the public SDK app API.
-    const clientHandlers: AcpClientConnectionHandlers = {
+    const providerClientHandlers: AcpClientConnectionHandlers = {
       sessionUpdate: async (params: SessionNotification) => {
         await this.handleSessionUpdate(params);
       },
@@ -2105,6 +2123,21 @@ export class AcpBackend implements AgentBackend {
         }
         if (tracksForeground) markToolCallRunningAfterPermission(toolCallId, this.createHandlerContext());
         return { outcome };
+      },
+    };
+
+    const clientHandlers: AcpClientConnectionHandlers = {
+      ...providerClientHandlers,
+      // A running prompt waiting on this answer cannot take a steer; hold steering until it moves on.
+      requestPermission: async (params: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
+        const turnGeneration = this.turnGeneration;
+        this.unansweredProviderInputRequestCount += 1;
+        try {
+          return await providerClientHandlers.requestPermission(params);
+        } finally {
+          this.unansweredProviderInputRequestCount -= 1;
+          this.inFlightSteerHeldTurnGeneration = turnGeneration;
+        }
       },
     };
 
@@ -2782,6 +2815,8 @@ export class AcpBackend implements AgentBackend {
       logger.debug('[AcpBackend] Dropping prompt-turn session/update outside an active dispatched generation');
       return;
     }
+    // The provider moved on after the answer or rejection that held steering.
+    this.inFlightSteerHeldTurnGeneration = null;
 
     if (this.waitingForResponse) {
       this.sawSessionUpdateSincePrompt = true;
@@ -3347,6 +3382,14 @@ export class AcpBackend implements AgentBackend {
    * unacknowledged steer, so its input is accepted before its own response ends the combined turn.
    */
   private outstandingSteerPrompts: Readonly<{ generation: number; steers: OutstandingAcpSteerPrompt[] }> | null = null;
+  /** Provider permission/question requests Happier has not answered yet. */
+  private unansweredProviderInputRequestCount = 0;
+  /**
+   * Turn generation whose steering waits for the provider's next session update: after Happier answers
+   * a provider permission/question, or after the provider rejected a steer, the running prompt may
+   * still be blocked on that answer and agents such as agy refuse a steer prompt meanwhile.
+   */
+  private inFlightSteerHeldTurnGeneration: number | null = null;
   private idleStatusDeferredUntilPromptResponse = false;
 
   private observeAcpTransportMessageWritten(message: unknown): void {
@@ -3505,6 +3548,12 @@ export class AcpBackend implements AgentBackend {
 
     this.finalizeTurnOutcome(mapStopReasonToAcpTurnOutcome(stopReason));
     return true;
+  }
+
+  /** Whether a steer prompt can reach the running turn now, rather than waiting on a provider input request. */
+  isInFlightSteerWindowOpen(): boolean {
+    return this.unansweredProviderInputRequestCount === 0
+      && this.inFlightSteerHeldTurnGeneration !== this.turnGeneration;
   }
 
   private countOutstandingSteerPrompts(turnGeneration: number): number {
@@ -4126,6 +4175,13 @@ export class AcpBackend implements AgentBackend {
         return { kind: 'exact_final_response', response };
       })
       .catch((error: unknown) => {
+        // A JSON-RPC error answering a steer the provider never acknowledged refuses only that steer:
+        // the running prompt keeps its turn, tool calls and permissions, and the input is redelivered.
+        if (isAcpJsonRpcRejection(error) && !outstandingSteer.acknowledged) {
+          logger.debug('[AcpBackend] Provider rejected an in-flight steer; the running turn continues');
+          if (turnGeneration === this.turnGeneration) this.inFlightSteerHeldTurnGeneration = turnGeneration;
+          throw toAcpPromptSubmissionPhaseError('rejected_before_effect', error);
+        }
         if (!this.disposed && this.waitingForResponse) {
           const normalizedError = error instanceof Error ? error : new Error(String(error));
           this.failPendingResponseWait(normalizedError);

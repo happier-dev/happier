@@ -2587,6 +2587,14 @@ export const de: TranslationStructure = {
     },
 
     connectedServices: {
+        accountStatusConsent: {
+            sectionTitle: "Kontostatus",
+            toggleTitle: "Kontingent und Kontostatus anzeigen",
+            toggleSubtitle: "Liest Nutzungslimits und Verifizierungsstatus der verbundenen Konten dieses Agents. Pools aktivieren dies für ihre Mitglieder.",
+            noticeTitle: "Über den Kontostatus",
+            noticeBody: "Liest die Nutzung aus dem Kontodienst von Google. Google unterstützt den Zugriff durch Drittanbieter auf diese Dienste offiziell nicht; die Aktivierung liegt in deinem Ermessen.",
+            learnMore: "Mehr erfahren",
+        },
         importAccounts: {
             unknownResult: "Das Ergebnis des Imports ist unbekannt. Aktualisiere die Kontoliste und prüfe dieses Profil vor einem neuen Versuch.",
             title: "Vorhandene Anmeldung importieren",
@@ -5571,6 +5579,8 @@ export const de: TranslationStructure = {
                     targetUnavailable: ({ agent }: { agent: string }) => `${agent} ist auf diesem Rechner nicht verfügbar. Es wurde nichts gesendet.`,
                     sourceNotIdle: ({ agent }: { agent: string }) => `${agent} arbeitet noch. Es wurde nichts gesendet – versuch es noch einmal, sobald es fertig ist.`,
                     sourceStopFailed: ({ agent }: { agent: string }) => `${agent} ließ sich nicht stoppen, deshalb hat sich nichts geändert. Es wurde nichts gesendet.`,
+                    connectedAccountUnsupported: ({ agent }: { agent: string }) => `Dieses Konto kann nicht mit ${agent} verwendet werden. Es wurde nichts gesendet – wähle ein anderes Konto und versuche es erneut.`,
+                    connectedAccountMissing: ({ account }: { account: string }) => `Das ausgewählte Konto „${account}“ existiert nicht mehr. Der Wechsel wurde nicht gestartet und deine aktuelle Sitzung ist unverändert. Wähle ein anderes Konto und versuche es erneut.`,
                 },
                 conflictingDestination: ({ agent }: { agent: string }) => `Es wurde nichts gesendet. Diese Nachricht hat bereits ein anderes Ziel und kann diese Session deshalb nicht zusätzlich wechseln zu ${agent}. Lös eines von beidem auf und sende erneut.`,
                 sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} wurde gestoppt, aber der Wechsel zu ${agent} wurde nicht abgeschlossen. Deine Nachricht wurde nicht gesendet.`,

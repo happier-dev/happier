@@ -1,5 +1,8 @@
 import type { ConnectedServiceAuthGroupV1, ConnectedServiceCredentialHealthStatusV1 } from '@happier-dev/protocol';
-import { ConnectedServiceAuthGroupMemberStateV1Schema } from '@happier-dev/protocol';
+import {
+  CONNECTED_SERVICE_MANUAL_OVERRIDABLE_RUNTIME_BLOCKER_KEYS,
+  ConnectedServiceAuthGroupMemberStateV1Schema,
+} from '@happier-dev/protocol';
 
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
 import {
@@ -90,6 +93,51 @@ export function mergePersistedMemberRuntimeState(
   };
 }
 
+const USER_OVERRIDABLE_LIMITER_FAILURE_KINDS: ReadonlySet<string> = new Set(['usage_limit', 'rate_limit']);
+
+/**
+ * The user's explicit selection of the active member (`lastSwitchReason: 'manual'`) wins over limiter
+ * cooldowns remembered before it, such as a provider "resets in" message preceding a plan upgrade.
+ * A limiter failure observed after the selection is newer evidence and applies again. Other members
+ * keep their cooldowns, so automatic rotation never moves onto a truly exhausted account.
+ */
+export function applyConnectedServiceAuthGroupUserSelectedActiveMember(
+  state: ConnectedServiceAuthGroupSwitchState,
+): ConnectedServiceAuthGroupSwitchState {
+  const profileId = readString(state.activeProfileId);
+  const selectedAtMs = readNonNegativeNumber(state.lastSwitchAt);
+  if (state.lastSwitchReason !== 'manual' || !profileId || selectedAtMs === null) return state;
+  const memberState = state.memberStatesByProfileId.get(profileId);
+  if (!memberState) return state;
+  const failureObservedAtMs = readNonNegativeNumber(memberState.lastObservedAtMs);
+  if (failureObservedAtMs !== null && failureObservedAtMs > selectedAtMs) return state;
+
+  const next: {
+    -readonly [Key in keyof ConnectedServiceAuthGroupMemberRuntimeState]: ConnectedServiceAuthGroupMemberRuntimeState[Key];
+  } = { ...memberState };
+  const overriddenRetryAtValues: number[] = [];
+  for (const key of [...CONNECTED_SERVICE_MANUAL_OVERRIDABLE_RUNTIME_BLOCKER_KEYS, 'cooldownStartedAtMs'] as const) {
+    const value = readNonNegativeNumber(next[key]);
+    if (value === null) continue;
+    if (key !== 'cooldownStartedAtMs') overriddenRetryAtValues.push(value);
+    delete next[key];
+  }
+  if (next.lastFailureKind && USER_OVERRIDABLE_LIMITER_FAILURE_KINDS.has(next.lastFailureKind)) {
+    delete next.lastFailureKind;
+    delete next.lastFailureProviderLimitId;
+  }
+  const memberStatesByProfileId = new Map(state.memberStatesByProfileId);
+  memberStatesByProfileId.set(profileId, next);
+  return {
+    ...state,
+    memberStatesByProfileId,
+    userSelectedActiveProfile: {
+      profileId,
+      overriddenRetryAtMs: overriddenRetryAtValues.length > 0 ? Math.max(...overriddenRetryAtValues) : null,
+    },
+  };
+}
+
 export function buildConnectedServiceAuthGroupSwitchState(input: Readonly<{
   group: ConnectedServiceAuthGroupV1;
   runtimeQuotaSnapshots: ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore;
@@ -128,7 +176,7 @@ function buildConnectedServiceAuthGroupSwitchStateFromMemberRuntimeStates(input:
     );
   }
 
-  return {
+  return applyConnectedServiceAuthGroupUserSelectedActiveMember({
     serviceId: input.group.serviceId,
     groupId: input.group.groupId,
     activeProfileId: input.group.activeProfileId,
@@ -144,5 +192,5 @@ function buildConnectedServiceAuthGroupSwitchStateFromMemberRuntimeStates(input:
       createdAtMs: member.createdAt,
     })),
     memberStatesByProfileId,
-  };
+  });
 }

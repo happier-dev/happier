@@ -193,7 +193,10 @@ export function normalizeEditInput(rawInput: unknown): UnknownRecord {
                 ? record.path.trim()
                 : (typeof record.filePath === 'string' && record.filePath.trim().length > 0)
                     ? record.filePath.trim()
-                    : null;
+                    // agy replace_file_content names it Path, with Target and Replacement.
+                    : (typeof record.Path === 'string' && record.Path.trim().length > 0)
+                        ? record.Path.trim()
+                        : null;
     const fromItem = filePath ? null : coerceItemPath(firstItem);
     const fromLocations = filePath || fromItem ? null : coerceSingleLocationPath(record.locations);
     const normalizedPath = filePath ?? fromItem ?? fromLocations;
@@ -206,7 +209,9 @@ export function normalizeEditInput(rawInput: unknown): UnknownRecord {
                 ? record.oldText.trim()
                 : (typeof record.oldString === 'string' && record.oldString.trim().length > 0)
                     ? record.oldString.trim()
-                    : coerceItemText(firstItem, 'old');
+                    : (typeof record.Target === 'string' && record.Target.trim().length > 0)
+                        ? record.Target.trim()
+                        : coerceItemText(firstItem, 'old');
     const newText =
         (typeof record.new_string === 'string' && record.new_string.trim().length > 0)
             ? record.new_string.trim()
@@ -214,7 +219,9 @@ export function normalizeEditInput(rawInput: unknown): UnknownRecord {
                 ? record.newText.trim()
                 : (typeof record.newString === 'string' && record.newString.trim().length > 0)
                     ? record.newString.trim()
-                    : coerceItemText(firstItem, 'new');
+                    : (typeof record.Replacement === 'string' && record.Replacement.trim().length > 0)
+                        ? record.Replacement.trim()
+                        : coerceItemText(firstItem, 'new');
 
     if (oldText) out.old_string = oldText;
     if (newText) out.new_string = newText;

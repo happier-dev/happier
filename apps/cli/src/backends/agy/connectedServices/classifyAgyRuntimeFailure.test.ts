@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { buildUsageLimitIssueFingerprint, type SessionRuntimeIssueV1 } from '@happier-dev/protocol';
+import { accountSettingsParse, buildUsageLimitIssueFingerprint, type SessionRuntimeIssueV1 } from '@happier-dev/protocol';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createTestAcpRuntime } from '@/testkit/backends/acpRuntime';
@@ -137,8 +138,9 @@ describe('Antigravity native turn-failure classification', () => {
 describe('Antigravity verification-required turn', () => {
   const VERIFY_URL = 'https://accounts.google.com/signin/continue?sarp=1&continue=private-value';
   const profileSelection = JSON.stringify([{ kind: 'profile', serviceId: 'antigravity', profileId: 'unverified-profile', credentialRevision: 'csr_abcdefghijklmnopqrstuv' }]);
+  const poolSelection = JSON.stringify([{ kind: 'group', serviceId: 'antigravity', groupId: 'pool', activeProfileId: 'unverified-profile', fallbackProfileId: 'unverified-profile', generation: 3, credentialRevision: 'csr_abcdefghijklmnopqrstuv' }]);
 
-  async function runVerificationFailure(params: Readonly<{ loadCodeAssist: () => Response; daemonResult?: unknown; reports?: number }>) {
+  async function runVerificationFailure(params: Readonly<{ loadCodeAssist: () => Response; daemonResult?: unknown; reports?: number; selection?: string }>) {
     const root = await mkdtemp(join(tmpdir(), 'agy-verification-'));
     daemonBoundary.outboxRoot = root;
     const home = join(root, 'gemini-home');
@@ -157,7 +159,7 @@ describe('Antigravity verification-required turn', () => {
     try {
       for (let index = 0; index < (params.reports ?? 1); index += 1) {
         await reportAgyTurnFailure({ error: new Error('Verification required'), sessionId: 'agy-unverified', session: session as never,
-          processEnv: { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: profileSelection, GEMINI_HOME: home } });
+          processEnv: { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: params.selection ?? poolSelection, GEMINI_HOME: home } });
       }
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -165,7 +167,30 @@ describe('Antigravity verification-required turn', () => {
     return { messages, requests };
   }
 
-  it('posts Google\'s verification link once for the failed turn', async () => {
+  it('asks a non-pool account to verify in Antigravity without any request to Google', async () => {
+    const { messages, requests } = await runVerificationFailure({ selection: profileSelection,
+      loadCodeAssist: () => Response.json({ ineligibleTiers: [{ reasonCode: 'VALIDATION_REQUIRED', validationUrl: VERIFY_URL }] }) });
+    expect(requests).toEqual([]);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatch(/verify this Antigravity account/u);
+    expect(messages[0]).toMatch(/Antigravity app or `agy`/u);
+    expect(messages[0]).not.toMatch(/https?:/u);
+  });
+
+  it('looks the link up for a non-pool account when the agent\'s account-status setting is on', async () => {
+    setActiveAccountSettingsSnapshot({ source: 'cache', settingsVersion: 1, loadedAtMs: 0, settingsSecretsReadKeys: [],
+      settings: accountSettingsParse({ connectedServicesAccountStatusByAgentIdV1: { agy: true } }) });
+    try {
+      const { messages, requests } = await runVerificationFailure({ selection: profileSelection, loadCodeAssist: () => Response.json({
+        ineligibleTiers: [{ reasonCode: 'VALIDATION_REQUIRED', tierId: 'free-tier', validationUrl: VERIFY_URL }] }) });
+      expect(requests).toHaveLength(1);
+      expect(messages).toEqual([expect.stringContaining(VERIFY_URL)]);
+    } finally {
+      resetActiveAccountSettingsSnapshotForTests();
+    }
+  });
+
+  it('posts Google\'s verification link once for the failed turn of a pool member', async () => {
     const { messages, requests } = await runVerificationFailure({ reports: 2, loadCodeAssist: () => Response.json({ allowedTiers: [{ id: 'free-tier' }],
       ineligibleTiers: [{ reasonCode: 'VALIDATION_REQUIRED', tierId: 'free-tier', validationUrl: VERIFY_URL, validationUrlLinkText: 'Verify' }] }) });
     expect(messages).toEqual([expect.stringContaining(VERIFY_URL)]);

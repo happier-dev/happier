@@ -118,6 +118,7 @@ describe('captureDepartingAgentNativeResumeRecord — accepted-context boundary 
       agentId: 'claude',
       identity: CLAUDE_IDENTITY,
       departureSeqInclusive: DEPARTURE_HEAD,
+      auth: { profilesByServiceId: {}, materializationIdentity: null },
     }]);
   });
 
@@ -132,6 +133,7 @@ describe('captureDepartingAgentNativeResumeRecord — accepted-context boundary 
       agentId: 'claude',
       identity: CLAUDE_IDENTITY,
       departureSeqInclusive: DEPARTURE_HEAD,
+      auth: { profilesByServiceId: {}, materializationIdentity: null },
     }]);
   });
 

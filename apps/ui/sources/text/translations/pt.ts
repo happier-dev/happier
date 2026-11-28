@@ -2925,6 +2925,14 @@ export const pt: TranslationStructure = {
   },
 
   connectedServices: {
+    accountStatusConsent: {
+      sectionTitle: "Estado da conta",
+      toggleTitle: "Mostrar cota e estado da conta",
+      toggleSubtitle: "Lê os limites de uso e o estado de verificação das contas conectadas deste agente. Os pools ativam isto para os seus membros.",
+      noticeTitle: "Sobre o estado da conta",
+      noticeBody: "Lê o uso a partir do serviço de contas do Google. O Google não oferece suporte oficial ao acesso de terceiros a estes serviços; ativar isto fica ao seu critério.",
+      learnMore: "Saiba mais",
+    },
     importAccounts: {
         unknownResult: "O resultado da importação é desconhecido. Atualize a lista de contas e confira este perfil antes de tentar novamente.",
         title: "Importar login existente",
@@ -6026,6 +6034,8 @@ export const pt: TranslationStructure = {
           targetUnavailable: ({ agent }: { agent: string }) => `${agent} não está disponível nesta máquina. Nada foi enviado.`,
           sourceNotIdle: ({ agent }: { agent: string }) => `${agent} ainda está trabalhando. Nada foi enviado — tente quando terminar.`,
           sourceStopFailed: ({ agent }: { agent: string }) => `Não foi possível parar ${agent}, então nada mudou. Nada foi enviado.`,
+          connectedAccountUnsupported: ({ agent }: { agent: string }) => `Essa conta não pode ser usada com ${agent}. Nada foi enviado — escolha outra conta e tente novamente.`,
+          connectedAccountMissing: ({ account }: { account: string }) => `A conta selecionada “${account}” não existe mais. A troca não foi iniciada e a sessão atual permanece a mesma. Escolha outra conta e tente novamente.`,
         },
         conflictingDestination: ({ agent }: { agent: string }) => `Nada foi enviado. Esta mensagem já tem outro destino, então não pode também trocar esta sessão para ${agent}. Remova um dos dois e envie de novo.`,
         sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} parou, mas a troca para ${agent} não foi concluída. Sua mensagem não foi enviada.`,

@@ -2803,6 +2803,14 @@ export const es: TranslationStructure = {
   },
 
   connectedServices: {
+    accountStatusConsent: {
+      sectionTitle: "Estado de la cuenta",
+      toggleTitle: "Mostrar cuota y estado de la cuenta",
+      toggleSubtitle: "Lee los límites de uso y el estado de verificación de las cuentas conectadas de este agente. Los pools lo activan para sus miembros.",
+      noticeTitle: "Acerca del estado de la cuenta",
+      noticeBody: "Lee el uso desde el servicio de cuentas de Google. Google no admite oficialmente el acceso de terceros a estos servicios; activarlo queda a tu criterio.",
+      learnMore: "Más información",
+    },
     importAccounts: {
         unknownResult: "El resultado de la importación es desconocido. Actualiza la lista de cuentas y revisa este perfil antes de reintentar.",
         title: "Importar inicio de sesión existente",
@@ -5906,6 +5914,8 @@ export const es: TranslationStructure = {
           targetUnavailable: ({ agent }: { agent: string }) => `${agent} no está disponible en esta máquina. No se ha enviado nada.`,
           sourceNotIdle: ({ agent }: { agent: string }) => `${agent} sigue trabajando. No se ha enviado nada: inténtalo cuando termine.`,
           sourceStopFailed: ({ agent }: { agent: string }) => `No se pudo detener ${agent}, así que nada ha cambiado. No se ha enviado nada.`,
+          connectedAccountUnsupported: ({ agent }: { agent: string }) => `Esa cuenta no se puede usar con ${agent}. No se ha enviado nada: elige otra cuenta e inténtalo de nuevo.`,
+          connectedAccountMissing: ({ account }: { account: string }) => `La cuenta seleccionada «${account}» ya no existe. El cambio no se inició y tu sesión actual no ha cambiado. Elige otra cuenta e inténtalo de nuevo.`,
         },
         conflictingDestination: ({ agent }: { agent: string }) => `No se ha enviado nada. Este mensaje ya tiene otro destino, así que no puede cambiar además esta sesión a ${agent}. Quita uno de los dos y vuelve a enviar.`,
         sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} se detuvo, pero el cambio a ${agent} no se completó. Tu mensaje no se envió.`,

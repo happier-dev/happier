@@ -745,6 +745,7 @@ export {
 } from './connect/normalizeConnectedServiceSelectionInput.js';
 
 export {
+  CONNECTED_SERVICE_MANUAL_OVERRIDABLE_RUNTIME_BLOCKER_KEYS,
   clearConnectedServiceAuthGroupMemberRuntimeBlockers,
   readConnectedServiceManualActiveProfileRuntimeBlocker,
   type ConnectedServiceManualActiveProfileRuntimeBlocker,
@@ -1618,7 +1619,7 @@ export {
 export { applyInstallablePolicyOverride, resolveInstallablePolicy, type InstallablePolicyOverride } from './installablesPolicy.js';
 export { SOCKET_RPC_EVENTS, type SocketRpcEvent } from './socketRpc.js';
 export type { SocketRpcTargetFailureV1 } from './socketRpc.js';
-export { SESSION_UPDATE_INTEREST_SOCKET_AUTH_FIELD } from './socketSessionUpdateInterest.js';
+export { SESSION_UPDATE_INTEREST_SOCKET_AUTH_FIELD, LIVE_TRANSCRIPT_DISABLED_SOCKET_AUTH_FIELD } from './socketSessionUpdateInterest.js';
 export * from './tools/structuredQuestionAnswersV1.js';
 export {
   ChangeEntrySchema,
@@ -3562,6 +3563,9 @@ export {
   ConnectedServicesProviderStateSharingModeV1Schema,
   ConnectedServicesProviderStateSharingPolicyV1Schema,
   ConnectedServicesProviderStateSharingSettingsV1Schema,
+  ConnectedServicesAccountStatusByAgentIdV1Schema,
+  DEFAULT_CONNECTED_SERVICES_ACCOUNT_STATUS_BY_AGENT_ID_V1,
+  type ConnectedServicesAccountStatusByAgentIdV1,
   ForegroundBehaviorSchema,
   NotificationsSettingsV1Schema,
   DEFAULT_ACTIONS_SETTINGS_V1,

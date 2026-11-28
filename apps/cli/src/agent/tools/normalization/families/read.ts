@@ -110,7 +110,10 @@ export function normalizeReadInput(rawInput: unknown): UnknownRecord {
                     ? (record as any).filepath.trim()
                 : (typeof record.filePath === 'string' && record.filePath.trim().length > 0)
                     ? record.filePath.trim()
-                    : null;
+                    // agy view_file names it Path.
+                    : (typeof record.Path === 'string' && record.Path.trim().length > 0)
+                        ? record.Path.trim()
+                        : null;
 
     const fromLocations = filePath ? null : coerceSingleLocationPath(record.locations);
     const normalizedPath = filePath ?? fromLocations;

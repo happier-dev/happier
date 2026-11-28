@@ -116,10 +116,10 @@ export async function resolveSpawnChildEnvironment(params: {
   const sanitizedAuthEnv = sanitizeEnvVarRecord(authEnv);
 
   let resolvedProfileEnvironment = params.profileEnvironmentVariables;
-  if (params.options.existingSessionId && params.options.profileId) {
+  if (params.options.profileId) {
     try {
       if (!params.accountSettings || !params.credentials || !params.options.backendTarget) {
-        throw new Error('Account settings and credentials are required to restore the session profile.');
+        throw new Error('Account settings and credentials are required to resolve the session profile.');
       }
       const profile = resolveProfileForBackendTarget({
         backendTarget: params.options.backendTarget,
@@ -139,7 +139,7 @@ export async function resolveSpawnChildEnvironment(params: {
       });
       resolvedProfileEnvironment = overlay.envOverlayExpanded;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Session profile restoration failed.';
+      const errorMessage = error instanceof Error ? error.message : 'Session profile resolution failed.';
       params.logWarn(`[DAEMON RUN] ${errorMessage}`);
       return {
         ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED, errorMessage,

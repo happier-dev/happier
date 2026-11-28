@@ -202,6 +202,12 @@ export type AgentCore = Readonly<{
     connectedServices?: Readonly<{
       supportedServiceIds: ReadonlyArray<ConnectedServiceId>;
       quotaResetServiceIds?: ReadonlyArray<ConnectedServiceId>;
+      /**
+       * Connected services whose provider-account features (quota reads, onboarding, verification
+       * lookups, automatic account switching) run only for pool members: creating a pool is the
+       * consent. Resolved by `resolveConnectedServicePoolConsentPolicy`.
+       */
+      poolConsentServices?: ReadonlyArray<Readonly<{ serviceId: ConnectedServiceId; learnMoreUrl?: string }>>;
       providerStateSharing?: ConnectedServicesProviderStateSharingCapability;
       sessionAuthSwitch?: Readonly<{
         continuityMode: 'hot_apply' | 'restart_same_home' | 'restart_shared_state_required';

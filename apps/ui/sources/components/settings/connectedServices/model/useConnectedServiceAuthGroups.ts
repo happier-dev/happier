@@ -14,6 +14,7 @@ import { deriveConnectedServiceAuthGroupIdFromName } from '@/sync/domains/connec
 import { t } from '@/text';
 import type { ConnectedServiceAuthGroupV1, ConnectedServiceId } from '@happier-dev/protocol';
 
+import { presentConnectedServiceAccountStatusConsent } from '../consent/presentConnectedServiceAccountStatusConsent';
 import { resolveConnectedServiceSettingsErrorMessage } from '../errors/connectedServiceSettingsErrors';
 export {
     readConnectedServiceAuthGroupsLoadStatus,
@@ -78,6 +79,8 @@ export function useConnectedServiceAuthGroups(
         if (!serviceId || !accountGroupsEnabled || !groupConfigurationSupported) {
             return;
         }
+        // A pool of a consent-gated service turns on account reads for its members.
+        if (!(await presentConnectedServiceAccountStatusConsent([serviceId]))) return;
         const res = await Modal.prompt(
             t('connectedServices.detail.groupActions.createTitle'),
             t('connectedServices.detail.groupActions.createSubtitle'),
