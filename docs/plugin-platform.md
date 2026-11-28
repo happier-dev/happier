@@ -2703,7 +2703,9 @@ Channels Account Action `session-pull-request-links-v1` in 0.3 development
 source. The invoking app reads the exact Session's bindings from the Home
 collection and formats links through the admitted provider declaration. A
 reachable Home can serve these links while every daemon is offline. The
-separate PR Watch management Action still uses the normal receiver placement.
+same Action serves Agent and MCP callers after the host admits the exact
+Session under the requester's Account. The separate PR Watch management
+Action still uses the normal receiver placement.
 
 An Account Action can also declare `execution.agentInvokingUi.when` alongside
 `invokingUi: true` in 0.3 development source. The daemon sends a matching

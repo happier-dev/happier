@@ -1,6 +1,6 @@
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import { isPluginActionApprovalRequestCreated, type PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
-import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from '@happier-dev/plugin-sdk/collections';
+import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1, type PluginAccountCollectionForDefinition } from '@happier-dev/plugin-sdk/collections';
 import { SessionIdSchema, type ActionSessionAddressV1 } from '@happier-dev/plugin-sdk/sessions';
 import { SessionPullRequestWatchInputV1Schema, SessionPullRequestWatchReadResultV1Schema,
     SessionPullRequestWatchListResultV1Schema, resolveSessionPullRequestLinksV1,
@@ -71,17 +71,12 @@ export function assembleSessionPullRequestWatchMetadata(input: Readonly<{
     return { kind: 'ready', sessionId: input.sessionId, bindings };
 }
 
-async function readResolvedSessionMetadata(sessionId: string, context: SessionPullRequestWatchContext,
-    fixAttemptLimit?: number | null) {
-    const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
-    const [rows, currentLimit] = await Promise.all([
-        readSessionPullRequestBindingRows({ collection, sessionId, signal: context.signal }),
-        fixAttemptLimit === undefined ? readSessionPullRequestFixAttemptLimit(context) : fixAttemptLimit,
-    ]);
-    if (rows.length === 0) return { kind: 'ready' as const, sessionId, bindings: [] };
+async function readSessionPullRequestWatchFacts(
+    collection: Pick<PluginAccountCollectionForDefinition<typeof CHANNEL_STATE_COLLECTION>, 'get'>,
+    connectionIds: ReadonlySet<string>, context: SessionPullRequestWatchContext,
+) {
     const { contribution } = await readSessionPullRequestProvider({ targetedContributions: context.services.targetedContributions, signal: context.signal });
     const provider = contribution.descriptor.pullRequests!;
-    const connectionIds = new Set(rows.map(({ binding }) => binding.connectionId));
     const watchingMachines = new Map<string, { serverId: string; machineId: string; label: string }>();
     const connectionReasons = new Map<string, 'credentials' | 'paused'>();
     await Promise.all([...connectionIds].map(async connectionId => {
@@ -95,19 +90,30 @@ async function readResolvedSessionMetadata(sessionId: string, context: SessionPu
         watchingMachines.set(connectionId, { serverId: connection.transportOrigin.serverIdentityId,
             machineId: connection.transportOrigin.machineId, label: connection.transportOrigin.machineId });
     }));
-    const metadata = assembleSessionPullRequestWatchMetadata({
-        sessionId, admitted: rows, fixAttemptLimit: currentLimit, provider, watchingMachines, connectionReasons,
-    });
+    return { provider, watchingMachines, connectionReasons };
+}
+
+async function assembleSessionPullRequestWatchWithLatestUpdates(
+    input: Parameters<typeof assembleSessionPullRequestWatchMetadata>[0], context: SessionPullRequestWatchContext,
+) {
+    const metadata = assembleSessionPullRequestWatchMetadata(input);
     const bindings = await Promise.all(metadata.bindings.map(async binding => ({
         ...binding,
-        latestUpdate: await readSessionPullRequestLatestUpdateForBinding({ sessionId, bindingId: binding.bindingId }, context),
+        latestUpdate: await readSessionPullRequestLatestUpdateForBinding({ sessionId: input.sessionId, bindingId: binding.bindingId }, context),
     })));
     return { ...metadata, bindings };
 }
 export async function readSessionPullRequestWatchForSession(sessionId: string, context: SessionPullRequestWatchContext,
     fixAttemptLimit?: number | null): Promise<SessionPullRequestWatchReadResultV1> {
     if (!await resolveSessionAddress(sessionId, context)) return { kind: 'unavailable', sessionId, reason: 'sessionUnavailable' };
-    return readResolvedSessionMetadata(sessionId, context, fixAttemptLimit);
+    const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
+    const [rows, currentLimit] = await Promise.all([
+        readSessionPullRequestBindingRows({ collection, sessionId, signal: context.signal }),
+        fixAttemptLimit === undefined ? readSessionPullRequestFixAttemptLimit(context) : fixAttemptLimit,
+    ]);
+    if (rows.length === 0) return { kind: 'ready', sessionId, bindings: [] };
+    const facts = await readSessionPullRequestWatchFacts(collection, new Set(rows.map(({ binding }) => binding.connectionId)), context);
+    return assembleSessionPullRequestWatchWithLatestUpdates({ sessionId, admitted: rows, fixAttemptLimit: currentLimit, ...facts }, context);
 }
 
 export async function manageSessionPullRequestWatchForInvocation(input: JsonValue, context: SessionPullRequestWatchContext): Promise<SessionPullRequestWatchResultV1> {
@@ -123,7 +129,7 @@ export async function manageSessionPullRequestWatchForInvocation(input: JsonValu
         }));
         const fixAttemptLimit = await readSessionPullRequestFixAttemptLimit(context);
         const pageIds = new Set(page.rows.map(row => row.rowId));
-        const sessions = await Promise.all([...ids].map(async sessionId => {
+        const selected = await Promise.all([...ids].map(async sessionId => {
             const first = await collection.query({ index: CHANNEL_STATE_INDEX_ID.byPullRequestSessionBindingV1,
                 prefix: [CHANNEL_STATE_RECORD_KIND.binding, true, sessionId], order: 'asc', limit: 1 }, { signal: context.signal });
             // A Session group is emitted only on the physical page containing
@@ -131,11 +137,23 @@ export async function manageSessionPullRequestWatchForInvocation(input: JsonValu
             if (!first.rows[0] || !pageIds.has(first.rows[0].rowId)) return undefined;
             const address = await resolveSessionAddress(sessionId, context);
             if (!address) return null;
-            const metadata = await readResolvedSessionMetadata(sessionId, context, fixAttemptLimit);
-            return metadata.bindings.length > 0 ? { session: address, bindings: metadata.bindings } : undefined;
+            const rows = await readSessionPullRequestBindingRows({ collection, sessionId, signal: context.signal });
+            return rows.length > 0 ? { address, rows } : undefined;
         }));
-        if (sessions.some(session => session === null)) return { kind: 'unavailable', reason: 'sessionUnavailable' };
-        return SessionPullRequestWatchListResultV1Schema.parse({ kind: 'ready', sessions: sessions.filter(session => session != null), nextCursor: page.nextCursor ?? null });
+        if (selected.some(session => session === null)) return { kind: 'unavailable', reason: 'sessionUnavailable' };
+        const admitted = selected.filter(session => session != null);
+        const nextCursor = page.nextCursor ?? null;
+        if (admitted.length === 0) return { kind: 'ready', sessions: [], nextCursor };
+        const connectionIds = new Set(admitted.flatMap(({ rows }) => rows.map(({ binding }) => binding.connectionId)));
+        const facts = await readSessionPullRequestWatchFacts(collection, connectionIds, context);
+        const sessions = await Promise.all(admitted.map(async ({ address, rows }) => {
+            const { bindings } = await assembleSessionPullRequestWatchWithLatestUpdates({
+                sessionId: address.sessionId, admitted: rows, fixAttemptLimit, ...facts,
+            }, context);
+            return { session: address, bindings };
+        }));
+        return SessionPullRequestWatchListResultV1Schema.parse({ kind: 'ready',
+            sessions: sessions.filter(({ bindings }) => bindings.length > 0), nextCursor });
     }
     const sessionId = SessionIdSchema.parse(request.sessionId);
     if (request.kind === 'get') return SessionPullRequestWatchReadResultV1Schema.parse(await readSessionPullRequestWatchForSession(sessionId, context));

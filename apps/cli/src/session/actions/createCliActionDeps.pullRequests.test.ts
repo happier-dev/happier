@@ -19,10 +19,13 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { parseActionExecuteFailure, readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readPluginActionError } from '@happier-dev/protocol/plugins/actions/invocation';
 import { WidgetInstanceActionInputSchemasV1, WidgetInstanceActionOutputSchemasV1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
-import { SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1, SessionPullRequestBindingInputV1Schema } from '@happier-dev/channels-protocol/v1';
+import {
+  SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1, SESSION_PULL_REQUEST_LINKS_ACTION_ID_V1, SessionPullRequestBindingInputV1Schema,
+} from '@happier-dev/channels-protocol/v1';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { createPluginInvocationActionsService, type PluginActionsHostExecutor, type PluginActionsServiceSeed } from '@/plugins/runtime/invocation/services/actions';
 import { projectContributedActionFailure } from '@/plugins/runtime/invocation/actions/contributedActionFailure';
+import { projectDaemonContributedActionDefinition } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { createPluginActionCallerMaterializationFixture } from '@/plugins/runtime/invocation/services/actionCaller.testkit';
 import { createManagedPluginSourceCustody } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
@@ -33,6 +36,10 @@ import { readConversationBindingUpdateRow, readConversationConnectionUpdateRow, 
 import { CHANNEL_STATE_COLLECTION, CHANNEL_STATE_FIELD, CHANNEL_STATE_RECORD_KIND } from '../../../../../packages/plugins/channels/src/collections';
 import { runConversationCheckpointedPollForInvocation } from '../../../../../packages/plugins/channels/src/ingress';
 import { MemoryCollection } from '../../../../../packages/plugins/channels/src/testkit/memoryCollection';
+import { activate as activateChannelsAccount } from '../../../../../packages/plugins/channels/src/accountRuntime';
+import { withChannelStateSessionIdentity } from '../../../../../packages/plugins/channels/src/collectionMigrations';
+import { channelsProviderDescriptorFixture } from '../../../../../packages/plugins/channels/src/testkit/operationOnlyTargetedContributionsFixture';
+import { sessionPullRequestBindingFixture } from '../../../../../packages/plugins/channels/src/testkit/sessionPullRequestBindingFixture';
 import { logger } from '@/ui/logger';
 
 const boundary = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), request: vi.fn(), rpc: vi.fn() }));
@@ -77,6 +84,64 @@ describe('CLI session pull request binding', () => {
     expect(result).toMatchObject(echoSessionId === sessionId
       ? { lifetimeSession: { sessionId }, pullRequestLinks: [{ provider: 'github', repository: 'acme/widgets', number: 42 }] }
       : { lifetimeSession: { sessionId }, sets: [], pullRequestLinks: { status: 'unavailable', code: 'target_unavailable', diagnostic: { reason: 'channels_session_mismatch' } } });
+  });
+  it('lets a Session agent read retained PR links under the requester Account and refuses a foreign Session', async () => {
+    const installedAccountId = 'installed-account';
+    const requesterAccountId = 'requester-account';
+    const foreignSessionId = 'foreign-session';
+    const serverId = 'channels-link-home';
+    const state = new MemoryCollection();
+    for (const [id, targetSessionId, number] of [['requester-pr', sessionId, 42], ['foreign-pr', foreignSessionId, 87]] as const) {
+      const row = sessionPullRequestBindingFixture(id, targetSessionId, number);
+      await state.put(withChannelStateSessionIdentity(row, row.payload.target), { expectedRevision: 'absent' });
+    }
+    const manifest = normalizePluginManifestV2(CHANNELS_MANIFEST);
+    const declaration = manifest.contributes.actions.find(action => action.id === SESSION_PULL_REQUEST_LINKS_ACTION_ID_V1);
+    if (!declaration) throw new Error('Missing Channels PR links Action');
+    const definition = projectDaemonContributedActionDefinition(manifest, declaration);
+    const kit = await createPluginTestkit({ manifest: CHANNELS_MANIFEST,
+      module: { activate: CHANNELS_PLUGIN.activate, activateAccount: activateChannelsAccount },
+      services: {
+        storage: { account: { collection: () => state } } as unknown as PluginServices['storage'],
+        targetedContributions: channelsProviderDescriptorFixture(GITHUB_PLUGIN.manifest),
+      },
+    });
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: installedAccountId })).toString('base64url')}.signature`;
+    const targets: Array<{ accountId: string | undefined; sessionId: string | undefined }> = [];
+    const reads = vi.spyOn(state, 'query');
+    const { executor } = createCliActionExecutorHarness({
+      token, credentials: { token, encryption: null }, sessionId, mode: 'plain', ctx: null, serverId,
+    }, {
+      listContributedActionDefinitions: () => [definition],
+      // Model the authenticated Home membership boundary. Both rows exist in
+      // storage, so skipping Session admission exposes the foreign PR.
+      resolveSessionReference: async ({ sessionId: id, context }) => {
+        targets.push({ accountId: context.runtimeAccountId, sessionId: id });
+        return id === sessionId && context.runtimeAccountId === requesterAccountId
+          ? { kind: 'unique', address: { serverId, sessionId: id } } : { kind: 'none' };
+      },
+      invokeContributedAction: async ({ input, context }) => ({ ok: true, result: await kit.invokeAction(declaration.id, input, {
+        surface: context.surface === 'agent' ? 'agent' : 'ui',
+        accountScope: { serverId, accountId: context.runtimeAccountId ?? installedAccountId },
+        sessionTargetsV1: context.sessionTargetsV1,
+      }) }),
+    });
+    const read = (targetSessionId: string, surface: 'ui' | 'agent') => executor.execute('action.invoke', {
+      action: { pluginId: manifest.id, localId: declaration.id }, input: { sessionId: targetSessionId },
+    }, { surface, serverId, runtimeAccountId: requesterAccountId, defaultSessionId: sessionId,
+      authority: surface === 'agent' ? 'account_automation' : 'present_user',
+      actionCaller: surface === 'agent' ? { kind: 'session', sessionId, starterDepth: 0, turnDepth: 1 } : { kind: 'host' },
+    });
+    try {
+      const expected = { ok: true, result: { kind: 'links', sessionId,
+        pullRequestLinks: [{ provider: 'github', repository: 'acme/widgets', number: 42, url: pullRequest.url }] } };
+      await expect(read(sessionId, 'ui')).resolves.toEqual(expected);
+      await expect(read(sessionId, 'agent')).resolves.toEqual(expected);
+      await expect(read(foreignSessionId, 'agent')).resolves.toMatchObject({ ok: false, errorCode: 'session_target_unavailable' });
+      expect(definition.surfaces).toMatchObject({ ui: true, agent: true, mcp: true });
+      expect(targets).toEqual([sessionId, sessionId, foreignSessionId].map(id => ({ accountId: requesterAccountId, sessionId: id })));
+      expect(reads.mock.calls.map(([query]) => query.prefix?.[2])).toEqual([sessionId, sessionId]);
+    } finally { await kit.dispose(); }
   });
   it.each(['session_transport_absent', 'session_machine_absent', 'caller_fallback_unsupported', 'channels_result_invalid', 'channels_session_mismatch', 'channels_operation_mismatch', 'malformed_failure_envelope'] as const)(
     'retains the binding refusal reason after native PR creation: %s', async scenario => {

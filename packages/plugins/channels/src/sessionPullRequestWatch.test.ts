@@ -89,6 +89,7 @@ describe('portable Account PR Watch Action', () => {
             throw new Error(`Unexpected host Action ${id}`);
         });
         const targetedContributions = channelsProviderDescriptorFixture(GITHUB_PLUGIN.manifest);
+        const providerObservations = vi.spyOn(targetedContributions, 'observeForSelf');
         const services = {
             targetedContributions,
             storage: { account: { collection: () => state } } as unknown as PluginServices['storage'],
@@ -106,7 +107,7 @@ describe('portable Account PR Watch Action', () => {
                     presentation: { label: 'Pull request 12' } } }],
                 forgeEvidence: { v: 1, items: [{ source: { kind: 'hostedCi', label: 'CI' }, author: { kind: 'process' }, text: 'A check failed.' }] } },
         } as const;
-        return { state, execute, request, kit,
+        return { state, execute, request, kit, providerObservations,
             invoke: (input: JsonValue = request, surface: 'ui' | 'agent' = 'ui') => kit.invokeAction('session-pull-request-watch-v1', input, { surface }),
             start: (id = 'turn-1') => { witness = id; }, complete: () => { completed = true; },
             progress: async () => {
@@ -451,6 +452,31 @@ describe('portable Account PR Watch Action', () => {
             expect(metadata.bindings[0]?.watch.reason).toBe('credentials');
             expect(metadata.bindings[0]?.watch.policy).toEqual(policy);
         }
+    });
+    it('reads shared connection and provider facts once per list request', async () => {
+        const f = await configuredFixFixture();
+        try {
+            const second = sessionPullRequestBindingFixture('pr-2', 'session-b', 13);
+            await f.state.put(withChannelStateSessionIdentity(second, second.payload.target), { expectedRevision: 'absent' });
+            f.execute.mockImplementation(async (id, input) => {
+                if (id !== 'session.targets.resolve' || input === null || typeof input !== 'object' || !('target' in input)) {
+                    throw new Error('Watch metadata only resolves exact Session addresses');
+                }
+                return { coverage: 'complete', addresses: [{ sessionId: input.target, serverId: 'srv_example' }], error: null };
+            });
+            const get = vi.spyOn(f.state, 'get');
+
+            await expect(f.invoke({ kind: 'list' })).resolves.toMatchObject({ kind: 'ready', sessions: [
+                { session: { sessionId: 'session-a' }, bindings: [{ bindingId: 'pr-1', watch: { watchingMachine: { machineId: 'machine-example' } } }] },
+                { session: { sessionId: 'session-b' }, bindings: [{ bindingId: 'pr-2', watch: { watchingMachine: { machineId: 'machine-example' } } }] },
+            ] });
+            expect(f.execute.mock.calls.map(([, input]) => input)).toEqual([
+                { target: 'session-a', actionId: 'session.status.get' },
+                { target: 'session-b', actionId: 'session.status.get' },
+            ]);
+            expect(get.mock.calls.filter(([id]) => id === 'connection-1')).toHaveLength(1);
+            expect(f.providerObservations).toHaveBeenCalledOnce();
+        } finally { await f.kit.dispose(); }
     });
     it('pages complete distinct Session groups without reading unrelated chat bodies or repeating full groups', async () => {
         const state = new MemoryCollection();
