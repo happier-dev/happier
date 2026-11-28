@@ -22,7 +22,6 @@ type Words = Readonly<{
   tryItWith: string;
   firstTaskHint: string;
   whatItNeeds: string;
-  needsChecked: string;
   kindSoftware: string;
   kindAccount: string;
   kindMcp: string;
@@ -86,8 +85,6 @@ export const botTemplatePresentationTranslations = {
     tryItWith: 'Try it with',
     firstTaskHint: 'Its first task, one tap away once it’s yours.',
     whatItNeeds: 'What it needs',
-    needsChecked:
-      'Checked against your Machine when you make your own. No keys or sign-ins come with it; you connect your own.',
     kindSoftware: 'Software',
     kindAccount: 'Account',
     kindMcp: 'MCP server',
@@ -139,8 +136,6 @@ export const botTemplatePresentationTranslations = {
     firstTaskHint:
       'Sa première tâche, à portée de main une fois qu’il est à vous.',
     whatItNeeds: 'Ce qu’il lui faut',
-    needsChecked:
-      'Vérifié sur votre machine quand vous créez votre copie. Aucune clé ni connexion n’est incluse ; vous connectez les vôtres.',
     kindSoftware: 'Logiciel',
     kindAccount: 'Compte',
     kindMcp: 'Serveur MCP',
@@ -195,8 +190,6 @@ export const botTemplatePresentationTranslations = {
     firstTaskHint:
       'Seine erste Aufgabe, einen Tipp entfernt, sobald es dir gehört.',
     whatItNeeds: 'Was es braucht',
-    needsChecked:
-      'Wird beim Erstellen deiner Kopie mit deinem Rechner abgeglichen. Schlüssel und Anmeldungen kommen nicht mit; du verbindest deine eigenen.',
     kindSoftware: 'Software',
     kindAccount: 'Konto',
     kindMcp: 'MCP-Server',
@@ -247,8 +240,6 @@ export const botTemplatePresentationTranslations = {
     tryItWith: 'Pruébalo con',
     firstTaskHint: 'Su primera tarea, a un toque cuando sea tuyo.',
     whatItNeeds: 'Qué necesita',
-    needsChecked:
-      'Se comprueba en tu máquina al crear tu copia. No incluye claves ni cuentas; conectas las tuyas.',
     kindSoftware: 'Software',
     kindAccount: 'Cuenta',
     kindMcp: 'Servidor MCP',
@@ -299,8 +290,6 @@ export const botTemplatePresentationTranslations = {
     tryItWith: 'Provalo con',
     firstTaskHint: 'Il suo primo compito, a un tocco quando sarà tuo.',
     whatItNeeds: 'Cosa serve',
-    needsChecked:
-      'Verificato sulla tua macchina quando crei la tua copia. Non include chiavi né accessi; colleghi i tuoi.',
     kindSoftware: 'Software',
     kindAccount: 'Account',
     kindMcp: 'Server MCP',
@@ -348,8 +337,6 @@ export const botTemplatePresentationTranslations = {
     tryItWith: 'Experimenta com',
     firstTaskHint: 'A primeira tarefa, a um toque quando for teu.',
     whatItNeeds: 'Do que precisa',
-    needsChecked:
-      'Verificado na tua máquina quando crias a tua cópia. Não inclui chaves nem contas; ligas as tuas.',
     kindSoftware: 'Software',
     kindAccount: 'Conta',
     kindMcp: 'Servidor MCP',
@@ -400,8 +387,6 @@ export const botTemplatePresentationTranslations = {
     tryItWith: 'Prova-ho amb',
     firstTaskHint: 'La seva primera tasca, a un toc quan sigui teu.',
     whatItNeeds: 'Què necessita',
-    needsChecked:
-      'Es comprova a la teva màquina quan crees la teva còpia. No inclou claus ni comptes; connectes els teus.',
     kindSoftware: 'Programari',
     kindAccount: 'Compte',
     kindMcp: 'Servidor MCP',
@@ -446,8 +431,6 @@ export const botTemplatePresentationTranslations = {
     tryItWith: '試してみる',
     firstTaskHint: '自分のものになれば、最初のタスクはワンタップです。',
     whatItNeeds: '必要なもの',
-    needsChecked:
-      '自分のコピーを作るときにマシンで確認されます。キーやサインインは含まれず、自分のものを接続します。',
     kindSoftware: 'ソフトウェア',
     kindAccount: 'アカウント',
     kindMcp: 'MCPサーバー',
@@ -492,8 +475,6 @@ export const botTemplatePresentationTranslations = {
     tryItWith: 'Попробуйте',
     firstTaskHint: 'Первая задача — в одно касание, когда он станет вашим.',
     whatItNeeds: 'Что нужно',
-    needsChecked:
-      'Проверяется на вашем компьютере при создании копии. Ключи и входы не передаются; вы подключаете свои.',
     kindSoftware: 'Программа',
     kindAccount: 'Аккаунт',
     kindMcp: 'MCP-сервер',
@@ -544,8 +525,6 @@ export const botTemplatePresentationTranslations = {
     tryItWith: 'Wypróbuj z',
     firstTaskHint: 'Jego pierwsze zadanie, jedno dotknięcie, gdy będzie twój.',
     whatItNeeds: 'Czego potrzebuje',
-    needsChecked:
-      'Sprawdzane na twoim komputerze przy tworzeniu kopii. Klucze i logowania nie są dołączone; łączysz własne.',
     kindSoftware: 'Oprogramowanie',
     kindAccount: 'Konto',
     kindMcp: 'Serwer MCP',
@@ -587,8 +566,6 @@ export const botTemplatePresentationTranslations = {
     tryItWith: '试试',
     firstTaskHint: '归你之后，第一项任务一键即可开始。',
     whatItNeeds: '它需要什么',
-    needsChecked:
-      '创建你的副本时会在你的机器上检查。不包含任何密钥或登录；你连接自己的。',
     kindSoftware: '软件',
     kindAccount: '账户',
     kindMcp: 'MCP 服务器',
@@ -629,8 +606,6 @@ export const botTemplatePresentationTranslations = {
     tryItWith: '試試',
     firstTaskHint: '歸你之後，第一項任務一鍵即可開始。',
     whatItNeeds: '它需要什麼',
-    needsChecked:
-      '建立你的副本時會在你的機器上檢查。不包含任何金鑰或登入；你連接自己的。',
     kindSoftware: '軟體',
     kindAccount: '帳戶',
     kindMcp: 'MCP 伺服器',

@@ -4,6 +4,8 @@ import type { BotTemplateReleaseV1 } from '@happier-dev/protocol/bots/templates/
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { UserMessageBubble } from '@/components/sessions/transcript/UserMessageBubble';
+import { BotTemplateFace } from './BotTemplateFace';
 import { BotTemplatePreview } from './BotTemplatePreview';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -88,5 +90,17 @@ describe('BotTemplatePreview', () => {
         await screen.pressByTestIdAsync('bot-template:file:review:reference.bin');
         await screen.pressByTestIdAsync('bot-template:file:review:reference.bin:download');
         expect(download).toHaveBeenCalledWith('review', 'reference.bin');
+    });
+
+    it('shows the worked example as the conversation it stands for: the request in a prompt bubble, the reply beside the Bot\'s face (lab G2)', async () => {
+        const content = { ...release.content, workedExample: { request: 'Review #2481 Retry reconnect with backoff', reply: '#2481 is close. I drafted the comment.' } };
+        const screen = await renderScreen(<BotTemplatePreview content={content} />);
+        const bubble = screen.findAll((node) => node.type === UserMessageBubble);
+        expect(bubble.map((node) => node.props.testID)).toEqual(['bot-template-example-request']);
+        expect(bubble[0]!.findAll((node) => node.props.children === content.workedExample.request)).not.toHaveLength(0);
+        const reply = screen.findByTestId('bot-template-example-reply');
+        expect(reply).not.toBeNull();
+        expect(reply!.findAll((node) => node.type === BotTemplateFace)).toHaveLength(1);
+        expect(reply!.findAll((node) => node.props.children === content.workedExample.reply)).not.toHaveLength(0);
     });
 });

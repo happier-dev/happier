@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import type { BotTemplateContentV1, BotTemplateSkillV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { readSkillFrontmatterV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
@@ -13,6 +15,9 @@ import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { Icon } from '@/components/ui/icons/Icon';
 import { FileViewerBody } from '@/components/workspaces/files/file/FileViewerBody';
+import { Text } from '@/components/ui/text/Text';
+import { UserMessageBubble, userMessageBubbleAlignerStyle } from '@/components/sessions/transcript/UserMessageBubble';
+import { BotTemplateFace } from './BotTemplateFace';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import { t } from '@/text';
@@ -87,18 +92,48 @@ export function BotTemplateSuggestedAutomationRows({ workflows }: Readonly<{ wor
     </ItemGroup>;
 }
 
-export function BotTemplateExampleRows({ example }: Readonly<{ example: BotTemplateContentV1['workedExample'] }>) {
-    return example ? <ItemGroup title={t('botTemplateRecipient.workedExample')}>
-        <Item testID="bot-template-example-request" title={t('botTemplateRecipient.exampleRequest')}
-            subtitle={example.request} subtitleLines={0} mode="info" showChevron={false} />
-        <Item title={t('botTemplateRecipient.exampleReply')} subtitle={example.reply} subtitleLines={0} mode="info" showChevron={false} />
-    </ItemGroup> : null;
+/** The reply line's face: a mark beside the text, as the transcript's own small identity marks are. */
+const EXAMPLE_FACE_PX = 18;
+
+/**
+ * The worked example as the conversation it stands for (lab session-orchestration G2): the person's request in the
+ * transcript's own bubble, then the Bot's reply beside its face, together on one quiet well.
+ */
+export function BotTemplateExampleRows({ example, identity, pet }: Readonly<{
+    example: BotTemplateContentV1['workedExample'];
+    identity: BotTemplateContentV1['identity'];
+    pet?: BotTemplateContentV1['pet'];
+}>) {
+    if (!example) return null;
+    return <ItemGroup title={t('botTemplateRecipient.workedExample')} surface="none">
+        <View testID="bot-template-example" style={styles.exampleWell}>
+            <View style={userMessageBubbleAlignerStyle}>
+                <UserMessageBubble testID="bot-template-example-request">
+                    <Text variant="body" selectable accessibilityLabel={`${t('botTemplateRecipient.exampleRequest')}: ${example.request}`}>
+                        {example.request}
+                    </Text>
+                </UserMessageBubble>
+            </View>
+            <View testID="bot-template-example-reply" style={styles.exampleReply}>
+                <View style={styles.exampleFace}><BotTemplateFace identity={identity} pet={pet} size={EXAMPLE_FACE_PX} /></View>
+                <Text variant="body" selectable style={styles.exampleReplyText}
+                    accessibilityLabel={`${t('botTemplateRecipient.exampleReply')}: ${example.reply}`}>
+                    {example.reply}
+                </Text>
+            </View>
+        </View>
+    </ItemGroup>;
 }
 const NEED_KINDS = [
     { kind: 'software', icon: 'terminal', label: 'botTemplates.kindSoftware' },
     { kind: 'connectedAccounts', icon: 'user-circle', label: 'botTemplates.kindAccount' },
     { kind: 'mcpServers', icon: 'plug', label: 'botTemplates.kindMcp' },
 ] as const;
+
+/** A need in the preview says what kind it is, then what it is for or what happens without it (lab G2). */
+function previewNeedLine(need: Need, kindLabel: string) {
+    return need.requirement === 'required' ? `${kindLabel} · ${need.purpose}` : `${kindLabel} · ${botTemplateNeedLine(need)}`;
+}
 
 /** Required needs say what they are for; optional ones say what happens without them (preview and setup alike). */
 export function botTemplateNeedLine(need: Need) {
@@ -116,7 +151,7 @@ export function BotTemplatePreview({ content, onDownloadFile, showNeeds = true }
     const needs = NEED_KINDS.flatMap(({ kind, icon, label }) => content.needs[kind].map((need: Need) => ({ kind, icon, label, need })));
     const channels = content.needs.channels ?? [];
     return <>
-        <BotTemplateExampleRows example={content.workedExample} />
+        <BotTemplateExampleRows example={content.workedExample} identity={content.identity} pet={content.pet} />
         {/* Both sections keep their place when empty, so every template reads the same way (lab r2 install-preview). */}
         <ItemGroup title={t('botTemplates.tryItWith')}>
             {content.firstTask ? <Item testID="bot-template-first-task" title={content.firstTask} subtitle={t('botTemplates.firstTaskHint')}
@@ -124,17 +159,17 @@ export function BotTemplatePreview({ content, onDownloadFile, showNeeds = true }
                 : <Item testID="bot-template-first-task-empty" title={t('botTemplates.noFirstTask')}
                     subtitle={t('botTemplates.noFirstTaskHint')} icon={<Icon name="sparkle" />} showChevron={false} mode="info" />}
         </ItemGroup>
-        {showNeeds ? <ItemGroup title={t('botTemplates.whatItNeeds')} description={needs.length > 0 ? t('botTemplates.needsChecked') : undefined}>
+        {showNeeds ? <ItemGroup title={t('botTemplates.whatItNeeds')}>
             {needs.length > 0 || channels.length > 0 ? needs.map(({ kind, icon, label, need }) => <React.Fragment key={`${kind}:${need.key}`}>
-                <Item testID={`bot-template-need:${kind}:${need.key}`} title={need.name} subtitle={botTemplateNeedLine(need)}
-                    icon={<Icon name={icon} />} detail={t(label)} showChevron={false} />
+                <Item testID={`bot-template-need:${kind}:${need.key}`} title={need.name} subtitle={previewNeedLine(need, t(label))}
+                    icon={<Icon name={icon} />} showChevron={false} />
                 {'definition' in need ? <SectionContentRow>
                     <CodeBlockView code={JSON.stringify(need.definition, null, 2)} language="json" wrap />
                 </SectionContentRow> : null}
             </React.Fragment>) : <Item testID="bot-template-needs-empty" title={t('botTemplates.needsNothing')}
                 subtitle={t('botTemplates.needsNothingHint')} icon={<Icon name="check-circle" />} showChevron={false} mode="info" />}
             {channels.map(need => <Item key={need.key} testID={`bot-template-need:channels:${need.key}`}
-                title={need.name} subtitle={botTemplateNeedLine(need)} detail={t('botTemplateRecipient.conversations')}
+                title={need.name} subtitle={previewNeedLine(need, t('botTemplateRecipient.conversations'))}
                 icon={<Icon name="send" />} mode="info" showChevron={false} />)}
         </ItemGroup> : null}
         <BotTemplateSuggestedAutomationRows workflows={content.pausedWorkflows} />
@@ -168,3 +203,26 @@ function PreviewSkill(props: Readonly<{ skill: BotTemplateSkillV1; onDownloadFil
         {files.map(file => <PreviewFile key={file.path} skillKey={props.skill.key} file={file} onDownloadFile={props.onDownloadFile} />)}
     </BotTemplateDisclosure>;
 }
+
+const styles = StyleSheet.create((theme) => ({
+    // A quiet inset well on the section margin, the stone the lab's worked example sits on.
+    exampleWell: {
+        gap: theme.space.s12,
+        padding: theme.space.s12,
+        borderRadius: theme.parts.userBubble.radius + theme.space.s4,
+        backgroundColor: theme.colors.surface.inset,
+    },
+    exampleReply: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: theme.space.s8,
+    },
+    // The face sits on the first line of the reply, never centred on a long paragraph.
+    exampleFace: {
+        paddingTop: theme.space.s2,
+    },
+    exampleReplyText: {
+        flex: 1,
+        color: theme.colors.text.primary,
+    },
+}));
