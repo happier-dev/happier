@@ -13,6 +13,8 @@ import type { RpcLocalActionContext } from '@/api/rpc/types';
 
 import { listHappierMcpToolNames, registerHappierMcpResources } from '@/mcp/resources/registerHappierMcpResources';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
+import { resolveSessionDefaultWorkspaceAddress } from '@/agent/tools/happierTools/actionToolContext';
+import { getActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import { createSessionAgentTitleWriteGuard, SessionAgentTitleUpdateDenied } from '@/agent/permissions/codingPromptTitlePermission';
 import { createHappierActionIngressExecutor } from '@/agent/permissions/happierActionPermission';
 import { isAgentStartActionInvocationV1, requiresActionAgentStartDepthV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
@@ -283,6 +285,14 @@ export function createHappierMcpServer(
     })?.intent
     ?? null;
   const sessionLocation = resolveLiveClientLocation(client);
+  const sessionWorkspace = resolveSessionDefaultWorkspaceAddress({
+    serverId,
+    serverIdentityId,
+    metadata: sessionMetadataSnapshot,
+    machineId: sessionLocation?.machineId ?? null,
+    rootPath: sessionLocation?.path ?? null,
+    workspaceRefs: getActiveProjectAccountRowsSnapshot()?.workspaceRefs,
+  });
   const rawSession = sessionMetadataSnapshot || sessionLocation
     ? {
         ...(sessionMetadataSnapshot ? { metadata: sessionMetadataSnapshot } : {}),
@@ -804,6 +814,7 @@ export function createHappierMcpServer(
     actionToolNameToId: opts?.toolInventory?.actionToolNameToId,
     defaultSessionMachineId: sessionLocation?.machineId ?? null,
     defaultSessionRootPath: sessionLocation?.path ?? null,
+    defaultSessionWorkspace: sessionWorkspace,
   });
 
   if (happierToolsEnabled) registerHappierMcpResources(mcp, {
@@ -829,6 +840,7 @@ export function createHappierMcpServer(
     sessionId: client.sessionId,
     workingDirectory: sessionLocation?.path,
     sessionMachineId: sessionLocation?.machineId ?? null,
+    sessionWorkspace,
     surface: toolSurface,
     actionsSettings: readActionsSettings(),
     getActionsSettings: readActionsSettings,
@@ -858,6 +870,7 @@ export function createHappierMcpServer(
       sessionId: client.sessionId,
       sessionMachineId: sessionLocation?.machineId ?? null,
       sessionRootPath: sessionLocation?.path ?? null,
+      sessionWorkspace,
       surface: toolSurface,
       actionsSettings: readActionsSettings(),
       getActionsSettings: readActionsSettings,

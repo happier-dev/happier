@@ -2,6 +2,10 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import {
+  formatProjectComputeAgentGuidanceV1,
+  PROJECT_SCRIPT_RUN_CLI_COMMAND,
+} from '@happier-dev/protocol/workspaces/projectAgentGuidanceV1';
 import { resolveProjectExecutionChoiceV1, type ProjectExecutionChoiceResolutionV1, type WorkerDestinationV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 
 import {
@@ -16,14 +20,13 @@ import { t } from '@/text';
 import { describeMachineDestinationWorkerFacts } from '@/components/sessions/new/components/machineSelection/buildMachineDestinationModel';
 
 /** The command agents run a Project script with, shared by the guide and the Scripts page's Agents sentence. */
-export const PROJECT_SCRIPT_RUN_COMMAND = 'happier project script run';
-const RUN_COMMAND = `${PROJECT_SCRIPT_RUN_COMMAND} <name> [--on <machine>]`;
-const EXEC_COMMAND = 'happier project compute exec -- <argv>';
+export const PROJECT_SCRIPT_RUN_COMMAND = PROJECT_SCRIPT_RUN_CLI_COMMAND;
 
 /**
- * The read-only facts as agents receive them, in reading order (lab `s-agent` GUIDE): which scripts
- * may leave the checkout, how to run one, and whether explicit ad-hoc commands are allowed. Advisory
- * facts only: nothing here is approval or an accepted placement.
+ * The read-only facts as agents receive them, in reading order (lab `s-agent` GUIDE): renders the
+ * single canonical `formatProjectComputeAgentGuidanceV1` prompt block when portable scripts or
+ * compute workers are configured, accompanied only by non-duplicated UI advisory details (primary
+ * scripts, services, policy/override summary, and unavailable/refusal states).
  */
 export function describeProjectAgentGuidance(
   guidance: ProjectSetupAgentGuidance,
@@ -36,10 +39,6 @@ export function describeProjectAgentGuidance(
   const primary = scripts
     .filter((script) => script.execution !== 'portable')
     .map((script) => script.name);
-  const width =
-    Math.max(portable.join(', ').length, primary.join(', ').length) + 2;
-  const line = (names: readonly string[], note: string) =>
-    `${names.join(', ').padEnd(width)}${note}`;
   const destinationLabel = (destination: WorkerDestinationV1) => destination.kind === 'machine'
     ? destination.machineId
     : t(destination.selection === 'ask' ? 'projectWorkers.poolAsk' : 'projectWorkers.poolAutomatic', { pool: destination.poolId });
@@ -54,62 +53,87 @@ export function describeProjectAgentGuidance(
       case 'override_requires_review': return t('projectWorkers.changed');
     }
   };
-  const targetLines: string[] = [];
+
+  let workerSummary: string | null = null;
+  const observationDetailLines: string[] = [];
   const destination = guidance.destination;
   if (destination && 'configured' in destination && destination.configured && destination.observation) {
-    targetLines.push(`${t('projectWorkers.destination')}: ${destinationLabel(destination.configured)}`);
     const observation = destination.observation;
     if ('eligible' in observation) {
       const facts = describeMachineDestinationWorkerFacts(observation.eligible
         ? { eligible: true, worker: observation }
         : { eligible: false, reason: 'worker_refused', worker: observation });
-      if (facts) targetLines.push(facts);
+      if (facts) workerSummary = facts;
       if (!observation.eligible) {
-        if (observation.explanation === 'not_accepting') targetLines.push(t('projectWorkers.notAcceptingDetail'));
-        if (observation.explanation === 'worker_copy_missing') targetLines.push(t('projectWorkers.setUpCopy', {
+        if (observation.explanation === 'not_accepting') observationDetailLines.push(t('projectWorkers.notAcceptingDetail'));
+        if (observation.explanation === 'worker_copy_missing') observationDetailLines.push(t('projectWorkers.setUpCopy', {
           machine: observation.workerCopy?.targetMachineId ?? destinationLabel(destination.configured),
         }));
-        else targetLines.push(t('common.retry'));
+        else observationDetailLines.push(t('common.retry'));
       }
     } else if ('kind' in observation) {
-      targetLines.push(observation.kind === 'resolved'
+      workerSummary = observation.kind === 'resolved'
         ? `${t('projectWorkers.destination')}: ${observation.machineId}`
         : t(observation.reason === 'empty' || observation.reason === 'no_available_machine'
-          ? 'projectWorkers.empty' : 'projectWorkers.statusUnavailable'));
-      if (observation.kind === 'unavailable') targetLines.push(t('projectWorkers.emptyDetail'));
+          ? 'projectWorkers.empty' : 'projectWorkers.statusUnavailable');
+      if (observation.kind === 'unavailable') observationDetailLines.push(t('projectWorkers.emptyDetail'));
     } else {
-      targetLines.push(t('projectWorkers.statusUnavailable'), t('common.retry'));
+      workerSummary = t('projectWorkers.statusUnavailable');
+      observationDetailLines.push(t('common.retry'));
     }
   }
+
   const preferences = guidance.workerPreferences;
-  if ('status' in preferences && preferences.status === 'ready') {
-    const fallback = preferences.preference.unavailable;
-    targetLines.push(`${t('projectWorkers.whenUnavailable')}: ${t(fallback === 'primary'
+  const readyPreference = 'status' in preferences && preferences.status === 'ready'
+    ? preferences.preference
+    : null;
+  const canonicalGuidance = formatProjectComputeAgentGuidanceV1({
+    workspace: guidance.sourceWorkspace,
+    portableScripts: portable.map((name) => ({ name })),
+    workerPreferences: readyPreference
+      ? {
+          enabled: readyPreference.enabled,
+          allowAdHoc: readyPreference.allowAdHoc,
+          ...(readyPreference.destination ? { destinationLabel: destinationLabel(readyPreference.destination) } : {}),
+          unavailable: readyPreference.unavailable,
+        }
+      : { enabled: false, allowAdHoc: false },
+    ...(workerSummary ? { workerSummary } : {}),
+  });
+
+  const policyLines: string[] = [];
+  if (readyPreference) {
+    const fallback = readyPreference.unavailable;
+    policyLines.push(`${t('projectWorkers.whenUnavailable')}: ${t(fallback === 'primary'
       ? 'projectWorkers.fallbackPrimary' : fallback === 'fail' ? 'projectWorkers.fallbackFail' : 'projectWorkers.fallbackAsk')}`);
   } else {
-    targetLines.push(t('projectWorkers.policyUnavailable'));
-    targetLines.push('status' in preferences && preferences.status === 'locked'
+    policyLines.push(t('projectWorkers.policyUnavailable'));
+    policyLines.push('status' in preferences && preferences.status === 'locked'
       ? t('projectWorkers.settingsLocked') : t('common.retry'));
   }
+
   // The workspace default is independent of declaration policy and named overrides.
-  const overrides = 'status' in preferences && preferences.status === 'ready' ? preferences.preference.scriptOverrides : {};
+  const overrides = readyPreference ? readyPreference.scriptOverrides : {};
   const isOverridden = (name: string) => Object.hasOwn(overrides, name);
-  const workspaceDefault = 'status' in preferences && preferences.status === 'ready'
-    ? resolveProjectExecutionChoiceV1({ execution: 'portable', preference: { status: 'ready', value: preferences.preference } })
+  const workspaceDefault = readyPreference
+    ? resolveProjectExecutionChoiceV1({ execution: 'portable', preference: { status: 'ready', value: readyPreference } })
     : null;
   const scriptTargetLines = [
     ...(workspaceDefault ? [t('projectWorkers.defaultSummary', { destination: resolutionLabel(workspaceDefault) })] : []),
     ...scripts.filter(script => isOverridden(script.name))
       .map(script => `${script.name}: ${resolutionLabel(script.resolution)}`),
   ];
+
   const adHoc = guidance.adHoc.resolution;
+  const adHocAdvisoryLines = adHoc.status === 'resolved'
+    ? (canonicalGuidance ? [] : [t('projectWorkers.guideAdHocOn')])
+    : [resolutionLabel(adHoc)];
+
   return [
     `# ${t('projectWorkers.guideHeader', { project })}`,
-    ...(portable.length > 0
-      ? [line(portable, t('projectWorkers.guideWorker'))]
-      : []),
+    ...(canonicalGuidance ? [canonicalGuidance.promptBlock] : []),
     ...(primary.length > 0
-      ? [line(primary, t('projectWorkers.guidePrimary'))]
+      ? [`${primary.join(', ')}  ${t('projectWorkers.guidePrimary')}`]
       : []),
     ...(guidance.scripts === null ? [t('projectWorkers.guideUnavailable'), t('common.retry')]
       : scripts.length === 0 ? [t('projectWorkers.guideNoScripts')] : []),
@@ -117,17 +141,10 @@ export function describeProjectAgentGuidance(
       ? [`${t('projects.pages.services')}: ${guidance.services!.map(service => service.name).join(', ')}`]
       : []),
     ...scriptTargetLines,
-    ...targetLines,
-    '',
-    `${t('projectWorkers.guideRunOne')}  ${RUN_COMMAND}`,
-    `  · ${t('projectWorkers.guideOutput')}`,
-    `  · ${t('projectWorkers.guideQueue')}`,
-    `  · ${t('projectWorkers.guideExit')}`,
-    '',
-    `${t('projectWorkers.guideOther')}  ${EXEC_COMMAND}`,
-    `  · ${adHoc.status === 'resolved' ? t('projectWorkers.guideAdHocOn') : resolutionLabel(adHoc)}`,
-    ...(adHoc.status === 'resolved'
-      ? [`  · ${t('projectWorkers.defaultSummary', { destination: resolutionLabel(adHoc) })}`] : []),
+    ...(!canonicalGuidance && workerSummary ? [workerSummary] : []),
+    ...observationDetailLines,
+    ...policyLines,
+    ...adHocAdvisoryLines,
   ].join('\n');
 }
 

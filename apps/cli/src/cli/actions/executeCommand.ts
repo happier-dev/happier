@@ -5,7 +5,20 @@ import chalk from 'chalk';
 import type { ActionExecuteResult } from '@happier-dev/protocol';
 import { resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { readMissingActionSecretInputPaths } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
+import { isManagedWorkspaceRefV2, type WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import {
+  isWorkspacePathWithinRootV1,
+  normalizeWorkspaceRootPathV1,
+  workspaceAddressFromRefV1,
+} from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { z } from 'zod/mini';
 
+import {
+  bindContextualActionToolInput,
+  projectSessionBoundActionToolInputSchema,
+} from '@/agent/tools/happierTools/actionToolContext';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { readActiveMachineId, readRegisteredMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { executeSessionMcpAction, hasSessionMcpContext } from '@/cli/commands/toolsSessionMcp';
 import {
@@ -17,13 +30,14 @@ import {
 } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
 import { configuration } from '@/configuration';
-import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import {
   readStoredCredentials,
   readStoredCredentialsForServerId,
   type StoredCredentials,
 } from '@/persistence';
-import { getServerProfile, type ServerProfile } from '@/server/serverProfiles';
+import { getServerProfile, resolveServerProfileHomeIdentityId, type ServerProfile } from '@/server/serverProfiles';
+import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
 import {
   createServerUrlServerFeaturesSnapshotStore,
   type ServerFeaturesSnapshotStore,
@@ -66,6 +80,10 @@ type Executor = Pick<
 >;
 type ExecutorParams = Parameters<typeof createCliActionExecutorFromCredentials>[0];
 
+export type ActionCliWorkspaceResolutionResult =
+  | Readonly<{ ok: true; workspace: WorkspaceAddressV1 }>
+  | Readonly<{ ok: false; errorCode: string; errorMessage: string }>;
+
 export type ActionCliExecutionDeps = Readonly<{
   readCredentialsFn: () => Promise<StoredCredentials | null>;
   readCredentialsForServerIdFn: (serverId: string) => Promise<StoredCredentials | null>;
@@ -75,7 +93,79 @@ export type ActionCliExecutionDeps = Readonly<{
     token: string;
   }>) => ServerFeaturesSnapshotStore;
   createExecutorFn: (params: ExecutorParams) => Executor | Promise<Executor>;
+  resolveWorkspaceForCwdFn: (params: Readonly<{
+    cwd: string;
+    credentials: StoredCredentials;
+    serverId: string;
+    serverIdentityId?: string;
+    serverApiUrl?: string;
+    machineId?: string | null;
+    signal?: AbortSignal;
+  }>) => Promise<ActionCliWorkspaceResolutionResult>;
+  executeSessionMcpActionFn: typeof executeSessionMcpAction;
+  hasSessionMcpContextFn: typeof hasSessionMcpContext;
+  getCwdFn: () => string;
 }>;
+
+const PLACEHOLDER_CONTEXTUAL_WORKSPACE: WorkspaceAddressV1 = Object.freeze({
+  serverId: 'pending',
+  workspaceId: 'pending',
+  machineId: 'pending',
+  rootPath: '/',
+});
+
+async function resolveDefaultCliWorkspaceForCwd(params: Readonly<{
+  cwd: string;
+  credentials: StoredCredentials;
+  serverId: string;
+  serverIdentityId?: string;
+  serverApiUrl?: string;
+  machineId?: string | null;
+  signal?: AbortSignal;
+}>): Promise<ActionCliWorkspaceResolutionResult> {
+  const accountId = readAccountIdFromToken(params.credentials.token);
+  const resolvedMachineId = params.machineId
+    ?? await readRegisteredMachineId(params.serverId, accountId)
+    ?? await readActiveMachineId();
+  if (!resolvedMachineId) {
+    return {
+      ok: false,
+      errorCode: 'invalid_arguments',
+      errorMessage: 'No registered machine found for the current directory. Pass --workspace-json or run inside a registered project checkout.',
+    };
+  }
+  const homeId = params.serverIdentityId ?? await resolveServerProfileHomeIdentityId(params.serverId) ?? params.serverId;
+  const serverHttpBaseUrl = params.serverApiUrl ?? resolveServerHttpBaseUrl();
+  const rows = await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => readProjectAccountRows({
+    credentials: params.credentials,
+    serverId: homeId,
+    ...(params.signal ? { signal: params.signal } : {}),
+    selection: { kinds: ['workspace-ref'], serverId: homeId },
+  }));
+  const matching = rows.workspaceRefs.filter((ref) => (
+    !isManagedWorkspaceRefV2(ref)
+    && ref.machineId === resolvedMachineId
+    && isWorkspacePathWithinRootV1(params.cwd, ref.rootPath)
+  ));
+  if (matching.length === 0) {
+    return {
+      ok: false,
+      errorCode: 'invalid_arguments',
+      errorMessage: 'No registered project checkout found for the current directory. Pass --workspace-json or run inside a registered project checkout.',
+    };
+  }
+  const ranked = matching
+    .map((ref) => ({ ref, depth: normalizeWorkspaceRootPathV1(ref.rootPath)?.length ?? 0 }))
+    .sort((left, right) => right.depth - left.depth);
+  if (ranked.length > 1 && ranked[0]!.depth === ranked[1]!.depth) {
+    return {
+      ok: false,
+      errorCode: 'invalid_arguments',
+      errorMessage: 'Multiple registered project checkouts match the current directory. Pass --workspace-json to select one.',
+    };
+  }
+  return { ok: true, workspace: workspaceAddressFromRefV1(ranked[0]!.ref) };
+}
 
 const DEFAULT_DEPS: ActionCliExecutionDeps = {
   readCredentialsFn: readStoredCredentials,
@@ -85,6 +175,10 @@ const DEFAULT_DEPS: ActionCliExecutionDeps = {
   createExecutorFn: async (params) => (
     await import('@/session/actions/createCliActionExecutorFromCredentials')
   ).createCliActionExecutorFromCredentials(params),
+  resolveWorkspaceForCwdFn: resolveDefaultCliWorkspaceForCwd,
+  executeSessionMcpActionFn: executeSessionMcpAction,
+  hasSessionMcpContextFn: hasSessionMcpContext,
+  getCwdFn: () => process.cwd(),
 };
 
 /**
@@ -269,11 +363,34 @@ export async function runCompiledActionCliCommand(params: Readonly<{
     return;
   }
 
+  const deps: ActionCliExecutionDeps = { ...DEFAULT_DEPS, ...params.deps };
   const invocationId = randomUUID();
   const prepareSavedInput = needsSavedSecretsInputPreparation(command.actionId);
+  const workspaceContextualDefault = command.spec.contextualDefaults?.workspace ?? null;
+  const workspaceSuppliedInInput = (parsed.canonicalBase !== null && Object.prototype.hasOwnProperty.call(parsed.canonicalBase, 'workspace'))
+    || Object.prototype.hasOwnProperty.call(parsed.callerOverlay, 'workspace');
+  const needsContextualWorkspaceResolution = workspaceContextualDefault !== null && !workspaceSuppliedInInput;
+  const cwdSuppliedInInput = (parsed.canonicalBase !== null && Object.prototype.hasOwnProperty.call(parsed.canonicalBase, 'cwd'))
+    || Object.prototype.hasOwnProperty.call(parsed.callerOverlay, 'cwd');
+  const shouldDefaultComputeExecCwd = needsContextualWorkspaceResolution
+    && command.actionId === 'projects.compute.exec'
+    && !cwdSuppliedInInput;
+  const effectiveParsed = shouldDefaultComputeExecCwd
+    ? { ...parsed, callerOverlay: Object.freeze({ ...parsed.callerOverlay, cwd: deps.getCwdFn() }) }
+    : parsed;
+  const preTransportCanonicalSchema = prepareSavedInput && parsed.canonicalBase === null
+    ? command.callerSchema
+    : needsContextualWorkspaceResolution
+      ? projectSessionBoundActionToolInputSchema({
+          actionId: command.actionId,
+          inputSchema: command.spec.inputSchema,
+          contextualDefaults: command.spec.contextualDefaults,
+          context: { defaultSessionWorkspace: PLACEHOLDER_CONTEXTUAL_WORKSPACE },
+        }) as z.ZodMiniType
+      : command.spec.inputSchema;
   const composed = composeActionCliInput({
-    parsed,
-    canonicalSchema: prepareSavedInput && parsed.canonicalBase === null ? command.callerSchema : command.spec.inputSchema,
+    parsed: effectiveParsed,
+    canonicalSchema: preTransportCanonicalSchema,
     wholeInputSchema: command.wholeInputSchema,
     callerSchema: command.callerSchema,
     bindInput: command.spec.cli?.bindInput,
@@ -305,7 +422,7 @@ export async function runCompiledActionCliCommand(params: Readonly<{
 
   let result: ActionExecuteResult;
   let bridgeSessionId = params.agentBridgeSessionId;
-  if (params.agentBridgeSessionId !== undefined || hasSessionMcpContext()) {
+  if (params.agentBridgeSessionId !== undefined || deps.hasSessionMcpContextFn()) {
     if (hasFlagBeforeTerminator(actionCliCommandInputArgv(command, params.argv), new Set(commandTransportValueFlags(command)))) {
       await reportFailure({ json, kind, failure: { errorCode: 'invalid_arguments',
         errorMessage: 'Session MCP selects the Home and execution context. Supply resource targets in the Action input.' },
@@ -322,12 +439,12 @@ export async function runCompiledActionCliCommand(params: Readonly<{
       : params.signal;
     const requestSignal = requestSignalForCommand(command, callerSignal);
     const execute = (actionId: Parameters<typeof prepareSavedSecretsCliInput>[0]['actionId'], actionInput: unknown) =>
-      executeSessionMcpAction(actionId, actionInput, { ...(requestSignal ? { signal: requestSignal } : {}) });
+      deps.executeSessionMcpActionFn(actionId, actionInput, { ...(requestSignal ? { signal: requestSignal } : {}) });
     try {
       if (prepareInput) {
         input = await prepareSavedSecretsCliInput({ actionId: command.actionId, input, signal: requestSignal,
           secretInput: command.spec, execute });
-        const validated = command.spec.inputSchema.safeParse(input);
+        const validated = preTransportCanonicalSchema.safeParse(input);
         if (!validated.success) throw new SavedSecretsInputFailure({ errorCode: 'invalid_arguments', errorMessage: 'Invalid prepared Action input.' });
         input = validated.data as Readonly<Record<string, unknown>>;
         context = { command, json, input, callerInput };
@@ -349,7 +466,6 @@ export async function runCompiledActionCliCommand(params: Readonly<{
       return;
     } finally { if (observation) process.removeListener('SIGINT', onInterrupt); }
   } else {
-  const deps: ActionCliExecutionDeps = { ...DEFAULT_DEPS, ...params.deps };
   let credentials: StoredCredentials | null;
   let fixedServer: ActionCliFixedServerTarget | null = null;
   let serverIdentityId: string | undefined;
@@ -437,6 +553,50 @@ export async function runCompiledActionCliCommand(params: Readonly<{
         ? { externalActionClient: true as const }
         : {}),
     };
+    if (needsContextualWorkspaceResolution) {
+      const resolvedWorkspace = await deps.resolveWorkspaceForCwdFn({
+        cwd: deps.getCwdFn(),
+        credentials,
+        serverId: fixedServer?.serverId ?? configuration.activeServerId,
+        ...(serverIdentityId ? { serverIdentityId } : {}),
+        ...(fixedServer?.serverApiUrl ? { serverApiUrl: fixedServer.serverApiUrl } : {}),
+        ...(machineId !== null ? { machineId } : {}),
+        ...(requestSignal ? { signal: requestSignal } : {}),
+      });
+      if (!resolvedWorkspace.ok) {
+        await reportFailure({
+          json,
+          kind,
+          failure: { errorCode: resolvedWorkspace.errorCode, errorMessage: resolvedWorkspace.errorMessage },
+          extraFields: null,
+          humanSuffix: null,
+          unexpected: false,
+          help: null,
+        });
+        return;
+      }
+      const boundInput = bindContextualActionToolInput({
+        actionId: command.actionId,
+        input,
+        contextualDefaults: command.spec.contextualDefaults,
+        context: { defaultSessionWorkspace: resolvedWorkspace.workspace },
+      });
+      const validated = command.spec.inputSchema.safeParse(boundInput);
+      if (!validated.success) {
+        await reportFailure({
+          json,
+          kind,
+          failure: { errorCode: 'invalid_arguments', errorMessage: 'Invalid Action input after resolving workspace.' },
+          extraFields: null,
+          humanSuffix: null,
+          unexpected: false,
+          help: null,
+        });
+        return;
+      }
+      input = Object.freeze(validated.data as Record<string, unknown>);
+      context = { command, json, input, callerInput };
+    }
     const executor = await deps.createExecutorFn(fixedServer
       ? { ...executorOptions, ...fixedServer }
       : executorOptions);

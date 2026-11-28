@@ -14,6 +14,8 @@ export async function createAccountServerWorkspaceWorkerPreferenceClient(input: 
   token: string; credentials?: StoredCredentials; serverHttpBaseUrl: string; signal?: AbortSignal;
   context: ActionExecutorContext; actionId: string; isCredentialCurrent?: () => boolean | Promise<boolean>;
   operationContext?: SavedSecretOperationContextV1;
+  /** Descriptive reads may borrow an already-observed Account encryption mode instead of burning a second RTT. */
+  encryptionModeUsage?: 'identity' | 'fresh-authority';
   onRequestIssued?: () => void;
   resolveRequestHeaders(params: Readonly<{context: ActionExecutorContext; effectActionId: string; method: string; path: string; body?: unknown}>): Readonly<Record<string, string>> | null | Promise<Readonly<Record<string, string>> | null>;
 }>): Promise<ReturnType<typeof createWorkspaceExecutionConfigClientV1> | null> {
@@ -46,6 +48,7 @@ export async function createAccountServerWorkspaceWorkerPreferenceClient(input: 
   let mode: Awaited<ReturnType<typeof readAccountEncryptionModeOnce>>;
   try { mode = await readAccountEncryptionModeOnce({
     credentials: { token: input.token },
+    ...(input.encryptionModeUsage ? { usage: input.encryptionModeUsage } : {}),
     scope: { token: input.token, serverBaseUrl: input.serverHttpBaseUrl, signal: input.signal },
     request: () => request('/v1/account/encryption'),
   }); }

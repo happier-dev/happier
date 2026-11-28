@@ -1,5 +1,9 @@
 import { isSessionHappierToolsEnabled } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1';
 import { resolveCodingPromptSessionTitleUpdatesModeV1 } from '@happier-dev/protocol/prompts/codingPromptBehaviorV1';
+import {
+  formatProjectComputeAgentGuidanceV1,
+  type ProjectComputeAgentGuidanceInputV1,
+} from '@happier-dev/protocol/workspaces/projectAgentGuidanceV1';
 import type { AgentToolsDelivery, PromptBlockV1 } from '@happier-dev/protocol';
 
 import { buildHappierToolsPromptAppendix } from '@/agent/tools/happierTools/runtime/buildHappierToolsPromptAppendix';
@@ -19,8 +23,20 @@ export function resolveCodingToolDeliveryBlocks(args: Readonly<{
   sessionTitled?: boolean;
   createdAsBot?: boolean;
   codeMode?: Readonly<{ bootstrap: boolean; scriptRunner: boolean; onDemandServers?: readonly string[] }>;
+  projectComputeGuidance?: ProjectComputeAgentGuidanceInputV1 | null;
 }>): PromptBlockV1[] {
   if (args.delivery === 'unsupported' || !isSessionHappierToolsEnabled(args.sessionMetadata)) return [];
+
+  const formattedComputeGuidance = args.projectComputeGuidance
+    ? formatProjectComputeAgentGuidanceV1(args.projectComputeGuidance)
+    : null;
+  const projectComputeGuidanceBlocks: PromptBlockV1[] = formattedComputeGuidance
+    ? [{
+        id: 'tool_delivery.project_compute_guidance',
+        scope: 'tool_delivery',
+        text: formattedComputeGuidance.promptBlock,
+      }]
+    : [];
 
   const scmGuidance: PromptBlockV1 = {
     id: 'tool_delivery.scm',
@@ -29,7 +45,7 @@ export function resolveCodingToolDeliveryBlocks(args: Readonly<{
   };
   const deferredServers = args.codeMode?.onDemandServers?.filter(Boolean) ?? [];
   const deferredSuffix = deferredServers.length > 0 ? ` Deferred MCP servers: ${deferredServers.join(', ')}.` : '';
-  if (args.delivery !== 'shell_bridge') return [scmGuidance, {
+  if (args.delivery !== 'shell_bridge') return [scmGuidance, ...projectComputeGuidanceBlocks, {
     id: 'tool_delivery.visual_actions',
     scope: 'tool_delivery',
     text: `${HAPPIER_VISUAL_AUTHORING_GUIDANCE}\n\n${HAPPIER_VISUAL_ACTION_GUIDANCE}`,
@@ -37,10 +53,11 @@ export function resolveCodingToolDeliveryBlocks(args: Readonly<{
     id: 'tool_delivery.session_tool_discovery', scope: 'tool_delivery' as const,
     text: `Use \`tools_search\` to find Actions and configured tools, \`tools_describe\` to read their inputs, and \`tools_call\` to invoke them. Each tool retains its own approval policy.${deferredSuffix}`,
   }] : [])];
-  if (!args.sessionId || !args.directory) return [scmGuidance];
+  if (!args.sessionId || !args.directory) return [scmGuidance, ...projectComputeGuidanceBlocks];
 
   return [
     scmGuidance,
+    ...projectComputeGuidanceBlocks,
     {
       id: 'tool_delivery.shell_bridge.happier_tools',
       scope: 'tool_delivery',

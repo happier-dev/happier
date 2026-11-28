@@ -200,6 +200,8 @@ export const PROJECT_WORKER_ACTION_SPECS: ActionSpecArrayConcat<readonly [
   const retire = isProjectWorkerCopyRetireActionIdV1(id);
   return {
     id, approval: read ? { result: 'required' } : { result: 'optional', flow: 'deferred' },
+    ...(id === 'projects.worker.preferences.get' || id === 'projects.worker.status'
+      ? { contextualDefaults: { workspace: 'current_session_workspace_config' as const } } : {}),
     approvalPolicy: { uiConfirmation: id === 'projects.worker.copy.retire' ? 'policy' : 'direct' }, title: titles[id], description: id === 'projects.worker.preferences.get'
       ? 'Read current worker preferences for this exact Home/checkout. Ready values describe the saved destination, per-script overrides, fallback and explicit ad-hoc opt-in; locked, invalid or unavailable is not disabled or primary. After projects.inspect, use these facts to explain the effective default without overriding a primary-only declaration. Observe an exact Machine with projects.worker.status; for a pool use machines.pools.resolve with purpose finite and this workspace. Reads and saved choices do not accept work or grant Action approval.'
       : id === 'projects.worker.status'

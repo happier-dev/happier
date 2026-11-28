@@ -13,6 +13,7 @@ import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/acti
 import { normalizeExecutionRunToolResult } from './executionRunToolResult';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
+import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { bindContextualActionToolInput, normalizeActionExecuteInput } from './actionToolContext';
 import { materializeActionRequestAttributionV1, type ActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -320,6 +321,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
   actionToolNameToId?: ReadonlyMap<string, string>;
   defaultSessionMachineId?: string | null;
   defaultSessionRootPath?: string | null;
+  defaultSessionWorkspace?: WorkspaceAddressV1 | null;
   /** Exact host-owned Session corpus available to non-Agent tool surfaces. */
   resolveSessionListAccess?: (defaultSessionId: string) => 'current_session' | 'led_subtree' | undefined;
 }>): Readonly<{
@@ -358,7 +360,8 @@ export function createActionToolExecutorBridge(params: Readonly<{
       // Voice's tool host lives in its carrier Session. The answering App
       // owns the working coding target and resolves omission there.
       const toolContext = { ...(surface === 'voice' ? {} : { defaultSessionId }),
-        defaultSessionMachineId: params.defaultSessionMachineId, defaultSessionRootPath: params.defaultSessionRootPath };
+        defaultSessionMachineId: params.defaultSessionMachineId, defaultSessionRootPath: params.defaultSessionRootPath,
+        defaultSessionWorkspace: params.defaultSessionWorkspace };
       if (toolName === 'action_execute') {
         const argsRecord = isInputRecord(toolArgs) ? toolArgs : null;
         const actionId = argsRecord ? readTrimmedStringField(argsRecord, 'actionId') : '';

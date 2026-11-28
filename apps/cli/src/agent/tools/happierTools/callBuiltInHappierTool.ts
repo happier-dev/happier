@@ -1,6 +1,8 @@
 import { sameStoredCredentials, type StoredCredentials } from '@/persistence';
 import { dispatchBuiltInHappierTool } from './dispatchBuiltInHappierTool';
 import { createActionToolExecutorBridge } from './createActionToolExecutorBridge';
+import { resolveSessionDefaultWorkspaceAddress } from './actionToolContext';
+import { getActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import { createChangeTitleToolHandler } from './createChangeTitleToolHandler';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
@@ -113,12 +115,14 @@ export async function callBuiltInHappierTool(params: Readonly<{
   const harness = await openCliHappierToolActionHarness({ credentials: credentialSnapshot, rawSession,
     readCredentials: params.readCredentials });
   if (!harness.ok) return harness;
-  const { executor, actionToolBridge, actionsSettingsProvider, pluginToolCatalog, sessionMachineId, callerPermissionMode } = harness;
+  const { executor, actionToolBridge, actionsSettingsProvider, pluginToolCatalog, sessionMachineId, sessionRootPath, sessionWorkspace, callerPermissionMode } = harness;
   return await dispatchBuiltInHappierTool({
     toolName: params.toolName,
     args: params.args,
     sessionId,
     sessionMachineId,
+    sessionRootPath,
+    sessionWorkspace,
     surface,
     ...(params.signal ? { signal: params.signal } : {}),
     getActionsSettings: actionsSettingsProvider.getActionsSettings,
@@ -138,7 +142,7 @@ export async function callBuiltInHappierTool(params: Readonly<{
 
 export async function openCliHappierToolActionHarness(params: Readonly<{
   credentials: StoredCredentials;
-  rawSession: { machineId?: string | null };
+  rawSession: { machineId?: string | null; path?: string | null; metadata?: unknown };
   readCredentials?: () => Promise<StoredCredentials | null>;
   readFeatures?: Parameters<typeof createCliActionExecutorFromCredentials>[0]['resolveServerFeaturesSnapshot'];
 }>) {
@@ -147,6 +151,16 @@ export async function openCliHappierToolActionHarness(params: Readonly<{
   const sessionMachineId = typeof params.rawSession.machineId === 'string' && params.rawSession.machineId.trim().length > 0
     ? params.rawSession.machineId.trim()
     : null;
+  const sessionRootPath = typeof params.rawSession.path === 'string' && params.rawSession.path.trim().length > 0
+    ? params.rawSession.path.trim()
+    : null;
+  const sessionWorkspace = resolveSessionDefaultWorkspaceAddress({
+    serverId: configuration.activeServerId,
+    metadata: params.rawSession.metadata,
+    machineId: sessionMachineId,
+    rootPath: sessionRootPath,
+    workspaceRefs: getActiveProjectAccountRowsSnapshot()?.workspaceRefs,
+  });
   await ensureCliActionPolicySettings(params.credentials);
   if (params.readCredentials) {
     const currentCredentials = await params.readCredentials().catch(() => null);
@@ -192,7 +206,9 @@ export async function openCliHappierToolActionHarness(params: Readonly<{
     pluginToolCatalog,
     resolveCallerPermissionMode: () => callerPermissionMode,
     defaultSessionMachineId: sessionMachineId,
+    defaultSessionRootPath: sessionRootPath,
+    defaultSessionWorkspace: sessionWorkspace,
   });
 
-  return { ok: true as const, executor, actionToolBridge, actionsSettingsProvider, pluginToolCatalog, sessionMachineId, callerPermissionMode };
+  return { ok: true as const, executor, actionToolBridge, actionsSettingsProvider, pluginToolCatalog, sessionMachineId, sessionRootPath, sessionWorkspace, callerPermissionMode };
 }

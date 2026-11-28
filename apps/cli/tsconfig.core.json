@@ -99,6 +99,7 @@
     "src/agent/permissions/workspaceWritePolicy.ts",
     "src/agent/prompting/coding/providerPromptBehaviorRegistry.ts",
     "src/agent/prompting/coding/resolveEffectiveCodingPrompt.ts",
+    "src/agent/prompting/coding/resolveProjectComputeGuidance.ts",
     "src/agent/prompting/coding/sessionProjectPromptStack.ts",
     "src/agent/prompting/coding/sessionPromptPlan.ts",
     "src/agent/prompting/coding/sessionPromptStack.ts",

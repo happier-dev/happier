@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import {
+  formatProjectComputeAgentGuidanceV1,
+  PROJECT_COMPUTE_EXEC_CLI_USAGE,
+  PROJECT_SCRIPT_RUN_CLI_USAGE,
+} from '@happier-dev/protocol/workspaces/projectAgentGuidanceV1';
 import { createDefaultWorkspaceWorkerPreferenceV1, resolveProjectExecutionChoiceV1, type WorkspaceWorkerPreferenceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 
 vi.mock('@/text', async () =>
@@ -35,27 +40,30 @@ function guidance(adHoc: 'resolved' | 'refused'): Guidance {
 }
 
 describe('describeProjectAgentGuidance', () => {
-  it('lists which scripts may leave the checkout and which stay, from the declarations', () => {
+  it('renders portable scripts through the single canonical formatter and lists primary scripts separately without duplication', () => {
     const text = describeProjectAgentGuidance(guidance('refused'), 'happier');
     const lines = text.split('\n');
     expect(
-      lines.find((line) => line.includes('projectWorkers.guideWorker')),
-    ).toContain('test, typecheck');
+      lines.find((line) => line.startsWith('Portable scripts')),
+    ).toContain('"test", "typecheck"');
     expect(
       lines.find((line) => line.includes('projectWorkers.guidePrimary')),
     ).toContain('lint');
     expect(
-      lines.find((line) => line.includes('projectWorkers.guideWorker')),
+      lines.find((line) => line.startsWith('Portable scripts')),
     ).not.toContain('lint');
+    // CLI usage appears once (via canonical formatter), never duplicated.
+    expect(text.split(PROJECT_SCRIPT_RUN_CLI_USAGE).length - 1).toBe(1);
+    expect(text).not.toContain(PROJECT_COMPUTE_EXEC_CLI_USAGE);
   });
 
   it('says whether explicit ad-hoc commands are allowed from the resolved checkout preference', () => {
     expect(
       describeProjectAgentGuidance(guidance('refused'), 'happier'),
     ).toContain('projectWorkers.guideAdHocOff');
-    expect(
-      describeProjectAgentGuidance(guidance('resolved'), 'happier'),
-    ).toContain('projectWorkers.guideAdHocOn');
+    const allowedText = describeProjectAgentGuidance(guidance('resolved'), 'happier');
+    expect(allowedText).toContain(PROJECT_COMPUTE_EXEC_CLI_USAGE);
+    expect(allowedText.split(PROJECT_COMPUTE_EXEC_CLI_USAGE).length - 1).toBe(1);
   });
 
   it.each(['locked', 'unavailable'] as const)('does not describe %s reads as an empty project or ad-hoc opt-out', status => {
@@ -111,7 +119,7 @@ describe('describeProjectAgentGuidance', () => {
       .toContain('projectWorkers.guideNoScripts');
   });
 
-  it('presents effective script targets separately from declaration permission and shows current refusal guidance', () => {
+  it('passes workerSummary into the single canonical prompt block and avoids duplicating scripts, destination, or CLI commands', () => {
     const base = guidance('resolved');
     const destination = { kind: 'machine', machineId: 'worker-b' } as const;
     const preference = { ...createDefaultWorkspaceWorkerPreferenceV1(), enabled: true, allowAdHoc: true,
@@ -128,14 +136,39 @@ describe('describeProjectAgentGuidance', () => {
         explanation: 'not_accepting', lastCleanSyncAtMs: null } } };
     const text = describeProjectAgentGuidance(facts, 'happier');
     expect(text).toContain('worker-b');
-    // The default is said once; only the overridden script names its own target.
-    expect(text.match(/projectWorkers\.defaultSummary \{"destination":"[^"]*"\}/g)?.length).toBe(2);
+    expect(text.match(/projectWorkers\.defaultSummary \{"destination":"[^"]*"\}/g)?.length).toBe(1);
     expect(text).toContain('test: worker-b');
     expect(text).not.toContain('typecheck: ');
     expect(text).not.toContain('lint: ');
-    expect(text.split('happier project compute exec -- <argv>')[1])
-      .toContain('projectWorkers.defaultSummary {"destination":"worker-b"}');
     expect(text).toContain('projectWorkers.notAccepting');
     expect(text).toContain('projectWorkers.notAcceptingDetail');
+    // Neither CLI usage string is duplicated.
+    expect(text.split(PROJECT_SCRIPT_RUN_CLI_USAGE).length - 1).toBe(1);
+    expect(text.split(PROJECT_COMPUTE_EXEC_CLI_USAGE).length - 1).toBe(1);
+    const canonical = formatProjectComputeAgentGuidanceV1({
+      workspace: base.sourceWorkspace,
+      portableScripts: [{ name: 'test' }, { name: 'typecheck' }],
+      workerPreferences: {
+        enabled: true,
+        allowAdHoc: true,
+        destinationLabel: 'worker-b',
+        unavailable: preference.unavailable,
+      },
+      workerSummary: 'projectWorkers.notAccepting',
+    });
+    expect(canonical).not.toBeNull();
+    expect(text).toContain(canonical!.promptBlock);
+  });
+
+  it('omits the canonical session prompt block when neither portable scripts nor enabled workers exist', () => {
+    const base = guidance('refused');
+    const text = describeProjectAgentGuidance({
+      ...base,
+      scripts: base.scripts!.filter((script) => script.execution !== 'portable'),
+    }, 'happier');
+    expect(text).not.toContain('projects_script_run');
+    expect(text).not.toContain('projects_compute_exec');
+    expect(text).not.toContain(PROJECT_SCRIPT_RUN_CLI_USAGE);
+    expect(text).not.toContain(PROJECT_COMPUTE_EXEC_CLI_USAGE);
   });
 });

@@ -41,6 +41,7 @@ export type ProjectExecutionActionInputById = {
         executable: string;
         argv: string[];
         cwd: string;
+        env?: Record<string, string> | undefined;
         environmentBindings?: ActionDtoShape_161712a45994bb6d;
         choice?: ActionDtoShape_b4fd80ccfa6fb9ac;
         execution?: 'portable' | 'primary' | undefined;

@@ -11,6 +11,7 @@ import type { StoredCredentials } from '@/persistence';
 import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
 import type { AiLaunchProfile } from '@happier-dev/protocol/profiles/read';
 import type { PromptStackAdmittedEntryV1 } from '@happier-dev/protocol/prompts/library/resolvePromptStackSystemAppendBlocksV1';
+import type { ProjectComputeAgentGuidanceInputV1 } from '@happier-dev/protocol/workspaces/projectAgentGuidanceV1';
 import { resolveCliMemoryRecallGuidanceEnabled } from '@/agent/prompts/library/resolveCliMemoryRecallGuidanceEnabled';
 import {
   resolveCliPromptStackSystemAppendBlocks,
@@ -61,6 +62,7 @@ export type ResolveEffectiveCodingPromptArgs = Omit<CliPromptStackSystemAppendIn
   toolDelivery: AgentToolsDelivery;
   toolDeliverySessionId?: string | null;
   toolDeliveryDirectory?: string | null;
+  projectComputeGuidance?: ProjectComputeAgentGuidanceInputV1 | null;
   memoryMachineId?: string | null;
   sessionTitleToolAvailable?: boolean;
   sessionMetadata?: unknown;
@@ -354,6 +356,7 @@ export async function resolveEffectiveCodingPromptPlan(
       delivery: toolDelivery,
       sessionId,
       directory,
+      projectComputeGuidance: args.projectComputeGuidance,
       settings: promptSettings,
       sessionTitleToolAvailable,
       createdAsBot: args.createdAsBot,

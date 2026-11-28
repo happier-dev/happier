@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { isSessionHappierToolsEnabled } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1';
 import { hasSessionTitleInMetadata } from '@happier-dev/protocol/sessions/metadata/sessionTitle';
 import { AgentSessionStartupInstructionsV1Schema } from '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1';
 import type { AgentSessionStartupInstructionsV1, SessionRolePromptContextV1, CodingPromptBehaviorV1 } from '@happier-dev/protocol';
@@ -13,6 +14,7 @@ import type { SessionSkillPlanV1 } from '@happier-dev/protocol/prompts/library/s
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { resolvePluginPromptAssetBlocks, resolvePluginToolPromptContributions } from '@/plugins/runtime/hooks/execution/dispatchAgentTurnHooks';
 import { resolveEffectiveCodingPromptPlan } from './resolveEffectiveCodingPrompt';
+import { resolveSessionProjectComputeGuidance } from './resolveProjectComputeGuidance';
 import { prepareSessionPromptStackInputs } from './sessionPromptStack';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken, isActiveAccountSettingsSnapshotLifetimeCurrent, readAccountProfilePromptStackSources } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { PromptStackAdmittedEntryV1 } from '@happier-dev/protocol/prompts/library/resolvePromptStackSystemAppendBlocksV1';
@@ -186,6 +188,21 @@ export function createSessionPromptPlanResolver(params: Readonly<{
     // transports. Join them before composition, retaining the final Account
     // fences rather than serializing these reads or reusing an older plan.
     const sessionMetadata = params.session.getMetadataSnapshot();
+    const shouldResolveComputeGuidance = toolDelivery !== 'unsupported' && isSessionHappierToolsEnabled(sessionMetadata);
+    const knownMetadataWorkspaceId = typeof sessionMetadata?.workspaceId === 'string' && sessionMetadata.workspaceId.trim().length > 0
+      ? sessionMetadata.workspaceId.trim()
+      : null;
+    const earlyComputeGuidancePromise = shouldResolveComputeGuidance && knownMetadataWorkspaceId
+      ? resolveSessionProjectComputeGuidance({
+          directory: params.directory,
+          serverId,
+          machineId: params.machineId,
+          workspaceId: knownMetadataWorkspaceId,
+          credentials: params.opts.credentials,
+          operationContext,
+          signal,
+        }).catch(() => null)
+      : null;
     const [promptPreparation, stackPreparation] = await Promise.allSettled([
       (async () => params.daemonBridge
         ? await params.daemonBridge.resolvePrompt(scope)
@@ -197,19 +214,35 @@ export function createSessionPromptPlanResolver(params: Readonly<{
               excludePluginIds ? { excludePluginIds } : undefined,
             ),
           })(),
-      prepareSessionPromptStackInputs({
-        credentials: params.opts.credentials, metadata: sessionMetadata, sessionId: params.session.sessionId,
-        machineId: params.machineId, directory: params.directory, signal, serverId,
-        operationContext,
-        accountContext: { ...accountContext, settings: params.opts.accountSettingsContext?.settings ?? null },
-      }),
+      (async () => {
+        const prepared = await prepareSessionPromptStackInputs({
+          credentials: params.opts.credentials, metadata: sessionMetadata, sessionId: params.session.sessionId,
+          machineId: params.machineId, directory: params.directory, signal, serverId,
+          operationContext,
+          accountContext: { ...accountContext, settings: params.opts.accountSettingsContext?.settings ?? null },
+        });
+        const computeGuidance = !shouldResolveComputeGuidance
+          ? null
+          : earlyComputeGuidancePromise
+            ? await earlyComputeGuidancePromise
+            : await resolveSessionProjectComputeGuidance({
+                directory: params.directory,
+                serverId,
+                machineId: params.machineId,
+                workspaceRef: prepared.workspaceRef,
+                credentials: params.opts.credentials,
+                operationContext,
+                signal,
+              }).catch(() => null);
+        return { prepared, computeGuidance };
+      })(),
     ]);
     // Do not leave an independent source read running after a failed IPC reply.
     if (promptPreparation.status === 'rejected') throw promptPreparation.reason;
     if (stackPreparation.status === 'rejected') throw stackPreparation.reason;
     const promptContributions = promptPreparation.value;
-    const preparedStack = stackPreparation.value;
-    const { accountSnapshot: currentAccount, assertCurrentAccount, ...stackInputs } = preparedStack;
+    const { prepared: preparedStack, computeGuidance: projectComputeGuidance } = stackPreparation.value;
+    const { accountSnapshot: currentAccount, assertCurrentAccount, workspaceRef: _workspaceRef, ...stackInputs } = preparedStack;
     const { settings, profileId } = stackInputs;
     const skills = params.readSessionSkills?.();
     const skillReadAvailable = toolDelivery !== 'unsupported' && isSessionAgentToolAvailable({
@@ -247,6 +280,7 @@ export function createSessionPromptPlanResolver(params: Readonly<{
       toolDeliverySessionId: toolDelivery === 'shell_bridge'
         ? params.session.sessionId : params.readNativeSessionId(),
       toolDeliveryDirectory: params.directory,
+      projectComputeGuidance,
       memoryMachineId: params.machineId,
       memoryRecallGuidanceEnabled: params.memoryRecallGuidanceEnabled,
       toolPromptContributions: promptContributions.toolPromptContributions,

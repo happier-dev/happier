@@ -3,6 +3,7 @@ import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/
 import { resolveEffectiveCodingPromptBehaviorV1 } from '@happier-dev/protocol/prompts/effectiveCodingPromptBehaviorV1';
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
 import type { ActionId, ActionsSettingsV1, FeatureId, CodingPromptBehaviorV1 } from '@happier-dev/protocol';
+import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import type { AgentSessionNativeToolDescriptor } from '@happier-dev/plugin-sdk/agents/runtime';
 import { z } from 'zod/mini';
@@ -76,6 +77,7 @@ export function resolveSessionNativeToolDescriptors(params: Readonly<{
   happierToolsEnabled?: boolean;
   sessionMachineId?: string | null;
   sessionRootPath?: string | null;
+  sessionWorkspace?: WorkspaceAddressV1 | null;
   memoryRecallGuidanceEnabled: boolean;
   /** Resolved from current host Session metadata, never Agent arguments. */
   sessionMemoryEnabled?: boolean;
@@ -124,6 +126,7 @@ export function resolveSessionNativeToolDescriptors(params: Readonly<{
             defaultSessionId: params.sessionId,
             defaultSessionMachineId: params.sessionMachineId ?? null,
             defaultSessionRootPath: params.sessionRootPath ?? null,
+            defaultSessionWorkspace: params.sessionWorkspace ?? null,
           },
         })
       : tool.inputSchema;

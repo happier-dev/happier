@@ -5,6 +5,7 @@ import {
   type ApprovalRequestOriginV1,
   type ResolvedActionOption,
 } from '@happier-dev/protocol';
+import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import {
   getActionToolIdForToolName,
   getEquivalentActionIdForBuiltInTool,
@@ -117,6 +118,7 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
   sessionId?: string;
   sessionMachineId?: string | null;
   sessionRootPath?: string | null;
+  sessionWorkspace?: WorkspaceAddressV1 | null;
   surface?: import('./actionToolCatalog').HappierBuiltInToolSurface;
   actionsSettings?: ActionsSettingsV1 | null;
   getActionsSettings?: (() => ActionsSettingsV1 | null) | null;
@@ -232,6 +234,7 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
             defaultSessionId: params.sessionId,
             defaultSessionMachineId: params.sessionMachineId,
             defaultSessionRootPath: params.sessionRootPath,
+            defaultSessionWorkspace: params.sessionWorkspace,
           },
           registry: params.registry,
           pluginToolCatalog: params.pluginToolCatalog,

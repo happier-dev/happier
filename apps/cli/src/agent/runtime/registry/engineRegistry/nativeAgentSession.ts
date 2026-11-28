@@ -235,6 +235,8 @@ import { readStoredCredentials } from '@/persistence';
 import { buildHappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
 import { isSessionHappierToolsEnabled } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1';
 import { resolveSessionNativeToolDescriptors } from '@/agent/tools/happierTools/resolveSessionNativeToolBridge';
+import { resolveSessionDefaultWorkspaceAddress } from '@/agent/tools/happierTools/actionToolContext';
+import { getActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import type { SessionPromptPlanResolver } from '@/agent/prompting/coding/sessionPromptPlan';
 import { createBoundTranscriptIdentityReconciler } from '@/agent/runtime/session/transcripts/reconcileSourceIdentities';
 import {
@@ -658,7 +660,7 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
     auth?: AgentSessionHostServices['auth'];
     followSource?: AgentSessionHostServices['transcripts']['followSource'];
     nativeHome?: NonNullable<AgentSessionHostServices['nativeHome']>;
-    session: Pick<ApiSessionClient, 'updateMetadata' | 'enqueueAgentMessageCommitted'> & Partial<Pick<ApiSessionClient, 'getMetadataSnapshot' | 'awaitTurnPublication'>> & Readonly<{
+    session: Pick<ApiSessionClient, 'updateMetadata' | 'enqueueAgentMessageCommitted'> & Partial<Pick<ApiSessionClient, 'getMetadataSnapshot' | 'awaitTurnPublication' | 'getServerBinding'>> & Readonly<{
         sessionId: string;
     }>;
     transcriptIdentity?: Readonly<{
@@ -975,6 +977,13 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
                     sessionId: params.sessionId,
                     sessionMachineId: params.sessionMachineId ?? null,
                     sessionRootPath: params.directory,
+                    sessionWorkspace: resolveSessionDefaultWorkspaceAddress({
+                        serverId: params.session.getServerBinding?.().serverId ?? null,
+                        metadata: params.session.getMetadataSnapshot?.(),
+                        machineId: params.sessionMachineId ?? null,
+                        rootPath: params.directory,
+                        workspaceRefs: getActiveProjectAccountRowsSnapshot()?.workspaceRefs,
+                    }),
                     memoryRecallGuidanceEnabled: params.memoryRecallGuidanceEnabled === true,
                     sessionMemoryEnabled: readSessionMemoryEnabledV1(params.session.getMetadataSnapshot?.()),
                     isServerFeatureEnabled: params.owners.features.isEnabled,

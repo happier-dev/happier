@@ -3316,6 +3316,8 @@ export const PLUGIN_UI_HOST_PROVIDED_PROTOCOL_SPECIFIERS: readonly string[] = Ob
     '@happier-dev/protocol/workspaces/index',
     '@happier-dev/protocol/workspaces/locationSchema',
     '@happier-dev/protocol/workspaces/manifestSchema',
+    '@happier-dev/protocol/workspaces/projectAgentGuidanceV1',
+    '@happier-dev/protocol/workspaces/projectComputeEnvV1',
     '@happier-dev/protocol/workspaces/projectPagesV1',
     '@happier-dev/protocol/workspaces/projectServicePlacementV1',
     '@happier-dev/protocol/workspaces/projectServiceRelocationV1',

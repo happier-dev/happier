@@ -45,6 +45,8 @@ export {
 
 export * from './projectWorkerPreferencesV1.js';
 export * from './projectWorkerExecutionV1.js';
+export * from './projectComputeEnvV1.js';
+export * from './projectAgentGuidanceV1.js';
 export * from './projectServicePlacementV1.js';
 export * from './projectServiceRelocationV1.js';
 export { projectProjectListV1, projectScopeKeysV1, compareProjectWorkspaceRefsV1,

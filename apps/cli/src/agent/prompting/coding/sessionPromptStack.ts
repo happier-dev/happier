@@ -1,5 +1,6 @@
 import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
 import type { PromptStackEntryV1 } from '@happier-dev/protocol/prompts/library/promptStacksV1';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { assertPromptStackArtifactHeaderV1, PromptStackPreparationError, type PromptStackScopeV1 } from '@happier-dev/protocol/prompts/library/resolvePromptStackSystemAppendBlocksV1';
 import { migrateRetainedSessionWorkContextV1, readSessionMemoryEnabledV1, SessionDisabledInheritedEntryIdsV1Schema,
   SessionPromptStackV1Schema } from '@happier-dev/protocol/sessions/context/sessionContextV1';
@@ -92,6 +93,7 @@ export type PreparedSessionPromptStackInputs = Readonly<{
   profileEntries?: readonly PromptStackEntryV1[];
   sessionEntries: readonly PromptStackEntryV1[];
   projectEntries: readonly PromptStackEntryV1[];
+  workspaceRef?: WorkspaceRefV1 | null;
   memoryEnabled: boolean;
   createdAsBot: boolean;
   disabledInheritedEntryIds: readonly string[];
@@ -202,17 +204,21 @@ export async function prepareSessionPromptStackInputs(input: SessionPromptStackI
       metadata, signal: input.signal, machineId: input.machineId, directory: input.directory, serverId,
       operationContext: input.operationContext,
     };
-    const projectEntries: readonly PromptStackEntryV1[] = input.projectEntries ?? (input.credentials ? await (input.projectPreparation
-      ? input.projectPreparation.resolve({ metadata, machineId: input.machineId, directory: input.directory })
-      : resolveSessionProjectPromptStack({
-        credentials: input.credentials, ...projectInput,
-      })).then(project => project.entries) : []);
+    const projectResolution = input.projectEntries === undefined && input.credentials
+      ? await (input.projectPreparation
+        ? input.projectPreparation.resolve({ metadata, machineId: input.machineId, directory: input.directory })
+        : resolveSessionProjectPromptStack({
+          credentials: input.credentials, ...projectInput,
+        }))
+      : null;
+    const projectEntries: readonly PromptStackEntryV1[] = input.projectEntries ?? projectResolution?.entries ?? [];
+    const workspaceRef = projectResolution?.workspaceRef ?? null;
     await assertOperationCurrent();
     return {
       credentials: input.credentials, operationContext: input.operationContext, serverId, scope, settings, profileId,
       ...(currentAccount?.profileCatalog ? { profileCatalog: currentAccount.profileCatalog } : {}),
       ...(accountSources?.status === 'ready' ? { accountEntries: accountSources.accountEntries, profileEntries: accountSources.profileEntries } : {}),
-      sessionEntries, projectEntries, memoryEnabled: readSessionMemoryEnabledV1(metadata),
+      sessionEntries, projectEntries, ...(workspaceRef ? { workspaceRef } : {}), memoryEnabled: readSessionMemoryEnabledV1(metadata),
       createdAsBot: metadata?.createdAsBot === true, disabledInheritedEntryIds, accountSnapshot: currentAccount, assertCurrentAccount,
     };
   } catch (error) {

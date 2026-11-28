@@ -4,6 +4,11 @@ import { ActionSpecSchema, getActionSpec, PUBLIC_ACTION_OUTPUT_SCHEMAS, resolveA
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { PROJECT_ACTION_INPUT_SCHEMAS_V1 } from './projectActionFamily.js';
+import {
+  isValidProjectComputeEnvKey,
+  PROJECT_COMPUTE_ENV_MAX_ENTRIES,
+  validateProjectComputeEnv,
+} from '../workspaces/projectComputeEnvV1.js';
 import { describeApprovalActionFields } from './actionApprovalPresentation.js';
 import { createActionExecutor } from './actionExecutor.js';
 import { freezeActionCompletionContractV1 } from './actionCompletion.js';
@@ -122,5 +127,108 @@ describe('Project preparation Action contracts', () => {
           approvalWaivedSurfaces: { [id]: ['agent'] },
         }) }).required).toBe(false);
     }
+  });
+
+  it('declares workspace contextualDefaults on project compute and worker read actions', () => {
+    expect(getActionSpec('projects.script.run').contextualDefaults).toEqual({ workspace: 'current_session_workspace' });
+    expect(getActionSpec('projects.compute.exec').contextualDefaults).toEqual({ workspace: 'current_session_workspace' });
+    expect(getActionSpec('projects.worker.preferences.get').contextualDefaults).toEqual({ workspace: 'current_session_workspace_config' });
+    expect(getActionSpec('projects.worker.status').contextualDefaults).toEqual({ workspace: 'current_session_workspace_config' });
+  });
+
+  it('validates canonical env overrides, blocks dangerous keys, and exposes approvalPresentation parity on projects.compute.exec', () => {
+    const spec = getActionSpec('projects.compute.exec');
+    const workspace = { serverId: 'home', workspaceId: 'workspace', machineId: 'primary-1', rootPath: '/repo' };
+    const workerChoice = { kind: 'workers', destination: { kind: 'machine', machineId: 'worker-1' } } as const;
+    const valid = {
+      workspace,
+      executable: 'pnpm',
+      argv: ['test', '--run'],
+      cwd: '/repo/apps/cli',
+      env: { CI: '1', VITEST_MAX_WORKERS: '1', NODE_ENV: 'test' },
+      choice: workerChoice,
+    };
+    expect(spec.inputSchema.parse(valid)).toEqual(valid);
+    expect(validateProjectComputeEnv({ CI: '1', VITEST_MAX_WORKERS: '1' })).toEqual({
+      ok: true,
+      value: { CI: '1', VITEST_MAX_WORKERS: '1' },
+    });
+
+    // Reject blocked loader/shell/git/Happier/prototype keys and invalid identifiers.
+    for (const badKey of [
+      'PATH',
+      'path',
+      'LD_PRELOAD',
+      'ld_library_path',
+      'DYLD_INSERT_LIBRARIES',
+      'HAPPIER_SERVER_URL',
+      'happier_token',
+      'NODE_OPTIONS',
+      'GIT_SSH_COMMAND',
+      'GIT_CONFIG_KEY_0',
+      'BASH_FUNC_x',
+      'HTTP_PROXY',
+      'SSL_CERT_FILE',
+      '__proto__',
+      'constructor',
+      'prototype',
+      'BAD=KEY',
+      '1STARTS_WITH_DIGIT',
+      'HAS SPACE',
+      '',
+    ]) {
+      expect(isValidProjectComputeEnvKey(badKey), badKey).toBe(false);
+      const env = Object.create(null) as Record<string, string>;
+      env[badKey] = '1';
+      expect(validateProjectComputeEnv(env).ok, badKey).toBe(false);
+      expect(spec.inputSchema.safeParse({ ...valid, env }).success, badKey).toBe(false);
+    }
+
+    // Reject NUL in env values and excessive entry counts.
+    expect(spec.inputSchema.safeParse({ ...valid, env: { OK: 'bad\0val' } }).success).toBe(false);
+    const tooMany = Object.fromEntries(
+      Array.from({ length: PROJECT_COMPUTE_ENV_MAX_ENTRIES + 1 }, (_, i) => [`KEY_${i}`, '1']),
+    );
+    expect(spec.inputSchema.safeParse({ ...valid, env: tooMany }).success).toBe(false);
+
+    // Description and env hint explicitly warn against secrets in env.
+    expect(spec.description).toMatch(/non-secret/i);
+    expect(spec.description).toContain('environmentBindings');
+    const envFieldHint = spec.inputHints?.fields.find((field) => field.path === 'env');
+    expect(envFieldHint?.description).toMatch(/non-secret/i);
+    expect(envFieldHint?.description).toContain('environmentBindings');
+
+    expect(spec.safety).toBe('danger');
+    expect(spec.approvalPresentation?.referenceForField?.('workspace.machineId', 'primary-1', valid))
+      .toEqual({ kind: 'machine', id: 'primary-1', serverId: 'home' });
+    expect(spec.approvalPresentation?.referenceForField?.('choice.destination.machineId', 'worker-1', valid))
+      .toEqual({ kind: 'machine', id: 'worker-1', serverId: 'home' });
+    expect(spec.approvalPresentation?.referenceForField?.('choice.destination.poolId', 'pool-1', {
+      ...valid,
+      choice: { kind: 'workers', destination: { kind: 'pool', poolId: '00000000-0000-4000-8000-000000000001', selection: 'automatic' } },
+    })).toEqual({ kind: 'machinePool', id: 'pool-1' });
+
+    const summary = spec.approvalPresentation?.summary?.({
+      ...valid,
+      env: { CI: 'secret-like-value-never-shown', VITEST_MAX_WORKERS: '2' },
+    });
+    expect(summary).toContain('pnpm test --run');
+    expect(summary).toContain('worker-1');
+    expect(summary).toContain('/repo');
+    expect(summary).toContain('Directory "/repo/apps/cli"');
+    expect(summary).toContain('Env keys: "CI", "VITEST_MAX_WORKERS"');
+    expect(summary).not.toContain('secret-like-value-never-shown');
+
+    const rootSummary = spec.approvalPresentation?.summary?.({
+      ...valid,
+      cwd: '/repo',
+      env: undefined,
+    });
+    expect(rootSummary).not.toContain('Directory ');
+    expect(rootSummary).not.toContain('Env keys:');
+
+    const presentation = describeApprovalActionFields({ actionId: 'projects.compute.exec', actionArgs: valid });
+    expect(presentation.unrepresentable).toBeNull();
+    expect(presentation.rows.map(row => row.path)).toContain('env');
   });
 });

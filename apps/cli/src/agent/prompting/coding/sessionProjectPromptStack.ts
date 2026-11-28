@@ -10,7 +10,7 @@ import { migrateProjectPromptStackSkillRules, readProjectAccountRows, readProjec
   type ProjectStackSkillMigrationResult, type ProjectAccountRowsObservation } from '@/workspaces/projectAccountRows';
 import { readProjectContextEntriesV1 } from '@happier-dev/protocol/projects/projectContextV1';
 import { resolveProjectContextSourceV1 } from '@happier-dev/protocol/projects/projectListProjectionV1';
-import type { QualifiedProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { QualifiedProjectKeyV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { classifyHomeReadPreparationError } from '@/agent/prompts/library/homeReadPreparationError';
 
@@ -18,6 +18,7 @@ export type { SessionProjectPromptStackInput } from '@/workspaces/resolveSession
 
 type SessionProjectPromptStackResult = Readonly<{
   entries: readonly PromptStackEntryV1[]; projectKey: string | null; skillMigration: ProjectStackSkillMigrationResult;
+  workspaceRef?: WorkspaceRefV1 | null;
 }>;
 const projectPending = (reason: 'project_association_unavailable' | 'project_source_unavailable'): never => {
   throw Object.assign(new Error(reason), { code: 'preparation_pending', status: 'preparation_pending', reason });
@@ -62,7 +63,7 @@ export function createSessionProjectPromptStackPreparation(binding: Readonly<{
     }
     const result = await context;
     await assertCurrent();
-    return result;
+    return { ...result, workspaceRef: resolved.workspaceRef };
   } };
 }
 
@@ -142,5 +143,5 @@ async function readResolvedSessionProjectPromptStack(input: SessionProjectPrompt
     ref: { ...entry.ref, serverId: entry.ref.serverId ?? serverId } }));
   const skillMigration = await migrateProjectPromptStackSkillRules({ credentials: input.credentials, serverId, serverHttpBaseUrl,
     projectKey: resolved.projectKey, entries, signal: input.signal, operationContext: input.operationContext });
-  return { entries, projectKey: resolved.projectKey, skillMigration };
+  return { entries, projectKey: resolved.projectKey, skillMigration, workspaceRef };
 }

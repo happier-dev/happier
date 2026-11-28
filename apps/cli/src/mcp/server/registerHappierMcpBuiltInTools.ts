@@ -5,6 +5,7 @@ import { CallToolResultSchema, type CallToolResult, type ToolAnnotations } from 
 import { createHappierToolInventory, type HappierToolInventory, type BuiltInHappierToolsSurface } from '@/agent/tools/happierTools/listBuiltInHappierTools';
 import { dispatchBuiltInHappierTool } from '@/agent/tools/happierTools/dispatchBuiltInHappierTool';
 import type { ActionId, ActionsSettingsV1, ApprovalRequestOriginV1, BrowserScreenshotMediaReferenceV1 } from '@happier-dev/protocol';
+import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { ExternalActionRequestIdV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { APPROVAL_REQUEST_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { describeWorkflowApprovalReadText } from '@happier-dev/protocol/actions';
@@ -182,6 +183,7 @@ export function prepareHappierMcpToolInventory(params: Readonly<{
     sessionId?: string;
     sessionMachineId?: string | null;
     sessionRootPath?: string | null;
+    sessionWorkspace?: WorkspaceAddressV1 | null;
 }>): HappierMcpToolInventory {
     const registrations = params.inventory.tools.flatMap(tool => {
         try {
@@ -193,7 +195,8 @@ export function prepareHappierMcpToolInventory(params: Readonly<{
                 title: tool.title,
                 inputSchema: toMcpToolInputSchema({
                     actionId, inputSchema: tool.inputSchema, sessionId: params.sessionId,
-                    sessionMachineId: params.sessionMachineId, sessionRootPath: params.sessionRootPath, contextualDefaults: tool.contextualDefaults,
+                    sessionMachineId: params.sessionMachineId, sessionRootPath: params.sessionRootPath,
+                    sessionWorkspace: params.sessionWorkspace, contextualDefaults: tool.contextualDefaults,
                 }),
                 ...(annotations === undefined ? {} : { annotations }),
                 ...(pluginToolMcpMeta === undefined ? {} : { _meta: pluginToolMcpMeta }),
@@ -232,6 +235,7 @@ export function registerHappierMcpBuiltInTools(
         sessionId?: string;
         workingDirectory?: string | null;
         sessionMachineId?: string | null;
+        sessionWorkspace?: WorkspaceAddressV1 | null;
         mcpToolCallIdMetaKey?: string;
         surface: BuiltInHappierToolsSurface;
         happierToolsEnabled?: boolean;
@@ -254,6 +258,7 @@ export function registerHappierMcpBuiltInTools(
         sessionId: params.sessionId,
         sessionMachineId: params.sessionMachineId,
         sessionRootPath: params.workingDirectory,
+        sessionWorkspace: params.sessionWorkspace,
         inventory: createHappierToolInventory({
             surface: params.surface,
             happierToolsEnabled: params.happierToolsEnabled,
@@ -301,6 +306,7 @@ export function registerHappierMcpBuiltInTools(
                         sessionId,
                         sessionMachineId: params.sessionMachineId,
                         sessionRootPath: params.workingDirectory,
+                        sessionWorkspace: params.sessionWorkspace,
                         surface: params.surface,
                         actionsSettings: currentActionsSettings,
                         getActionsSettings: readActionsSettings,

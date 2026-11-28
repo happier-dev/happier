@@ -7,6 +7,7 @@ import { isActionExecutableFromStandaloneMcp } from '@happier-dev/protocol/actio
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { REGISTRY_ACTION_IDS_V1 } from '@happier-dev/protocol/registries';
 import { DeploymentActionInputSchemasV1, type ActionId } from '@happier-dev/protocol';
+import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { executeDeploymentAction } from '@happier-dev/protocol/actions/executor/deploymentAction';
 
 import type { StoredCredentials } from '@/persistence';
@@ -66,6 +67,7 @@ export function createExternalMcpServer(params: Readonly<{
   defaultSessionId?: string | null;
   /** Current device Machine identity used by the existing durable approval replay owner. */
   machineId?: string | null;
+  defaultSessionWorkspace?: WorkspaceAddressV1 | null;
   pluginToolCatalog?: readonly ProjectedPluginToolCatalogEntry[];
   /**
    * `undefined` preserves the ordinary ambient daemon lifecycle owner. A
@@ -386,6 +388,7 @@ export function createExternalMcpServer(params: Readonly<{
     actionsSettings,
     pluginToolCatalog,
     defaultSessionMachineId: params.machineId,
+    defaultSessionWorkspace: params.defaultSessionWorkspace,
     resolveSessionListAccess: (defaultSessionId) => (
       defaultSessionAddress?.sessionId === defaultSessionId ? 'current_session' : undefined
     ),
@@ -400,6 +403,7 @@ export function createExternalMcpServer(params: Readonly<{
 
   const { toolNames } = registerHappierMcpBuiltInTools(mcp, {
     sessionId: 'cli-global',
+    sessionWorkspace: params.defaultSessionWorkspace,
     surface: toolSurface,
     actionsSettings,
     pluginToolCatalog,

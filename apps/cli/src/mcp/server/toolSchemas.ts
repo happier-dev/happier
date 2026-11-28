@@ -4,6 +4,7 @@ import { zodSchemaToJsonSchemaObject, type JsonSchemaObject } from '@happier-dev
 import { projectActionOutputJsonSchema } from '@happier-dev/protocol/actions/actionCatalog';
 import { projectActionSchemaForToolAdvertisement } from '@happier-dev/protocol/actions/actionSpecSections';
 import { ActionApprovalRequestCreatedResultSchema, ActionOperationAcceptedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { HappierBuiltInToolDefinition } from '@/agent/tools/happierTools/types';
 import { bindContextualActionToolInput, projectSessionBoundActionToolInputSchema } from '@/agent/tools/happierTools/actionToolContext';
 import { projectMcpToolInputJsonSchema, rewriteMcpJsonSchemaReferences } from './projectMcpToolInputJsonSchema';
@@ -29,12 +30,14 @@ export function toMcpToolInputSchema(params: Readonly<{
     sessionId?: string;
     sessionMachineId?: string | null;
     sessionRootPath?: string | null;
+    sessionWorkspace?: WorkspaceAddressV1 | null;
     contextualDefaults: HappierBuiltInToolDefinition['contextualDefaults'];
 }>): z.ZodMiniType {
     const context = {
         defaultSessionId: params.sessionId,
         defaultSessionMachineId: params.sessionMachineId,
         defaultSessionRootPath: params.sessionRootPath,
+        defaultSessionWorkspace: params.sessionWorkspace,
     };
     const fields = params.actionId ? Object.keys(bindContextualActionToolInput({
         actionId: params.actionId, input: {}, context, contextualDefaults: params.contextualDefaults,

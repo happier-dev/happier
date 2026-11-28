@@ -1,6 +1,8 @@
 import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema, lazyDefinition } from '../lazyZodSchema.js';
+import { actionCliDerivedDefault } from './actionCliProjection.js';
+import { readRecord } from '../inputs/inputRecords.js';
 import { WorkspaceAddressV1Schema } from '../workspaces/workspaceRefV1.js';
 import { ProjectExecutionChoiceV1Schema } from '../workspaces/projectWorkerPreferencesV1.js';
 import { ProjectNativeRefV1Schema, ProjectMemoryDemandV1Schema } from '../workspaces/projectSetup/projectManifestV1.js';
@@ -14,6 +16,7 @@ import { ActionExecuteFailureSchema } from './actionExecutionResult.js';
 import { ProjectSetupConsentFailureDetailsV1Schema, ProjectSetupConsentScopeV1Schema, type ProjectSetupConsentFailureDetailsV1 } from './projectSetupConsentFailure.js';
 import { canRetainProjectSetupReviewV1, ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1 } from './operations/v1.js';
 import { normalizeWorkspaceRootPathV1 } from '../workspaces/workspaceRefResolutionV1.js';
+import { ProjectComputeExecEnvV1Schema } from '../workspaces/projectComputeEnvV1.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
@@ -138,6 +141,11 @@ export const ProjectPagesListInputV1Schema = lazyZodSchema(() => z.strictObject(
 export type ProjectPagesListInputV1 = z.infer<typeof ProjectPagesListInputV1Schema>;
 export const ProjectPagesListOutputV1Schema = lazyZodSchema(() => z.strictObject({ pages: z.array(ProjectPageDescriptorV1Schema) }));
 export type ProjectPagesListOutputV1 = z.infer<typeof ProjectPagesListOutputV1Schema>;
+const projectComputeExecEnvSchema = ProjectComputeExecEnvV1Schema;
+const projectScriptSelectionSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('named'), name: nonempty }),
+  z.strictObject({ kind: z.literal('native'), source: ProjectNativeRefV1Schema }),
+]));
 export const PROJECT_ACTION_INPUT_SCHEMAS_V1 = {
   'projects.pages.list': ProjectPagesListInputV1Schema,
   'projects.trust.list': lazyZodSchema(() => z.strictObject({ project: z.optional(QualifiedProjectTrustProjectV1Schema) })),
@@ -146,20 +154,84 @@ export const PROJECT_ACTION_INPUT_SCHEMAS_V1 = {
   'projects.prepare': ProjectPrepareInputV1Schema,
   'projects.script.run': lazyZodSchema(() => z.strictObject({
     workspace,
-    selection: z.discriminatedUnion('kind', [
-      z.strictObject({ kind: z.literal('named'), name: nonempty }),
-      z.strictObject({ kind: z.literal('native'), source: ProjectNativeRefV1Schema }),
-    ]),
+    selection: projectScriptSelectionSchema,
     choice: z.optional(ProjectExecutionChoiceV1Schema), expectedEffectDigest: z.optional(nonempty),
     memoryDemand: z.optional(ProjectMemoryDemandV1Schema),
   })),
   'projects.compute.exec': lazyZodSchema(() => z.strictObject({
     workspace, executable: nonempty, argv: z.array(z.string()), cwd: nonempty,
+    env: z.optional(projectComputeExecEnvSchema),
     environmentBindings: z.optional(SecretReferenceOverlayV1Schema), choice: z.optional(ProjectExecutionChoiceV1Schema),
     execution: z.optional(z.enum(['primary', 'portable'])),
     memoryDemand: z.optional(ProjectMemoryDemandV1Schema),
   })),
 } as const;
+const ProjectScriptRunCliInputV1Schema = lazyZodSchema(() => z.strictObject({
+  workspace: z.optional(workspace),
+  name: z.optional(nonempty),
+  selection: z.optional(projectScriptSelectionSchema),
+  on: z.optional(nonempty),
+  choice: z.optional(ProjectExecutionChoiceV1Schema),
+  expectedEffectDigest: z.optional(nonempty),
+  memoryDemand: z.optional(ProjectMemoryDemandV1Schema),
+}).check(
+  z.refine(input => input.name === undefined || input.selection === undefined, {
+    path: ['selection'], message: 'Provide either a script <name> or --selection-json, not both.',
+  }),
+  z.refine(input => input.on === undefined || input.choice === undefined, {
+    path: ['choice'], message: 'Provide either --on or --choice-json, not both.',
+  }),
+));
+const ProjectComputeExecCliInputV1Schema = lazyZodSchema(() => z.strictObject({
+  workspace: z.optional(workspace),
+  executable: z.optional(nonempty),
+  argv: z.optional(z.array(z.string())),
+  cwd: z.optional(nonempty),
+  on: z.optional(nonempty),
+  choice: z.optional(ProjectExecutionChoiceV1Schema),
+  env: z.optional(projectComputeExecEnvSchema),
+  environmentBindings: z.optional(SecretReferenceOverlayV1Schema),
+  execution: z.optional(z.enum(['primary', 'portable'])),
+  memoryDemand: z.optional(ProjectMemoryDemandV1Schema),
+}).check(
+  z.refine(input => input.on === undefined || input.choice === undefined, {
+    path: ['choice'], message: 'Provide either --on or --choice-json, not both.',
+  }),
+));
+function bindProjectScriptRunCliInput(raw: unknown): Record<string, unknown> {
+  const input = readRecord(raw);
+  const result: Record<string, unknown> = {};
+  if (input.workspace !== undefined) result.workspace = input.workspace;
+  if (input.selection !== undefined) result.selection = input.selection;
+  else if (typeof input.name === 'string') result.selection = { kind: 'named', name: input.name };
+  if (input.choice !== undefined) result.choice = input.choice;
+  else if (typeof input.on === 'string') result.choice = { kind: 'workers', destination: { kind: 'machine', machineId: input.on } };
+  if (input.expectedEffectDigest !== undefined) result.expectedEffectDigest = input.expectedEffectDigest;
+  if (input.memoryDemand !== undefined) result.memoryDemand = input.memoryDemand;
+  return result;
+}
+function bindProjectComputeExecCliInput(raw: unknown): Record<string, unknown> {
+  const input = readRecord(raw);
+  const result: Record<string, unknown> = {};
+  if (input.workspace !== undefined) result.workspace = input.workspace;
+  if (input.executable !== undefined) result.executable = input.executable;
+  if (input.argv !== undefined) result.argv = input.argv;
+  else result.argv = actionCliDerivedDefault([]);
+  if (input.cwd !== undefined) result.cwd = input.cwd;
+  else if (input.workspace && typeof input.workspace === 'object' && !Array.isArray(input.workspace)) {
+    const rootPath = (input.workspace as { rootPath?: unknown }).rootPath;
+    if (typeof rootPath === 'string' && rootPath.trim().length > 0) {
+      result.cwd = actionCliDerivedDefault(rootPath);
+    }
+  }
+  if (input.choice !== undefined) result.choice = input.choice;
+  else if (typeof input.on === 'string') result.choice = { kind: 'workers', destination: { kind: 'machine', machineId: input.on } };
+  if (input.env !== undefined) result.env = input.env;
+  if (input.environmentBindings !== undefined) result.environmentBindings = input.environmentBindings;
+  if (input.execution !== undefined) result.execution = input.execution;
+  if (input.memoryDemand !== undefined) result.memoryDemand = input.memoryDemand;
+  return result;
+}
 // Refusal and pre-launch failure use the incumbent ActionExecuteFailure envelope;
 // they cannot masquerade as successful launch evidence for generic completion.
 const finiteResult = lazyZodSchema(() => z.union([ProjectCommandActionOutputV1Schema, ProjectSetupConsentRequiredV1Schema]));
@@ -221,6 +293,8 @@ const PROJECT_ACTION_INPUT_FIELDS = {
     { path: 'executable', title: 'Executable', widget: 'text', required: true },
     { path: 'argv', title: 'Arguments', widget: 'json', required: true },
     { path: 'cwd', title: 'Working directory', widget: 'text', required: true },
+    { path: 'env', title: 'Environment overrides', widget: 'json',
+      description: 'Literal non-secret environment overrides only (e.g. CI=1, NODE_ENV=test). Never place secrets or tokens in env; use environmentBindings for saved secrets.' },
     { path: 'environmentBindings', title: 'Saved Secret references', widget: 'json' },
     { path: 'execution', title: 'Execution constraint', widget: 'select', options: [
       { value: 'primary', label: 'Primary Machine' }, { value: 'portable', label: 'Portable' },
@@ -230,11 +304,18 @@ const PROJECT_ACTION_INPUT_FIELDS = {
   ],
 } as const satisfies Record<ProjectActionIdV1, NonNullable<PreNormalizedActionSpec['inputHints']>['fields']>;
 
+function formatConciseComputeCommand(executable: string, argv: readonly string[]): string {
+  const joined = [executable, ...argv].join(' ');
+  return joined.length <= 160 ? joined : `${joined.slice(0, 159)}…`;
+}
+
 function row<const Id extends ProjectActionIdV1>(id: Id) {
   const clientRead = id === 'projects.pages.list';
   const read = id === 'projects.trust.list' || clientRead;
   return {
     id, approval: { result: 'required' },
+    ...(id === 'projects.script.run' || id === 'projects.compute.exec'
+      ? { contextualDefaults: { workspace: 'current_session_workspace' as const } } : {}),
     ...(id === 'projects.prepare' ? { approvalPolicy: { uiConfirmation: 'policy' as const, rpcConfirmation: true as const },
       executionPlacementForInput: (input: unknown) => isProjectSetupTrustRequestV1(id, input) ? 'account' as const : 'machine' as const } : {}),
     ...(id === 'projects.compute.exec' ? { approvalPolicy: { uiConfirmation: 'direct' as const } } : {}),
@@ -250,12 +331,14 @@ function row<const Id extends ProjectActionIdV1>(id: Id) {
     } : {}),
     originalExecution: { accountRoot: 'allowed' }, title: PROJECT_ACTION_COPY[id][0],
     approvalPresentation: {
-      ...(id === 'projects.script.run' ? { referenceForField: (path: string, value: unknown, input: unknown) => {
+      ...(id === 'projects.script.run' || id === 'projects.compute.exec' ? { referenceForField: (path: string, value: unknown, input: unknown) => {
         if (typeof value !== 'string') return undefined;
-        const script = PROJECT_ACTION_INPUT_SCHEMAS_V1['projects.script.run'].safeParse(input);
-        if (!script.success) return undefined;
+        const parsed = id === 'projects.script.run'
+          ? PROJECT_ACTION_INPUT_SCHEMAS_V1['projects.script.run'].safeParse(input)
+          : PROJECT_ACTION_INPUT_SCHEMAS_V1['projects.compute.exec'].safeParse(input);
+        if (!parsed.success) return undefined;
         if (path === 'workspace.machineId' || path === 'choice.destination.machineId') {
-          return { kind: 'machine' as const, id: value, serverId: script.data.workspace.serverId };
+          return { kind: 'machine' as const, id: value, serverId: parsed.data.workspace.serverId };
         }
         return path === 'choice.destination.poolId' ? { kind: 'machinePool' as const, id: value } : undefined;
       } } : {}),
@@ -270,6 +353,41 @@ function row<const Id extends ProjectActionIdV1>(id: Id) {
           }
         }
       }
+      if (id === 'projects.compute.exec') {
+        const exec = PROJECT_ACTION_INPUT_SCHEMAS_V1['projects.compute.exec'].safeParse(input);
+        if (exec.success) {
+          const { workspace, executable, argv, cwd, env, choice } = exec.data;
+          const command = formatConciseComputeCommand(executable, argv);
+          const envKeys = env ? Object.keys(env).sort() : [];
+          const normalizedCwd = normalizeWorkspaceRootPathV1(cwd);
+          const normalizedRoot = normalizeWorkspaceRootPathV1(workspace.rootPath);
+          const details: string[] = [];
+          if (normalizedCwd !== normalizedRoot) {
+            details.push(`Directory ${JSON.stringify(cwd)}.`);
+          }
+          if (envKeys.length > 0) {
+            details.push(`Env keys: ${envKeys.map((key) => JSON.stringify(key)).join(', ')}.`);
+          }
+          const detailSuffix = details.length > 0 ? `\n${details.join(' ')}` : '';
+          if (choice?.kind === 'workers' && choice.destination.kind === 'machine') {
+            return `Run ${JSON.stringify(command)} on Worker ${JSON.stringify(choice.destination.machineId)}.\n`
+              + `Checkout ${JSON.stringify(workspace.rootPath)} on ${JSON.stringify(workspace.machineId)} (Home ${JSON.stringify(workspace.serverId)}).`
+              + detailSuffix;
+          }
+          if (choice?.kind === 'workers' && choice.destination.kind === 'pool') {
+            return `Run ${JSON.stringify(command)} on Worker pool ${JSON.stringify(choice.destination.poolId)}.\n`
+              + `Checkout ${JSON.stringify(workspace.rootPath)} on ${JSON.stringify(workspace.machineId)} (Home ${JSON.stringify(workspace.serverId)}).`
+              + detailSuffix;
+          }
+          if (choice?.kind === 'primary') {
+            return `Run ${JSON.stringify(command)} on Primary ${JSON.stringify(workspace.machineId)}.\n`
+              + `Checkout ${JSON.stringify(workspace.rootPath)} (Home ${JSON.stringify(workspace.serverId)}).`
+              + detailSuffix;
+          }
+          return `Run ${JSON.stringify(command)} in checkout ${JSON.stringify(workspace.rootPath)} on ${JSON.stringify(workspace.machineId)} (Home ${JSON.stringify(workspace.serverId)}).`
+            + detailSuffix;
+        }
+      }
       return PROJECT_ACTION_COPY[id][1];
     } },
     description: clientRead
@@ -277,7 +395,7 @@ function row<const Id extends ProjectActionIdV1>(id: Id) {
       : id === 'projects.script.run'
       ? 'Run the selected Script on the exact qualified checkout through current declaration and worker policy. Read projects.inspect and projects.worker.preferences.get first; primary-only declarations cannot run on workers. An explicit invocation choice precedes the per-script override and saved checkout default; Ask requires a deliberate exact target choice. Setup-effect review follows the separate projects.prepare approval policy; waiving Run does not waive setup review. Only the user can grant remembered setup trust. Acceptance returns an exact-target operation, not completion: inspect action.operations.get and projects.execution.output.read for queue, copy, setup, output and exit facts. After possible acceptance or unknown outcome inspect that same target; do not repeat Run or fall back because it is busy, offline, failed or Stop is unconfirmed.'
       : id === 'projects.compute.exec'
-      ? 'Run an explicitly requested ad-hoc command on the exact qualified checkout. Read projects.worker.preferences.get first: allowAdHoc must be enabled in ready current preferences; opted-out and unavailable settings are distinct refusals. Commands follow configurable Action approval and reviewed setup consent, and arbitrary shell commands are not automatically offloaded. Observe the chosen target through projects.worker.status or finite-purpose machines.pools.resolve. Acceptance is an inspectable operation, not completion; read its exact-target state and output, and never repeat or change targets after possible acceptance without renewed explicit intent.'
+      ? 'Run an ad-hoc command (such as heavy tests, builds, or typechecks) on a configured compute worker or checkout when allowAdHoc is enabled in workspace worker preferences. Defaults workspace from the current session context when available; supply executable, argv, cwd, and optional env or choice. Use env for literal non-secret overrides only (e.g. CI=1, NODE_ENV=test); never put secrets or tokens in env (use environmentBindings for saved secrets). Follows configured approval policy and setup review, returns an inspectable operation (read via action.operations.get and projects.execution.output.read), and never automatically offloads arbitrary shell commands.'
       : id === 'projects.prepare'
       ? 'Prepare the exact Project checkout. Request consentScope untilChanged with heldOperationId and expectedEffectDigest to ask a present person to remember the retained setup effect until it changes. A person must approve through the ordinary approval flow; an agent cannot grant or approve its own setup trust. Approval rechecks the retained target review and uses the approving Account Trust writer. Ordinary preparation and one-time consent follow the projects.prepare approval policy; a waiver writes no remembered trust.'
       : 'Use the authenticated Account and exact Project workspace. Setup-effect review follows the projects.prepare approval policy. A waiver permits only this invocation and does not grant remembered setup trust; only the user can grant that trust.',
@@ -289,7 +407,53 @@ function row<const Id extends ProjectActionIdV1>(id: Id) {
         ? { rpcMethod: id === 'projects.prepare' ? PROJECT_FINITE_ACTION_RPC_METHODS_V1['projects.prepare']
           : id === 'projects.script.run' ? PROJECT_FINITE_ACTION_RPC_METHODS_V1['projects.script.run']
           : PROJECT_FINITE_ACTION_RPC_METHODS_V1['projects.compute.exec'] } : {}) },
-    cli: { acceptsServerId: true, commands: [{ path: ['project', ...id.split('.').slice(1)], visibility: 'canonical' }] },
+    cli: id === 'projects.script.run'
+      ? {
+          acceptsServerId: true,
+          inputSchema: ProjectScriptRunCliInputV1Schema,
+          bindInput: bindProjectScriptRunCliInput,
+          inputHints: {
+            title: PROJECT_ACTION_COPY[id][0],
+            description: PROJECT_ACTION_COPY[id][1],
+            fields: [
+              { path: 'name', title: 'Script name', widget: 'text' },
+              { path: 'on', title: 'Worker machine id', widget: 'text' },
+              { path: 'workspace', title: 'Qualified checkout', widget: 'json' },
+              { path: 'selection', title: 'Selected script', widget: 'json' },
+              { path: 'choice', title: 'Execution placement', widget: 'json' },
+              { path: 'expectedEffectDigest', title: 'Reviewed Script effect', widget: 'text' },
+              { path: 'memoryDemand', title: 'Memory demand', widget: 'json' },
+            ],
+          },
+          commands: [{ path: ['project', 'script', 'run'], positionals: ['name'], visibility: 'canonical' as const }],
+        }
+      : id === 'projects.compute.exec'
+      ? {
+          acceptsServerId: true,
+          inputSchema: ProjectComputeExecCliInputV1Schema,
+          bindInput: bindProjectComputeExecCliInput,
+          inputHints: {
+            title: PROJECT_ACTION_COPY[id][0],
+            description: PROJECT_ACTION_COPY[id][1],
+            fields: [
+              { path: 'executable', title: 'Executable', widget: 'text' },
+              { path: 'argv', title: 'Arguments', widget: 'json' },
+              { path: 'on', title: 'Worker machine id', widget: 'text' },
+              { path: 'cwd', title: 'Working directory', widget: 'text' },
+              { path: 'workspace', title: 'Qualified checkout', widget: 'json' },
+              { path: 'env', title: 'Environment overrides', widget: 'json',
+      description: 'Literal non-secret environment overrides only (e.g. CI=1, NODE_ENV=test). Never place secrets or tokens in env; use environmentBindings for saved secrets.' },
+              { path: 'environmentBindings', title: 'Saved Secret references', widget: 'json' },
+              { path: 'execution', title: 'Execution constraint', widget: 'select', options: [
+                { value: 'primary', label: 'Primary Machine' }, { value: 'portable', label: 'Portable' },
+              ] },
+              { path: 'choice', title: 'Execution placement', widget: 'json' },
+              { path: 'memoryDemand', title: 'Memory demand', widget: 'json' },
+            ],
+          },
+          commands: [{ path: ['project', 'compute', 'exec'], positionals: ['executable'], variadicPositional: 'argv', visibility: 'canonical' as const }],
+        }
+      : { acceptsServerId: true, commands: [{ path: ['project', ...id.split('.').slice(1)], visibility: 'canonical' as const }] },
     inputSchema: PROJECT_ACTION_INPUT_SCHEMAS_V1[id], outputSchema: PROJECT_ACTION_OUTPUT_SCHEMAS_V1[id],
     ...(id !== 'projects.trust.list' && id !== 'projects.trust.revoke' ? {
       invocationServerIdForInput: actionInputServerId<(typeof PROJECT_ACTION_INPUT_SCHEMAS_V1)[ProjectActionIdV1]>(PROJECT_ACTION_INPUT_SCHEMAS_V1[id], input =>

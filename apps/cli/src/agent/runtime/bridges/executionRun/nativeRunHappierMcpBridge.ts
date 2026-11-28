@@ -5,6 +5,7 @@ import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/acti
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { actionInputIssueFailure, actionInputValidationFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
+import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { z } from 'zod/mini';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { createHappierActionIngressExecutor } from '@/agent/permissions/happierActionPermission';
@@ -23,6 +24,7 @@ export async function createNativeRunHappierMcpBridge(input: Readonly<{
     signal: AbortSignal;
     directory: string;
     machineId: string;
+    sessionWorkspace?: WorkspaceAddressV1 | null;
     readPermission: Parameters<typeof createHappierActionIngressExecutor>[0]['readPermission'];
 }>) {
     const bridge = createActionToolExecutorBridge({
@@ -60,11 +62,13 @@ export async function createNativeRunHappierMcpBridge(input: Readonly<{
           },
         }),
         surface: 'agent', defaultSessionMachineId: input.machineId, defaultSessionRootPath: input.directory,
+        defaultSessionWorkspace: input.sessionWorkspace,
     });
     const createServer = (signal: AbortSignal) => {
         const mcp = new McpServer({ name: 'Happier', version: '1.0.0' });
         registerHappierMcpBuiltInTools(mcp, {
             surface: 'agent', workingDirectory: input.directory, sessionMachineId: input.machineId,
+            sessionWorkspace: input.sessionWorkspace,
             deps: {
                 ...bridge,
                 resolveActionOptions: args => bridge.resolveActionOptions(args, undefined),

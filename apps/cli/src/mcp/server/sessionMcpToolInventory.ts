@@ -3,6 +3,9 @@ import { isSessionHappierToolsEnabled } from '@happier-dev/protocol/reach/sessio
 import type { ActionId } from '@happier-dev/protocol';
 import { readSessionMemoryEnabledV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
 import { createHappierToolInventory } from '@/agent/tools/happierTools/listBuiltInHappierTools';
+import { resolveSessionDefaultWorkspaceAddress } from '@/agent/tools/happierTools/actionToolContext';
+import { readServerIdentityIdFromFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { getActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import type { HappyMcpSessionClient } from '@/mcp/startHappyServer';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
 import { createSessionActionSettingsView, type RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
@@ -124,14 +127,27 @@ export function createSessionMcpToolInventory(params: Readonly<{
         () => params.client.getMetadataSnapshot?.(), surface);
     const readInputs = (pluginToolCatalog: readonly ProjectedPluginToolCatalogEntry[]) => {
         const location = params.client.getCurrentSessionLocation?.();
+        const metadata = params.client.getMetadataSnapshot?.();
+        const serverFeatures = params.client.getServerFeaturesSnapshot?.();
+        const serverBinding = params.client.getServerBinding?.();
+        const serverIdentityId = readServerIdentityIdFromFeaturesSnapshot(serverFeatures) ?? null;
+        const sessionWorkspace = resolveSessionDefaultWorkspaceAddress({
+            serverId: serverBinding?.serverId ?? null,
+            serverIdentityId,
+            metadata,
+            machineId: location?.machineId ?? null,
+            rootPath: location?.path ?? null,
+            workspaceRefs: getActiveProjectAccountRowsSnapshot()?.workspaceRefs,
+        });
         return {
             actionsSettings: sessionActionSettings.getActionsSettings(),
-            serverFeatures: params.client.getServerFeaturesSnapshot?.(),
-            sessionMemoryEnabled: surface === 'voice' ? undefined : readSessionMemoryEnabledV1(params.client.getMetadataSnapshot?.()),
-            happierToolsEnabled: params.happierToolsEnabled ?? isSessionHappierToolsEnabled(params.client.getMetadataSnapshot?.()),
+            serverFeatures,
+            sessionMemoryEnabled: surface === 'voice' ? undefined : readSessionMemoryEnabledV1(metadata),
+            happierToolsEnabled: params.happierToolsEnabled ?? isSessionHappierToolsEnabled(metadata),
             sessionToolsBootstrap: params.readSessionToolsBootstrap?.(),
             sessionMachineId: location?.machineId ?? null,
             sessionRootPath: location?.path ?? null,
+            sessionWorkspace,
             buildPolicy: readCliFeatureBuildPolicyInputs(env),
             localPolicy: readCliLocalFeaturePolicySnapshot(env),
             pluginToolCatalog,
@@ -160,6 +176,7 @@ export function createSessionMcpToolInventory(params: Readonly<{
                 sessionId: params.client.sessionId,
                 sessionMachineId: inputs.sessionMachineId,
                 sessionRootPath: inputs.sessionRootPath,
+                sessionWorkspace: inputs.sessionWorkspace,
                 inventory: createHappierToolInventory({
                     surface, isActionEnabled, actionsSettings: inputs.actionsSettings,
                     sessionToolsBootstrap: inputs.sessionToolsBootstrap,
