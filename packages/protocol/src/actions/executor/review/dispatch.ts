@@ -147,11 +147,14 @@ export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionI
           const comments: ReviewCommentV1[] = [];
           const scopes = 'reviewId' in apply ? [{ reviewId: apply.reviewId }]
             : [...new Set(apply.reviews.map(review => review.runId))].map(runId => ({ sessionId: apply.sessionId, runId }));
-          for (const scope of scopes) {
+          const reviewCommentAction = deps.reviewCommentAction;
+          const listComments = async (scope: (typeof scopes)[number] | { commentIds: string[] }): Promise<
+            Readonly<{ ok: true; comments: ReviewCommentV1[] }> | Extract<ActionExecuteResult, { ok: false }>> => {
+            const comments: ReviewCommentV1[] = [];
             let cursor: string | undefined;
             do {
               ctx.signal?.throwIfAborted();
-              const result = await deps.reviewCommentAction({ actionId: 'reviews.comments.list',
+              const result = await reviewCommentAction({ actionId: 'reviews.comments.list',
                 input: ReviewCommentListActionRequestV1Schema.parse({ ...scope, includeHistory: true,
                   ...('reviewId' in apply && apply.commentIds !== undefined ? { commentIds: apply.commentIds } : {}),
                   limit: REVIEW_COMMENT_LIST_PAGE_LIMIT_MAX_V1, ...(cursor ? { cursor } : {}) }),
@@ -162,10 +165,26 @@ export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionI
               comments.push(...page.items);
               cursor = page.cursor ?? undefined;
             } while (cursor !== undefined);
+            return { ok: true, comments };
+          };
+          const listedScopes = await Promise.all(scopes.map(listComments));
+          for (const listed of listedScopes) {
+            if (!listed.ok) return listed;
+            comments.push(...listed.comments);
           }
           // A materialized finding can reuse an earlier round's canonical comment.
-          for (const id of new Set('reviewId' in apply ? [] : apply.reviews.flatMap(review => review.findings.flatMap(finding => finding.comment ? [finding.comment.id] : [])))) {
-            if (comments.some(comment => comment.id === id)) continue;
+          const listedIds = new Set(comments.map(comment => comment.id));
+          const missingIds = [...new Set('reviewId' in apply ? [] : apply.reviews.flatMap(review => review.findings.flatMap(finding => finding.comment ? [finding.comment.id] : [])))]
+            .filter(id => !listedIds.has(id));
+          if (missingIds.length > 0) {
+            const listed = await listComments({ commentIds: missingIds });
+            if (!listed.ok) return listed;
+            comments.push(...listed.comments);
+            for (const comment of listed.comments) listedIds.add(comment.id);
+          }
+          // Lists omit missing or inaccessible IDs. Preserve the get owner's typed refusal.
+          for (const id of missingIds) {
+            if (listedIds.has(id)) continue;
             ctx.signal?.throwIfAborted();
             const result = await deps.reviewCommentAction({ actionId: 'reviews.comments.get', input: { commentId: id, includeHistory: true }, ...requestContext });
             const failure = readActionFailureEnvelope(result);
@@ -315,10 +334,13 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           comparisonCwd ??= status.data.snapshot?.repo.rootPath ?? undefined;
           return status.data.snapshot;
         };
-        let selectedSource = reviewInput.reviewRound ? undefined : await resolveReviewComparisonSourceV1(reviewInput, readComparisonSnapshot);
+        const [resolvedSource, sourceSessionStatus] = await Promise.all([
+          reviewInput.reviewRound ? undefined : resolveReviewComparisonSourceV1(reviewInput, readComparisonSnapshot),
+          !reviewInput.reviewRound && sourceSessionId && deps.sessionStatusGet
+            ? readReviewSessionStatusV1(ctx, sourceSessionId, executeHostChild, true) : undefined,
+        ]);
+        let selectedSource = resolvedSource;
         const needsComparison = !reviewInput.reviewRound && Boolean(selectedSource || reviewInput.comparisonId);
-        const sourceSessionStatus = !reviewInput.reviewRound && sourceSessionId && deps.sessionStatusGet
-          ? await readReviewSessionStatusV1(ctx, sourceSessionId, executeHostChild, true) : undefined;
         const comparisonTarget = needsComparison || needsWorkflowProject
           ? await resolveReviewComparisonTargetV1(deps, ctx, sessionId, actionId, executeHostChild,
             sessionId === sourceSessionId ? sourceSessionStatus : undefined) : undefined;
@@ -376,14 +398,16 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
               defaultOptions, profileOptions)?.capabilities.sessionTranscript !== true;
           })) return { ok: false, errorCode: 'invalid_input', error: 'The selected review profile does not accept ordinary instructions.' };
         }
-        const transcript = transcriptReviewers.length > 0 && reviewInput.sourceSession
-          ? await readReviewTranscriptInput(reviewInput.sourceSession, executeHostChild, ctx) : null;
+        const [transcript, projectSourceId] = await Promise.all([
+          transcriptReviewers.length > 0 && reviewInput.sourceSession
+            ? readReviewTranscriptInput(reviewInput.sourceSession, executeHostChild, ctx) : null,
+          reviewInput.reviewRound ? undefined
+            : resolveReviewProjectSourceV1(deps, ctx, sourceSessionId, serverId ?? undefined, comparisonCwd, executeHostChild, sourceSessionStatus),
+        ]);
         if (transcript && !transcript.ok) return transcript;
-        const projectSourceId = reviewInput.reviewRound ? undefined
-          : await resolveReviewProjectSourceV1(deps, ctx, sourceSessionId, serverId ?? undefined, comparisonCwd, executeHostChild, sourceSessionStatus);
         if (workflowComposition) {
-          const selectedConsents: { consent: NonNullable<ReviewStartInput['teamCredentialSessionBindingConsent']>;
-            model: NonNullable<ReviewStartInput['teamCredentialModel']> }[] = [];
+          const selectedConsents = new Map<string, { consent: NonNullable<ReviewStartInput['teamCredentialSessionBindingConsent']>;
+            model: NonNullable<ReviewStartInput['teamCredentialModel']> }>();
           for (const reviewer of reviewers) {
             if (reviewer.kind !== 'engine') continue;
             const selection = { ...reviewInput, ...reviewer };
@@ -396,12 +420,15 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             if (!selected.success || !selected.data.teamCredentialModel || consent.sessionId !== sourceSessionId) {
               return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
             }
-            selectedConsents.push({ consent, model: selected.data.teamCredentialModel });
+            const model = selected.data.teamCredentialModel;
+            const key = JSON.stringify([consent.sessionId, consent.teamId, model.resourceId,
+              model.expectedResourceRevision, model.deliveryMode]);
+            selectedConsents.set(key, { consent, model });
           }
           // Match attached Run admission: the source Session's access owner consumes
           // explicit visibility consent before the reviewers become detached Runs.
-          for (const { consent, model } of selectedConsents) {
-            const granted = await invokeHostReviewedChildV1({
+          const grants = await Promise.all([...selectedConsents.values()].map(({ consent, model }) =>
+            invokeHostReviewedChildV1({
               parent: { actionId, input: parsed.data as JsonObject }, context: ctx,
               child: { action: 'session.access.grant.set', role: 'session.access.grant.set', input: {
                 sessionId: consent.sessionId, subject: { kind: 'team', teamId: consent.teamId },
@@ -411,9 +438,9 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
                 },
               } },
               execute: (input, context, childId) => executeHostChild(childId, input, context),
-            });
-            if (!granted.ok) return granted;
-          }
+            })));
+          const refusedGrant = grants.find(granted => !granted.ok);
+          if (refusedGrant) return refusedGrant;
           const consumeConsent = (reviewer: ReviewStartInput['reviewers'][number]) => {
             if (reviewer.kind !== 'engine') return reviewer;
             const { teamCredentialSessionBindingConsent: _consent, ...selection } = reviewer;
@@ -445,14 +472,14 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             catalogs.set(key, read);
             return read;
           };
-          const modelNames = new Map(await Promise.all(reviewers.flatMap(reviewer => reviewer.kind !== 'model' ? [] : [(async () => {
+          const modelNamesRead = Promise.all(reviewers.flatMap(reviewer => reviewer.kind !== 'model' ? [] : [(async () => {
             const { executionTarget, agentTarget } = reviewer.launch;
             const targetKey = resolveBackendTargetKeyV2(agentTarget);
             // The catalog supplies copy only. Its availability does not decide whether to launch this reviewer.
             const catalog = await catalogFor(executionTarget.serverId, executionTarget.machineId);
             return [reviewer, catalog.ok ? catalog.items.find(item => item.targetKey === targetKey)?.label : undefined] as const;
-          })()])));
-          const sessionIdentities = new Map(await Promise.all([...selectedSessions].map(async ([key, session]) => {
+          })()]));
+          const sessionIdentitiesRead = Promise.all([...selectedSessions].map(async ([key, session]) => {
             const context = { ...ctx, serverId: session.serverId };
             const response = await executeHostChild('session.status.get', { sessionId: session.sessionId, live: false }, context);
             if (!response.ok) throw createActionExecuteFailureError(response);
@@ -470,7 +497,10 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
                 && item.agentTarget?.definitionId === target.definitionId;
             });
             return [key, { displayName: item?.label, agentId }] as const;
-          })));
+          }));
+          const [modelNameEntries, sessionIdentityEntries] = await Promise.all([modelNamesRead, sessionIdentitiesRead]);
+          const modelNames = new Map(modelNameEntries);
+          const sessionIdentities = new Map(sessionIdentityEntries);
           const composedRunId = globalThis.crypto.randomUUID();
           const { reviewRound } = await prepareReviewRoundV1({ reviewInput,
             ...(initialComparison ? { comparison: initialComparison } : {}),

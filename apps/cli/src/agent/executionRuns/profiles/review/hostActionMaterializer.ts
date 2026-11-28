@@ -11,7 +11,7 @@ import {
   resolvePluginFinalPolicyAuthorizationFacts,
   type PluginFinalPolicyCurrentRuntime,
 } from '@/plugins/runtime/policy/facts';
-import { resolveReviewCommentSnapshot } from '../../../reviews/comments/snapshots';
+import { createReviewCommentSnapshotResolver } from '../../../reviews/comments/snapshots';
 
 export type ReviewCommentHostActionCandidate = Readonly<{
   actionId: 'reviews.comments.create';
@@ -205,24 +205,22 @@ async function prepareSubject(params: Readonly<{
     effect: ReviewCommentHostActionEffect;
   }>[];
 }> | null> {
-  const prepared: Array<Readonly<{
-    proposal: ReviewCommentProposalV1;
-    request: ReviewCommentCreateRequestV1;
-    effect: ReviewCommentHostActionEffect;
-  }>> = [];
-  for (const [proposalIndex, proposal] of params.base.proposals.entries()) {
-    const snapshot = await resolveReviewCommentSnapshot({ cwd: params.cwd, anchor: proposal.anchor });
-    if (!snapshot) return null;
+  const resolveSnapshot = createReviewCommentSnapshotResolver();
+  const snapshots = await Promise.all(params.base.proposals.map(proposal => resolveSnapshot({ cwd: params.cwd, anchor: proposal.anchor })));
+  const prepared = params.base.proposals.flatMap((proposal, proposalIndex) => {
+    const snapshot = snapshots[proposalIndex];
+    if (!snapshot) return [];
     const request = buildCreateRequest({ subject: params.base, proposal, proposalIndex, snapshot });
-    prepared.push({
+    return [{
       proposal,
       request,
       effect: Object.freeze({
         proposalFingerprint: fingerprint(proposal, 'happier.reviewComment.proposal.v1'),
         effectBodySha256Base64Url: effectBodySha256Base64Url(request),
       }),
-    });
-  }
+    }];
+  });
+  if (prepared.length !== params.base.proposals.length) return null;
   const effects = Object.freeze(prepared.map((item) => item.effect));
   const subjectWithoutFingerprint = { ...params.base, effects };
   return Object.freeze({

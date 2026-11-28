@@ -23,8 +23,7 @@ import { db } from "@/storage/db";
 import { ReviewCommentOperationError } from "./errors";
 import type { ReviewAccessCapability, ReviewCommentPrincipal } from "./permissions";
 import { createSqlReviewCommentStore, readReviewCommentReviewIds } from "./store";
-import { resolveReviewAccessInTx } from '../reviewAccess';
-import { workflowRunIdentityWhere } from "@/app/workflows/workflowRunService";
+import { createReviewCommentPrincipalReads, type ReviewCommentPrincipalReads } from "./principalReads";
 import { resolveSessionAccessForOperation } from "@/app/session/access/sessionAccess";
 import { readSessionAccessAuthenticationFromRequest } from "@/app/session/access/sessionAccessAuthentication";
 import { readSessionManagedSubtreeSessionIdsInTx } from "@/app/session/follow/sessionManagerSubtree";
@@ -131,6 +130,7 @@ async function verifyReviewCommentPrincipalHeader(params: Readonly<{
     method: string | undefined;
     path: string | undefined;
     body: unknown;
+    reads: ReviewCommentPrincipalReads;
 }>): Promise<Readonly<{
     actor: ReviewCommentActorRefV1;
     currentIntent?: ReviewCommentPrincipalHeaderV1["currentIntent"];
@@ -186,14 +186,7 @@ async function verifyReviewCommentPrincipalHeader(params: Readonly<{
     }
     const actor = params.headerPrincipal.actor;
     const workflow = actor.kind === "workflow"
-        ? await db.automationRun.findFirst({
-            where: workflowRunIdentityWhere({ runId: actor.runId, accountId: params.accountId }),
-            select: {
-                originSessionId: true, claimedByMachineId: true, workflowCustodyState: true, state: true,
-                assignments: { orderBy: { priority: "asc" }, take: 1,
-                    select: { machineId: true, admittedMachineInstallationId: true } },
-            },
-        }) : null;
+        ? await params.reads.workflow(params.accountId, actor.runId) : null;
     if (actor.kind === "workflow" && (!workflow || workflow.assignments[0]?.machineId !== proof.machineId
         || (workflow.claimedByMachineId !== null && workflow.claimedByMachineId !== proof.machineId))) {
         throw new ReviewCommentOperationError("review_comment_permission_denied", "Workflow review host is unavailable");
@@ -204,18 +197,7 @@ async function verifyReviewCommentPrincipalHeader(params: Readonly<{
         && workflow?.state === "running" && workflow.workflowCustodyState === "pending"
         && workflow.claimedByMachineId === proof.machineId
         && workflow.assignments[0]?.admittedMachineInstallationId === proof.installationId;
-    const machine = await db.machine.findFirst({
-        where: {
-            ...(usesAssignedInstallation ? {} : { accountId: params.accountId }),
-            id: proof.machineId,
-        },
-        select: {
-            installationId: true,
-            installationPublicKey: true,
-            replacedByMachineId: true,
-            revokedAt: true,
-        },
-    });
+    const machine = await params.reads.machine(params.accountId, proof.machineId, usesAssignedInstallation);
     if (
         !machine
         || machine.revokedAt
@@ -274,17 +256,8 @@ async function verifyReviewCommentPrincipalHeader(params: Readonly<{
     };
 }
 
-async function resolveDefaultPrincipal(request: Parameters<ReviewCommentRoutePrincipalResolver>[0]): Promise<ReviewCommentPrincipal> {
-    const account = await db.account.findUnique({
-        where: { id: request.userId },
-        select: {
-            publicKey: true,
-            seq: true,
-            encryptionMode: true,
-            contentPublicKey: true,
-            contentPublicKeySig: true,
-        },
-    });
+async function resolveDefaultPrincipal(request: Parameters<ReviewCommentRoutePrincipalResolver>[0], reads = createReviewCommentPrincipalReads()): Promise<ReviewCommentPrincipal> {
+    const account = await reads.account(request.userId);
     const currentness = account
         ? deriveAccountEncryptionCurrentnessFromRow(account)
         : null;
@@ -305,6 +278,7 @@ async function resolveDefaultPrincipal(request: Parameters<ReviewCommentRoutePri
             method: request.method,
             path: request.path,
             body: request.body,
+            reads,
         })
         : null;
     const actor = verifiedHeaderPrincipal?.actor ?? defaultActorForUser(request.userId);
@@ -312,7 +286,7 @@ async function resolveDefaultPrincipal(request: Parameters<ReviewCommentRoutePri
     const createBody = canonicalRequest?.mutation.actionId === "reviews.comments.create" ? canonicalRequest.mutation.input : request.body;
     const commitReceipt = request.path === "/v1/reviews/comments/mutations/commit"
         ? readReviewCommentPreparationReceipt(request.userId, ReviewCommentCommitMutationRequestV1Schema.parse(request.body).receipt) : null;
-    const reviewAccess = commitReceipt?.reviewAccess ?? await resolveRequestReviewAccess(request, canonicalRequest?.mutation.input);
+    const reviewAccess = commitReceipt?.reviewAccess ?? await resolveRequestReviewAccess(request, canonicalRequest?.mutation.input, reads);
     if (!reviewAccess && (mode?.status !== "ready" || currentness?.status !== "ready")) {
         throw new ReviewCommentOperationError("review_comment_encryption_mode_mismatch", "Account encryption state is unavailable");
     }
@@ -329,10 +303,8 @@ async function resolveDefaultPrincipal(request: Parameters<ReviewCommentRoutePri
         if (workflowScope) {
             const identity = readWorkflowActionInvocationV1(actor.runId, workflowScope.actionRequestId);
             const [logical, invocation] = identity ? await Promise.all([
-                db.workflowRunInvocation.findFirst({ where: { id: identity.logicalInvocationId, runId: actor.runId },
-                    select: { parentRecordId: true, memberOrdinal: true } }),
-                db.workflowRunInvocation.findFirst({ where: { id: workflowScope.invocationId, runId: actor.runId },
-                    select: { parentRecordId: true, memberOrdinal: true, attempt: true, lifecycle: true } }),
+                reads.logicalInvocation(actor.runId, identity.logicalInvocationId),
+                reads.invocation(actor.runId, workflowScope.invocationId),
             ]) : [null, null];
             if (!identity || !logical || !invocation || invocation.attempt.toString() !== identity.attempt
                 || invocation.lifecycle === "superseded" || invocation.parentRecordId !== logical.parentRecordId
@@ -408,7 +380,7 @@ async function resolveDefaultPrincipal(request: Parameters<ReviewCommentRoutePri
 }
 
 /** Resolve structural membership, then consume the Artifact owner's one access decision. */
-async function resolveRequestReviewAccess(request: Parameters<ReviewCommentRoutePrincipalResolver>[0], mutationInput?: unknown): Promise<ReviewAccessCapability | undefined> {
+async function resolveRequestReviewAccess(request: Parameters<ReviewCommentRoutePrincipalResolver>[0], mutationInput: unknown, reads: ReviewCommentPrincipalReads): Promise<ReviewAccessCapability | undefined> {
     const input = mutationInput ?? (request.method === "GET" ? request.query : request.body);
     const fields = input && typeof input === "object" ? input as Record<string, unknown> : {};
     const params = request.params && typeof request.params === "object" ? request.params as Record<string, unknown> : {};
@@ -422,7 +394,7 @@ async function resolveRequestReviewAccess(request: Parameters<ReviewCommentRoute
     const reviewId = explicit ?? bound[0];
     if (!reviewId) return undefined;
     if ([...memberships.values()].some(id => id !== reviewId)) throw new ReviewCommentOperationError("review_comment_permission_denied", "Comment targets must belong to one Review");
-    const access = await resolveReviewAccessInTx(db, { actorAccountId: request.userId, reviewId });
+    const access = await reads.reviewAccess(request.userId, reviewId);
     if (!access) throw new ReviewCommentOperationError("review_comment_not_found", "Review not found");
     if (!access.encryptionMode) throw new ReviewCommentOperationError("review_comment_encryption_mode_mismatch", "Review encryption state is unavailable");
     return access;
@@ -518,29 +490,35 @@ export function registerReviewCommentRoutes(app: Fastify, options: ReviewComment
     app.post("/v1/reviews/comments/mutations/prepareBatch", { preHandler: app.authenticate }, async (request, reply) => {
         try {
             const batch = parseReviewCommentRouteInput(ReviewCommentMutationBatchRequestV1Schema, request.body, "review_comment_invalid_request");
-            const items = [];
-            for (const item of batch.items) {
+            const reads = createReviewCommentPrincipalReads();
+            const items = await Promise.all(batch.items.map(async item => {
                 try {
                     const input = parseReviewCommentRouteInput(ReviewCommentPrepareMutationRequestV1Schema, item.input, "review_comment_invalid_request");
                     if (input.mutation.actionId !== REVIEW_COMMENT_CREATE_ACTION_ID_V1) throw new ReviewCommentOperationError("review_comment_invalid_request", "Create batches accept only creates");
-                    const principal = await resolvePrincipal(batchItemRequest(request, item, "/v1/reviews/comments/mutations/prepare"));
-                    items.push({ ok: true as const, value: await operations.prepareMutation({ ...principal, input }) });
-                } catch (error) { items.push(batchError(error)); }
-            }
+                    const itemRequest = batchItemRequest(request, item, "/v1/reviews/comments/mutations/prepare");
+                    const principal = await (options.resolvePrincipal?.(itemRequest) ?? resolveDefaultPrincipal(itemRequest, reads));
+                    return { ok: true as const, value: await operations.prepareMutation({ ...principal, input }) };
+                } catch (error) { return batchError(error); }
+            }));
             return ReviewCommentPrepareMutationBatchResponseV1Schema.parse({ items });
         } catch (error) { return sendOperationError(reply, error); }
     });
     app.post("/v1/reviews/comments/mutations/commitBatch", { preHandler: app.authenticate }, async (request, reply) => {
         try {
             const batch = parseReviewCommentRouteInput(ReviewCommentMutationBatchRequestV1Schema, request.body, "review_comment_invalid_request");
-            const admitted = [];
+            const reads = createReviewCommentPrincipalReads();
             const items: z.infer<typeof ReviewCommentCommitMutationBatchResponseV1Schema>["items"] = [];
-            for (const [index, item] of batch.items.entries()) {
+            const admissionResults = await Promise.all(batch.items.map(async (item, index) => {
                 try {
                     const input = parseReviewCommentRouteInput(ReviewCommentCommitMutationRequestV1Schema, item.input, "review_comment_invalid_request");
-                    const principal = await resolvePrincipal(batchItemRequest(request, item, "/v1/reviews/comments/mutations/commit"));
-                    admitted.push({ index, principal, input });
-                } catch (error) { items[index] = batchError(error); }
+                    const itemRequest = batchItemRequest(request, item, "/v1/reviews/comments/mutations/commit");
+                    const principal = await (options.resolvePrincipal?.(itemRequest) ?? resolveDefaultPrincipal(itemRequest, reads));
+                    return { ok: true as const, index, principal, input };
+                } catch (error) { return { ...batchError(error), index }; }
+            }));
+            const admitted = admissionResults.filter(result => result.ok);
+            for (const result of admissionResults) {
+                if (!result.ok) items[result.index] = { ok: false, errorCode: result.errorCode, error: result.error };
             }
             const results = await operations.commitCreateBatch(admitted);
             results.forEach((result, index) => { items[admitted[index]!.index] = result; });

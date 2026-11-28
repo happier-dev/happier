@@ -285,7 +285,7 @@ import { projectAcceptedDeploymentDomainSecretLaunchAdmission } from '@/app/depl
 import { readDeploymentChildHttpPurposeInTx, readDeploymentChildPeerGrantTarget } from './deploymentChildHttpPurpose';
 import { isExternalActionManagedResourceAction, readExternalActionManagedAcquireResourceInTx, resolveManagedActionMachineAdmissionInTx, resolveSessionPresetActionMachineAdmissionInTx } from './externalActionManagedAdmission';
 import { resolveManagedNativeCredentialActionMachineAdmissionInTx, type ExternalActionManagedAdmissionContext } from './externalActionManagedNativeAdmission';
-import type { Prisma } from '@prisma/client';
+import type { Machine, Prisma } from '@prisma/client';
 import { withMachineContentSelect } from '@/storage/sessionMachineStoredContent';
 import { MACHINE_ACCESS_FACTS_SELECT, resolveMachineAdmissionFromFactsInTx } from '@/app/machines/machineAccess';
 import { hasAdmittedExternalActionHandoffScope, projectAdmittedExternalActionHandoffMachineFromRow, readAdmittedExternalActionHandoffMachineInTx, readAdmittedExternalActionMachineInTx } from './externalActionHandoffAdmission';
@@ -1520,6 +1520,7 @@ export async function readCurrentManagedGuestActivityInTx(reader: Tx,
 /** An admitted continuation retains its captured source signer, never its private key. */
 async function readCurrentExternalActionSourceSigningPublicKey(
     binding: ExternalActionExecutionAuthorizationBindingV1,
+    targetMachineRead?: Promise<Pick<Machine, 'installationId' | 'installationPublicKey' | 'revokedAt' | 'replacedByMachineId'> | null>,
 ): Promise<Uint8Array | null> {
     let source: Readonly<{ machineId: string; installationId: string }> | undefined;
     if (binding.handoffContinuation || binding.handoffPreflight) {
@@ -1532,7 +1533,8 @@ async function readCurrentExternalActionSourceSigningPublicKey(
             ...source, sourceSessionId: binding.sessionActionOrigin.caller.sessionId })) return null;
     }
     if (!source) return null;
-    const machine = await db.machine.findUnique({ where: { id: source.machineId }, select: {
+    const targetMachine = source.machineId === binding.machineId ? await targetMachineRead : undefined;
+    const machine = targetMachine ?? await db.machine.findUnique({ where: { id: source.machineId }, select: {
         installationId: true, installationPublicKey: true, revokedAt: true, replacedByMachineId: true,
     } });
     return machine?.installationId === source.installationId
@@ -6648,9 +6650,7 @@ export async function verifyExternalActionMachineRpcExecution(
     // cannot substitute the destination signer for that original authority.
     const requiresSource = !managedGuestActivity && Boolean(binding.handoffContinuation || binding.handoffPreflight
         || 'authentication' in binding && binding.sessionActionOrigin);
-    const sourceKey = requiresSource ? await readCurrentExternalActionSourceSigningPublicKey(binding) : null;
-    if (requiresSource && !sourceKey) return refuse('source_before_principal');
-    const machine = await db.machine.findFirst({
+    const machineRead = db.machine.findFirst({
         where: { id: binding.machineId, accountId: binding.custodianAccountId, installationId: binding.installationId },
         select: {
             accountId: true,
@@ -6660,7 +6660,12 @@ export async function verifyExternalActionMachineRpcExecution(
             installationId: true,
             installationPublicKey: true,
         },
-    });
+    }).then(machine => machine);
+    const [sourceKey, machine] = await Promise.all([
+        requiresSource ? readCurrentExternalActionSourceSigningPublicKey(binding, machineRead) : null,
+        machineRead,
+    ]);
+    if (requiresSource && !sourceKey) return refuse('source_before_principal');
     const signingPublicKey = requiresSource ? sourceKey : machine?.installationPublicKey;
     if (refineInputPurpose && (!signingPublicKey
         || !verifyScmRefineSavedSessionV1(execution.authorization, signingPublicKey))) return null;

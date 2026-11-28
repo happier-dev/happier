@@ -14,7 +14,7 @@ import { ReviewStartInputSchema, reviewReviewerIdForSelectionV1 } from '../revie
 import { dispatchReviewDispatch2 } from './executor/review/dispatch.js';
 import { startExecutionRunWithSelectionV1 } from './executor/executionRuns.js';
 import { ScmComparisonCaptureInputSchema } from '../scm/diffSummary.js';
-import { createScmCapabilities } from '../scm/index.js';
+import { createScmCapabilities, SCM_OPERATION_ERROR_CODES } from '../scm/index.js';
 import { SessionAccessGrantSetActionInputV1Schema } from '../sessions/access/sessionAccessActionsV1.js';
 import { buildBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
 
@@ -196,6 +196,105 @@ describe('createActionExecutor (review.start)', () => {
     }, { surface: 'ui' });
     expect(result).toEqual({ ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' });
     expect(grants).toEqual([]);
+  });
+
+  it.each(['model', 'team', 'resource', 'revision', 'delivery'] as const)('grants once per actual selected consent identity: %s', async difference => {
+    const grants: ReturnType<typeof SessionAccessGrantSetActionInputV1Schema.parse>[] = [];
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const model = { kind: 'team_credential_provider_model' as const, teamId: 'team', resourceId: 'resource',
+      expectedResourceRevision: 4, deliveryMode: 'brokered' as const, agentTargetKey: 'backend:codex', modelId: 'model' };
+    const other = { ...model, modelId: 'another-model',
+      ...(difference === 'team' ? { teamId: 'another-team' } : {}),
+      ...(difference === 'resource' ? { resourceId: 'another-resource' } : {}),
+      ...(difference === 'revision' ? { expectedResourceRevision: 5 } : {}),
+      ...(difference === 'delivery' ? { deliveryMode: 'direct' as const } : {}) };
+    const executor = createActionExecutor({
+      sessionAccessAction: async ({ input }) => {
+        const grant = SessionAccessGrantSetActionInputV1Schema.parse(input);
+        grants.push(grant);
+        await pending;
+        return { changed: true, grant: { subject: grant.subject, accessLevel: grant.accessLevel,
+          canApprovePermissions: grant.canApprovePermissions, requiredByTeamPolicy: true } };
+      },
+      workflowAction: async () => ({ ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' }),
+    });
+    const running = executor.execute('review.start', { sessionId: 's1', scope: 'repository', instructions: 'Review.',
+      reviewers: [{ kind: 'engine', engineId: 'codex', teamCredentialModel: model,
+        teamCredentialSessionBindingConsent: { v: 1, sessionId: 's1', teamId: model.teamId,
+          resourceId: model.resourceId, expectedResourceRevision: model.expectedResourceRevision } },
+        { kind: 'engine', engineId: 'codex', teamCredentialModel: other,
+        teamCredentialSessionBindingConsent: { v: 1, sessionId: 's1', teamId: other.teamId,
+          resourceId: other.resourceId, expectedResourceRevision: other.expectedResourceRevision } }],
+    }, { surface: 'ui' });
+    try { await vi.waitFor(() => expect(grants).toHaveLength(difference === 'model' ? 1 : 2)); }
+    finally { release(); }
+    const result = await running;
+    expect(result).toMatchObject({ ok: false, errorCode: 'content_unavailable' });
+    expect(grants).toHaveLength(difference === 'model' ? 1 : 2);
+    expect(grants.at(-1)).toMatchObject({ subject: { teamId: other.teamId }, requiredTeamCredential: {
+      resourceId: other.resourceId, expectedResourceRevision: other.expectedResourceRevision, deliveryMode: other.deliveryMode,
+    } });
+  });
+
+  it('starts independent comparison and Session reads together and retains the typed comparison refusal', async () => {
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const reads: string[] = [];
+    const executor = createCoreActionExecutor({
+      reviewRecords: () => createInMemoryReviewRecordPortV1(),
+      scmActionExecute: async () => { reads.push('comparison'); await pending;
+        return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE, error: 'Backend unavailable' }; },
+      sessionStatusGet: async ({ sessionId }) => { reads.push('session'); return { session: { id: sessionId,
+        createdAt: 1, updatedAt: 1, active: true, activeAt: 1, encryption: null, machineId: 'machine-1' } }; },
+    });
+    const running = executor.execute('review.start', { sessionId: 'source', changeType: 'committed',
+      base: { kind: 'none' }, instructions: 'Review.', reviewers: [{ kind: 'engine', engineId: 'codex' }] }, { surface: 'ui' });
+    try { await vi.waitFor(() => expect([...reads].sort()).toEqual(['comparison', 'session'])); }
+    finally { release(); }
+    expect(await running).toMatchObject({ ok: false, errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE });
+  });
+
+  it('starts a detached Review Project read while its selected transcript is pending', async () => {
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const reads: string[] = [];
+    const executor = createActionExecutor({
+      sessionTranscriptGet: async ({ sessionId }) => { reads.push('transcript'); await pending;
+        return { ok: true, sessionId, items: [], nextCursor: null, hasMore: false,
+          diagnostics: { rawRowsScanned: 0, pagesFetched: 1, scanLimitReached: false, payloadTruncations: 0 } }; },
+      projectWorkspaceRefs: async () => { reads.push('project'); return { workspaceRefs: [] }; },
+      workflowAction: async () => ({ ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' }),
+    });
+    const running = executor.execute('review.start', { target: { kind: 'detached' }, cwd: '/repo', scope: 'repository',
+      sourceSession: { serverId: 'home', sessionId: 'source' }, instructions: 'Review.',
+      reviewers: [{ kind: 'session', session: { serverId: 'home', sessionId: 'reviewer' }, includeSessionTranscript: true }],
+    }, { surface: 'ui', serverId: 'home', executionRunTargetMachineId: 'machine-1' });
+    try { await vi.waitFor(() => expect([...reads].sort()).toEqual(['project', 'transcript'])); }
+    finally { release(); }
+    expect(await running).toMatchObject({ ok: false, errorCode: 'content_unavailable' });
+  });
+
+  it('reads selected Session identities while model catalog display names are pending', async () => {
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const reads: string[] = [];
+    const agentTarget = { kind: 'agent', identity: { pluginId: 'review.plugin', localId: 'reviewer' } } as const;
+    const executor = createActionExecutor({
+      agentsBackendsList: async () => { reads.push('catalog'); await pending; return { items: [
+        { targetKey: buildBackendTargetKeyV2(agentTarget), agentTarget, label: 'Reviewer', enabled: true },
+      ] }; },
+      sessionStatusGet: async ({ sessionId }) => { reads.push(sessionId); return { session: { id: sessionId,
+        createdAt: 1, updatedAt: 1, active: true, activeAt: 1, encryption: null, title: 'Selected Session', machineId: 'machine-1' } }; },
+      workflowAction: async () => ({ ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' }),
+    });
+    const running = executor.execute('review.start', { sessionId: 'source', scope: 'repository', instructions: 'Review.',
+      reviewers: [{ kind: 'model', launch: { agentTarget, executionTarget: { serverId: 'home', machineId: 'machine-1' },
+        directory: { kind: 'path', path: '/repo' } } }, { kind: 'session', session: { serverId: 'home', sessionId: 'reviewer' } }],
+    }, { surface: 'ui', serverId: 'home', defaultSessionId: 'source', defaultSessionMachineId: 'machine-1' });
+    try { await vi.waitFor(() => expect([...reads].sort()).toEqual(['catalog', 'reviewer', 'source'])); }
+    finally { release(); }
+    expect(await running).toMatchObject({ ok: false, errorCode: 'content_unavailable' });
   });
 
   it('retains the Project Source for a detached Review addressed through a profile Home alias', async () => {

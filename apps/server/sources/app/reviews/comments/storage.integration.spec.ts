@@ -340,7 +340,6 @@ describe("review comment durable storage", () => {
         } }));
         await withAuthenticatedTestApp(registerReviewCommentRoutes, async app => {
             const paths: string[] = [];
-            let checkedBadSibling = false;
             const ingest = () => executeReviewCommentCreateBatchTransportV1({ items,
                 randomBytes: length => randomBytes(length),
                 request: async request => {
@@ -357,21 +356,48 @@ describe("review comment durable storage", () => {
                         return { input: item.body, principalHeader: createSignedPrincipalHeader({ actor, currentIntent,
                             machineId, installationId, keyPair, path: item.path, body: item.body }) };
                     });
-                    if (request.path.endsWith('/prepareBatch') && !checkedBadSibling) {
-                        submitted.push({ ...submitted[0]!, input: { ...request.items[0]!.body, contentCommitment: 'z'.repeat(43) } });
-                        checkedBadSibling = true;
+                    const badHeader = JSON.parse(Buffer.from(submitted[0]!.principalHeader, 'base64url').toString('utf8'));
+                    badHeader.proof.signatureBase64Url = Buffer.alloc(tweetnacl.sign.signatureLength).toString('base64url');
+                    submitted.splice(1, 0, { ...submitted[0]!, principalHeader: encodePrincipalHeader(badHeader) });
+                    // Observe the persistent-system boundary while running the real principal resolver and store.
+                    const accountFindUnique = db.account.findUnique;
+                    const machineFindFirst = db.machine.findFirst;
+                    let accountReads = 0;
+                    let machineReads = 0;
+                    db.account.findUnique = new Proxy(accountFindUnique, { apply(target, thisArg, args) {
+                        accountReads += 1;
+                        return Reflect.apply(target, thisArg, args);
+                    } });
+                    db.machine.findFirst = new Proxy(machineFindFirst, { apply(target, thisArg, args) {
+                        machineReads += 1;
+                        return Reflect.apply(target, thisArg, args);
+                    } });
+                    const queryRaw = db.$queryRaw;
+                    let pendingReads = 0;
+                    let peakReads = 0;
+                    db.$queryRaw = new Proxy(queryRaw, { apply(target, thisArg, args) {
+                        pendingReads += 1;
+                        peakReads = Math.max(peakReads, pendingReads);
+                        return Promise.resolve(Reflect.apply(target, thisArg, args)).finally(() => { pendingReads -= 1; });
+                    } });
+                    let response;
+                    try {
+                        response = await app.inject({ method: 'POST', url: request.path,
+                            headers: { 'x-test-user-id': account.id }, payload: { items: submitted } });
+                    } finally {
+                        db.account.findUnique = accountFindUnique;
+                        db.machine.findFirst = machineFindFirst;
+                        db.$queryRaw = queryRaw;
                     }
-                    const response = await app.inject({ method: 'POST', url: request.path,
-                        headers: { 'x-test-user-id': account.id }, payload: { items: submitted } });
                     expect(response.statusCode, response.body).toBe(200);
                     expect(response.body).not.toContain('PRIVATE-batch-body');
-                    if (submitted.length > request.items.length) {
-                        const parsed = ReviewCommentPrepareMutationBatchResponseV1Schema.parse(response.json());
-                        expect(parsed.items.pop()).toMatchObject({ ok: false, errorCode: 'review_comment_permission_denied' });
-                        return parsed;
-                    }
-                    return (request.path.endsWith('/prepareBatch') ? ReviewCommentPrepareMutationBatchResponseV1Schema
+                    const parsed = (request.path.endsWith('/prepareBatch') ? ReviewCommentPrepareMutationBatchResponseV1Schema
                         : ReviewCommentCommitMutationBatchResponseV1Schema).parse(response.json());
+                    expect(parsed.items.splice(1, 1)).toMatchObject([{ ok: false, errorCode: 'review_comment_permission_denied' }]);
+                    expect(accountReads).toBe(1);
+                    expect(machineReads).toBe(1);
+                    if (request.path.endsWith('/prepareBatch')) expect(peakReads).toBeGreaterThan(1);
+                    return parsed;
                 },
             });
             const result = await ingest();

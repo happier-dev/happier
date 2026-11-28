@@ -124,11 +124,42 @@ function isLikelyBinary(buffer: Uint8Array): boolean {
     return buffer.includes(0);
 }
 
+type SnapshotReads = Map<string, Promise<Buffer | null>>;
+
+function readOnce(reads: SnapshotReads | undefined, key: string, read: () => Promise<Buffer | null>): Promise<Buffer | null> {
+    if (!reads) return read();
+    let pending = reads.get(key);
+    if (!pending) {
+        pending = read();
+        reads.set(key, pending);
+    }
+    return pending;
+}
+
+async function readComparisonBlob(repository: string, blobId: string): Promise<Buffer | null> {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-review-blob-'));
+    try {
+        // Git writes the complete immutable object through the existing binary-safe
+        // output owner. Never substitute HEAD or the current path on a failed read.
+        const output = join(directory, 'blob');
+        const read = await runGitCheckpointCommand({ cwd: repository,
+            args: ['cat-file', 'blob', blobId], stdoutFilePath: output });
+        return read.success ? await readFile(output) : null;
+    } finally {
+        try {
+            await rm(directory, { recursive: true, force: true });
+        } catch {
+            logger.warnLocalFile('Temporary review snapshot directory could not be removed.');
+        }
+    }
+}
+
 async function resolveComparisonSnapshot(params: Readonly<{
     comparison: ScmComparison;
     anchor: ReviewCommentAnchorV1;
     filePath: string;
     capturedAt: number;
+    reads?: SnapshotReads;
 }>): Promise<ReviewCommentSnapshotV1 | null> {
     const { comparison, anchor, filePath, capturedAt } = params;
     const files = comparison.inventory.files.filter(file => file.path === filePath || file.previousPath === filePath);
@@ -161,45 +192,44 @@ async function resolveComparisonSnapshot(params: Readonly<{
         return null;
     }
     if (!blobId || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(blobId)) return null;
-    const directory = await mkdtemp(join(tmpdir(), 'happier-review-blob-'));
-    try {
-        // Git writes the complete immutable object through the existing binary-safe
-        // output owner. Never substitute HEAD or the current path on a failed read.
-        const output = join(directory, 'blob');
-        const read = await runGitCheckpointCommand({ cwd: comparison.repository.rootPath,
-            args: ['cat-file', 'blob', blobId], stdoutFilePath: output });
-        if (!read.success) return null;
-        const buffer = await readFile(output);
-        if (isLikelyBinary(buffer)) {
-            return anchor.kind === 'file' || anchor.kind === 'binary'
-                ? { kind: 'binary', sizeBytes: buffer.byteLength, sha256: sha256(buffer), source: 'diffSide', capturedAt }
-                : null;
-        }
-        const text = buffer.toString('utf8');
-        if (!Buffer.from(text).equals(buffer)) return null;
-        const snapshot = createTextSnapshot({ lines: splitLines(text), anchor, capturedAt });
-        if (snapshot?.kind !== 'text') return null;
-        return { ...snapshot, source: 'diffSide', isUncommitted: comparison.source.kind === 'workingTree'
-            || comparison.source.kind === 'session' || comparison.source.kind === 'turnCheckpoint',
-            isUntracked: !file.beforeBlobId,
-            diffContext: { side, ...(comparison.endpoints.before ? { baseSha: comparison.endpoints.before } : {}),
-                ...(comparison.endpoints.after ? { headSha: comparison.endpoints.after } : {}) } };
-    } finally {
-        try {
-            await rm(directory, { recursive: true, force: true });
-        } catch {
-            logger.warnLocalFile('Temporary review snapshot directory could not be removed.');
-        }
+    const buffer = await readOnce(params.reads, JSON.stringify(['blob', comparison.repository.rootPath, blobId]),
+        () => readComparisonBlob(comparison.repository.rootPath, blobId));
+    if (!buffer) return null;
+    if (isLikelyBinary(buffer)) {
+        return anchor.kind === 'file' || anchor.kind === 'binary'
+            ? { kind: 'binary', sizeBytes: buffer.byteLength, sha256: sha256(buffer), source: 'diffSide', capturedAt }
+            : null;
     }
+    const text = buffer.toString('utf8');
+    if (!Buffer.from(text).equals(buffer)) return null;
+    const snapshot = createTextSnapshot({ lines: splitLines(text), anchor, capturedAt });
+    if (snapshot?.kind !== 'text') return null;
+    return { ...snapshot, source: 'diffSide', isUncommitted: comparison.source.kind === 'workingTree'
+        || comparison.source.kind === 'session' || comparison.source.kind === 'turnCheckpoint',
+        isUntracked: !file.beforeBlobId,
+        diffContext: { side, ...(comparison.endpoints.before ? { baseSha: comparison.endpoints.before } : {}),
+            ...(comparison.endpoints.after ? { headSha: comparison.endpoints.after } : {}) } };
 }
 
-export async function resolveReviewCommentSnapshot(params: Readonly<{
+type SnapshotParams = Readonly<{
     cwd: string;
     anchor: ReviewCommentAnchorV1;
     /** Present only for a Review bound to captured evidence; null means unavailable. */
     comparison?: ScmComparison | null;
     now?: () => number;
-}>): Promise<ReviewCommentSnapshotV1 | null> {
+}>;
+
+/** Read sharing lasts only for this materialization, never across user operations. */
+export function createReviewCommentSnapshotResolver(): typeof resolveReviewCommentSnapshot {
+    const reads: SnapshotReads = new Map();
+    return params => resolveSnapshot(params, reads);
+}
+
+export async function resolveReviewCommentSnapshot(params: SnapshotParams): Promise<ReviewCommentSnapshotV1 | null> {
+    return resolveSnapshot(params);
+}
+
+async function resolveSnapshot(params: SnapshotParams, reads?: SnapshotReads): Promise<ReviewCommentSnapshotV1 | null> {
     const cwd = String(params.cwd ?? '').trim();
     const filePath = filePathForAnchor(params.anchor);
     if (!cwd || !filePath) return null;
@@ -210,7 +240,7 @@ export async function resolveReviewCommentSnapshot(params: Readonly<{
     const capturedAt = Math.max(0, Math.trunc((params.now ?? Date.now)()));
     if (params.comparison !== undefined) {
         return params.comparison ? resolveComparisonSnapshot({ comparison: params.comparison,
-            anchor: params.anchor, filePath, capturedAt }) : null;
+            anchor: params.anchor, filePath, capturedAt, reads }) : null;
     }
     let fileStat;
     try {
@@ -237,7 +267,7 @@ export async function resolveReviewCommentSnapshot(params: Readonly<{
     }
 
     if (!fileStat.isFile()) return null;
-    const buffer = await readFile(realScopedPath).catch(() => null);
+    const buffer = await readOnce(reads, JSON.stringify(['file', realScopedPath]), () => readFile(realScopedPath).catch(() => null));
     if (!buffer) return null;
     if (isLikelyBinary(buffer)) {
         return {

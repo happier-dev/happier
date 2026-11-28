@@ -1,8 +1,8 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ActionExecutorContext, ReviewCommentCreateRequestV1 } from '@happier-dev/protocol';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
@@ -14,6 +14,12 @@ import {
   type ReviewCommentHostActionCandidate,
   type ReviewCommentHostPluginAuthority,
 } from './hostActionMaterializer';
+
+// Snapshot policy and proposal preparation remain real; only filesystem reads are counted.
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, readFile: vi.fn(actual.readFile) };
+});
 
 const roots: string[] = [];
 const releaseSecrets: Array<() => void> = [];
@@ -71,6 +77,26 @@ const currentPluginAuthority: ReviewCommentHostPluginAuthority = Object.freeze({
 });
 
 describe('createReviewCommentHostActionMaterializer', () => {
+  it('reads a shared file once for independent proposals and retains their ordered snapshots', async () => {
+    const cwd = await fixture();
+    const snapshots: unknown[] = [];
+    const materialize = createReviewCommentHostActionMaterializer({
+      cwd, isRunActive: () => true, readCurrentCandidate: twoProposalCandidate,
+      readCurrentPluginAuthority: async () => currentPluginAuthority,
+      resolveWorkspace: async () => ({ projectId: 'project-1', workspaceId: 'workspace-1', serverId: 'server-1' }),
+      requestCurrentIntent: async subject => ({ status: 'approved', fingerprint: subject.subjectFingerprint }),
+      executeHostAction: async (_actionId, input) => {
+        snapshots.push(input.snapshot);
+        return { ok: true, result: { comment: { id: `comment-${snapshots.length}` }, replayed: false } };
+      },
+    });
+    vi.mocked(readFile).mockClear();
+    expect(await materialize()).toMatchObject({ ok: true, result: { status: 'created', comments: [
+      { findingId: 'finding-1', commentId: 'comment-1' }, { findingId: 'finding-2', commentId: 'comment-2' },
+    ] } });
+    expect(vi.mocked(readFile).mock.calls.filter(([path]) => String(path) === join(cwd, 'a.ts'))).toHaveLength(1);
+    expect(snapshots).toMatchObject([{ selectedLines: ['two'] }, { selectedLines: ['three'] }]);
+  });
   it('admits review-comment host effects only through an applied final-policy generation', () => {
     const occurrenceId = createPluginRuntimeOccurrenceId('acme.review-current');
     const current = {

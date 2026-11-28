@@ -1798,6 +1798,10 @@ export async function authorizeMachineRpcRequest(
       && resolveMachineRpcRoutePolicy(method).requesterExecutionIsolationRequired === true) {
       try {
         const installationId = machine.resolveInstallationId();
+        const [homeServerIdentityId, custodianAccountId] = await Promise.all([
+          machine.resolveHomeServerIdentityId?.(request.signal),
+          machine.resolveCustodianAccountId(request.signal),
+        ]);
         const identity = selectHostRequesterExecutionIdentity({ actionContext: {
           ...request.localActionContext,
           authority: request.callerAuthority,
@@ -1806,8 +1810,8 @@ export async function authorizeMachineRpcRequest(
           sessionActionOrigin: request.sessionActionOrigin,
           requesterSessionBootstrap: request.requesterSessionBootstrap,
           signal: request.signal,
-        }, hostHomeServerIdentityId: await machine.resolveHomeServerIdentityId?.(request.signal),
-          hostCustodianAccountId: await machine.resolveCustodianAccountId(request.signal),
+        }, hostHomeServerIdentityId: homeServerIdentityId,
+          hostCustodianAccountId: custodianAccountId,
           hostExecutionTarget: installationId ? { machineId: machine.machineId, installationId } : undefined });
         if (identity.kind === 'unknown') return forbidden('machine_admission');
         const useRead = localRepositoryRead && retainedRequester?.authorization.binding.admittedMachineRole === 'use';
@@ -1872,16 +1876,6 @@ export async function authorizeMachineRpcRequest(
         return forbidden(targetPredicate);
       if (!request.method.startsWith(`${machine.machineId}:`))
         return forbidden('machine_scope');
-      // Routed workspace packets retain the child's custodian. Home independently
-      // verifies this installed physical controller's own Account and signer.
-      if (
-        !sourceRouting &&
-        !targetRouting &&
-        !writerTargetRouting &&
-        !seedRouting &&
-        context.custodianAccountId !== custodianAccountId
-      )
-        return forbidden('machine_custodian');
       const rpcMethod = request.method.slice(machine.machineId.length + 1);
       const privateSpawn = privateSessionMethods.includes(rpcMethod)
         ? SpawnDaemonSessionRequestSchema.safeParse(request.params)
@@ -2059,8 +2053,10 @@ export async function authorizeMachineRpcRequest(
           || resolveMachineRpcRoutePolicy(rpcMethod)
           .requesterExecutionIsolationRequired === true)
       ) {
-        const physicalCustodianAccountId = custodianAccountId
-          ?? await machine.resolveCustodianAccountId(request.signal);
+        const [physicalCustodianAccountId, homeServerIdentityId] = await Promise.all([
+          custodianAccountId ?? machine.resolveCustodianAccountId(request.signal),
+          machine.resolveHomeServerIdentityId?.(request.signal),
+        ]);
         const receivingAdmission = source === 'authenticated_home_socket'
           ? request.receivingMachineAdmission
           : verifiedAdmission && typeof verifiedAdmission === 'object'
@@ -2082,9 +2078,7 @@ export async function authorizeMachineRpcRequest(
             signal: request.signal,
             verifyMachineAdmissionCurrent: async () => true,
           },
-          hostHomeServerIdentityId: await machine.resolveHomeServerIdentityId?.(
-            request.signal,
-          ),
+          hostHomeServerIdentityId: homeServerIdentityId,
           hostCustodianAccountId: physicalCustodianAccountId,
           hostExecutionTarget: { machineId: machine.machineId, installationId },
           // Exact route/root/phase checks and Home admission above bind the

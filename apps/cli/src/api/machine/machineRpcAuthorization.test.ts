@@ -55,6 +55,23 @@ import { createBeforeShutdownDrain } from '@/daemon/lifecycle/createBeforeShutdo
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 
 describe('authorizeMachineRpcRequest', () => {
+  it('resolves independent local-root host identities together before selecting SCM custody', async () => {
+    let custodianReadStarted = false;
+    const boundary: MachineRpcAdmissionBoundary = {
+      machineId: 'machine', resolveInstallationId: () => 'installation',
+      resolveHomeServerIdentityId: async () => {
+        await Promise.resolve();
+        if (!custodianReadStarted) throw new Error('host_identity_reads_serialized');
+        return 'home';
+      },
+      resolveCustodianAccountId: async () => { custodianReadStarted = true; return 'owner'; },
+      verifyMachineAdmission: async () => true,
+    };
+    expect(await authorizeMachineRpcRequest({ method: `machine:${RPC_METHODS.SCM_STATUS_SNAPSHOT}`, params: {},
+      callerAuthority: 'account_automation', localActionContext: {
+        authenticatedLocalRootCustody: { serverIdentityId: 'home', accountId: 'owner', machineId: 'machine', installationId: 'installation' },
+      } }, boundary)).toMatchObject({ ok: true });
+  });
   it('drains a Machine RPC already reading while refusing a fresh SCM admission as shutdown', async () => {
     const drain = createDaemonAdmissionDrain();
     const machineAdmission = { actorAccountId: 'owner', custodianAccountId: 'owner',

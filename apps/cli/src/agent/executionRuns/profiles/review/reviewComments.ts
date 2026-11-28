@@ -10,7 +10,7 @@ import { createReviewFindingIdentityV1, createReviewFindingMessageHashV1 } from 
 import { ReviewCommentV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
 import { ReviewTriageOverlaySchema } from '@happier-dev/protocol/messages/structured/reviewFindingsV1';
 import { ReviewFindingContentSchema, ReviewFindingSeveritySchema, reviewFindingFallsBelowThreshold } from '@happier-dev/protocol/reviews/ReviewFinding';
-import { stringifyReviewCommentPrincipalCanonicalJsonV1 } from '@happier-dev/protocol/reviews/comments/actions';
+import { ReviewCommentActionOutputSchemasV1, ReviewCommentBulkTransitionResponseV1Schema, stringifyReviewCommentPrincipalCanonicalJsonV1 } from '@happier-dev/protocol/reviews/comments/actions';
 import type { ActionExecuteFailure, ReviewCommentAnchorV1, ReviewCommentCreateRequestV1, ReviewCommentFingerprintV1, ReviewCommentScopeV1, ReviewCommentV1, ReviewCommentPrincipalHeaderV1, ReviewFinding, ReviewTriageOverlay, ReviewTriageStatus } from '@happier-dev/protocol';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
@@ -20,7 +20,7 @@ import { createCliReviewCommentActionExecutorFromCredentials, resolveCliReviewCo
 import { createAcknowledgedAccountArtifactTransport, createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { AdmittedRequesterSessionBootstrap } from '@/daemon/sessionEncryption/requesterSessionCredentials';
-import { resolveReviewCommentSnapshot } from '@/agent/reviews/comments/snapshots';
+import { createReviewCommentSnapshotResolver } from '@/agent/reviews/comments/snapshots';
 import type { ExecutionRunActionResult, ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 import { captureScmComparison, readCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
 import { runWithScmExecutionRunAccountScope } from '@/agent/runtime/bridges/executionRun/profileStart';
@@ -180,7 +180,8 @@ export function createReviewRunCommentService(deps: Readonly<{
         ? await readCapturedScmComparison({ cwd, comparisonId: input.comparisonId,
           ...(producingSessionId ? { sessionId: producingSessionId } : {}) }).then(captured => captured.comparison, () => null)
         : undefined);
-      for (const finding of params.findings) {
+      const resolveSnapshot = createReviewCommentSnapshotResolver();
+      const prepared = await Promise.all(params.findings.map(async finding => {
         try {
           if (!reviewerId) throw createActionExecuteFailureError({ ok: false, error: 'Review reviewer provenance is unavailable', errorCode: 'review_comment_invalid_request' });
           if (!review && !producingSessionId && !workflowRunId) throw createActionExecuteFailureError({ ok: false, error: 'Review scope is unavailable', errorCode: 'review_comment_session_unavailable' });
@@ -188,7 +189,7 @@ export function createReviewRunCommentService(deps: Readonly<{
             ? { ...deps.scope, workspace: { ...deps.scope.workspace, path: launchCwd } }
             : deps.scope;
           let anchor = findingAnchor(finding, producingRunId);
-          const resolvedSnapshot = await resolveReviewCommentSnapshot({ cwd, anchor, comparison });
+          const resolvedSnapshot = await resolveSnapshot({ cwd, anchor, comparison });
           // Preserve the finding and its original location in the Review payload,
           // without inventing a code location when its evidence cannot be verified.
           if (!resolvedSnapshot && 'filePath' in anchor) anchor = { kind: 'finding', runId: producingRunId, findingId: finding.id };
@@ -224,7 +225,7 @@ export function createReviewRunCommentService(deps: Readonly<{
               ? [{ kind: 'pullRequest' as const, url: comparison.pullRequest.url }] : []), ...(params.run ? [{ kind: 'executionRun' as const, id: producingRunId }] : []), ...(producingSessionId ? [{ kind: 'session' as const, id: producingSessionId }] : [])],
             clientMutationId: `review-finding:${createHash('sha256').update(mutationSource).digest('hex')}`,
           };
-          pending.push({ findingId: finding.id, input,
+          return { pending: { findingId: finding.id, input,
             principal: {
               ...(params.workflowScope ? { workflowScope: params.workflowScope } : {}),
               actor: workflowRunId
@@ -239,11 +240,15 @@ export function createReviewRunCommentService(deps: Readonly<{
                 effectBodySha256Base64Url: createHash('sha256').update(stringifyReviewCommentPrincipalCanonicalJsonV1(input)).digest('base64url'),
               },
             },
-          });
+          } satisfies ReviewCommentCreateBatchItem & { findingId: string } };
         } catch (error) {
           const failure = normalizeActionExecutorThrownError(error, 'review.comments.materialize');
-          failures.push({ findingId: finding.id, ...failure, error: redactTranscriptSecrets(failure.error) });
+          return { failure: { findingId: finding.id, ...failure, error: redactTranscriptSecrets(failure.error) } };
         }
+      }));
+      for (const item of prepared) {
+        if (item.pending) pending.push(item.pending);
+        else if (item.failure) failures.push(item.failure);
       }
       if (pending.length) {
         try {
@@ -286,18 +291,45 @@ export function createReviewRunCommentService(deps: Readonly<{
         if (!actor) return { ok: false, errorCode: 'review_comment_principal_unavailable', error: 'The Session review principal is unavailable' };
         const options = { principal: { actor } };
         const comments: ReviewCommentV1[] = [];
-        for (const finding of parsed.data.findings) {
+        const targets = parsed.data.findings.map(finding => {
           const retained = retainedFindings?.find((entry) => entry.id === finding.id);
           const retainedComment = record(retained?.comment);
           const commentId = typeof finding.commentId === 'string' ? finding.commentId
             : typeof retainedComment?.id === 'string' ? retainedComment.id : null;
-          if (!commentId) return { ok: false, errorCode: 'review_comment_reference_unavailable', error: 'The finding has no persisted comment reference' };
-          const current = resultComment(await deps.execute('reviews.comments.get', { commentId, includeHistory: true }, options));
+          return { finding, commentId };
+        });
+        if (targets.some(target => !target.commentId)) return { ok: false, errorCode: 'review_comment_reference_unavailable', error: 'The finding has no persisted comment reference' };
+        if (!targets.length) return { ok: true, result: { triage: projectReviewRunTriage([]), commentIds: [] } };
+        const listed = await deps.execute('reviews.comments.list', { commentIds: [...new Set(targets.map(target => target.commentId!))], includeHistory: true, allPages: true }, options);
+        const currentById = new Map(ReviewCommentActionOutputSchemasV1['reviews.comments.list'].parse(listed).items.map(comment => [comment.id, comment]));
+        const requests = [];
+        for (const { finding, commentId } of targets) {
+          const current = currentById.get(commentId!) ?? resultComment(await deps.execute('reviews.comments.get', { commentId, includeHistory: true }, options));
+          currentById.set(current.id, current);
+          requests.push(buildReviewTriageTransitionRequestV1({ comment: current, decision: finding.status,
+            ...(finding.comment ? { note: finding.comment } : {}), clientMutationId: `review-triage:${randomUUID()}` }));
+        }
+        const commonFields = ({ commentId: _id, expectedServerRevision: _revision, clientMutationId: _mutation, ...fields }: typeof requests[number]) => fields;
+        const first = requests[0]!;
+        const common = commonFields(first);
+        if (requests.length > 1 && currentById.size === requests.length
+          && requests.every(request => stringifyReviewCommentPrincipalCanonicalJsonV1(commonFields(request)) === stringifyReviewCommentPrincipalCanonicalJsonV1(common))) {
+          const result = ReviewCommentBulkTransitionResponseV1Schema.parse(await deps.execute('reviews.comments.bulkTransition', {
+            ...common, commentIds: requests.map(request => request.commentId),
+            expectedServerRevisions: Object.fromEntries(requests.map(request => [request.commentId, request.expectedServerRevision])),
+            clientMutationId: `review-triage:${randomUUID()}`,
+          }, options));
+          if (result.failed.length) throw createActionExecuteFailureError({ ok: false, ...result.failed[0]! });
+          const updatedById = new Map(result.updated.map(comment => [comment.id, comment]));
+          for (const { finding, commentId } of targets) comments.push({ ...ReviewCommentV1Schema.parse(updatedById.get(commentId!)), findingId: finding.id });
+        } else for (const { finding, commentId } of targets) {
+          const current = currentById.get(commentId!)!;
           const updated = resultComment(await deps.execute('reviews.comments.transition', buildReviewTriageTransitionRequestV1({
             comment: current, decision: finding.status, ...(finding.comment ? { note: finding.comment } : {}),
             clientMutationId: `review-triage:${randomUUID()}`,
           }), options));
           comments.push({ ...updated, findingId: finding.id });
+          currentById.set(updated.id, updated);
         }
         return { ok: true, result: { triage: projectReviewRunTriage(comments), commentIds: comments.map((comment) => comment.id) } };
       } catch (error) {

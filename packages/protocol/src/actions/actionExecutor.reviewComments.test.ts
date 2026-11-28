@@ -49,6 +49,87 @@ function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutor
 }
 
 describe('createActionExecutor (review comments)', () => {
+  it.each(['accepted', 'missing', 'other-session'] as const)('batches prior-round findings after parallel run scopes: %s', async outcome => {
+    const finding = (id: string) => ({ id: `finding-${id}`, title: `Finding ${id}`, summary: `Evidence ${id}`,
+      severity: 'high', category: 'correctness', comment: { id: `comment-${id}`, serverRevision: 1, state: 'open',
+        workspace: { machineId: 'machine', path: '/repo' } } });
+    const comments = ['one', 'two'].map((id, index) => ReviewCommentV1Schema.parse({
+      v: 1, id: `comment-${id}`, accountId: 'account', workspace: { machineId: 'machine', path: '/repo' },
+      sessionId: outcome === 'other-session' && index === 1 ? 'another-session' : 'origin', runId: 'prior-round',
+      findingId: `finding-${id}`, findingIdentity: String(index + 1).repeat(64), body: `Evidence ${id}`,
+      bodyVersion: 1, edits: [], flags: {}, dispositions: {}, threadId: `comment-${id}`, transitions: [],
+      anchor: { kind: 'file', filePath: 'reader.ts' }, snapshot: { kind: 'none', capturedAt: 1 },
+      author: { kind: 'agent', agentId: 'codex', sessionId: 'origin' }, state: 'open', reviewTriageStatus: 'accept',
+      serverRevision: 2, createdAt: 1, updatedAt: 1,
+    }));
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const scopes: string[] = [];
+    const targeted: string[][] = [];
+    const singleton: string[] = [];
+    const sent: string[] = [];
+    const refusal = { ok: false as const, errorCode: 'review_comment_not_found', error: 'review_comment_not_found' };
+    const executor = createActionExecutor(createDeps({
+      reviewCommentAction: async ({ actionId, input }) => {
+        if (actionId === 'reviews.comments.get') {
+          singleton.push(ReviewCommentActionInputSchemasV1[actionId].parse(input).commentId);
+          return refusal;
+        }
+        const request = ReviewCommentActionInputSchemasV1['reviews.comments.list'].parse(input);
+        expect(request.includeHistory).toBe(true);
+        if (request.commentIds) {
+          targeted.push(request.commentIds);
+          // Transport pages may return a different order than the requested findings.
+          return { items: request.cursor ? [comments[0]] : outcome === 'missing' ? [] : [comments[1]],
+            cursor: request.cursor || outcome === 'missing' ? null : 'prior-page' };
+        }
+        scopes.push(`${request.runId}:${request.cursor ?? 'first'}`);
+        if (request.runId === 'run-one' && !request.cursor) { await pending; return { items: [], cursor: 'next' }; }
+        return { items: [], cursor: null };
+      },
+      sessionSendMessage: async ({ message }) => { sent.push(message); return { status: 'accepted', localId: 'apply' }; },
+    }));
+    const running = executor.execute('review.apply', { sessionId: 'origin', reviews: [
+      { runId: 'run-one', findings: [finding('one')] }, { runId: 'run-two', findings: [finding('two')] },
+    ] }, { surface: 'ui', serverId: 'home' });
+    try { await vi.waitFor(() => expect(scopes).toEqual(['run-one:first', 'run-two:first'])); }
+    finally { release(); }
+    const result = await running;
+    expect(scopes).toEqual(['run-one:first', 'run-two:first', 'run-one:next']);
+    expect(targeted).toEqual(outcome === 'missing' ? [['comment-one', 'comment-two']]
+      : [['comment-one', 'comment-two'], ['comment-one', 'comment-two']]);
+    if (outcome === 'accepted') {
+      expect(result).toMatchObject({ ok: true });
+      expect(singleton).toEqual([]);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.indexOf('comment-one')).toBeLessThan(sent[0]!.indexOf('comment-two'));
+      expect(sent[0]).toContain('"expectedServerRevision": 2');
+    } else {
+      expect(result).toMatchObject(outcome === 'missing' ? refusal : { ok: false, errorCode: 'review_comment_permission_denied' });
+      expect(singleton).toEqual(outcome === 'missing' ? ['comment-one'] : []);
+      expect(sent).toEqual([]);
+    }
+  });
+
+  it('retains the first run scope refusal when parallel reads settle out of order', async () => {
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const reads: string[] = [];
+    const first = { ok: false as const, errorCode: 'review_comment_permission_denied', error: 'first' };
+    const executor = createActionExecutor(createDeps({ reviewCommentAction: async ({ input }) => {
+      const request = ReviewCommentActionInputSchemasV1['reviews.comments.list'].parse(input);
+      reads.push(request.runId!);
+      if (request.runId === 'one') { await pending; return first; }
+      return { ok: false, errorCode: 'review_comment_not_found', error: 'second' };
+    }, sessionSendMessage: async () => { throw new Error('Must not send partial findings'); } }));
+    const running = executor.execute('review.apply', { sessionId: 'origin', reviews: [
+      { runId: 'one', findings: [] }, { runId: 'two', findings: [] },
+    ] }, { surface: 'ui', serverId: 'home' });
+    try { await vi.waitFor(() => expect(reads).toEqual(['one', 'two'])); }
+    finally { release(); }
+    expect(await running).toEqual(first);
+  });
+
   it.each(['prompt', 'session'] as const)('implements only selected accepted Review roots through the %s destination', async destination => {
     const root = ReviewCommentV1Schema.parse({
       v: 1, id: 'selected', accountId: 'account', reviewId: 'review',

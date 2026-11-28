@@ -290,7 +290,7 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
                 privateKeyBase64Url: Buffer.from(keys.secretKey).toString('base64url') }),
             assertPrincipalCurrent: (observed) => {
                 expect(observed).toBe(principal);
-                if (++checks === 3) throw new Error('execution_run_host_action_stale');
+                if (++checks === 2) throw new Error('execution_run_host_action_stale');
             },
         });
         await expect(executor('reviews.comments.create', { ...input, body: 'substituted' }, { principal })).rejects.toMatchObject({ code: 'review_comment_permission_denied' });
@@ -299,14 +299,24 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
         expect(axiosPostMock).toHaveBeenCalledTimes(1);
     });
 
-    it('keeps valid batch siblings when individual principals become stale before prepare or commit', async () => {
-        const inputs = ['prepare-stale', 'commit-stale', 'valid'].map(id => ({
+    it.each(['individual', 'shared-host'] as const)('keeps valid batch siblings and bounds signing reads for %s principals', async kind => {
+        const ids = ['prepare-stale', 'commit-stale', 'valid'];
+        const inputs = Array.from({ length: kind === 'shared-host' ? 15 : 3 }, (_, index) => ({
             workspace: { machineId: 'machine-1', path: '/repo' }, runId: 'run-1',
             anchor: { kind: 'run' as const, runId: 'run-1' }, snapshot: { kind: 'none' as const, capturedAt: 1 },
-            body: `Body ${id}`, clientMutationId: id,
+            body: `Body ${ids[index % 3]}`, clientMutationId: `${ids[index % 3]}-${index}`,
         }));
-        const principals = inputs.map(input => ReviewCommentPrincipalHeaderV1Schema.parse({
-            actor: { kind: 'agent', agentId: input.clientMutationId, sessionId: 'session-1' },
+        const principals = inputs.map((input, index) => ReviewCommentPrincipalHeaderV1Schema.parse({
+            actor: { kind: 'agent', agentId: ids[index % 3], sessionId: 'session-1' },
+            ...(kind === 'shared-host' ? { currentIntent: {
+                v: 1, kind: 'execution_run_host_action', actionId: 'reviews.comments.create',
+                subjectFingerprint: 'a'.repeat(64),
+                effectBodySha256Base64Url: createHash('sha256').update(stringifyReviewCommentPrincipalCanonicalJsonV1(input)).digest('base64url'),
+                sessionId: 'session-1', runId: 'run-1', callId: `call-${index}`, profileId: 'acme.review/review',
+                pluginId: index % 3 === 2 ? 'acme.other' : 'acme.review', agentId: ids[index % 3],
+                projectId: 'project-1', workspaceId: 'workspace-1',
+                sourceCustody: { kind: 'managed', immutableGenerationId: index % 3 === 0 ? 'generation-1' : 'generation-2', installSource: 'archive' },
+            } } : {}),
         }));
         const structures = new Map<string, ReturnType<typeof deriveReviewCommentStructuralMutationV1>['records'][number]['structural']>();
         const sent: string[][] = [];
@@ -334,10 +344,11 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
         });
         const keys = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(8));
         const checks = new Map<string, number>();
+        const resolvePrincipalSigningContext = vi.fn(async () => ({ machineId: 'machine-1', installationId: 'installation-1',
+            privateKeyBase64Url: Buffer.from(keys.secretKey).toString('base64url') }));
         const execute = createCliReviewCommentActionExecutorFromCredentials({
             credentials: { token: 'token-1', encryption: null }, ...plainEventStorageParams,
-            resolvePrincipalSigningContext: async () => ({ machineId: 'machine-1', installationId: 'installation-1',
-                privateKeyBase64Url: Buffer.from(keys.secretKey).toString('base64url') }),
+            resolvePrincipalSigningContext,
             assertPrincipalCurrent: principal => {
                 if (principal.actor.kind !== 'agent') throw new Error('Unexpected fixture principal');
                 const id = principal.actor.agentId;
@@ -350,7 +361,7 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
                 }
             },
         });
-        await expect(execute.createBatch!(inputs.map((input, index) => ({ input, principal: principals[index] })))).resolves.toMatchObject([
+        const expected = [
             { ok: false, errorCode: 'review_comment_permission_denied', requestId: 'stale-prepare-stale', effectAttempted: false,
                 details: { principalId: 'prepare-stale' },
                 failureCause: { phase: 'review.comments.sign', errorCode: 'review_comment_permission_denied', httpStatus: 403 } },
@@ -358,8 +369,15 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
                 details: { principalId: 'commit-stale' },
                 failureCause: { phase: 'review.comments.sign', errorCode: 'review_comment_permission_denied', httpStatus: 403 } },
             { ok: true, comment: { body: 'Body valid' } },
+        ];
+        await expect(execute.createBatch!(inputs.map((input, index) => ({ input, principal: principals[index] })))).resolves.toMatchObject(
+            inputs.map((_, index) => expected[index % 3]));
+        expect(sent).toEqual([
+            inputs.filter((_, index) => index % 3 !== 0).map(input => input.clientMutationId),
+            inputs.filter((_, index) => index % 3 === 2).map(input => input.clientMutationId),
         ]);
-        expect(sent).toEqual([['commit-stale', 'valid'], ['valid']]);
+        expect(resolvePrincipalSigningContext).toHaveBeenCalledTimes(1);
+        expect(Object.fromEntries(checks)).toEqual({ 'prepare-stale': 1, 'commit-stale': 2, valid: 2 });
     });
 
     it('keeps the complete private E2EE publication plan out of actual HTTP bytes', async () => {
@@ -594,9 +612,7 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
             assertPrincipalCurrent: () => {
                 const currentness = Promise.resolve().then(() => {
                     events.push('currentness-check');
-                    if (events.filter((event) => event === 'currentness-check').length === 2) {
-                        throw new Error('execution_run_host_action_stale');
-                    }
+                    throw new Error('execution_run_host_action_stale');
                 });
                 // The regression discards this promise; observe its rejection so
                 // RED reports the dispatched effect rather than a harness error.
@@ -637,7 +653,7 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
             },
         })).rejects.toThrow('execution_run_host_action_stale');
 
-        expect(events).toEqual(['signing-context', 'currentness-check', 'currentness-check']);
+        expect(events).toEqual(['signing-context', 'currentness-check']);
         expect(axiosPostMock).not.toHaveBeenCalled();
     });
 

@@ -60,6 +60,11 @@ vi.mock('axios', async importOriginal => {
   const actual = await importOriginal<typeof import('axios')>();
   return { ...actual, default: { ...actual.default, post: vi.fn(), get: vi.fn(), patch: vi.fn() } };
 });
+// Count content acquisition at the filesystem boundary; snapshot policy stays real.
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, readFile: vi.fn(actual.readFile) };
+});
 const environment = vi.hoisted(() => ({ homeDir: '' }));
 vi.mock('@/configuration', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/configuration')>();
@@ -155,6 +160,7 @@ function service() {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  vi.mocked(readFile).mockImplementation((await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).readFile);
   root = await mkdtemp(join(tmpdir(), 'happier-review-comments-'));
   environment.homeDir = root;
   await writeFile(join(root, 'a.ts'), 'input();\n', 'utf8');
@@ -166,6 +172,147 @@ afterEach(async () => {
 });
 
 describe('canonical review Run comments', () => {
+  it('reads each working-tree file once per materialization while preserving distinct finding windows', async () => {
+    await writeFile(join(root, 'a.ts'), 'first\nsecond\n');
+    vi.mocked(axios.post).mockImplementation(async (_url, body) => ({ status: 200,
+      data: { comment: commentForCreate(body), replayed: false } }));
+    vi.mocked(readFile).mockClear();
+    const result = await service().materialize({ run: run(), reviewedFingerprint: null,
+      findings: [findings[0], { ...findings[0], id: 'second', startLine: 2 }] });
+    expect(result).toMatchObject({ status: 'materialized', commentIds: ['comment-file-finding', 'comment-second'] });
+    expect(vi.mocked(readFile).mock.calls.filter(([path]) => String(path) === join(root, 'a.ts'))).toHaveLength(1);
+    expect(vi.mocked(axios.post).mock.calls.map(([, body]) => (body as { snapshot: unknown }).snapshot))
+      .toMatchObject([{ selectedLines: ['first'] }, { selectedLines: ['second'] }]);
+    await writeFile(join(root, 'a.ts'), 'next operation\n');
+    await service().materialize({ run: run(), reviewedFingerprint: null, findings: [findings[0]] });
+    expect(vi.mocked(readFile).mock.calls.filter(([path]) => String(path) === join(root, 'a.ts'))).toHaveLength(2);
+    expect(vi.mocked(axios.post).mock.calls.at(-1)?.[1]).toMatchObject({ snapshot: { selectedLines: ['next operation'] } });
+  });
+
+  it('starts independent snapshot reads together and keeps findings ordered when one read fails', async () => {
+    await writeFile(join(root, 'b.ts'), 'second file\n');
+    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    const acquired = new Set<string>();
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    vi.mocked(readFile).mockImplementation(async (...args: Parameters<typeof actual.readFile>) => {
+      const path = String(args[0]);
+      if (path === join(root, 'a.ts') || path === join(root, 'b.ts')) {
+        acquired.add(path);
+        await held;
+        if (path === join(root, 'a.ts')) throw Object.assign(new Error('File disappeared'), { code: 'ENOENT' });
+      }
+      return actual.readFile(...args);
+    });
+    vi.mocked(axios.post).mockImplementation(async (_url, body) => ({ status: 200,
+      data: { comment: commentForCreate(body), replayed: false } }));
+    const materialization = service().materialize({ run: run(), reviewedFingerprint: null,
+      findings: [findings[0], { ...findings[0], id: 'second', filePath: 'b.ts' }] });
+    try {
+      await vi.waitFor(() => expect(acquired.size).toBe(2));
+    } finally {
+      release();
+    }
+    expect(await materialization).toMatchObject({ status: 'materialized', commentIds: ['comment-file-finding', 'comment-second'] });
+    expect(vi.mocked(axios.post).mock.calls.map(([, body]) => body)).toMatchObject([
+      { anchor: { kind: 'finding', findingId: 'file-finding' }, snapshot: { kind: 'none' } },
+      { anchor: { kind: 'line', filePath: 'b.ts' }, snapshot: { kind: 'text', selectedLines: ['second file'] } },
+    ]);
+    vi.mocked(readFile).mockImplementation(actual.readFile);
+  });
+
+  it('triages uniform findings with one targeted read and one bulk mutation, retaining per-comment CAS', async () => {
+    const comments = [0, 1, 2].map(index => ({ ...commentForCreate({ workspace, sessionId: 'session-1',
+      runId: 'review-run', findingId: `finding-${index}`, anchor: { kind: 'finding', runId: 'review-run', findingId: `finding-${index}` },
+      snapshot: { kind: 'none', capturedAt: 1 }, body: 'Finding', clientMutationId: `fixture-${index}` }), serverRevision: index + 3 }));
+    vi.mocked(axios.get).mockImplementation(async (_url, config) => {
+      expect(config?.params).toMatchObject({ commentIds: JSON.stringify(comments.map(comment => comment.id)), includeHistory: true });
+      return { status: 200, data: { items: comments.map(plainStoredComment), cursor: null } };
+    });
+    vi.mocked(axios.post).mockImplementation(async (url, body) => {
+      expect(String(url)).toContain('/bulkTransition');
+      expect(body).toMatchObject({ commentIds: comments.map(comment => comment.id), expectedState: 'proposed',
+        toState: 'open', reviewTriageStatus: 'accept', expectedServerRevisions: Object.fromEntries(comments.map(comment => [comment.id, comment.serverRevision])) });
+      return { status: 200, data: { bulkActionId: 'bulk-1', updated: comments.map(comment => ({ ...comment, state: 'open',
+        reviewTriageStatus: 'accept', serverRevision: comment.serverRevision + 1 })), failed: [] } };
+    });
+    const result = await service().triage('review-run', { findings: comments.map((comment, index) => ({
+      id: `finding-${index}`, commentId: comment.id, status: 'accept' })) });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { commentIds: comments.map(comment => comment.id),
+      triage: { findings: comments.map((_, index) => ({ id: `finding-${index}`, status: 'accept' })) } } });
+    expect(axios.get).toHaveBeenCalledTimes(1);
+    expect(axios.post).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens targeted ID-only pages through each Review resource once and still refuses foreign Account content', async () => runWithScmAccountScope('review-list-context', async () => {
+    await prepareReviewArtifact();
+    const artifactGet = vi.mocked(axios.get).getMockImplementation()!;
+    const comments = [0, 1].map(index => ({ ...commentForCreate({ workspace, sessionId: 'session-1',
+      runId: 'review-run', findingId: `bound-${index}`, anchor: { kind: 'finding', runId: 'review-run', findingId: `bound-${index}` },
+      snapshot: { kind: 'none', capturedAt: 1 }, body: 'Bound finding', clientMutationId: `bound-${index}` }), reviewId: 'review-1' }));
+    vi.mocked(axios.get).mockClear().mockImplementation(async (url, config) => {
+      if (!String(url).endsWith('/v1/reviews/comments')) return artifactGet(url, config);
+      const second = Boolean(config?.params?.cursor);
+      return { status: 200, data: { items: [plainStoredComment(comments[second ? 1 : 0]!)], cursor: second ? null : 'next' } };
+    });
+    const execute = transport();
+    expect(await execute('reviews.comments.list', { commentIds: comments.map(comment => comment.id), includeHistory: true, allPages: true }))
+      .toMatchObject({ items: comments, cursor: null });
+    expect(vi.mocked(axios.get).mock.calls.filter(([url]) => String(url).includes('/v1/artifacts/review-1'))).toHaveLength(1);
+    const foreign = { ...comments[0]!, reviewId: undefined, accountId: 'other-account' };
+    vi.mocked(axios.get).mockResolvedValueOnce({ status: 200, data: { items: [plainStoredComment(foreign)], cursor: null } });
+    await expect(execute('reviews.comments.list', { commentIds: [foreign.id], includeHistory: true }))
+      .rejects.toMatchObject({ code: 'review_comment_content_binding_mismatch' });
+  }));
+
+  it('keeps distinct triage notes per comment and advances CAS when several findings share one comment', async () => {
+    const initial = [0, 1].map(index => commentForCreate({ workspace, sessionId: 'session-1', runId: 'review-run',
+      findingId: `finding-${index}`, anchor: { kind: 'finding', runId: 'review-run', findingId: `finding-${index}` },
+      snapshot: { kind: 'none', capturedAt: 1 }, body: 'Finding', clientMutationId: `fixture-${index}` }));
+    const current = new Map(initial.map(comment => [comment.id, comment]));
+    vi.mocked(axios.get).mockImplementation(async url => ({ status: 200, data: String(url).endsWith('/v1/reviews/comments')
+      ? { items: initial.map(plainStoredComment), cursor: null } : { comment: plainStoredComment(current.get(String(url).split('/').at(-1)!)!) } }));
+    const notes: string[] = [];
+    vi.mocked(axios.post).mockImplementation(async (url, body) => {
+      const id = String(url).split('/').at(-2)!;
+      const request = ReviewCommentTransitionRequestV1Schema.parse({ ...(body as object), commentId: id });
+      const previous = current.get(id)!;
+      expect(request).toMatchObject({ expectedState: previous.state, expectedServerRevision: previous.serverRevision });
+      notes.push(request.reason!);
+      const comment = { ...previous, state: request.toState, reviewTriageStatus: request.reviewTriageStatus,
+        serverRevision: previous.serverRevision + 1 };
+      current.set(id, comment);
+      return { status: 200, data: { comment } };
+    });
+    expect(await service().triage('review-run', { findings: [
+      { id: 'finding-0', commentId: initial[0]!.id, status: 'accept', comment: 'First note' },
+      { id: 'finding-1', commentId: initial[1]!.id, status: 'accept', comment: 'Second note' },
+      { id: 'same-comment', commentId: initial[0]!.id, status: 'reject', comment: 'Reconsidered' },
+    ] })).toMatchObject({ ok: true, result: { triage: { findings: [
+      { id: 'finding-0', status: 'accept' }, { id: 'finding-1', status: 'accept' }, { id: 'same-comment', status: 'reject' },
+    ] } } });
+    expect(notes).toEqual(['First note', 'Second note', 'Reconsidered']);
+    expect(vi.mocked(axios.get).mock.calls.filter(([url]) => String(url).includes('/v1/reviews/comments'))).toHaveLength(1);
+  });
+
+  it('reads one immutable blob for several captured finding windows without falling back to changed working-tree bytes', async () => runWithScmAccountScope('snapshot-batch', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-snapshot-batch-' });
+    repositories.push(fixture.rootPath);
+    await writeFile(join(fixture.rootPath, fixture.trackedPath), 'captured first\ncaptured second\n');
+    const { comparison } = await captureScmComparison({ cwd: fixture.rootPath, source: { kind: 'workingTree', area: 'both' } });
+    await writeFile(join(fixture.rootPath, fixture.trackedPath), 'changed after capture\n');
+    vi.mocked(axios.post).mockImplementation(async (_url, body) => ({ status: 200,
+      data: { comment: commentForCreate(body), replayed: false } }));
+    vi.mocked(readFile).mockClear();
+    const result = await service().materialize({ run: { ...run(), launch: { cwd: fixture.rootPath } }, comparison,
+      reviewedFingerprint: null, findings: [1, 2].map(line => ({ ...findings[0], id: `captured-${line}`,
+        filePath: fixture.trackedPath, startLine: line })) });
+    expect(result).toMatchObject({ status: 'materialized', commentIds: ['comment-captured-1', 'comment-captured-2'] });
+    expect(vi.mocked(readFile).mock.calls.filter(([path]) => String(path).includes('happier-review-blob-'))).toHaveLength(1);
+    expect(vi.mocked(axios.post).mock.calls.map(([, body]) => (body as { snapshot: unknown }).snapshot))
+      .toMatchObject([{ source: 'diffSide', selectedLines: ['captured first'] }, { source: 'diffSide', selectedLines: ['captured second'] }]);
+  }));
+
   it.each([
     { mode: 'plain' as const, attached: false }, { mode: 'e2ee' as const, attached: false },
     { mode: 'plain' as const, attached: true },
@@ -908,7 +1055,8 @@ describe('canonical review Run comments', () => {
   it('records a live run\'s triage only in ReviewComment and never rewrites or re-publishes the review result', async () => {
     return runWithScmAccountScope('account', async () => {
     const created = commentForCreate({ workspace, sessionId: 'session-1', runId: 'review-run', engineId: 'claude', findingId: 'file-finding', anchor: { kind: 'file', filePath: 'a.ts' }, snapshot: { kind: 'none', capturedAt: 1 }, body: 'Reject invalid input.', clientMutationId: 'fixture' }, 'proposed');
-    vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { comment: plainStoredComment(created) } });
+    vi.mocked(axios.get).mockImplementation(async url => ({ status: 200, data: String(url).endsWith('/v1/reviews/comments')
+      ? { items: [plainStoredComment(created)], cursor: null } : { comment: plainStoredComment(created) } }));
     vi.mocked(axios.post).mockImplementation(async (_url, body) => {
       const request = ReviewCommentTransitionRequestV1Schema.parse({ ...(body as object), commentId: created.id });
       expect(request).toMatchObject({ expectedState: 'proposed', toState: 'open', reviewTriageStatus: 'accept' });
@@ -1094,7 +1242,8 @@ describe('canonical review Run comments', () => {
     // A fresh host has no in-memory Run; durable references must remain usable.
     const bridge = new ExecutionRunHostBridge({ parentProvider: 'claude', cwd: root, sendAcp: async () => {}, reviewComments: service() });
     const created = commentForCreate({ workspace, sessionId: 'session-1', runId: 'review-run', engineId: 'claude', findingId: 'file-finding', anchor: { kind: 'file', filePath: 'a.ts' }, snapshot: { kind: 'none', capturedAt: 1 }, body: 'Reject invalid input.', clientMutationId: 'fixture' }, 'open');
-    vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { comment: plainStoredComment(created) } });
+    vi.mocked(axios.get).mockImplementation(async url => ({ status: 200, data: String(url).endsWith('/v1/reviews/comments')
+      ? { items: [plainStoredComment(created)], cursor: null } : { comment: plainStoredComment(created) } }));
     vi.mocked(axios.post).mockImplementation(async (_url, body, config) => {
       if (!body || typeof body !== 'object') throw new Error('Missing transition body');
       const principal = ReviewCommentPrincipalHeaderV1Schema.parse(JSON.parse(Buffer.from(String(config?.headers?.[REVIEW_COMMENT_PRINCIPAL_HEADER_V1]), 'base64url').toString('utf8')));

@@ -115,7 +115,7 @@ export async function executeReviewCommentTransportV1(params: Readonly<{
     context: ReviewCommentTransportContextV1;
     actor: ReviewCommentActorRefV1;
 }> | Readonly<{
-    actionId: 'reviews.comments.get';
+    actionId: 'reviews.comments.get' | 'reviews.comments.list';
     /** Resolve an ID-only read from its authorized stored binding, before opening private content. */
     resolveContext: (reviewId: string | undefined) => Promise<ReviewCommentTransportContextV1>;
 }>)): Promise<unknown> {
@@ -143,8 +143,10 @@ export async function executeReviewCommentTransportV1(params: Readonly<{
     }
     if (params.actionId === 'reviews.comments.list') {
         const parsed = ReviewCommentActionInputSchemasV1['reviews.comments.list'].parse(input);
+        const context = 'resolveContext' in params ? await params.resolveContext(parsed.reviewId) : params.context;
+        if ('resolveContext' in params) assertInputContext(context, parsed.reviewId);
         const { allPages, filePath: _file, folderPath: _folder, severity: _severity, taxonomyIds: _taxonomy, cursor: _cursor, ...publicFilters } = parsed;
-        const filterKey = digest(params.context, 'list-filters', canonicalReviewCommentListFilters(parsed));
+        const filterKey = digest(context, 'list-filters', canonicalReviewCommentListFilters(parsed));
         let serverCursor = decodeCursor(parsed.cursor, filterKey);
         const items: ReviewCommentV1[] = [];
         do {
@@ -155,7 +157,10 @@ export async function executeReviewCommentTransportV1(params: Readonly<{
                     ...(serverCursor ? { cursor: serverCursor } : {}),
                 } }));
             for (const record of page.items) {
-                const comment = await open(record, params.context);
+                const recordContext = 'resolveContext' in params
+                    ? await params.resolveContext(parsed.reviewId ?? record.structural.reviewId) : context;
+                if ('resolveContext' in params) assertInputContext(recordContext, parsed.reviewId ?? record.structural.reviewId);
+                const comment = await open(record, recordContext);
                 if (matchesReviewCommentListFilters(comment, parsed))
                     items.push(comment);
             }

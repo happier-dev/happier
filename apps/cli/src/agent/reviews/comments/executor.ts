@@ -369,25 +369,31 @@ export function createCliReviewCommentActionExecutorFromCredentials(
                     ...(params.resolvePrincipalSigningContext ? { resolvePrincipalSigningContext: params.resolvePrincipalSigningContext } : {}),
                     assertPrincipalCurrent: async () => { if (originalPrincipal) await params.assertPrincipalCurrent?.(originalPrincipal); },
                 }) : undefined;
-                if (originalPrincipal) await params.assertPrincipalCurrent?.(originalPrincipal);
                 if (writeMode) await assertWriteMode(writeMode, options?.signal);
                 return executeReviewCommentHttpRequest({ credentials: params.credentials, request,
                     ...(principalHeader ? { principalHeader } : {}), ...(options?.signal ? { signal: options.signal } : {}) });
             };
             const reviewId = typeof parsedInput.reviewId === 'string' ? parsedInput.reviewId : undefined;
-            if (parsedActionId === 'reviews.comments.get' && !reviewId) {
+            if ((parsedActionId === 'reviews.comments.get' || parsedActionId === 'reviews.comments.list') && !reviewId) {
+                const contexts = new Map<string | undefined, Promise<ReviewCommentTransportContextV1>>();
                 return executeReviewCommentTransportV1({ actionId: parsedActionId, input: parsedInput,
                     randomBytes: params.randomBytes ?? ((length) => nodeRandomBytes(length)), request: requestTransport,
                     resolveContext: async boundReviewId => {
-                        const resource = boundReviewId ? await readResource(boundReviewId, options) : undefined;
-                        const mode = resource?.mode ?? await readMode({ usage: 'identity', ...(options?.signal ? { signal: options.signal } : {}) });
-                        if (mode === 'unknown') throw createActionExecuteFailureError({ ok: false,
-                            errorCode: 'review_comment_encryption_mode_unavailable', error: 'review_comment_encryption_mode_unavailable' });
-                        const accountId = (params.resolveAccountId ?? resolveAccountIdFromToken)(params.credentials.token);
-                        const context = resource ? { accountId, mode, material: null, resource }
-                            : { accountId, mode, material: mode === 'plain' ? null : resolveAccountScopedMaterial(params.credentials) };
-                        assertLogicalIntent(context);
-                        return context;
+                        const existing = contexts.get(boundReviewId);
+                        if (existing) return existing;
+                        const pending = (async () => {
+                            const resource = boundReviewId ? await readResource(boundReviewId, options) : undefined;
+                            const mode = resource?.mode ?? await readMode({ usage: 'identity', ...(options?.signal ? { signal: options.signal } : {}) });
+                            if (mode === 'unknown') throw createActionExecuteFailureError({ ok: false,
+                                errorCode: 'review_comment_encryption_mode_unavailable', error: 'review_comment_encryption_mode_unavailable' });
+                            const accountId = (params.resolveAccountId ?? resolveAccountIdFromToken)(params.credentials.token);
+                            const context = resource ? { accountId, mode, material: null, resource }
+                                : { accountId, mode, material: mode === 'plain' ? null : resolveAccountScopedMaterial(params.credentials) };
+                            assertLogicalIntent(context);
+                            return context;
+                        })();
+                        contexts.set(boundReviewId, pending);
+                        return pending;
                     },
                 });
             }
@@ -449,9 +455,6 @@ export function createCliReviewCommentActionExecutorFromCredentials(
                     : {}),
             })
             : undefined;
-        if (options?.principal) {
-            await params.assertPrincipalCurrent?.(options.principal);
-        }
         if (publicationContext || isReviewCommentMutationAction(parsedActionId)) {
             await assertWriteMode(publicationContext?.mode ?? 'plain', options?.signal);
         }
@@ -468,6 +471,9 @@ export function createCliReviewCommentActionExecutorFromCredentials(
     };
     execute.createBatch = async (items, options) => {
         if (!items.length) return [];
+        let signingContext: Promise<ReviewCommentPrincipalSigningContext> | undefined;
+        const resolvePrincipalSigningContext = () => signingContext ??= (
+            params.resolvePrincipalSigningContext ?? resolveCliReviewCommentPrincipalSigningContext)();
         const accountId = (params.resolveAccountId ?? resolveAccountIdFromToken)(params.credentials.token);
         const contexts = new Map<string | undefined, Promise<ReviewCommentTransportContextV1>>();
         const results: ReviewCommentCreateBatchTransportResultV1[] = [];
@@ -496,14 +502,29 @@ export function createCliReviewCommentActionExecutorFromCredentials(
         const batchResults = await executeReviewCommentCreateBatchTransportV1({ items: resolved,
             randomBytes: params.randomBytes ?? (length => nodeRandomBytes(length)),
             request: async batch => {
+                const currentness = new Map<string, Promise<void>>();
+                const assertPrincipalCurrent = async (principal: ReviewCommentPrincipalHeaderV1) => {
+                    const intent = principal.currentIntent;
+                    if (!intent || intent.kind !== 'execution_run_host_action') {
+                        await params.assertPrincipalCurrent?.(principal);
+                        return;
+                    }
+                    const key = stringifyReviewCommentPrincipalCanonicalJsonV1([intent.pluginId, intent.sourceCustody]);
+                    let pending = currentness.get(key);
+                    if (!pending) {
+                        pending = Promise.resolve().then(() => params.assertPrincipalCurrent?.(principal));
+                        currentness.set(key, pending);
+                    }
+                    await pending;
+                };
                 const signed = await Promise.all(batch.items.map(async request => {
                     try {
                         const principal = items[resolved[request.itemIndex]!.index]!.principal;
                         const rebound = principal?.currentIntent && request.contentCommitment
                             ? { ...principal, currentIntent: { ...principal.currentIntent, effectBodySha256Base64Url: request.contentCommitment } } : principal;
                         const principalHeader = rebound ? await encodeReviewCommentPrincipalHeader({ principal: rebound, request,
-                            resolvePrincipalSigningContext: params.resolvePrincipalSigningContext,
-                            assertPrincipalCurrent: async () => { if (principal) await params.assertPrincipalCurrent?.(principal); },
+                            resolvePrincipalSigningContext,
+                            assertPrincipalCurrent: async () => { if (principal) await assertPrincipalCurrent(principal); },
                         }) : undefined;
                         return { ok: true as const, value: { input: request.body, ...(principalHeader ? { principalHeader } : {}) } };
                     } catch (error) {
