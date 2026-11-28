@@ -119,8 +119,8 @@ it('a newly registered detached Run reader inherits store isolation without an i
   expect(store.listPublicForRequest({ limit: 1 }, null, run.requesterWorkAttributionV1))
     .toMatchObject([{ runId: run.runId }]);
   expect(store.listPublicForRequest({}, null, undefined)).toBeNull();
-  // One cold lookup recovers; warm owner/foreign/ownerless reads do no more storage work.
-  expect(recovery).toHaveBeenCalledOnce();
+  // Exact requester reads never enumerate other Accounts' retained Runs.
+  expect(recovery).not.toHaveBeenCalled();
 });
 
 it('Run ingress modules cannot read the unscoped store or choose their own list predicate', async () => {

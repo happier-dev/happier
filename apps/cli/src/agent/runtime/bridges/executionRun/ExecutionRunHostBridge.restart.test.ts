@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { once } from 'node:events';
@@ -16,6 +16,8 @@ import { readBackendTargetRefV2 } from '@happier-dev/protocol';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
 import { gcExecutionRunMarkers, readRetainedExecutionRunRecords, removeExecutionRunMarker, retainExecutionRunState } from '@/daemon/executionRunRegistry';
+import { createExecutionRunRpcActionDeps } from '@/rpc/handlers/executionRuns/dispatchExecutionRunRpcAction';
+import { resolveExecutionRunPolicy } from '@/agent/executionRuns/policy/executionRunPolicy';
 import { ExecutionRunHostBridge } from './ExecutionRunHostBridge';
 import { finishExecutionRun } from './finishExecutionRun';
 import { writeExecutionRunActivityMarker } from './activityMarkers';
@@ -35,6 +37,23 @@ vi.mock('@/session/transport/rpc/sessionRpc', () => ({
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
   return createBundledPluginPublicationFsFixture(actual);
+});
+
+const retainedIo = vi.hoisted(() => ({ scans: 0, opens: [] as string[] }));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    readdir(...args: Parameters<typeof actual.readdir>) {
+      if (basename(String(args[0])) === 'daemon-execution-runs') retainedIo.scans++;
+      return actual.readdir(...args);
+    },
+    open(...args: Parameters<typeof actual.open>) {
+      const path = String(args[0]);
+      if (/[/\\]state-[a-f0-9]{64}\.sealed$/.test(path) && typeof args[1] === 'number') retainedIo.opens.push(path);
+      return actual.open(...args);
+    },
+  };
 });
 
 let directory: string;
@@ -105,6 +124,28 @@ describe('execution lifecycle restart recovery', () => {
     const restarted = bridge();
     await restarted.recoverRetainedRuns();
     expect(restarted.get(run.runId)).toMatchObject({ status: 'succeeded', latestToolResult: output, structuredMeta });
+  });
+
+  it('stops a retained Run without reading the other retained Runs', async () => {
+    const run = { ...state('parent-session', 'resumable'), status: 'succeeded', finishedAtMs: 3 } as const;
+    for (let i = 0; i < 8; i++) await retainExecutionRunState({ ...run, runId: `retained-${i}` });
+    await retainExecutionRunState(run);
+    const restarted = bridge();
+    const deps = createExecutionRunRpcActionDeps({
+      manager: restarted,
+      context: { sessionId: 'parent-session', cwd: directory },
+      policy: resolveExecutionRunPolicy({
+        defaults: { boundedTimeoutMs: null, reviewBoundedTimeoutMs: null, maxTurns: null },
+      }),
+      isExecutionRunsEnabled: () => true,
+    });
+
+    retainedIo.scans = 0;
+    retainedIo.opens.length = 0;
+    await expect(deps.executionRunStop('parent-session', { runId: run.runId })).resolves.toEqual({
+      ok: true, status: 'succeeded',
+    });
+    expect({ scans: retainedIo.scans, opens: retainedIo.opens.length }).toEqual({ scans: 0, opens: 1 });
   });
 
   it('redelivers one loss but distinguishes a later resumed host lifetime', () => {

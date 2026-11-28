@@ -116,6 +116,7 @@ import {
   acknowledgeExecutionRunWorkerUpdate,
   deleteRetainedExecutionRunHistory,
   readPendingExecutionRunWorkerUpdates,
+  reconcileRetainedExecutionRunRecord,
   reconcileRetainedExecutionRunRecords,
   retainExecutionRunState,
   type RetainedExecutionRunWorkerUpdate,
@@ -130,6 +131,7 @@ import type { ExecutionRunTranscriptPublisher } from './executionRunTranscriptPu
 import type { ExecutionRunSessionStateTarget } from './sessionStateDelivery';
 import { enqueueExecutionRunMarkerWrite, writeExecutionRunActivityMarker } from './activityMarkers';
 import type { ExecutionRunHostBridgeContract } from './executionRunBridgeContract';
+import type { RetainedExecutionRunRecord } from './retainedState';
 import { areExecutionRunBackendTargetsEqual, matchesExecutionRunLegacyBackendId, resolveExecutionRunRuntimeBackendId, resolveExecutionRunRuntimeBackendTarget } from './backendTargets';
 import {
   readExecutionRunPermissionResponseFromDispatch,
@@ -1938,8 +1940,13 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   }
 
   /** Request reads never expose detached work on the strength of Machine access alone. */
-  async getForRequest(runId: string, scopeSessionId: string | null, requester: ExecutionRunState['requesterWorkAttributionV1']): Promise<ExecutionRunState | null> {
-    if (!this.runs.has(runId)) await this.recoverRetainedRuns();
+  async getForRequest(
+    runId: string,
+    scopeSessionId: string | null,
+    requester: ExecutionRunState['requesterWorkAttributionV1'],
+    options?: Readonly<{ refreshRetained?: boolean }>,
+  ): Promise<ExecutionRunState | null> {
+    if (options?.refreshRetained || !this.runs.has(runId)) await this.recoverRetainedRun(runId);
     const run = this.runs.get(runId);
     return run && this.isRunInRequestScope(run, scopeSessionId, requester) ? run : null;
   }
@@ -1991,23 +1998,33 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     if (!this.retainedRunRecovery) {
       this.retainedRunRecovery = (async () => {
         const records = await reconcileRetainedExecutionRunRecords({ nowMs: this.getNowMs() });
-        for (const record of records) {
-          // An alive different host retains control. Its record is not a local
-          // controller and must never authorize this bridge to resume it.
-          if (this.controllers.has(record.state.runId)) continue;
-          if (record.state.status === 'running') {
-            // A different live host may have resumed a previously recovered
-            // terminal run. Its persisted record cannot grant local control.
-            if (record.ownerPid !== process.pid) this.runs.delete(record.state.runId);
-            continue;
-          }
-          this.runs.set(record.state.runId, { ...record.state,
-            ...(record.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: record.requesterWorkAttributionV1 } : {}),
-          });
-        }
+        for (const record of records) this.mergeRetainedRun(record);
       })().finally(() => { this.retainedRunRecovery = null; });
     }
     await this.retainedRunRecovery;
+  }
+
+  private async recoverRetainedRun(runId: string): Promise<void> {
+    if (this.controllers.has(runId)) return;
+    const record = await reconcileRetainedExecutionRunRecord(runId, { nowMs: this.getNowMs() });
+    if (record === 'unavailable') {
+      if (!this.controllers.has(runId)) this.runs.delete(runId);
+    } else if (record) {
+      this.mergeRetainedRun(record);
+    }
+  }
+
+  private mergeRetainedRun(record: RetainedExecutionRunRecord): void {
+    const runId = record.state.runId;
+    if (this.controllers.has(runId)) return;
+    // A live foreign owner may have resumed a previously recovered terminal Run.
+    if (record.state.status === 'running') {
+      if (record.ownerPid !== process.pid) this.runs.delete(runId);
+      return;
+    }
+    this.runs.set(runId, { ...record.state,
+      ...(record.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: record.requesterWorkAttributionV1 } : {}),
+    });
   }
 
   getRunningCount(): number {
@@ -2961,6 +2978,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       signal?: AbortSignal;
       permissionRequestStore?: ExecutionRunPermissionRequestStore;
       workflowObservationSink?: ExecutionRunWorkflowObservationSink;
+      admittedRun?: ExecutionRunState;
       projectLaunchContext?: ExecutionRunRuntimeCreateOptions['projectLaunchContext'];
       /** Session Pending custody, installed before the recovered bounded turn can emit output. */
       pendingInput?: Readonly<{
@@ -2979,10 +2997,12 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   ): Promise<{ ok: boolean; errorCode?: string; error?: string }> {
     if (params.actionRequestAttributionV1) params = { ...params,
       actionRequestAttributionV1: materializeActionRequestAttributionV1(params.actionRequestAttributionV1) };
-    await this.recoverRetainedRuns();
+    if (!params.admittedRun) await this.recoverRetainedRun(runId);
     this.ensurePermissionResponseTargetHandlerRegistered();
     const run = this.runs.get(runId) ?? null;
-    if (!run) return { ok: false, errorCode: 'execution_run_not_found', error: 'Not found' };
+    if (!run || (params.admittedRun && run !== params.admittedRun)) {
+      return { ok: false, errorCode: 'execution_run_not_found', error: 'Not found' };
+    }
     const accountSnapshotResolver = this.bindInvocationAccountSettingsSnapshot(params.projectLaunchContext?.ingress);
     if (params.pendingInput && (run.sessionId === null || run.runClass !== 'bounded'
       || run.status !== 'failed' || params.resume !== true)) {
@@ -3031,6 +3051,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         const ensured = await this.ensure(runId, {
           resume: true,
           inputFollowsResume: true,
+          admittedRun: run,
           resolveAccountSettingsSnapshot: accountSnapshotResolver,
           ...(params.projectLaunchContext ? { projectLaunchContext: params.projectLaunchContext } : {}),
           ...(params.causalPermissionAuthority
@@ -3346,6 +3367,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       signal?: AbortSignal;
       /** Host-only coupling used by bounded `send({ resume: true })`. */
       inputFollowsResume?: boolean;
+      admittedRun?: ExecutionRunState;
       resolveAccountSettingsSnapshot?: ExecutionRunRuntimeCreateOptions['resolveAccountSettingsSnapshot'];
       causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
       actionRequestAttributionV1?: import('@happier-dev/protocol/actions/actionRequestAttributionV1').ActionRequestAttributionV1;
@@ -3360,7 +3382,10 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     runId: string,
     params: Parameters<ExecutionRunHostBridge['ensure']>[1],
   ): Promise<ExecutionRunEnsureResult> {
-    await this.recoverRetainedRuns();
+    if (!params.admittedRun) await this.recoverRetainedRun(runId);
+    if (params.admittedRun && this.runs.get(runId) !== params.admittedRun) {
+      return { ok: false, errorCode: 'execution_run_not_found', error: 'Not found' };
+    }
     this.ensurePermissionResponseTargetHandlerRegistered();
     const accountSnapshotResolver = Object.hasOwn(params, 'resolveAccountSettingsSnapshot')
       ? params.resolveAccountSettingsSnapshot
@@ -3691,16 +3716,23 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     });
   }
 
-  async stop(runId: string): ReturnType<typeof stopExecutionRun> {
-    return await this.stopWithIntent(runId, 'explicit_stop');
+  async stop(runId: string, admittedRun?: ExecutionRunState): ReturnType<typeof stopExecutionRun> {
+    return await this.stopWithIntent(runId, 'explicit_stop', admittedRun);
   }
 
-  private async stopWithIntent(runId: string, intent: 'explicit_stop' | 'dispose'): ReturnType<typeof stopExecutionRun> {
-    return await runInExecutionRunTranscriptSecretScope(this.readRunTranscriptSecrets(runId), () => this.stopInRunSecretScope(runId, intent));
+  private async stopWithIntent(
+    runId: string, intent: 'explicit_stop' | 'dispose', admittedRun?: ExecutionRunState,
+  ): ReturnType<typeof stopExecutionRun> {
+    return await runInExecutionRunTranscriptSecretScope(this.readRunTranscriptSecrets(runId), () => this.stopInRunSecretScope(runId, intent, admittedRun));
   }
 
-  private async stopInRunSecretScope(runId: string, intent: 'explicit_stop' | 'dispose'): ReturnType<typeof stopExecutionRun> {
-    await this.recoverRetainedRuns();
+  private async stopInRunSecretScope(
+    runId: string, intent: 'explicit_stop' | 'dispose', admittedRun?: ExecutionRunState,
+  ): ReturnType<typeof stopExecutionRun> {
+    if (!admittedRun) await this.recoverRetainedRun(runId);
+    if (admittedRun && this.runs.get(runId) !== admittedRun) {
+      return { ok: false, errorCode: 'execution_run_not_found', error: 'Not found' };
+    }
     const recoveryInput = this.boundedRecoveryInputs.get(runId);
     this.boundedRecoveryInputs.delete(runId);
     await recoveryInput?.consumer?.dispose();

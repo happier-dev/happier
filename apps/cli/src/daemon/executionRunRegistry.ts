@@ -442,67 +442,91 @@ export async function isExecutionRunHomeRetained(runId: string): Promise<boolean
   return false;
 }
 
-/** Existing daemon process supervision feeds the lifecycle owner; transport loss never does. */
-export async function reconcileRetainedExecutionRunRecords(params: Readonly<{
+type RetainedExecutionRunReconciliation = Readonly<{
   nowMs: number;
   isPidAlive?: (pid: number) => boolean | Promise<boolean>;
   isPidSafeHappyProcess?: (pid: number) => boolean | Promise<boolean>;
-}>, onUnavailable?: () => void): Promise<readonly RetainedExecutionRunRecord[]> {
+}>;
+
+/** Existing daemon process supervision feeds the lifecycle owner; transport loss never does. */
+export async function reconcileRetainedExecutionRunRecords(
+  params: RetainedExecutionRunReconciliation,
+  onUnavailable?: () => void,
+): Promise<readonly RetainedExecutionRunRecord[]> {
   const records = await readRetainedExecutionRunRecords(onUnavailable);
   const reconciled: RetainedExecutionRunRecord[] = [];
   for (const observed of records) {
-    const reconciledRecord = await serializeRetainedStateWrite(observed.state.runId, async () => {
-      // A checkpoint or acceptance ACK may have advanced the scanned record.
-      const record = await readRetainedExecutionRunRecord(observed.state.runId);
-      if (!record) return null;
-      let next = record;
-      if (record.state.status === 'running') {
-        const alive = await (params.isPidAlive ?? isPidPresent)(record.ownerPid);
-        // Process recognition can be inconclusive. Its visibility-only boolean
-        // is not authority to settle a live owner's lifecycle or admit resume.
-        const identity = alive && record.ownerProcessStartTimeMs !== undefined ? await readProcessIdentityByPid(record.ownerPid) : null;
-        const reused = processGenerationProvesReuse(record.ownerProcessStartTimeMs, identity?.processStartTimeMs);
-        if (!alive || reused) {
-          next = projectExecutionRunHostLoss(record, params.nowMs);
-          await writeRetainedExecutionRunRecord(next, false, false, true);
-          const run = next.state;
-          const { resolvedSelection } = projectExecutionRunPublicState(run);
-          await writeExecutionRunMarker({
-            pid: record.ownerPid, happySessionId: run.sessionId, runId: run.runId, callId: run.callId,
-            ...(next.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: next.requesterWorkAttributionV1 } : {}),
-            sidechainId: run.sidechainId, intent: run.intent, backendTarget: readBackendTargetRefV2(run.backendTarget),
-            permissionMode: run.permissionMode, approvalProfileId: run.approvalProfileId ?? null,
-            retentionPolicy: run.retentionPolicy, runClass: run.runClass,
-            ioMode: run.ioMode, status: run.status, startedAtMs: run.startedAtMs,
-            ...(resolvedSelection ? { resolvedSelection } : {}),
-            updatedAtMs: params.nowMs, finishedAtMs: params.nowMs, errorCode: 'execution_run_host_lost',
-          });
-        }
-      }
-      if (next.terminalEventId) {
-        const update = composeExecutionRunWorkerUpdate(next.state, next.terminalEventId);
-        if (update) {
-          const path = join(resolveExecutionRunMarkerDir(), resolveWorkerUpdateEntry(update.update.workerId, update.localId));
-          // An existing (even unreadable) delivery owns its immutable custody.
-          // Recovery only fills the crash window before initial publication.
-          try { await lstat(path); }
-          catch (error) {
-            if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
-            await retainExecutionRunWorkerUpdate({ ...update,
-              ...(next.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: next.requesterWorkAttributionV1 } : {}),
-            });
-          }
-        } else {
-          const { terminalEventId: _notSelected, ...settled } = next;
-          next = settled;
-          await writeRetainedExecutionRunRecord(next);
-        }
-      }
-      return next;
-    });
-    if (reconciledRecord) reconciled.push(reconciledRecord);
+    const record = await reconcileRetainedExecutionRunRecord(observed.state.runId, params, onUnavailable);
+    if (record && record !== 'unavailable') reconciled.push(record);
   }
   return reconciled;
+}
+
+export async function reconcileRetainedExecutionRunRecord(
+  runId: string,
+  params: RetainedExecutionRunReconciliation,
+  onUnavailable?: () => void,
+): Promise<RetainedExecutionRunRecord | null | 'unavailable'> {
+  return await serializeRetainedStateWrite(runId, async () => {
+    // A checkpoint or acceptance ACK may have advanced the last observed state.
+    let record: RetainedExecutionRunRecord | null;
+    try {
+      record = await readRetainedExecutionRunRecord(runId);
+    } catch {
+      const path = retainedStatePath(runId);
+      onUnavailable?.();
+      reportUnavailableRetainedEntry(path, await retainedEntryObservation(path), {
+        code: 'execution_run_state_unavailable', entry: basename(path), reason: 'read_failed',
+      }, '[executionRunRegistry] Retained execution state could not be opened');
+      return 'unavailable';
+    }
+    if (!record) return null;
+    unavailableRetainedEntries.delete(retainedStatePath(runId));
+    let next = record;
+    if (record.state.status === 'running') {
+      const alive = await (params.isPidAlive ?? isPidPresent)(record.ownerPid);
+      // Process recognition can be inconclusive. Its visibility-only boolean
+      // is not authority to settle a live owner's lifecycle or admit resume.
+      const identity = alive && record.ownerProcessStartTimeMs !== undefined ? await readProcessIdentityByPid(record.ownerPid) : null;
+      const reused = processGenerationProvesReuse(record.ownerProcessStartTimeMs, identity?.processStartTimeMs);
+      if (!alive || reused) {
+        next = projectExecutionRunHostLoss(record, params.nowMs);
+        await writeRetainedExecutionRunRecord(next, false, false, true);
+        const run = next.state;
+        const { resolvedSelection } = projectExecutionRunPublicState(run);
+        await writeExecutionRunMarker({
+          pid: record.ownerPid, happySessionId: run.sessionId, runId: run.runId, callId: run.callId,
+          ...(next.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: next.requesterWorkAttributionV1 } : {}),
+          sidechainId: run.sidechainId, intent: run.intent, backendTarget: readBackendTargetRefV2(run.backendTarget),
+          permissionMode: run.permissionMode, approvalProfileId: run.approvalProfileId ?? null,
+          retentionPolicy: run.retentionPolicy, runClass: run.runClass,
+          ioMode: run.ioMode, status: run.status, startedAtMs: run.startedAtMs,
+          ...(resolvedSelection ? { resolvedSelection } : {}),
+          updatedAtMs: params.nowMs, finishedAtMs: params.nowMs, errorCode: 'execution_run_host_lost',
+        });
+      }
+    }
+    if (next.terminalEventId) {
+      const update = composeExecutionRunWorkerUpdate(next.state, next.terminalEventId);
+      if (update) {
+        const path = join(resolveExecutionRunMarkerDir(), resolveWorkerUpdateEntry(update.update.workerId, update.localId));
+        // An existing (even unreadable) delivery owns its immutable custody.
+        // Recovery only fills the crash window before initial publication.
+        try { await lstat(path); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
+          await retainExecutionRunWorkerUpdate({ ...update,
+            ...(next.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: next.requesterWorkAttributionV1 } : {}),
+          });
+        }
+      } else {
+        const { terminalEventId: _notSelected, ...settled } = next;
+        next = settled;
+        await writeRetainedExecutionRunRecord(next);
+      }
+    }
+    return next;
+  });
 }
 
 const ExecutionRunMarkerSchema = DaemonExecutionRunMarkerSchema;

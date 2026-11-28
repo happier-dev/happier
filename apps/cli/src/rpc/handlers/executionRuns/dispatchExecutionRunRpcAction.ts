@@ -768,9 +768,8 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       const disabled = ensureEnabled();
       if (disabled) return disabled;
       if (!isAuthoritativeScope(sessionId)) return executionRunScopeMismatch();
-      await params.manager.recoverRetainedRuns();
       const parsed = ExecutionRunSendRequestSchema.parse(request);
-      const run = await params.manager.getForRequest(parsed.runId, sessionId, actionOptions?.requesterWorkAttributionV1);
+      const run = await params.manager.getForRequest(parsed.runId, sessionId, actionOptions?.requesterWorkAttributionV1, { refreshRetained: true });
       if (!run) return executionRunNotFound();
       const refusal = admitExecutionRunCallerTurn(run, actionOptions?.authority);
       if (refusal) return refusal;
@@ -788,6 +787,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
         return { ok: false, errorCode: 'execution_run_invalid_action_input', error: 'Workflow observation requires an exact local input id' };
       }
       const sent = await params.manager.send(parsed.runId, {
+        admittedRun: run,
         message: parsed.message,
         resume: parsed.resume,
         delivery: parsed.delivery,
@@ -945,10 +945,10 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       const disabled = ensureEnabled();
       if (disabled) return disabled;
       if (!isAuthoritativeScope(sessionId)) return executionRunScopeMismatch();
-      await params.manager.recoverRetainedRuns();
       const parsed = ExecutionRunGetRequestSchema.parse(request);
-      if (!await params.manager.getForRequest(parsed.runId, sessionId, actionOptions?.requesterWorkAttributionV1)) return executionRunNotFound();
-      const stopped = await params.manager.stop(parsed.runId);
+      const run = await params.manager.getForRequest(parsed.runId, sessionId, actionOptions?.requesterWorkAttributionV1, { refreshRetained: true });
+      if (!run) return executionRunNotFound();
+      const stopped = await params.manager.stop(parsed.runId, run);
       if (!stopped.ok) {
         return {
           ok: false,

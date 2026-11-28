@@ -50,7 +50,7 @@ export interface ExecutionRunHostBridgeContract {
   waitForOutput(runId: string, observation: import('@happier-dev/protocol/reviews/reviewNarration').ExecutionRunOutputObservation, signal?: AbortSignal): Promise<void>;
   recoverRetainedRuns(): Promise<void>;
   get(runId: string): ExecutionRunState | null;
-  getForRequest(runId: string, scopeSessionId: string | null, requester: RequesterWorkAttributionV1 | undefined): Promise<ExecutionRunState | null>;
+  getForRequest(runId: string, scopeSessionId: string | null, requester: RequesterWorkAttributionV1 | undefined, options?: Readonly<{ refreshRetained?: boolean }>): Promise<ExecutionRunState | null>;
   deleteForRequest(runId: string, requester: RequesterWorkAttributionV1 | undefined): Promise<ExecutionRunHistoryDeleteResult>;
   hasAttachedRun(runId: string): boolean;
   projectPublicState(run: ExecutionRunState): ExecutionRunPublicState;
@@ -91,6 +91,8 @@ export interface ExecutionRunHostBridgeContract {
       causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
       effectiveCallerPermissionMode?: string;
       signal?: AbortSignal;
+      /** State admitted for this call by the request scope reader. */
+      admittedRun?: ExecutionRunState;
       /** Host-private exact-input interaction target; never an RPC field. */
       permissionRequestStore?: ExecutionRunPermissionRequestStore;
     }>,
@@ -135,7 +137,7 @@ export interface ExecutionRunHostBridgeContract {
     runId: string,
     params: Readonly<{ text: string; displayText?: string; localId: string }>,
   ): Promise<{ ok: true } | { ok: false; errorCode: string; error: string }>;
-  stop(runId: string): Promise<{ ok: boolean; errorCode?: string; error?: string }>;
+  stop(runId: string, admittedRun?: ExecutionRunState): Promise<{ ok: boolean; errorCode?: string; error?: string }>;
   cancelCurrentTurn(runId: string, params: Readonly<{ occurrenceId: string; turnId: string }>): Promise<import('@happier-dev/protocol').ExecutionRunCancelTurnResponse>;
   dispose?(): Promise<void>;
   respondToPermissionRequest(
