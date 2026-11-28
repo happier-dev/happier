@@ -445,7 +445,7 @@ export function deploymentAccountPurgeCases() {
         expect(await db.deploymentDomain.count({ where: { targetLinkId: f.link.id } })).toBe(0);
     });
 
-    it('protects a managed deployment until the owner explicitly detaches after a failed teardown', async () => {
+    it.each([false, true])('protects a managed deployment until explicit detach after failed teardown (revoked Machine: %s)', async revoked => {
         const f = await fixture(false);
         await db.machine.update({ where: { id: f.machine.id }, data: {
             metadata: encodePlainMachineStoredContent({ host: 'Purge', platform: 'linux', happyCliVersion: 'test',
@@ -470,6 +470,7 @@ export function deploymentAccountPurgeCases() {
             predecessorDeploymentId: f.receipt.id, requestedAt: new Date(2), startedAt: new Date(3), settledAt: new Date(4),
             contentArtifactId: f.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1,
         } });
+        if (revoked) await db.machine.update({ where: { id: f.machine.id }, data: { revokedAt: new Date(), active: false } });
         expect(await deleteAccountForErasure({ accountId: f.account.id })).toEqual({
             status: 'failed', code: 'account_erasure_deployment_cleanup_required',
             blocker: { reason: 'teardown_incomplete', ...target },

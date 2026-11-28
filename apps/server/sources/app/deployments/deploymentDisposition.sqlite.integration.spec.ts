@@ -113,6 +113,36 @@ it('refuses foreign, reader, revoked manager, stale revision, and forged teardow
     expect((await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: own.link.id } })).deletedAt).toBeNull();
 });
 
+it.each(['unlink', 'delete'] as const)('allows record-only %s after the owner revokes the Machine', async action => {
+    const f = await fixture();
+    await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { buildMachineId: f.machine.id } });
+    const dispose = (actorAccountId: string, detachKeepRunning: boolean) => inTx(tx => action === 'unlink'
+        ? unlinkDeploymentTargetInTx(tx, actorAccountId, { ...f.input, detachKeepRunning })
+        : deleteDeploymentEnvironmentInTx(tx, actorAccountId, { ...f.base, detachKeepRunning }));
+    await db.machine.update({ where: { id: f.machine.id }, data: { revokedAt: new Date(), active: false } });
+    expect(await dispose(f.reader.id, true)).toMatchObject({ error: 'deployment_access_denied' });
+    expect(await dispose(f.owner.id, false)).toMatchObject({ error: 'machine_unavailable' });
+    expect(await dispose(f.owner.id, true)).toMatchObject({ ok: true, detached: true });
+    expect(await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.link.id } }))
+        .toMatchObject({ state: 'detached', detachedAt: expect.any(Date) });
+});
+
+it('refuses explicit detach when the revoked Machine belongs to another Account', async () => {
+    const f = await fixture();
+    await db.machine.update({ where: { id: f.machine.id }, data: { accountId: f.foreign.id } });
+    await db.userRelationship.create({ data: { fromUserId: f.foreign.id, toUserId: f.owner.id, status: 'friend' } });
+    await db.machineGrant.create({ data: { principalKind: 'account', accountId: f.owner.id, machineId: f.machine.id,
+        accessLevel: 'admin', createdByAccountId: f.foreign.id } });
+    const active = await f.receipt('succeeded');
+    await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { state: 'deployed', activeDeploymentId: active.id } });
+    expect(await inTx(tx => unlinkDeploymentTargetInTx(tx, f.owner.id, f.input)))
+        .toMatchObject({ error: 'deployment_teardown_required' });
+    await db.machine.update({ where: { id: f.machine.id }, data: { revokedAt: new Date(), active: false } });
+    expect(await inTx(tx => unlinkDeploymentTargetInTx(tx, f.owner.id, { ...f.input, detachKeepRunning: true })))
+        .toMatchObject({ error: 'deployment_access_denied' });
+    expect(await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.link.id } })).toMatchObject({ detachedAt: null });
+});
+
 it.each(['queued', 'running'])('refuses %s dependent receipt even for explicit detach', async state => {
     const f = await fixture();
     const receipt = await f.receipt(state);

@@ -14,6 +14,9 @@ history to be erased with it, including stale Deploy grants and references to a
 revoked Machine. **Detach and keep running** releases Happier’s custody, including
 after a failed teardown or a disconnected provider credential. Detach works
 without the provider credential and leaves the provider resource running.
+The Account that owns the Project Source can also detach when its own placement
+Machine has been revoked. Detach releases Home's management records without
+sending a stop or removal command to that Machine.
 
 Before confirming their own Account erasure, the person sees each shared
 Environment that will be deleted and the number of other members who will lose

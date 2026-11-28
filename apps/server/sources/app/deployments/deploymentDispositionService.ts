@@ -114,6 +114,28 @@ async function admitDispositionInTx(tx: Tx, actorAccountId: string, input: Dispo
     return loaded;
 }
 
+async function admitDispositionMachinesInTx(tx: Tx, actorAccountId: string, loaded: AdmittedDeploymentEnvironment,
+    detachKeepRunning: boolean | undefined,
+) {
+    const { row, admission: { owner } } = loaded;
+    const machines = await readDeploymentDefinitionMachinesInTx(tx, row);
+    if (!detachKeepRunning || owner.kind !== 'account' || owner.accountId !== actorAccountId) {
+        return admitDeploymentDefinitionMachinesInTx(tx, actorAccountId, owner, machines);
+    }
+    // Explicit detach only releases Home's records. A Source owner can release
+    // their own revoked placements even though those Machines cannot admit work.
+    const revoked = new Set<string>();
+    const machineIds = [...new Set(machines.map(machine => machine.machineId))];
+    for (const ids of portableQueryChunks({ values: machineIds, bindingsPerValue: 1, fixedBindings: 1 })) {
+        const rows = await tx.machine.findMany({ where: {
+            id: { in: [...ids] }, accountId: actorAccountId, revokedAt: { not: null },
+        }, select: { id: true } });
+        for (const machine of rows) revoked.add(machine.id);
+    }
+    return admitDeploymentDefinitionMachinesInTx(tx, actorAccountId, owner,
+        machines.filter(machine => !revoked.has(machine.machineId)));
+}
+
 async function dispositionDependenciesInTx(tx: Tx, input: DispositionInput,
     row: Extract<Awaited<ReturnType<typeof loadDeploymentEnvironmentInTx>>, { ok: true }>['row'],
 ) {
@@ -148,8 +170,7 @@ export async function unlinkDeploymentTargetInTx(tx: Tx, actorAccountId: string,
         deletedAt: null, detachedAt: null }, include: { machines: true } });
     if (!link) return deploymentFailure('deployment_unavailable', { phase: 'deployment.target.unlink.load', causeKind: 'not_found' });
     if (link.revision !== input.expectedTargetLinkRevision) return deploymentFailure('deployment_conflict');
-    const denied = await admitDeploymentDefinitionMachinesInTx(tx, actorAccountId, loaded.admission.owner,
-        await readDeploymentDefinitionMachinesInTx(tx, loaded.row));
+    const denied = await admitDispositionMachinesInTx(tx, actorAccountId, loaded, input.detachKeepRunning);
     if (denied) return denied;
     const dependency = await dispositionDependenciesInTx(tx, input, loaded.row);
     if (dependency) return dependency;
@@ -204,8 +225,7 @@ export async function deleteDeploymentEnvironmentInTx(tx: Tx, actorAccountId: st
     }
     if (loaded.row.deletedAt) return deploymentFailure('deployment_unavailable', { phase: 'deployment.environment.delete', causeKind: 'already_deleted' });
     if (loaded.row.revision !== input.expectedRevision) return deploymentFailure('deployment_conflict');
-    const denied = await admitDeploymentDefinitionMachinesInTx(tx, actorAccountId, loaded.admission.owner,
-        await readDeploymentDefinitionMachinesInTx(tx, loaded.row));
+    const denied = await admitDispositionMachinesInTx(tx, actorAccountId, loaded, input.detachKeepRunning);
     if (denied) return denied;
     const dependency = await dispositionDependenciesInTx(tx, input, loaded.row);
     if (dependency) return dependency;
