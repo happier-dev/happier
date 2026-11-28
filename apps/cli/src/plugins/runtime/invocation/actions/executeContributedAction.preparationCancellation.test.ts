@@ -1,16 +1,17 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 
 import { createExternalActionRuntime } from '@/daemon/externalActions/externalActionRuntime.testkit';
+import { createSignedRootActionApprovalAcknowledgement } from '@/daemon/externalActions/signedRootActionApproval';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { createTargetActionCurrentIntentAdapter } from '@/session/actions/approvals/targetActionCurrentIntent';
 import { executeContributedAction } from './executeContributedAction';
 
 afterEach(() => getSharedBlockingApprovalCoordinator().dispose());
 
-it('withdraws the preparation wait for a live-only CLI approval when its caller disconnects', async () => {
+it('presents a live-only Ask to the signed CLI and withdraws it when the caller disconnects', async () => {
   let effects = 0;
   let artifact: TargetActionApprovalRequestV1 | null = null;
   let ready!: () => void;
@@ -32,14 +33,29 @@ it('withdraws the preparation wait for a live-only CLI approval when its caller 
   const caller = new AbortController();
   const approvalContext = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
     runtimeAccountId: 'account', serverId: 'home' } satisfies ActionExecutorContext;
-  const pending = executeContributedAction({ runtimeRegistry: runtime, actionId: 'acme.cli-approval/inspect',
-    input: {}, approvalContext, requestCurrentIntent,
-    context: { ...approvalContext, signal: caller.signal, approvalInputCustody: 'live_only', observePluginExecution: host.observePluginExecution },
-    actionsSettings: { v: 1, actions: { 'acme.cli-approval/actions/inspect': { approvalRequiredSurfaces: ['cli'] } } },
+  const acknowledgement = createSignedRootActionApprovalAcknowledgement();
+  const present = vi.fn();
+  const pending = acknowledgement.execute({
+    actionId: 'action.invoke', surface: 'cli', signal: caller.signal, onApprovalRequested: present,
+    run: async (signal, operationOwnerUpdate) => {
+      const attempt = await executeContributedAction({ runtimeRegistry: runtime, actionId: 'acme.cli-approval/inspect',
+        input: {}, approvalContext: { ...approvalContext, operationOwnerUpdate }, requestCurrentIntent,
+        daemonHoldsApprovalWaiter: true,
+        context: { ...approvalContext, signal, approvalInputCustody: 'live_only', observePluginExecution: host.observePluginExecution },
+        actionsSettings: { v: 1, actions: { 'acme.cli-approval/actions/inspect': { approvalRequiredSurfaces: ['cli'] } } },
+      });
+      if (!attempt.matched) throw new Error('Expected the contributed Action to be available');
+      return attempt.result;
+    },
   });
-  expect(await Promise.race([waiting.then(() => 'waiting'), pending.then(() => 'settled')])).toBe('waiting');
-  caller.abort();
-  await expect(pending).resolves.toMatchObject({ matched: true, result: { ok: false, errorCode: 'plugin_action_aborted' } });
+  try {
+    expect(await Promise.race([waiting.then(() => 'waiting'), pending.then(() => 'settled')])).toBe('waiting');
+    expect(present.mock.calls).toEqual([[{ kind: 'approval_request_created', artifactId, actionId: 'action.invoke' }]]);
+  } finally {
+    caller.abort();
+    await expect(pending).resolves.toMatchObject({ ok: false, errorCode: 'plugin_action_aborted' });
+    await acknowledgement.close();
+  }
   expect(effects).toBe(0);
   expect(host.store.get({ accountId: 'account', machineId: 'machine' }, artifactId)).toBeNull();
 });

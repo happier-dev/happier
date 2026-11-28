@@ -10826,7 +10826,9 @@ the executor's persisted approval receipt before the person decides. The daemon
 retains the original private input and blocking invocation until decision or
 shutdown; closing the acknowledged terminal request does not withdraw it.
 Disconnecting before that receipt still cancels the request. Actions whose
-results also require live custody keep their original blocking response.
+results also require live custody keep their original blocking response. A signed
+local CLI invocation of a contributed Action with live-only custody reports the
+persisted approval Artifact ID on its progress stream while awaiting its result.
 
 The required-ness comes from Action Settings when they are present, and otherwise from the
 default floor. `safety: 'danger'` rows are picked up automatically from

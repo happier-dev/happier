@@ -873,6 +873,8 @@ export async function executeContributedAction(params: Readonly<{
     let announceLiveAsk: ((artifactId: string) => void) | undefined;
     const liveAsk = observeOperation && trackedOperation && admissionResponse && params.daemonHoldsApprovalWaiter
       ? new Promise<string>(resolve => { announceLiveAsk = resolve; }) : undefined;
+    const signedCliProgress = params.daemonHoldsApprovalWaiter && actionSurface !== 'plugin' && invocationSurface === 'cli'
+      ? params.approvalContext?.operationOwnerUpdate : undefined;
     let waitedForApproval = false;
     // The pressing person reviews in their own UI: the parent carries its review
     // back for a digest-bound re-press. Never a self-approval Artifact.
@@ -892,12 +894,17 @@ export async function executeContributedAction(params: Readonly<{
             || action.definition.approvalInputCustody === 'live_only'
             || (projectedInput?.confidentialPaths.length ?? 0) > 0
             || (accountTarget && !runtimeRegistry.resolveCurrentPluginApprovalReplayPlacement);
-          const currentIntentRequest = accountTarget || (liveOnly && announceLiveAsk) ? {
+          const currentIntentRequest = accountTarget || (liveOnly && (announceLiveAsk || signedCliProgress)) ? {
             ...request,
             onLiveApprovalRequested: (artifactId: string) => {
               waitedForApproval = true;
               request.onLiveApprovalRequested?.(artifactId);
-              if (liveOnly) announceLiveAsk?.(artifactId);
+              if (liveOnly) {
+                announceLiveAsk?.(artifactId);
+                // The signed CLI keeps its terminal result while the private input waits here.
+                signedCliProgress?.update({ progress: { phase: 'waiting_for_approval', label: 'Waiting for approval',
+                  approval: { kind: 'approval_request_created', artifactId, actionId: ACTION_INVOKE_ACTION_ID_V1 } } });
+              }
             },
           } : request;
           const requestedSurface = request.invocationSurface ?? request.surface;
