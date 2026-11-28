@@ -1,5 +1,7 @@
 import axios from 'axios';
 import nacl from 'tweetnacl';
+import credentialAxios from '@/api/client/credentialAxios';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema,
@@ -8,7 +10,8 @@ import { dispatchOriginalAccountAction, verifyExternalActionExecutionAuthorizati
 import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
 import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { invokeHostAdmittedSignedReviewedChildV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { MachineSetupApplyInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
@@ -17,7 +20,25 @@ import { SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/m
 import { createNativeSoftwareInstallFixture } from '@/testkit/machines/nativeSoftwareInstall';
 import { createCombinedMachineSetupActionDeps } from './composeMachineSetup';
 
+const homeUrl = 'https://home.test';
+
 describe('native Setup reviewed child admission', () => {
+  beforeEach(() => {
+    // Keep Automation selection real. This fake Home has Workflows enabled and no matching triggers.
+    const features = FeaturesResponseSchema.parse({ features: { workflows: { enabled: true } } });
+    const index = ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      expect(input instanceof Request ? input.url : String(input)).toBe(homeUrl + '/v1/features');
+      return Response.json(features);
+    });
+    vi.spyOn(credentialAxios, 'request').mockImplementation(async config => {
+      expect(config).toMatchObject({ method: 'GET', url: homeUrl + AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 });
+      return { status: 200, data: index };
+    });
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
   it('does not treat a public binding-looking context as admitted native review', async () => {
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt-none', accountEncryptionMode: 'e2ee' });
     const input = MachineSetupApplyInputV1Schema.parse({ homeId: 'srv_home', machineId: fixture.machine.id,
@@ -46,7 +67,7 @@ describe('native Setup reviewed child admission', () => {
     } finally { await fixture.dispose(); }
   });
   it.each([false, true])('spends a restored exact leaf through real Action policy without reopening its Run review (app intent=%s)', async hasApps => {
-    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt-none', accountEncryptionMode: 'plain' });
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt-none', accountEncryptionMode: 'plain', serverHttpBaseUrl: homeUrl });
     try {
       const input = MachineSetupApplyInputV1Schema.parse({ homeId: 'srv_home', machineId: fixture.machine.id,
         targets: [{ homeId: 'srv_home', machineId: fixture.machine.id, desiredRevision: 99,
@@ -81,7 +102,7 @@ describe('native Setup reviewed child admission', () => {
   });
 
   it.each(['plain', 'e2ee'] as const)('delivers a private reviewed leaf from a different Machine to the real native decider (%s)', async mode => {
-    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt-none', accountEncryptionMode: mode });
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt-none', accountEncryptionMode: mode, serverHttpBaseUrl: homeUrl });
     const sourceKey = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(71));
     const source = { kind: 'machine' as const, machineId: 'publisher-machine' };
     const target = { kind: 'machine' as const, machineId: fixture.machine.id };
