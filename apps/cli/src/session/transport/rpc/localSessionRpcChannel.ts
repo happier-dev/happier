@@ -267,7 +267,8 @@ function admitLocalPacket(current: Ingress, body: unknown): Readonly<{ registere
 
 async function handleIngressRequest(current: Ingress, request: IncomingMessage, response: ServerResponse): Promise<void> {
   if (request.method === 'POST' && (request.url === HOST_ADD_PATH || request.url === HOST_END_PATH || request.url === HOST_WATCH_PATH
-    || request.url === HOST_HANDOVER_PATH || request.url === HOST_HOLD_PATH || request.url === HOST_LIVE_WORK_PATH)) {
+    || request.url === HOST_HANDOVER_PATH || request.url === HOST_HOLD_PATH || request.url === HOST_LIVE_WORK_PATH
+    || request.url === HOST_STOP_IF_IDLE_PATH)) {
     await handleSessionHostRequest(current, request, response);
     return;
   }
@@ -653,6 +654,7 @@ export function resolveLocalSessionRpcRoute(input: Readonly<{
 
 const HOST_ADD_PATH = '/v1/session-host/add';
 const HOST_END_PATH = '/v1/session-host/end';
+const HOST_STOP_IF_IDLE_PATH = '/v1/session-host/stop-if-idle';
 /** A restarted daemon re-observes a running Session's end (the add request's body, re-attached). */
 const HOST_WATCH_PATH = '/v1/session-host/watch';
 /** A newer daemon moves this host's Sessions to a current host: the host hands over and exits. */
@@ -670,6 +672,7 @@ const SESSION_NOT_HOSTED = 'session_not_hosted';
 export const SESSION_HOST_HANDOVER_EXIT_CODE = 75;
 /** First stdout line of a ready session host; its daemon waits for it before adding Sessions. */
 export const SESSION_HOST_READY_LINE = 'happier-session-host-ready';
+export const SESSION_HOST_IDLE_EXPIRED_LINE = 'happier-session-host-idle-expired';
 
 type LocalSessionHostDescriptorV1 = Readonly<{
   v: typeof DESCRIPTOR_VERSION;
@@ -755,6 +758,8 @@ export type LocalSessionHostAdmission = Readonly<{
    * `SESSION_HOST_HANDOVER_EXIT_CODE`; false when the host is already ending.
    */
   handOver(): boolean;
+  /** Stop a host in its idle grace period without affecting Sessions that outlive daemon stop. */
+  stopIfIdle(): boolean;
   /**
    * Keep the host alive until the returned release is called. A New Session intent also preloads
    * the runner by default. Throws `SessionHostClosingError` when the host no longer admits.
@@ -804,6 +809,10 @@ async function parseSessionHostAddRequest(body: unknown): Promise<SessionHostAdd
 async function handleSessionHostRequest(current: Ingress, request: IncomingMessage, response: ServerResponse): Promise<void> {
   const host = current.host;
   if (!host) {
+    if (request.url === HOST_ADD_PATH) {
+      reply(response, 503, { error: 'The session host is ending', errorCode: SESSION_HOST_CLOSING });
+      return;
+    }
     reply(response, 404, { error: 'No session host on this endpoint', errorCode: 'local_session_unavailable' });
     return;
   }
@@ -833,6 +842,10 @@ async function handleSessionHostRequest(current: Ingress, request: IncomingMessa
     const reason = SessionLifecycleStateReasonSchema.safeParse((body as { lifecycleStateReason?: unknown } | null)?.lifecycleStateReason);
     reply(response, 200, typeof trackingKey === 'string'
       ? host.endSession(trackingKey, reason.success ? reason.data : undefined) : { status: 'not_hosted' });
+    return;
+  }
+  if (request.url === HOST_STOP_IF_IDLE_PATH) {
+    reply(response, 200, { stopping: host.stopIfIdle() });
     return;
   }
   if (request.url === HOST_HANDOVER_PATH) {
@@ -1025,7 +1038,10 @@ function openLocalSessionHostSession(input: Readonly<{ hostPid: number; path: st
   });
   outgoing.once('error', error => {
     // Before admission nothing was started; after it, the host connection broke.
-    refuse(false, false, (error as NodeJS.ErrnoException).code);
+    const code = (error as NodeJS.ErrnoException).code;
+    // A connect failure cannot have admitted an Add. A reset may have occurred after
+    // admission, so preserve it without replaying the request.
+    refuse(input.path === HOST_ADD_PATH && (code === 'ENOENT' || code === 'ECONNREFUSED'), false, code);
   });
   outgoing.end(text);
   return { admitted, ended };
@@ -1071,6 +1087,11 @@ export async function endLocalSessionHostSession(input: Readonly<{ hostPid: numb
   const status = result?.status;
   if (status === 'termination_requested' || status === 'not_hosted' || status === 'termination_unavailable') return { status };
   return { status: 'host_unavailable' };
+}
+
+/** Ask the peer-checked host to retire immediately if it has no Session or hold. */
+export async function stopIdleLocalSessionHost(hostPid: number): Promise<boolean> {
+  return (await callLocalSessionHost(hostPid, HOST_STOP_IF_IDLE_PATH, {}))?.stopping === true;
 }
 
 /** One read of a hosted Session's current live work (unparsed); null when the host has none or is unreachable. */

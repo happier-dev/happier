@@ -100,7 +100,7 @@ describe('session host', () => {
       turn.resolve();
       await healthy;
     }
-    expect(await settledWithin(running.whenEnded)).toBeUndefined();
+    expect(running.watchSession('healthy-policy')).toBeNull();
   });
 
   it.each(['command', 'background', 'before registration'] as const)('preserves a %s failure cause without ending the sibling Session', async delivery => {
@@ -139,12 +139,51 @@ describe('session host', () => {
 
   afterEach(async () => {
     processExit.mockClear();
-    if (host) hostProcess.emit('SIGTERM');
+    if (host) {
+      hostProcess.emit('SIGTERM');
+      await host.whenEnded;
+    }
+    vi.useRealTimers();
     host = null;
   });
   afterAll(async () => {
     processExit.mockRestore();
     await rm(testHome, { recursive: true, force: true });
+  });
+
+  it('reuses the host after its last Session ends and expires after the next idle period', async () => {
+    const nextTurn = deferred();
+    const running = await startHost(async argv => {
+      if (argv[0] === 'next') await nextTurn.promise;
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await expect(add('first')).resolves.toEqual({ exitCode: 0 });
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    const next = add('next');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(hostExit).not.toHaveBeenCalled();
+    nextTurn.resolve();
+    await expect(next).resolves.toEqual({ exitCode: 0 });
+    expect(hostExit).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await running.whenEnded;
+    expect(hostExit).toHaveBeenCalledExactlyOnceWith(0);
+  });
+
+  it('honors process termination during the idle grace period', async () => {
+    const running = await startHost(async () => {});
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await add('ends-before-stop');
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(hostExit).not.toHaveBeenCalled();
+
+    hostProcess.emit('SIGTERM');
+    await running.whenEnded;
+    expect(hostExit).toHaveBeenCalledExactlyOnceWith(0);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(hostExit).toHaveBeenCalledTimes(1);
   });
 
   it('distinguishes missing termination registration from an absent Session and transport refusal', async () => {

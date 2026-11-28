@@ -1,5 +1,6 @@
 import type { SessionLifecycleStateReason } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import type { ChildProcess } from 'node:child_process';
+import { createInterface } from 'node:readline';
 
 import { isPidPresent } from '@happier-dev/cli-common/process';
 import { resolveSessionAutoResumeAdmissionV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
@@ -8,6 +9,7 @@ import type { SpawnFailureLimitsReader } from '@/processes/spawnFailure/classify
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import {
   SESSION_HOST_READY_LINE,
+  SESSION_HOST_IDLE_EXPIRED_LINE,
   addLocalSessionHostSession,
   endLocalSessionHostSession,
   handOverLocalSessionHost,
@@ -15,6 +17,7 @@ import {
   listLocalSessionHostPids,
   readLocalSessionHostLiveWork,
   removeExitedSessionHostDescriptor,
+  stopIdleLocalSessionHost,
   watchLocalSessionHostSession,
   type LocalSessionHostSession,
   type SessionHostCommandEnd,
@@ -69,6 +72,8 @@ export type DaemonSessionHost = Readonly<{
    * its last Session.
    */
   prestart(signal: AbortSignal): Promise<void>;
+  /** Daemon shutdown retires an idle host. Live Sessions keep their host for reattachment. */
+  stopIdleHost(): Promise<void>;
   /**
    * Daemon restart: the reattached Sessions whose process is a live session host (marker pid,
    * birth and command identity) are hosted Sessions again — Stop goes through the host and each
@@ -95,6 +100,8 @@ export type DaemonSessionHost = Readonly<{
 }>;
 
 type HostExit = Readonly<{ code: number | null; signal: NodeJS.Signals | null }>;
+type HostLaunchResult = RunningHost | Extract<SpawnSessionResult, { type: 'error' }>;
+type HostLaunch = { outcome: Promise<HostLaunchResult>; host: RunningHost | null };
 type RunningHost = Readonly<{
   pid: number;
   ready: Promise<boolean>;
@@ -130,23 +137,24 @@ function createHostedSessionHandle(host: RunningHost, trackingKey: string, sessi
  */
 function waitForHostReady(child: ChildProcess): Promise<number | null> {
   return new Promise((resolve) => {
-    let buffered = '';
-    const onData = (chunk: Buffer | string) => {
-      buffered += String(chunk);
-      const ready = new RegExp(`${SESSION_HOST_READY_LINE} (\\d+)\\n`).exec(buffered);
-      if (!ready) return;
-      // Keep draining the host's stdout so a full pipe can never block it.
-      child.stdout?.off('data', onData);
-      child.stdout?.resume();
-      child.off('exit', onExit);
-      resolve(Number(ready[1]));
-    };
-    const onExit = () => {
-      child.stdout?.off('data', onData);
-      resolve(null);
-    };
-    child.stdout?.on('data', onData);
-    child.once('exit', onExit);
+    let pid: number | null = null;
+    const ready = new RegExp(`^${SESSION_HOST_READY_LINE} (\\d+)$`);
+    if (child.stdout) {
+      // Keep draining throughout the host lifetime. The detached host reports idle expiry
+      // explicitly because process signals can also produce a normal exit code.
+      createInterface({ input: child.stdout }).on('line', line => {
+        if (pid === null) {
+          const match = ready.exec(line);
+          if (match) {
+            pid = Number(match[1]);
+            resolve(pid);
+          }
+        } else if (line === SESSION_HOST_IDLE_EXPIRED_LINE) {
+          logger.infoFile('[DAEMON RUN] Session host idle grace expired', { pid });
+        }
+      });
+    }
+    child.once('exit', () => resolve(null));
   });
 }
 
@@ -162,9 +170,9 @@ export function createDaemonSessionHost(params: Readonly<{
   readSpawnFailureLimits?: SpawnFailureLimitsReader;
   logDebug: (message: string, payload?: unknown) => void;
 }>): DaemonSessionHost {
-  let currentHost: Promise<RunningHost | Extract<SpawnSessionResult, { type: 'error' }>> | null = null;
+  let currentHost: HostLaunch | null = null;
 
-  const launchHost = async (): Promise<RunningHost | Extract<SpawnSessionResult, { type: 'error' }>> => {
+  const launchHost = async (): Promise<HostLaunchResult> => {
     const launched = await launchDetachedHappierProcess({
       args: ['session-host'],
       directory: params.directory,
@@ -197,16 +205,19 @@ export function createDaemonSessionHost(params: Readonly<{
     return { pid, ready: Promise.resolve(true), isRunning: () => child.exitCode === null && child.signalCode === null, exited };
   };
 
-  const ensureHost = async (): Promise<RunningHost | Extract<SpawnSessionResult, { type: 'error' }>> => {
+  const ensureHost = async (): Promise<HostLaunchResult> => {
     const pending = currentHost;
     if (pending) {
-      const existing = await pending;
+      const existing = await pending.outcome;
       if (currentHost !== pending) return await ensureHost();
       if (!('type' in existing) && existing.isRunning()) return existing;
     }
     // One launch shared by concurrent adds (assigned before any await); it settles once spawned.
-    currentHost = launchHost();
-    return await currentHost;
+    const launched: HostLaunch = { outcome: launchHost(), host: null };
+    currentHost = launched;
+    const outcome = await launched.outcome;
+    if (!('type' in outcome)) launched.host = outcome;
+    return outcome;
   };
 
   type AddResult = Awaited<ReturnType<DaemonSessionHost['addSession']>>
@@ -225,6 +236,11 @@ export function createDaemonSessionHost(params: Readonly<{
       return { status: 'added' as const, session: createHostedSessionHandle(host, request.trackingKey, session) };
     }
     const { closing, admissionFailure } = await session.ended;
+    if (closing) {
+      // Only forget the host that refused this Add. A concurrent Add may
+      // already have started its replacement.
+      if (currentHost?.host === host) currentHost = null;
+    }
     return { status: closing ? 'closing' as const : 'failed' as const, result: {
       type: 'error' as const, errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
       errorMessage: `Session host PID ${host.pid} did not admit the Session${admissionFailure ? ` (${admissionFailure.code})` : ''}`,
@@ -246,11 +262,16 @@ export function createDaemonSessionHost(params: Readonly<{
       await hold.closed;
       signal.removeEventListener('abort', release);
     },
+    stopIdleHost: async () => {
+      // An idle host is already ready. Shutdown must not wait for a cold launch.
+      const host = currentHost?.host;
+      if (!host?.isRunning()) return;
+      if (await stopIdleLocalSessionHost(host.pid)) await host.exited;
+    },
     addSession: async (request) => {
       const first = await addToHost(request);
       if (first.status !== 'closing') return first;
-      // The host was ending after its last Session (idle); a new host takes this Session.
-      currentHost = null;
+      // The retiring host did not admit the Session. Use the current host or launch one.
       const second = await addToHost(request);
       return second.status === 'closing' ? { status: 'failed' as const, result: second.result } : second;
     },
@@ -272,7 +293,7 @@ export function createDaemonSessionHost(params: Readonly<{
         const adoptedHost = { host, markLost: () => { lost = true; }, current, reconciled: [] };
         adoptedHosts.set(pid, adoptedHost);
         // A live host of the current runtime takes new Sessions (no second host is started).
-        if (current) currentHost ??= Promise.resolve(host);
+        if (current) currentHost ??= { outcome: Promise.resolve(host), host };
         return adoptedHost;
       };
       let adopted = 0;
@@ -395,6 +416,7 @@ export function createSessionHostPlacement(params: Readonly<{
   /** New Session intent: prestart the host where Sessions are hosted (see `DaemonSessionHost.prestart`). */
   prestart: (signal: AbortSignal) => Promise<void>;
   adoptReattachedSessions: DaemonSessionHost['adoptReattachedSessions'];
+  stopIdleHost: DaemonSessionHost['stopIdleHost'];
 }> {
   let host: DaemonSessionHost | null = null;
   const daemonHost = (): DaemonSessionHost =>
@@ -404,5 +426,6 @@ export function createSessionHostPlacement(params: Readonly<{
     place,
     prestart: async (signal) => { await place()?.prestart(signal); },
     adoptReattachedSessions: (input) => place()?.adoptReattachedSessions(input) ?? 0,
+    stopIdleHost: async () => { await host?.stopIdleHost(); },
   };
 }

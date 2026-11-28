@@ -179,11 +179,11 @@ async function createHarness(startupFailure?: Error,
   const hosts: InProcessHost[] = [];
   census.startHost = async () => {
     const hostProcess = new EventEmitter();
+    const child = census.hostChildren.at(-1);
     // A host process that exits breaks every connection to it.
     const hostExit = vi.fn<(code: number) => void>(code => {
       for (const socket of hostSockets) socket.destroy();
-      if (startupFailure) {
-        const child = census.hostChildren.at(-1)!;
+      if (child && child.exitCode === null && child.signalCode === null) {
         child.exitCode = code;
         child.emit('exit', code, null);
       }
@@ -297,10 +297,10 @@ async function crashLatestHost(harness: Awaited<ReturnType<typeof createHarness>
   for (const socket of hostSockets) socket.destroy();
   // The in-process stand-in stops serving (a dead process serves nothing) before its exit is seen.
   const inProcess = harness.hosts.at(-1)!;
-  inProcess.process.emit('SIGTERM');
-  await inProcess.host.whenEnded;
   const child = census.hostChildren.at(-1)!;
   child.signalCode = 'SIGKILL';
+  inProcess.process.emit('SIGTERM');
+  await inProcess.host.whenEnded;
   child.emit('exit', null, 'SIGKILL');
 }
 
@@ -902,6 +902,35 @@ describe.skipIf(process.platform === 'win32')('daemon session host placement', (
       .toEqual([ra!.trackingKey, rb!.trackingKey, rc!.trackingKey, d.record.trackingKey].sort());
   });
 
+  it('launches no host after Start when the preceding Session ended during the grace window', { timeout: 120_000 }, async () => {
+    const harness = await createHarness();
+    const add = (trackingKey: string) => harness.sessionHost.addSession({
+      trackingKey, argv: ['codex'], env: {}, cwd: testHome,
+    });
+    const first = await add('warm-host-first');
+    expect(first).toMatchObject({ status: 'added' });
+    if (first.status !== 'added') throw new Error('Expected the first Session to be admitted');
+    harness.releaseAll();
+    await first.session.ended;
+
+    const launchesAtStart = census.hostLaunches;
+    const second = await add('warm-host-second');
+    expect(second).toMatchObject({ status: 'added' });
+    if (second.status !== 'added') throw new Error('Expected the second Session to be admitted');
+    expect(second.session.hostPid).toBe(first.session.hostPid);
+    expect(census.hostLaunches - launchesAtStart).toBe(0);
+    // Plain daemon stop preserves an active Session for reattachment.
+    await harness.sessionHost.stopIdleHost();
+    expect(harness.hosts[0]!.host.watchSession('warm-host-second')).not.toBeNull();
+
+    harness.releaseAll();
+    await second.session.ended;
+    expect(harness.hosts[0]!.exit).not.toHaveBeenCalled();
+    await harness.sessionHost.stopIdleHost();
+    expect(harness.hosts[0]!.exit).toHaveBeenCalledExactlyOnceWith(0);
+    expect(census.hostLaunches - launchesAtStart).toBe(0);
+  });
+
   it('prestarts ONE host on New Session intents, preloads the runner once, and the next Session joins that host', { timeout: 120_000 }, async () => {
     const launchesBefore = census.hostLaunches;
     const preloadsBefore = census.runnerPreloads;
@@ -951,7 +980,8 @@ describe.skipIf(process.platform === 'win32')('daemon session host placement', (
       stopReattachedSession: async () => { throw new Error('No Session to stop'); },
     })).toBe(0);
 
-    await vi.waitFor(() => expect(stranded.exit).toHaveBeenCalledWith(0), { timeout: 5_000 });
+    await stranded.host.whenEnded;
+    expect(stranded.exit).toHaveBeenCalledWith(0);
     expect(census.runnerPreloads).toBe(preloadsBeforeReplacement);
   });
 

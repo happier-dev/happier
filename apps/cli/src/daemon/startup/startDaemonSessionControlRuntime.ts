@@ -12200,6 +12200,7 @@ export async function startDaemonSessionControlRuntime(
           ]
         : []),
       ['control_runtime_resources', disposeControlRuntimeResources],
+      ['idle_session_host', sessionHostPlacement.stopIdleHost],
       ['ended_runner_state_retirement', async () => { await endedRunnerStateRetirement; }],
       ...trailingPhases,
     ];

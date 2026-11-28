@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { createWriteStream } from 'node:fs';
 import { appendFile, cp, mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { loadavg, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { expect, it, onTestFinished } from 'vitest';
@@ -41,6 +41,7 @@ import { isSessionHostProcessCommand } from '@/daemon/sessionHost/daemonSessionH
  * 3. Host SIGKILL mid-turn at N=3: one new host, same Agents, one settled turn per Session, and
  *    all emitted chunks present exactly once in order.
  * 4. An Agent exits after host SIGKILL: accept its final stdout and settle its turn before the holder leaves.
+ * Warm phase: two sequential Starts around a short idle gap, with an idle PSS sample.
  * 5. Host update: the daemon restarts from another runtime identity (a `versions/<v>` path
  *    before, the checkout after) while turns stream; the old host hands over (exit 75).
  * Scratch measurement harness (gated). Results and logs: HAPPIER_SESSION_HOST_GATE_DIR.
@@ -493,6 +494,40 @@ it.skipIf(process.env.HAPPIER_RUN_SESSION_HOST_GATE !== '1')(
   };
   const results: Record<string, unknown> = { runtime: gateRuntime, entry: bundleEntry ? 'bundle' : 'source', bun: gateRuntime === 'bun' ? gateBun : null, startedAt: new Date().toISOString() };
   const save = async () => await writeFile(join(gateDir, 'results.json'), JSON.stringify(results, null, 1));
+
+  if (gatePhases.has('warm')) {
+    const loadAtStart = loadavg();
+    const before = await openSession('SHGATE');
+    await agentOf(before);
+    await waitTurnsSettled([before]);
+    const state = (await readDaemonState())!;
+    const readDaemonLog = async () => await readFile(state.daemonLogPath!, 'utf8');
+    const hostLaunches = async () => (await readDaemonLog()).split('[DAEMON RUN] Session host launched').length - 1;
+    const stop = async (session: GateSession) => {
+      expect(await stopDaemonSession(session.sessionId, { target: state })).toMatchObject({ status: 'stopped' });
+      await waitFor(async () => (await listChildren()).every(child => child.happySessionId !== session.sessionId) || null, 'Session ended');
+    };
+    await stop(before);
+    const endedAt = performance.now();
+    await sleep(2_000);
+    const idleHost = await smaps(before.hostPid);
+    const idleCpuTicks = await cpuTicks(before.hostPid);
+    const launchesAtStart = await hostLaunches();
+    const idleGapMs = round(performance.now() - endedAt);
+    const after = await openSession('SHGATE');
+    await agentOf(after);
+    await waitTurnsSettled([after]);
+    const postStartLaunches = await hostLaunches() - launchesAtStart;
+    results.warm = { before, after, idleHost, idleCpuTicks, idleGapMs, postStartLaunches, loadAtStart, loadAtEnd: loadavg() };
+    await save();
+    console.info('[shgate] warm', JSON.stringify(results.warm));
+    expect(launchesAtStart).toBe(1);
+    expect(after.hostPid).toBe(before.hostPid);
+    expect(postStartLaunches).toBe(0);
+    await stop(after);
+    expect(await waitForProcessExit(after.hostPid, { timeoutMs: 60_000 })).toBe(true);
+    await waitFor(async () => (await readDaemonLog()).includes('[DAEMON RUN] Session host idle grace expired') || null, 'logged idle grace expiry');
+  }
 
   // 1+2. N = 1, 3, 10 (2-chunk turns), then the soak at N=10.
   const sessions: GateSession[] = [];
