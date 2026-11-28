@@ -1,6 +1,7 @@
+import { existsSync, realpathSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { sourceBuildNodeArgs } from '../../apps/stack/scripts/utils/proc/sourceBuildNodeArgs.mjs';
@@ -64,7 +65,9 @@ export async function withWorkspaceOutputScriptArgs({ packageDir, scriptName, en
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Node resolves the module URL through aliases such as macOS's /var, but argv keeps the launch path.
+if (process.argv[1] && existsSync(process.argv[1])
+    && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   const [{ buildUniversalPluginUiArtifacts }, { sourcePluginUiBuildOptions }] = await Promise.all([
     import('../../packages/plugin-sdk/src/ui/build/buildUniversalUiArtifacts.ts'),
     import('./sourcePluginUiBuildOptions.mjs'),

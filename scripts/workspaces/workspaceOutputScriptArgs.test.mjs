@@ -1,7 +1,7 @@
 // @happier-test-preparation source-condition
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,7 +54,16 @@ test('staged UI builds resolve manifest and artifact dependencies from current w
         { kind: 'hostedWeb', source: { kind: 'artifact', artifact: 'hosted' } }] } }
     };
   `);
-  const env = { ...process.env, NODE_OPTIONS: '--trace-warnings', HAPPIER_WORKSPACE_DIST_OUTPUT_DIR: outputDir };
+  const repoDir = fileURLToPath(new URL('../../', import.meta.url));
+  const linkedRepo = join(packageDir, 'capture-repo');
+  await symlink(repoDir, linkedRepo, 'junction');
+  const env = {
+    ...process.env,
+    NODE_OPTIONS: '--trace-warnings',
+    HAPPIER_WORKSPACE_DIST_OUTPUT_DIR: outputDir,
+    HAPPIER_WORKSPACE_CAPTURE_SOURCE_REPO_DIR: repoDir,
+    HAPPIER_STACK_REPO_DIR: linkedRepo,
+  };
   await withWorkspaceOutputScriptArgs({ packageDir, scriptName: 'build:ui', env }, async (args, childEnv = env) => {
     const manifestPath = args[args.indexOf('--manifest-path') + 1];
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
@@ -62,7 +71,7 @@ test('staged UI builds resolve manifest and artifact dependencies from current w
     // Sensitivity control: Node's source loader cannot repair the bundler's
     // stale installed exports when the source build options are absent.
     const legacyArgs = sourceBuildNodeArgs({
-      repoDir: fileURLToPath(new URL('../../', import.meta.url)),
+      repoDir,
       scriptPath: fileURLToPath(new URL('../../packages/plugin-sdk/src/ui/build/bin.ts', import.meta.url)),
       args: ['--project-root', packageDir, '--manifest-path', manifestPath],
     });
