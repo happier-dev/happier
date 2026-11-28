@@ -3437,13 +3437,13 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     if (args.actionId === 'workflow.run.invocations.list') {
       try {
         const { includeContent, knownProgressRevisions, ...input } = args.input;
-        const operation = { operation: 'invocations.list', ...input,
-          ...(includeContent === true ? { progressEnvelopes: true } : {}),
-          pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES };
-        const options = args.context.signal ? { signal: args.context.signal } : {};
         const page = record(await deps.storage.execute({
-          ...operation, ...(knownProgressRevisions === undefined ? {} : { knownProgressRevisions }),
-        }, options));
+          operation: 'invocations.list',
+          ...input,
+          ...(includeContent === true ? { progressEnvelopes: true } : {}),
+          ...(knownProgressRevisions === undefined ? {} : { knownProgressRevisions }),
+          pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
+        }, args.context.signal ? { signal: args.context.signal } : {}));
         const result = WorkflowActionOutputSchemasV1[args.actionId].parse({
           invocations: page.invocations,
           parentRevision: page.parentRevision,
