@@ -15,6 +15,7 @@ import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGov
 import { configureConnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createProviderSettingsHarness, installBundledProviderDeclarationsRpcBoundary, type ProviderSettingsHarness } from '@/dev/testkit/harness/providerSettingsHarness';
 import { createMachineFixture, createPlainMachineRowFixture, createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import { QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountCredentialHealthPatchV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
@@ -207,7 +208,8 @@ function PortableSetup(props: Readonly<{ credentials: NonNullable<Awaited<Return
 }
 
 async function restorePortableFixture(requestedService = service, homeClient = false, vendorResponseReady?: Promise<void>, machinePresence: boolean | 'online' | 'legacy' | 'guests' | 'mixed' = false, offlineMachineId?: string, vendorStatus = 503,
-    accountsReady?: Promise<void>, rejectVercelToken?: string, machineInventoryReady?: Promise<void>) {
+    accountsReady?: Promise<void>, rejectVercelToken?: string, machineInventoryReady?: Promise<void>,
+    providerRpc?: ProviderSettingsHarness) {
     const accountId = 'portable-controller';
     const credentials = { token: createAccountTokenForTests(accountId) };
     const serverUrl = 'https://portable-controller.test';
@@ -222,6 +224,7 @@ async function restorePortableFixture(requestedService = service, homeClient = f
             scopesByMode: { oauth: ['account:read'] } }] } : {}),
     } }, features: {
         plugins: { enabled: true, ui: { enabled: true, hostedWeb: { enabled: true }, reactNativeBundles: { enabled: true } } },
+        ...(providerRpc ? { providers: { enabled: true } } : {}),
     } });
     homes.answer(serverId, '/v4/connect/qualified/accounts', { body: { service: requestedService, accounts: [] } });
     homes.answer(serverId, '/v1/features', { body: features });
@@ -271,6 +274,13 @@ async function restorePortableFixture(requestedService = service, homeClient = f
                 if (event.includes('rpc')) {
                     machineRpcs += 1;
                     machineRpcMethods.push(payload.method);
+                    const providerMethod = [RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
+                        RPC_METHODS.DAEMON_PROVIDERS_USAGE_REFRESH].find(method => payload.method.endsWith(method));
+                    if (providerRpc && providerMethod) {
+                        const machineId = payload.method.slice(0, -providerMethod.length - 1);
+                        return { ok: true, result: await providerRpc.machineRpc({ machineId, serverId,
+                            method: providerMethod, payload: payload.params }) };
+                    }
                     // The existing selector acquires the selected Machine's Agent/plugin catalog.
                     if (payload.method.endsWith(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)) {
                         DaemonContributionRegistryProjectionDescribeRequestSchema.parse(payload.params);
@@ -949,12 +959,15 @@ it.each(['configurationRequired', 'awaitingManual'] as const)('recovers Vercel f
     } finally { await screen.unmount(); }
 });
 
-it('keeps an idle Vercel account detail mounted without doing more reads', () => withPortableSheetBrowser(async () => {
-    const fixture = await restorePortableFixture(vercel, false, undefined, 'online');
+it.each(['token', 'oauth'] as const)('shows Gateway Usage on a portable Vercel %s account without idle Machine reads', kind => withPortableSheetBrowser(async () => {
+    const providerRpc = createProviderSettingsHarness();
+    installBundledProviderDeclarationsRpcBoundary(providerRpc);
+    const fixture = await restorePortableFixture(vercel, false, undefined, 'online', 'online-controller-b',
+        undefined, undefined, undefined, undefined, providerRpc);
     const { storage } = await import('@/sync/domains/state/storageStore');
     const account = { service: vercel, accountId: 'work-vercel' };
     const row = QualifiedConnectedAccountProfileV4Schema.parse({
-        ref: account, authenticationModeId: 'token', revisionSemantics: 'revisioned', status: 'connected',
+        ref: account, authenticationModeId: kind, kind, revisionSemantics: 'revisioned', status: 'connected',
         credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationReady: true,
         configurationRevision: 'configured-vercel',
     });
@@ -967,17 +980,33 @@ it('keeps an idle Vercel account detail mounted without doing more reads', () =>
     </InjectedAuthProvider>);
     try {
         await vi.waitFor(() => expect(screen.findHostByTestId('qualified-account-detail:configuration')).not.toBeNull());
-        await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
-        const detail = screen.findHostByTestId('qualified-account-detail');
-        const pathsBeforeIdle = fixture.paths.length;
-        const rpcsBeforeIdle = fixture.machineRpcs;
-        for (let minute = 1; minute <= 3; minute += 1) {
-            await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-            expect(screen.findHostByTestId('qualified-account-detail')).toBe(detail);
+        expect(screen.findHostByTestId('connected-account-provider-usage')).not.toBeNull();
+        if (kind === 'token') {
+            expect(screen.getTextContent()).toContain(t('connectedServices.diagnostics.body.signInWithOAuthForProvider', {
+                service: 'Vercel account', provider: 'Vercel AI Gateway',
+            }));
         }
-        // Machine presence can age visibly in Works on without refreshing the Account.
-        expect(fixture.paths.slice(pathsBeforeIdle)).toEqual([]);
-        expect(fixture.machineRpcs - rpcsBeforeIdle).toBe(0);
+        expect(fixture.machineRpcs).toBe(0);
+        if (kind === 'oauth') {
+            await screen.pressByTestIdAsync('connected-account-provider-usage');
+            const usage = () => providerRpc.state.requests.filter(request => request.method === RPC_METHODS.DAEMON_PROVIDERS_USAGE_REFRESH);
+            await vi.waitFor(() => expect(usage()).toEqual([expect.objectContaining({
+                machineId: 'online-controller-a',
+                payload: expect.objectContaining({ connectedAccountSource: expect.objectContaining({ account }) }),
+            })]));
+        } else {
+            await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+            const detail = screen.findHostByTestId('qualified-account-detail');
+            const pathsBeforeIdle = fixture.paths.length;
+            const rpcsBeforeIdle = fixture.machineRpcs;
+            for (let minute = 1; minute <= 3; minute += 1) {
+                await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+                expect(screen.findHostByTestId('qualified-account-detail')).toBe(detail);
+            }
+            // Machine presence can age visibly in Works on without refreshing the Account.
+            expect(fixture.paths.slice(pathsBeforeIdle)).toEqual([]);
+            expect(fixture.machineRpcs - rpcsBeforeIdle).toBe(0);
+        }
     } finally {
         await screen.unmount();
         vi.useRealTimers();

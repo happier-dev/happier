@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { ProviderConnectionUsageSection } from '@/components/settings/providers/ProviderConnectionUsageSection';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -10,6 +11,8 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { PROVIDER_CREDENTIAL_KIND_RECOVERY_DESCRIPTION_KEYS } from '@/providers/connection/errorPresentation';
 import { providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { readConnectedAccountProviderUsageSources } from '@/providers/hooks/useProviderConnectionUsageForSource';
+import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
+import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines/administration/useTargetSelection';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
@@ -24,20 +27,36 @@ export function QualifiedAccountProviderUsage(props: Readonly<{
     const presented = useLayoutPresentationActive();
     const enabled = useFeatureEnabled('providers', { scopeKind: 'spawn', serverId: props.serverId });
     const scope = useAccountSettingsScope();
-    const active = presented && enabled && Boolean(props.machineId && scope
-        && areServerProfileIdentifiersEquivalent(scope.serverId, props.serverId));
+    const active = presented && enabled && scope !== null
+        && areServerProfileIdentifiersEquivalent(scope.serverId, props.serverId);
     const [open, setOpen] = React.useState<string | null>(null);
+    const { ref: account, kind: credentialKind } = props.profile;
+    const accountChoices = React.useMemo(() => readConnectedAccountProviderUsageSources({
+        account, credentialKind, context: { kind: 'account' },
+    }), [account, credentialKind]);
+    // Recovery is an Account declaration fact. Only an eligible expanded row needs a Machine.
+    const chooseUsageMachine = active && !props.machineId && accountChoices.some(
+        choice => choice.observationKey === open && !choice.credentialKindRecovery,
+    );
+    const targetSelection = useMachineAdministrationTargetSelection(MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.providers, {
+        accountScope: scope ?? undefined,
+        enabled: chooseUsageMachine,
+    });
+    const machineId = props.machineId ?? targetSelection.resolveExecutionTarget()?.machine.id ?? null;
     const declarations = useDaemonMergedProjectionInputs({
-        machineId: props.machineId, serverId: props.serverId, sections: ['familiesById.providers'], enabled: active, load: open !== null,
+        machineId, serverId: props.serverId, sections: ['familiesById.providers'], enabled: active, load: open !== null,
     });
     const projection = declarations.phase === 'ready' ? declarations.inputs?.pluginProjectionV2 : null;
-    const choices = React.useMemo(() => readConnectedAccountProviderUsageSources({
-        account: props.profile.ref, credentialKind: props.profile.kind,
-        context: projection ? providerDeclarationContext(props.machineId, projection) : { kind: 'account' },
-    }), [props.profile.ref, props.profile.kind, props.machineId, projection]);
+    const machineChoices = React.useMemo(() => projection ? readConnectedAccountProviderUsageSources({
+        account, credentialKind, context: providerDeclarationContext(machineId, projection),
+    }) : null, [account, credentialKind, machineId, projection]);
+    const choices = props.machineId ? machineChoices ?? accountChoices : accountChoices;
     if (!active || choices.length === 0) return null;
     const selected = choices.find(choice => choice.observationKey === open && !choice.credentialKindRecovery);
-    const unavailable = declarations.phase === 'error' || declarations.phase === 'unsupported';
+    const readable = selected && machineChoices?.find(
+        choice => choice.observationKey === selected.observationKey && !choice.credentialKindRecovery,
+    );
+    const unavailable = declarations.phase === 'ready' || declarations.phase === 'error' || declarations.phase === 'unsupported';
     return (
         <>
             <ItemGroup>
@@ -61,27 +80,31 @@ export function QualifiedAccountProviderUsage(props: Readonly<{
                     );
                 })}
             </ItemGroup>
-            {selected && !projection ? (
-                <ItemGroup>
-                    <SurfaceStateCard size="line" kind={unavailable ? 'empty' : 'loading'}
-                        title={unavailable ? t('settingsProvidersCollection.usage.unsupported') : t('common.loading')} />
-                </ItemGroup>
-            ) : selected ? (
+            {chooseUsageMachine ? (
+                <MachineAdministrationTargetSelector selection={targetSelection} presentation="context"
+                    testIDPrefix="connected-account-provider-usage-target" />
+            ) : null}
+            {readable ? (
                 <ProviderConnectionUsageSection
-                    connectionId={selected.observationKey}
-                    connectedAccountSource={selected.selected}
+                    connectionId={readable.observationKey}
+                    connectedAccountSource={readable.selected}
                     connectedAccountPlanLabel={props.planLabel}
-                    identity={JSON.stringify([selected.declarationBasis, props.profile.credentialRevision, props.profile.configurationRevision])}
-                    providerName={selected.providerName}
+                    identity={JSON.stringify([readable.declarationBasis, props.profile.credentialRevision, props.profile.configurationRevision])}
+                    providerName={readable.providerName}
                     serverId={props.serverId}
                     scope={scope}
-                    machineId={props.machineId}
-                    sources={selected.sources}
+                    machineId={machineId}
+                    sources={readable.sources}
                     secretBindings={undefined}
                     active
                     onChooseBillingKey={null}
                     onChooseApiKey={null}
                 />
+            ) : selected && machineId ? (
+                <ItemGroup>
+                    <SurfaceStateCard size="line" kind={unavailable ? 'empty' : 'loading'}
+                        title={unavailable ? t('settingsProvidersCollection.usage.unsupported') : t('common.loading')} />
+                </ItemGroup>
             ) : null}
         </>
     );
