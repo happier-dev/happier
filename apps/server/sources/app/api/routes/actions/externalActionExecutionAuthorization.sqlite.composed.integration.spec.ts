@@ -3713,20 +3713,31 @@ describe("external Action execution authorization", () => {
             const send = (path: string, body: unknown, privateKey = fixture.keyPair.secretKey) => app.inject({ method: 'POST', url: path,
                 headers: machineHeaders({ authorizationToken: authorization.token, effectActionId: actionId,
                     method: 'POST', path, body, privateKey }), payload: body });
-            if (actionId === 'projects.script.run' || actionId === 'projects.compute.exec' || actionId === 'localServices.launcher.start'
-                || actionId === 'localServices.actions.restartManaged' || actionId === 'approval.request.decide') {
+            // A package_script open/restart runs projects.script.run under the
+            // unchanged terminal root, so it reads the requester's own preferences.
+            const opensShell = actionId === 'machines.terminal.open' || actionId === 'machines.terminal.restart';
+            const configBody = WorkspaceExecutionConfigReadRequestV1Schema.parse({ address: { serverId: homeId, refId: ref.id } });
+            const readMode = async () => {
                 const path = '/v1/account/encryption';
-                const mode = await app.inject({ method: 'GET', url: path, headers: machineHeaders({ authorizationToken: authorization.token,
+                return await app.inject({ method: 'GET', url: path, headers: machineHeaders({ authorizationToken: authorization.token,
                     effectActionId: actionId, method: 'GET', path, body: undefined, privateKey: fixture.keyPair.secretKey }) });
+            };
+            if (actionId.startsWith('machines.terminal.') && !opensShell) {
+                expect.soft((await readMode()).statusCode, 'a root that opens no shell reads no preferences').toBe(401);
+                expect.soft((await send('/v1/projects/execution/config/read', configBody)).statusCode).toBe(401);
+            }
+            if (actionId === 'projects.script.run' || actionId === 'projects.compute.exec' || actionId === 'localServices.launcher.start'
+                || actionId === 'localServices.actions.restartManaged' || actionId === 'approval.request.decide' || opensShell) {
+                const mode = await readMode();
                 expect.soft(mode.statusCode, mode.body).toBe(200);
-                const configBody = WorkspaceExecutionConfigReadRequestV1Schema.parse({ address: { serverId: homeId, refId: ref.id } });
                 const config = await send('/v1/projects/execution/config/read', configBody);
                 expect.soft(config.statusCode, config.body).toBe(200);
                 if (config.statusCode === 200) expect(WorkspaceExecutionConfigReadResponseV1Schema.parse(config.json())).toEqual({ status: 'absent' });
                 expect((await send('/v1/projects/execution/config/mutate', { ...configBody, expectedRevision: 'absent', content: null })).statusCode).toBe(401);
-                if (actionId === 'approval.request.decide') {
-                    // Replay keeps the decision root; the real preparation reader
-                    // must spend that root rather than claim a different effect.
+                if (opensShell) expect.soft((await send('/v1/projects/execution/config/read?unbound=1', configBody)).statusCode).toBe(401);
+                if (actionId === 'approval.request.decide' || opensShell) {
+                    // Replay keeps the decision root, and a package_script spends the
+                    // terminal root; the real preparation reader must spend that root.
                     const request = vi.spyOn(axios, 'request').mockImplementation(async config => {
                         if (config.method !== 'GET' && config.method !== 'POST') throw new Error('Unexpected preparation method');
                         const response = await app.inject({ method: config.method,

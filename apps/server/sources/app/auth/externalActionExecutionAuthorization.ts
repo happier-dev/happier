@@ -3105,6 +3105,16 @@ function isProjectSourceSetupPreparationHttpPurpose(proof: ExternalActionExecuti
     return census ? isArtifactRecipientKeyPreparationHttpPurpose(unscoped) : readArtifactGetHttpPurpose(unscoped) !== null;
 }
 
+/** The requester's own execution-preference read: its Account mode and one config row. Never a mutation. */
+function isWorkspaceExecutionConfigReadHttpPurpose(proof: ExternalActionExecutionRequestProof): boolean {
+    const url = new URL(proof.path, 'http://home.invalid');
+    if (url.search !== '' || url.hash !== '') return false;
+    const method = proof.method.toUpperCase();
+    if (method === 'GET') return proof.body === undefined && url.pathname === '/v1/account/encryption';
+    return method === 'POST' && url.pathname === `${WORKSPACE_EXECUTION_CONFIG_ROUTE_V1}/read`
+        && WorkspaceExecutionConfigReadRequestV1Schema.safeParse(proof.body).success;
+}
+
 /** Metadata purposes of an original Project root; domain routes retain row/CAS/audience admission. */
 function isProjectAccountMetadataHttpPurpose(verified: VerifiedExternalActionExecutionRequest,
     proof: ExternalActionExecutionRequestProof): boolean {
@@ -3125,6 +3135,9 @@ function isProjectAccountMetadataHttpPurpose(verified: VerifiedExternalActionExe
         // A Project shell or package script reads the requester's accepted Setup
         // under this root; Artifact ACLs retain access for this single-record read.
         if (opensShell && readArtifactGetHttpPurpose(proof) !== null) return true;
+        // A package_script runs projects.script.run under this unchanged root and
+        // reads the requester's own execution preferences before placement.
+        if (opensShell && isWorkspaceExecutionConfigReadHttpPurpose(proof)) return true;
         if (url.search !== '' || url.hash !== '' || method !== 'POST') return false;
         // Terminal discovery and shell admission can read the requester's accepted checkout.
         if (url.pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return ProjectAccountRowListRequestV1Schema.safeParse(proof.body).success;
@@ -3145,9 +3158,8 @@ function isProjectAccountMetadataHttpPurpose(verified: VerifiedExternalActionExe
         if (isAccountEncryptionCurrentnessHttpRead(proof) || readArtifactGetHttpPurpose(proof) !== null) return true;
         if (actionId === PROJECT_DEFINITION_INSPECT_ACTION_ID && (isSelectedProjectSourceReadHttpPurpose(verified.binding.serverIdentityId, proof)
             || /^\/v1\/artifacts\/[^/?#]+\?/u.test(proof.path) && isProjectSourceSetupPreparationHttpPurpose(proof))) return true;
-        if (url.search !== '' || url.hash !== '') return false;
-        if (method === 'GET' && proof.body === undefined) return readsExecutionConfig && url.pathname === '/v1/account/encryption';
-        if (method !== 'POST') return false;
+        if (readsExecutionConfig && isWorkspaceExecutionConfigReadHttpPurpose(proof)) return true;
+        if (url.search !== '' || url.hash !== '' || method !== 'POST') return false;
         // Finite work and inspection use admitted private requester custody for
         // Account topology. A signed Project root is not a catalog credential.
         const readsAccountRows = !Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId) && actionId !== PROJECT_DEFINITION_INSPECT_ACTION_ID;
@@ -3158,8 +3170,7 @@ function isProjectAccountMetadataHttpPurpose(verified: VerifiedExternalActionExe
         // full Trust catalog stays on the requester's own Machine.
         if (url.pathname === `${PROJECT_TRUST_ROUTE_V1}/list`) return isRequesterOwnMachineRequest(verified)
             && ProjectTrustListRequestV1Schema.safeParse(proof.body).success;
-        return readsExecutionConfig && url.pathname === `${WORKSPACE_EXECUTION_CONFIG_ROUTE_V1}/read`
-            && WorkspaceExecutionConfigReadRequestV1Schema.safeParse(proof.body).success;
+        return false;
     }
     const sourcePath = '/v1/projects/sources';
     if (actionId.startsWith('projects.sources.')) {
