@@ -6,6 +6,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { ensureManagedJavaScriptRuntimeCommand, managedJavaScriptRuntimeBinPath, resolveAgentCliManagedCommandPathForRuntime } from '@happier-dev/cli-common/agents';
 import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 import { REVIEW_NEW_ROUND_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { EXTERNAL_ACTION_HTTP_BODY_HEADER_V1, EXTERNAL_ACTION_HTTP_READ_BODY_MARKER_V1 } from '@happier-dev/protocol/actions/externalActionHttpTransportV1';
 import { reviewReviewerIdForSelectionV1, type ReviewEngineReviewerSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
 import { WorkflowDefinitionCreateResultV1Schema, WorkflowInvocationListResultV1Schema, WorkflowRunGetResultV1Schema, WorkflowRunListResultV1Schema, WorkflowRunStartResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
@@ -889,7 +890,9 @@ else {
     if (!admitted?.reviewRound) throw new Error('Review admission did not bind its Workflow and round');
     expect(await act('workflow.run.wait', { runId: admitted.workflow.runId, conditions: ['terminal'] }))
       .toMatchObject({ observation: 'terminal', run: { state: 'succeeded' } });
-    expect(fixture!.requestProxy!.count(request => request.method === 'GET'
+    // Signed logical GETs carry their proof frame as POST at the HTTP boundary.
+    expect(fixture!.requestProxy!.count(request => (request.method === 'GET'
+      || (request.method === 'POST' && request.headers[EXTERNAL_ACTION_HTTP_BODY_HEADER_V1] === EXTERNAL_ACTION_HTTP_READ_BODY_MARKER_V1))
       && request.path.split('?')[0] === `/v1/sessions/${sourceSessionId}/messages`)).toBe(1);
     const paths = (await readdir(dirname(auditPath))).filter(name => name.startsWith(`${basename(auditPath)}.`));
     const audits = await Promise.all(paths.map(name => readMuseMspProcessAudit(join(dirname(auditPath), name))));
