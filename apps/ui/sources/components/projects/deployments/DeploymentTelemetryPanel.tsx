@@ -298,8 +298,9 @@ function DeploymentTelemetryTabs(props: Readonly<{
   const collectorOnline = useServerScopedMachine(serverId, collectorId, selectCollectorOnline);
   const { invoke, createResourceClient } = React.useContext(TelemetryCaptureTransportContext);
   const reads = React.useMemo(() => lifetime
-    ? createTelemetryCaptureReads(invoke, { scope: lifetime.scope, environmentId: environment.id, collectorMachineId: collectorId })
-    : null, [invoke, lifetime, environment.id, collectorId]);
+    ? createTelemetryCaptureReads(invoke, { scope: lifetime.scope, environmentId: environment.id,
+      serverIdentityId: environment.serverId, collectorMachineId: collectorId })
+    : null, [invoke, lifetime, environment.id, environment.serverId, collectorId]);
   const capabilities = resolveDeploymentTelemetryCapabilitiesV1(detail.content.telemetry);
   const tabIds: readonly TelemetryTab[] = [...CAPTURE_TAB_IDS, ...(capabilities.appLlmCost ? ['llmCalls' as const] : []),
     ...(capabilities.metrics ? ['metrics' as const] : [])];

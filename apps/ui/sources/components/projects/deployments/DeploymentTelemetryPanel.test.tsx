@@ -252,7 +252,7 @@ describe('Environment Telemetry tabs', () => {
       failureCause: { phase: 'capture.trace', errorClass: 'HttpStatusError', errorCode: 'capture_denied', httpStatus: 403 } });
     const { invoke } = collector(() => refusal);
     const reads = createTelemetryCaptureReads(invoke, { scope: lifetime.scope, collectorMachineId: 'collector',
-      environmentId: source.environmentId });
+      environmentId: source.environmentId, serverIdentityId: source.serverId });
     const screen = await renderScreen(<AppPresentationPlatformProvider><TelemetryRequestDetail reads={reads}
       lifetime={lifetime} active request={request} locale="en" /></AppPresentationPlatformProvider>);
     try {
@@ -442,6 +442,26 @@ describe('Environment Telemetry tabs', () => {
     }
   });
 
+  it('loads the Environment capture through a profile whose local ID differs from the signed Home ID', async () => {
+    const homeSource = { ...source, serverId: 'srv_hosted_capture' };
+    const detail = setUpDetail();
+    const { invoke } = collector(call => {
+      const input = DatabaseCaptureEndpointsListInputV1Schema.parse(call.input);
+      return input.source.serverId === homeSource.serverId
+        ? answers(call, homeSource)
+        : { ok: false, code: 'admission_unavailable' };
+    });
+    const screen = await renderScreen(panel(invoke, {
+      ...detail, environment: { ...detail.environment, serverId: homeSource.serverId },
+    }));
+    try {
+      await settle();
+      expect(screen.findByTestId('telemetry.capture.endpoint.POST /checkout')).not.toBeNull();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it('shows collector storage is full while keeping previously captured data readable', async () => {
     const { invoke, calls } = collector(call => call.actionId === DATABASE_CAPTURE_STATUS_ACTION_ID_V1
       ? {
@@ -558,7 +578,7 @@ describe('Environment Telemetry tabs', () => {
       return answers(request);
     });
     const reads = createTelemetryCaptureReads(invoke, { scope: lifetime.scope, collectorMachineId: 'collector',
-      environmentId: source.environmentId });
+      environmentId: source.environmentId, serverIdentityId: source.serverId });
     const retained = await reads.appLlmCalls(selection, 1_000, 2_000, null);
     const selected = retained.items.find(item => item.id === 'call-b');
     expect(selected?.genAi).toEqual(genAi);
@@ -659,7 +679,7 @@ describe('Environment Telemetry tabs', () => {
       return { ...result, summaries: result.summaries.map(item => item.kind === 'log' ? { ...item, bodyPrefixTruncated: true } : item) };
     });
     const reads = createTelemetryCaptureReads(invoke, { scope: lifetime.scope, collectorMachineId: 'collector',
-      environmentId: source.environmentId });
+      environmentId: source.environmentId, serverIdentityId: source.serverId });
     const screen = await renderScreen(
       <AppPresentationPlatformProvider>
         <CoreCollectionScope>
@@ -695,7 +715,7 @@ describe('Environment Telemetry tabs', () => {
     const confirm = vi.spyOn(actualModal.Modal, 'confirm').mockImplementation(modal.spies.confirm);
     const worktree = { machineId: 'running-machine', projectId: 'billing-api', workspaceId: 'checkout' };
     const admittedSource: DatabaseCaptureSourceV1 = feature === 'Worktree request'
-      ? { kind: 'worktree', serverId, ...worktree } : { ...source, serverId };
+      ? { kind: 'worktree', serverId, ...worktree } : source;
     const { invoke, calls } = collector(call => {
       if (call.actionId !== DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1) return answers(call, admittedSource);
       const input = DatabaseCaptureEndpointsListInputV1Schema.parse(call.input);

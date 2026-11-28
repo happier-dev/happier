@@ -231,7 +231,7 @@ export type TelemetryCaptureEnvironment = Readonly<{
   scope: ServerAccountScope;
   collectorMachineId: string;
 }> & (
-  | Readonly<{ environmentId: string; worktree?: undefined }>
+  | Readonly<{ environmentId: string; serverIdentityId: string; worktree?: undefined }>
   | Readonly<{ environmentId?: undefined; worktree: Readonly<{ projectId: string; workspaceId: string }> }>
 );
 
@@ -250,7 +250,7 @@ function source(environment: TelemetryCaptureEnvironment): DatabaseCaptureSource
   }
   return {
     kind: 'environment' as const,
-    serverId: environment.scope.serverId,
+    serverId: environment.serverIdentityId,
     environmentId: environment.environmentId,
   };
 }
@@ -304,7 +304,7 @@ export function createTelemetryCaptureReads(
         hostRead: 'telemetry.capture',
         input: {
           action: parseQualifiedPluginActionId(TELEMETRY_METRICS_READ_ACTION_ID_V1)!,
-          input: { view: 'overview', serverId: environment.scope.serverId, environmentId: environment.environmentId, ...selection },
+          input: { view: 'overview', serverId: source(environment).serverId, environmentId: environment.environmentId, ...selection },
         },
         windowMs,
       };
