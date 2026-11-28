@@ -2800,13 +2800,6 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       } : childCaller;
       childPositions.set(childId, (childPositions.get(childId) ?? 0) + 1);
       if (!hostInternal && execute) return execute(childId, childInput, derivedContext);
-      if (!hostInternal && childCaller.executeOrdinaryChildAction) {
-        return childCaller.executeOrdinaryChildAction(childId, childInput, {
-          actionRequestId: derivedContext.actionRequestId, signal: derivedContext.signal,
-          serverId: derivedContext.serverId, expectedAccountId: derivedContext.expectedAccountId,
-          externalActionTarget: derivedContext.externalActionTarget,
-        });
-      }
       // A private Review continuation remains Review-scoped. It can spend
       // the admitted corpus only for the same caller, Home, Account and target.
       let inheritedScope: CoreOptions['workflowSessionScope'];
@@ -7383,10 +7376,15 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
           const input = DeploymentActionInputSchemasV1[actionId].parse(data);
           const parentRequestId = normalizeId(ctx.actionRequestId);
           if (!parentRequestId) return { ok: false, errorCode: 'invalid_action_input', error: 'invalid_action_input' };
+          const sessionChild = ctx.executeOrdinaryChildAction;
           return executeEnvironmentMaintenance(input, ctx, deps, (replacement, machineId) => {
             const childId = DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1;
             return executeChild(childId, { ...replacement, requestKey: nextChildRequestId(childId, parentRequestId) },
-              { ...ctx, externalActionTarget: { kind: 'machine', machineId } }, false);
+              { ...ctx, externalActionTarget: { kind: 'machine', machineId } }, false,
+              sessionChild && ((id, input, child) => sessionChild(id, input, {
+                actionRequestId: child.actionRequestId, signal: child.signal, serverId: child.serverId,
+                expectedAccountId: child.expectedAccountId, externalActionTarget: child.externalActionTarget,
+              })));
           });
         }
         if (isDeploymentActionIdV1(actionId)) {
