@@ -53,6 +53,7 @@ import {
     deleteWorkflowDefinition,
     getWorkflowDefinition,
     isWorkflowDefinitionConflictError,
+    readWorkflowDefinitionRevision,
 } from '@/sync/domains/workflows/workflowDefinitionActions';
 import {
     buildWorkflowDefinitionCandidate,
@@ -1680,6 +1681,10 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         setHighlightedBlockIds(changedBlockIds ?? NO_HIGHLIGHTED_BLOCKS);
         setContentScopeKey(accountScopeKey);
     });
+    const matchesAcceptedRevision = useEventCallback((current: Awaited<ReturnType<typeof readWorkflowDefinitionRevision>>) =>
+        current !== null && saved?.definitionId === current.definitionId
+        && contentScopeKey === accountScopeKey && definitionAccess === current.access
+        && pluginJsonValuesEqual(saved.revision, current.revision));
     const hydrationWasPresented = React.useRef(presented);
     React.useEffect(() => {
         const resumed = presented && !hydrationWasPresented.current;
@@ -1692,12 +1697,22 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         if (lifetime === null) return;
         let controller: AbortController | null = null;
         let cancelled = false;
-        const refresh = () => {
+        const refresh = (checkAcceptedRevision = false) => {
             controller?.abort();
             const attempt = new AbortController();
             controller = attempt;
             void (async () => {
                 try {
+                    if (checkAcceptedRevision && agentRevision === null && agentSeedId === null) {
+                        const current = await readWorkflowDefinitionRevision({
+                            definitionId: sourceDefinitionId, accountLifetime: lifetime, signal: attempt.signal,
+                        });
+                        if (cancelled || attempt.signal.aborted || !lifetime.isCurrent()) return;
+                        if (matchesAcceptedRevision(current)) {
+                            setHydrationFailure(null);
+                            return;
+                        }
+                    }
                     const result = await getWorkflowDefinition({ definitionId: sourceDefinitionId, accountLifetime: lifetime, signal: attempt.signal });
                     if (cancelled || attempt.signal.aborted || !lifetime.isCurrent()) return;
                     setHydrationFailure(null);
@@ -1713,9 +1728,11 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         };
         hydrationRefreshRef.current = refresh;
         const unsubscribe = accepted ? subscribeHomeAccountChange(event => {
-            if (affectsSelectedWorkflowDefinition(event, lifetime, sourceDefinitionId)) refresh();
+            if (affectsSelectedWorkflowDefinition(event, lifetime, sourceDefinitionId)) {
+                refresh(event.source !== 'connected' && event.changedWorkflowDefinitionIds !== undefined);
+            }
         }, { serverIds: [lifetime.scope.serverId], reconnect: 'refresh' }) : () => {};
-        if (!accepted || agentRevision !== null || agentSeedId !== null || resumed) refresh();
+        if (!accepted || agentRevision !== null || agentSeedId !== null || resumed) refresh(accepted && resumed);
         return () => {
             cancelled = true;
             controller?.abort();

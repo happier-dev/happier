@@ -1,8 +1,9 @@
 import { WorkflowDefinitionCreateRequestV1Schema, WorkflowDefinitionCreateResultV1Schema, WorkflowDefinitionDeleteRequestV1Schema, WorkflowDefinitionDeleteResultV1Schema, WorkflowDefinitionGetRequestV1Schema, WorkflowDefinitionGetResultV1Schema, WorkflowDefinitionListRequestV1Schema, WorkflowDefinitionListResultV1Schema, WorkflowDefinitionUpdateRequestV1Schema, WorkflowDefinitionUpdateResultV1Schema, type WorkflowDefinitionCreateResultV1, type WorkflowDefinitionDeleteResultV1, type WorkflowDefinitionGetResultV1, type WorkflowDefinitionListResultV1, type WorkflowDefinitionUpdateResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { WorkflowIntendedTriggerV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
-import type { WorkflowArtifactRevisionV1, WorkflowDefinitionMetadataV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
+import { WorkflowDefinitionArtifactHeaderV1ReadSchema, type WorkflowArtifactRevisionV1, type WorkflowDefinitionMetadataV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 
+import { HappyError } from '@/utils/errors/errors';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { callWorkflowAction, type WorkflowActionCallerContext, type WorkflowActionOperation } from './callWorkflowAction';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -122,6 +123,34 @@ export async function getWorkflowDefinition(params: Readonly<{
         ...(params.accountLifetime === undefined ? {} : { accountLifetime: params.accountLifetime }),
         ...signalOption(params.signal),
     });
+}
+
+/** An accepted editor can revalidate its Artifact revision and access without opening its body. */
+export async function readWorkflowDefinitionRevision(params: Readonly<{
+    definitionId: string;
+    accountLifetime: ServerAccountScopeLifetime;
+    signal: AbortSignal;
+}>): Promise<Pick<WorkflowDefinitionGetResultV1, 'definitionId' | 'revision' | 'access'> | null> {
+    const { definitionId, accountLifetime, signal } = params;
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const account = await captureLazyActionAccountContext(accountLifetime.scope.serverId, signal, undefined, accountLifetime.scope);
+    try {
+        const artifact = await account.readArtifactHeader(definitionId, { signal, fresh: true });
+        account.assertCurrent();
+        if (!artifact?.isDecrypted || !artifact.access || artifact.id !== definitionId) return null;
+        const header = WorkflowDefinitionArtifactHeaderV1ReadSchema.safeParse(artifact.rawHeader);
+        if (!header.success || header.data.definitionId !== definitionId
+            || header.data.revision.headerVersion !== artifact.headerVersion
+            || header.data.revision.bodyVersion !== artifact.bodyVersion) return null;
+        return { definitionId, revision: header.data.revision, access: artifact.access };
+    } catch (error) {
+        signal.throwIfAborted();
+        // Older Homes without the header projection retain the exact read.
+        if (error instanceof HappyError && (error.status === 400 || error.status === 404 || error.status === 405)) return null;
+        throw error;
+    } finally {
+        account.dispose();
+    }
 }
 
 /**

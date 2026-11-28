@@ -1957,6 +1957,31 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(boundary.automationCreates).toHaveLength(1);
     });
 
+    it('does not reopen the saved Workflow body when an unchanged editor returns to view', async () => {
+        const boundary = await serveMountedDraftActionHome();
+        const renderDestination = (visible: boolean) => <DestinationInstanceHost tabId="retained-saved-editor"
+            ref={{ kind: 'workflows', params: { workspacePathname: `/workflows/${SAVED_TRIGGER_WORKFLOW_ID}` } }}
+            pathname={`/workflows/${SAVED_TRIGGER_WORKFLOW_ID}`} focused={visible} visible={visible}
+            navigation={{ push: routerSpy.push, replace: routerSpy.replace, back: routerSpy.back, canGoBack: routerSpy.canGoBack }}>
+            <WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />
+        </DestinationInstanceHost>;
+        const screen = await renderScreen(renderDestination(true));
+        await vi.waitFor(() => expect(readBodyProps()?.draftStore.get()?.name).toBe('Saved workflow'));
+        const originalDraft = readBodyProps()!.draftStore.get();
+        await screen.update(renderDestination(false));
+        const from = boundary.requests.length;
+        await screen.update(renderDestination(true));
+        const artifactReads = () => boundary.requests.slice(from).filter(request =>
+            request.method === 'GET' && request.path === `/v1/artifacts/${SAVED_TRIGGER_WORKFLOW_ID}`
+            || request.method === 'POST' && request.path === '/v1/artifacts/read');
+        await vi.waitFor(() => expect(artifactReads()).toHaveLength(1));
+        expect(artifactReads().map(({ method, path, body }) => ({ method, path, body }))).toEqual([{
+            method: 'POST', path: '/v1/artifacts/read',
+            body: { projection: 'headers', artifactIds: [SAVED_TRIGGER_WORKFLOW_ID] },
+        }]);
+        expect(readBodyProps()!.draftStore.get()).toBe(originalDraft);
+    });
+
     it.each([false, true])('retained saved editor suspends reads while hidden and catches up on presentation (dirty=%s)', async dirty => {
         const boundary = await serveMountedDraftActionHome();
         const renderDestination = (visible: boolean) => <DestinationInstanceHost tabId="retained-saved-editor"
@@ -2217,6 +2242,26 @@ describe('WorkflowEditorHostScreen composition', () => {
             expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' });
         }
         expect(boundary.updates).toHaveLength(1);
+    });
+
+    it('checks only the saved header when Home wakes the editor after its Save receipt', async () => {
+        const boundary = await serveMountedDraftActionHome();
+        const screen = await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get()!, name: 'Saved here' }));
+        await screen.pressByTestIdAsync('workflow-editor-save');
+        await vi.waitFor(() => expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' }));
+        const from = boundary.requests.length;
+        await act(async () => publishHomeAccountChange(boundary.scope.serverId, [SAVED_TRIGGER_WORKFLOW_ID], { changeKinds: ['artifact'] }));
+        await flushHookEffects();
+        const reads = boundary.requests.slice(from).filter(request =>
+            request.method === 'GET' && request.path === `/v1/artifacts/${SAVED_TRIGGER_WORKFLOW_ID}`
+            || request.method === 'POST' && request.path === '/v1/artifacts/read');
+        expect(reads.map(({ method, path, body }) => ({ method, path, body }))).toEqual([{
+            method: 'POST', path: '/v1/artifacts/read',
+            body: { projection: 'headers', artifactIds: [SAVED_TRIGGER_WORKFLOW_ID] },
+        }]);
+        expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' });
     });
 
     it('keeps Saving visible when Home pushes that Save before the receipt', async () => {
