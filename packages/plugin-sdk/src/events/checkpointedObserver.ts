@@ -190,8 +190,14 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
     const now = input.now ?? Date.now;
     const sleep = input.sleep ?? sleepUntilEligible;
     const transports: readonly ('checkpointedPull' | 'durablePush')[] = input.transportKinds ?? ['checkpointedPull'];
+    const own = context.materialization;
+    const ownKey = own === undefined ? null : JSON.stringify(own);
     const state: ObserverState = { catalogs: new Map(), sources: new Map(), pendingObservations: new Map(), retiredRevision: null, owner: null,
         adoptedRevision: null, reconciliationStartedAt: null };
+    let assignedSources: {
+        definitions: readonly PluginCheckpointedEventSourceDefinitionV1[];
+        groups: Map<string, PluginCheckpointedEventSourceDefinitionV1[]>;
+    } | undefined;
     // Admission can await a person's approval. Keep its original candidate in
     // custody while the same source's advancing provider schedule keeps running.
     const admitting = new Map<string, {
@@ -254,7 +260,6 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
             let catalogFailed = false;
             try {
                 let revision: string | undefined;
-                const definitions: PluginCheckpointedEventSourceDefinitionV1[] = [];
                 const reportCatalog = async (observedRevision: string, knownDefinitions: readonly PluginCheckpointedEventSourceDefinitionV1[], current: boolean) => {
                     if (!current) state.reconciliationStartedAt ??= now();
                     const scopes = new Map<string, PluginEventAdmissionScope>();
@@ -271,19 +276,27 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
                     });
                 };
                 try {
-                    catalogReadController = new AbortController();
-                    const readContext = { ...cycleContext, signal: AbortSignal.any([cycleContext.signal, catalogReadController.signal]) };
+                    let readContext: BackgroundServiceContext | undefined;
                     for (const kind of transports) {
                         const adopted = state.catalogs.get(kind);
-                        const catalog = refreshDefinitions || adopted === undefined
-                            ? await readCurrentSourceDefinitions(readContext, { kind }, adopted, async (observedRevision, pageDefinitions) => {
+                        let catalog = adopted;
+                        if (refreshDefinitions || catalog === undefined) {
+                            if (readContext === undefined) {
+                                catalogReadController = new AbortController();
+                                readContext = { ...cycleContext, signal: AbortSignal.any([cycleContext.signal, catalogReadController.signal]) };
+                            }
+                            const read = await readCurrentSourceDefinitions(readContext, { kind }, adopted, async (observedRevision, pageDefinitions) => {
                                 if (state.retiredRevision !== observedRevision) await reportCatalog(observedRevision, pageDefinitions, false);
-                            }, catalogRefresh)
-                            : adopted;
-                        if (catalog === null || (revision !== undefined && catalog.revision !== revision)) throw new Error('Event source catalog is not current');
+                            }, catalogRefresh);
+                            if (read === null) throw new Error('Event source catalog is not current');
+                            catalog = read;
+                        }
+                        if (revision !== undefined && catalog.revision !== revision) throw new Error('Event source catalog is not current');
                         revision = catalog.revision;
-                        state.catalogs.set(kind, catalog);
-                        definitions.push(...catalog.definitions);
+                        if (catalog !== adopted) {
+                            state.catalogs.set(kind, catalog);
+                            assignedSources = undefined;
+                        }
                     }
                 } catch (error) {
                     definitionsInvalidated = true;
@@ -295,28 +308,31 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
                 const currentRevision = revision;
                 if (currentRevision === undefined) throw new Error('Event observer requires a source transport');
                 state.adoptedRevision = currentRevision;
+                if (assignedSources === undefined) {
+                    const definitions = [...state.catalogs.values()].flatMap(catalog => catalog.definitions);
+                    const groups = new Map<string, PluginCheckpointedEventSourceDefinitionV1[]>();
+                    if (own?.pluginId === context.plugin.id) {
+                        for (const definition of definitions) {
+                            if (definition.eventRef.pluginId !== context.plugin.id || !arePluginMachineMaterializationRefsEqual(own, assignment(definition))) continue;
+                            const key = sourceKey(definition);
+                            const group = groups.get(key);
+                            if (group) group.push(definition);
+                            else groups.set(key, [definition]);
+                        }
+                    }
+                    assignedSources = { definitions, groups };
+                }
+                const { definitions, groups } = assignedSources;
                 if (refreshDefinitions) {
                     const currentStatusKeys = new Set(definitions.map(statusKey));
                     for (const key of reportedStatuses.keys()) if (!currentStatusKeys.has(key)) reportedStatuses.delete(key);
                 }
                 const isCurrent = async () => !cycleContext.signal.aborted;
-                const own = context.materialization;
-                const groups = new Map<string, PluginCheckpointedEventSourceDefinitionV1[]>();
-                if (own?.pluginId === context.plugin.id) {
-                    for (const definition of definitions) {
-                        if (definition.eventRef.pluginId !== context.plugin.id || !arePluginMachineMaterializationRefsEqual(own, assignment(definition))) continue;
-                        const key = sourceKey(definition);
-                        const group = groups.get(key);
-                        if (group) group.push(definition);
-                        else groups.set(key, [definition]);
-                    }
-                }
                 for (const key of state.sources.keys()) if (!groups.has(key)) {
                     state.sources.delete(key);
                 }
                 for (const key of state.pendingObservations.keys()) if (!groups.has(key)) state.pendingObservations.delete(key);
                 for (const key of admitting.keys()) if (!groups.has(key)) admitting.delete(key);
-                const ownKey = own === undefined ? null : JSON.stringify(own);
                 const canRetire = ownKey !== null && own?.pluginId === context.plugin.id
                     && (groups.size > 0 || state.owner === ownKey || definitions.length === 0);
                 if (canRetire && state.retiredRevision !== currentRevision && source.retire !== undefined && await isCurrent()) {
@@ -391,7 +407,13 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
                             continue;
                         }
                         const decoded = source.decode(definition);
-                        if (decoded === null || !(await isCurrent())) continue;
+                        if (decoded === null) {
+                            // A retained group can adopt a definition the adapter cannot consume.
+                            // Its old deadline cannot make that definition eligible.
+                            sourceState.nextEligibleAt = null;
+                            continue;
+                        }
+                        if (!(await isCurrent())) continue;
                         const attemptContext: PluginCheckpointedEventAttemptContextV1<TSource> = { context: cycleContext, definition, definitions: group, source: decoded, isCurrent };
                         const startedAt = now();
                         const result = await source.observe(attemptContext);
@@ -434,7 +456,22 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
                             };
                             void processing.then(disposition => { attempt.outcome = { disposition }; settled(); },
                                 error => { attempt.outcome = { error }; settled(); });
-                        } else await finish(result, await processing, result.nextEligibleAt);
+                        } else {
+                            const disposition = await processing;
+                            let nextEligibleAt = result.nextEligibleAt;
+                            // An unfinished scan without observations cannot use a deadline
+                            // already consumed when it started to request another immediate scan.
+                            if (input.mode !== 'once' && !result.complete && result.observations.length === 0
+                                && nextEligibleAt !== null && nextEligibleAt <= startedAt) {
+                                eligibility(nextEligibleAt);
+                                const retryFrom = now();
+                                const retryAt = eligibility(source.retryAt({
+                                    error: new Error('Event source returned an elapsed eligibility deadline'), now: retryFrom, definition,
+                                }));
+                                nextEligibleAt = retryAt !== null && retryAt > retryFrom ? retryAt : null;
+                            }
+                            await finish(result, disposition, nextEligibleAt);
+                        }
                     } catch (error) {
                         if (cycleContext.signal.aborted) throw error;
                         const nextEligibleAt = eligibility(source.retryAt({ error, now: now(), definition }));
@@ -468,19 +505,25 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
             if (input.mode === 'once' || context.signal.aborted) return;
             if (changed || pendingWake !== undefined) continue;
             await new Promise<void>((resolve, reject) => {
-                const waiting = new AbortController();
-                const done = () => {
-                    waiting.abort();
+                const waiting = wakeAt === null ? undefined : new AbortController();
+                const cleanup = () => {
                     context.signal.removeEventListener('abort', done);
                     wake = undefined;
+                };
+                const done = () => {
+                    cleanup();
+                    waiting?.abort();
                     resolve();
                 };
                 wake = done;
                 context.signal.addEventListener('abort', done, { once: true });
-                if (wakeAt !== null) void sleep(Math.max(0, wakeAt - now()), waiting.signal).then(done, error => {
+                if (wakeAt !== null && waiting !== undefined) void sleep(Math.max(0, wakeAt - now()), waiting.signal).then(() => {
                     if (waiting.signal.aborted) return;
-                    context.signal.removeEventListener('abort', done);
-                    wake = undefined;
+                    cleanup();
+                    resolve();
+                }, error => {
+                    if (waiting.signal.aborted) return;
+                    cleanup();
                     reject(error);
                 });
                 if (context.signal.aborted || changed || pendingWake !== undefined) done();

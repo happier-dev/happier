@@ -109,6 +109,10 @@ keeps the existing provider cursor format and compare-and-swap storage.
 Eligibility comes from provider retry headers or a deliberate source period;
 the SDK adds no polling default. A handled provider failure may return the
 existing source-status `state` and `code` with that eligibility.
+In 0.3 development, if an incomplete scan returns no observations and an
+eligibility deadline already due when the scan began, the runner asks
+`retryAt` for a future deadline. Without one, it waits for a source wake
+or catalog invalidation.
 
 Continuous observers retain the original candidate while its Event admission
 awaits approval. A source normally waits for settlement before observing again.

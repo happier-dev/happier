@@ -694,6 +694,78 @@ describe('checkpointed observer ownership', () => {
         }
     });
 
+    it('backs off when an empty observation repeats its consumed deadline and parks after recovery', async () => {
+        const f = fixture();
+        vi.useFakeTimers();
+        vi.setSystemTime(1000);
+        const OriginalAbortController = AbortController;
+        let controllers = 0;
+        vi.stubGlobal('AbortController', class extends OriginalAbortController {
+            constructor() {
+                super();
+                controllers += 1;
+            }
+        });
+        let iterations = 0;
+        let wake: ((sourceInstanceId?: string) => Promise<void>) | undefined;
+        f.observe.mockImplementation(async () => {
+            if (iterations > 8) f.controller.abort(); // Bound a runaway RED without needing a timer callback.
+            return { observations: [], complete: false, nextEligibleAt: iterations <= 2 ? 2000 : null };
+        });
+        const running = runCheckpointedPluginEventObserverV1({ context: f.context, source: {
+            ...f.source,
+            decode() { iterations += 1; return 'source'; },
+            subscribeWake(listener) { wake = listener; return { dispose() {} }; },
+        } });
+        try {
+            await vi.advanceTimersByTimeAsync(1000);
+            expect({ iterations, controllers }).toEqual({ iterations: 2, controllers: 3 });
+            await vi.advanceTimersByTimeAsync(999);
+            expect({ iterations, controllers }).toEqual({ iterations: 2, controllers: 3 });
+            await vi.advanceTimersByTimeAsync(60_001);
+            expect({ iterations, controllers }).toEqual({ iterations: 3, controllers: 3 });
+            await wake?.('source:1');
+            expect({ iterations, controllers }).toEqual({ iterations: 4, controllers: 3 });
+        } finally {
+            f.controller.abort();
+            await running;
+            vi.unstubAllGlobals();
+            vi.useRealTimers();
+        }
+    });
+
+    it('drops a deadline for a retained source group whose new definition cannot be decoded', async () => {
+        const f = fixture();
+        vi.useFakeTimers();
+        vi.setSystemTime(1000);
+        let decodes = 0;
+        f.observe.mockResolvedValueOnce(f.observation());
+        f.observe.mockResolvedValue({ observations: [], complete: true, nextEligibleAt: null });
+        const running = runCheckpointedPluginEventObserverV1({ context: f.context, source: {
+            ...f.source,
+            decode(member) {
+                decodes += 1;
+                if (decodes > 8) f.controller.abort(); // Bound a runaway RED.
+                return member.eventRef.localId === definition().eventRef.localId ? 'source' : null;
+            },
+        } });
+        try {
+            await vi.advanceTimersByTimeAsync(0);
+            expect(f.observe).toHaveBeenCalledOnce();
+            f.replace([{ ...definition(), eventRef: { ...definition().eventRef, localId: 'unsupported' } }]);
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(decodes).toBe(2);
+            expect(f.observe).toHaveBeenCalledOnce();
+            f.replace([definition()]);
+            await vi.advanceTimersByTimeAsync(0);
+            expect(f.observe).toHaveBeenCalledTimes(2);
+        } finally {
+            f.controller.abort();
+            await running;
+            vi.useRealTimers();
+        }
+    });
+
     it('unparks an unavailable source after authenticated credential invalidation at the same catalog revision', async () => {
         const f = fixture();
         f.observe.mockResolvedValueOnce({ observations: [], complete: false, nextEligibleAt: null,
