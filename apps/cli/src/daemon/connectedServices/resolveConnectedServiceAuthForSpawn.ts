@@ -10,6 +10,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { CatalogAgentId } from '@/backends/types';
+import { logger } from '@/ui/logger';
 import { resolveConnectedServiceCredentialLifecycleDescriptor } from '@/backends/catalog';
 import type { ApiClient } from '@/api/api';
 import type { Credentials } from '@/persistence';
@@ -39,7 +40,10 @@ import type { ConnectedServiceCredentialRefreshResult } from './refresh/Connecte
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from './accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
 import { isConnectedServiceAuthGroupQuotaSnapshotExhausted } from './accountGroups/quotas/quotaUsability';
 import type { RuntimeAccountIdentitySelectionInput } from './quotas/identity/runtimeAccountIdentityTypes';
-import { selectConnectedServiceAuthGroupCandidate } from './accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import {
+  reconcileMemberRuntimeStateWithFreshQuotaEvidence,
+  selectConnectedServiceAuthGroupCandidate,
+} from './accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds } from './accountGroups/selection/resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds';
 import {
   buildConnectedServiceAuthGroupSwitchStateFromPersistedMemberState,
@@ -438,10 +442,20 @@ function isFullAuthGroup(value: ConnectedServiceAuthGroupResponse): value is Con
 function isActiveGroupProfileUsageExhausted(
   state: ConnectedServiceAuthGroupSwitchState,
   nowMs: number,
+  quotaFreshnessMs: number,
 ): boolean {
-  const activeState = state.activeProfileId
+  const rememberedState = state.activeProfileId
     ? state.memberStatesByProfileId.get(state.activeProfileId) ?? null
     : null;
+  // A fresh snapshot newer than a remembered limiter failure that shows headroom (for example after
+  // a plan upgrade) clears that cooldown through the same evidence owner candidate selection uses.
+  const activeState = reconcileMemberRuntimeStateWithFreshQuotaEvidence({
+    state: rememberedState,
+    quotaSnapshot: rememberedState?.quotaSnapshot ?? null,
+    quotaFreshnessMs,
+    policy: state.policy,
+    nowMs,
+  });
   // Quota evidence goes through the canonical usability owner, so an account still served by
   // provider credits is not treated as a hard limit; recorded provider limit failures stay authoritative.
   return (activeState?.quotaSnapshot ? isConnectedServiceAuthGroupQuotaSnapshotExhausted(activeState.quotaSnapshot) : false)
@@ -480,9 +494,21 @@ async function resolveAuthoritativeGroupAfterSpawnSwitchResult(params: Readonly<
   api: ConnectedServiceAuthGroupApi;
   result: ConnectedServiceAuthGroupPreTurnSwitchResult;
   switchReason: string;
+  userChoice: SpawnUserChoice | null;
 }>): Promise<ConnectedServiceAuthGroupResponse | null> {
   if (params.result.status === 'quota_proof_unavailable') {
     if (params.switchReason === 'soft_threshold') return params.group;
+    if (params.userChoice) {
+      // A user-initiated launch or the user's own pool selection proceeds on the current member;
+      // automatic launches keep requiring proof below.
+      logger.info('[ConnectedServices] Launching on the current pool member without quota proof by user choice', {
+        serviceId: params.serviceId,
+        groupId: params.groupId,
+        profileId: readProfileId(params.group.activeProfileId),
+        userChoice: params.userChoice,
+      });
+      return params.group;
+    }
     // A new spawn has no interrupted-turn recovery to schedule. Preserve its retryable launch
     // rejection; existing sessions consume this same switch result through the durable scheduler.
     throw new ConnectedServiceSpawnAuthGroupAuthorityError({
@@ -529,6 +555,8 @@ async function resolveAuthoritativeGroupAfterSpawnSwitchResult(params: Readonly<
   return currentGroup;
 }
 
+type SpawnUserChoice = 'user_request' | 'manual_selection';
+
 async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
   group: ConnectedServiceAuthGroupResponse;
   serviceId: ConnectedServiceId;
@@ -542,6 +570,7 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
   authGroupSwitchCoordinator?: ConnectedServiceAuthGroupPreTurnSwitchCoordinator | null;
   predictiveSoftSwitchMode: 'supported' | 'unsupported';
   quotaProbeDeadlineAtMs?: number;
+  userInitiated: boolean;
 }>): Promise<ConnectedServiceAuthGroupResponse> {
   if (!isFullAuthGroup(params.group)) return params.group;
   // Pre-spawn switches only happen through the injected switch coordinator FSM. There is no
@@ -557,7 +586,21 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
   });
   if (!state) return params.group;
   if (!state.policy.autoSwitch) return params.group;
-  const activeUsageExhausted = isActiveGroupProfileUsageExhausted(state, params.nowMs);
+  const userSelectedActiveProfile = state.userSelectedActiveProfile?.profileId === readProfileId(state.activeProfileId)
+    ? state.userSelectedActiveProfile
+    : null;
+  if (userSelectedActiveProfile?.overriddenRetryAtMs != null && userSelectedActiveProfile.overriddenRetryAtMs > params.nowMs) {
+    logger.info('[ConnectedServices] User-selected pool member overrides its remembered cooldown', {
+      serviceId: params.serviceId,
+      groupId: params.groupId,
+      profileId: userSelectedActiveProfile.profileId,
+      overriddenRetryAtMs: userSelectedActiveProfile.overriddenRetryAtMs,
+    });
+  }
+  const userChoice: SpawnUserChoice | null = params.userInitiated
+    ? 'user_request'
+    : userSelectedActiveProfile ? 'manual_selection' : null;
+  const activeUsageExhausted = isActiveGroupProfileUsageExhausted(state, params.nowMs, params.quotaFreshnessMs);
   const switchReason = activeUsageExhausted ? 'usage_limit' : 'soft_threshold';
   if (switchReason === 'soft_threshold' && !params.accountUsageStore) return params.group;
   const predictivePolicy = evaluatePredictiveSoftSwitchPolicy({
@@ -594,6 +637,7 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
       api: params.api,
       result: switched,
       switchReason,
+      userChoice,
     });
     if (authoritative) return authoritative;
     if (switched.status === 'no_eligible_member') {
@@ -631,6 +675,7 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
     api: params.api,
     result: switched,
     switchReason,
+    userChoice,
   });
   if (authoritative) return authoritative;
   if (switched.status === 'no_eligible_member') {
@@ -690,6 +735,7 @@ async function resolveCredentialBindings(params: Readonly<{
   authGroupSwitchCoordinator?: ConnectedServiceAuthGroupPreTurnSwitchCoordinator | null;
   predictiveSoftSwitchMode: 'supported' | 'unsupported';
   quotaProbeDeadlineAtMs?: number;
+  userInitiated: boolean;
 }>): Promise<Readonly<{
   credentialBindings: ReadonlyArray<{ serviceId: ConnectedServiceId; profileId: string }>;
   groupSelections: ReadonlyMap<ConnectedServiceId, ConnectedServiceResolvedGroupSelection>;
@@ -728,6 +774,7 @@ async function resolveCredentialBindings(params: Readonly<{
       authGroupSwitchCoordinator: params.authGroupSwitchCoordinator ?? null,
       predictiveSoftSwitchMode: params.predictiveSoftSwitchMode,
       quotaProbeDeadlineAtMs: params.quotaProbeDeadlineAtMs,
+      userInitiated: params.userInitiated,
     });
     const activeProfileId = readProfileId(selectedGroup.activeProfileId);
     if (!activeProfileId) {
@@ -851,6 +898,8 @@ async function applyCanonicalSpawnFailureSwitch(params: Readonly<{
     api: params.api,
     result,
     switchReason: 'refresh_failed',
+    // A credential refresh failure is not a quota question; user choice does not bypass it.
+    userChoice: null,
   });
   const activeProfileId = readProfileId(authoritative?.activeProfileId);
   if (!activeProfileId || activeProfileId === params.observedProfileId) return false;
@@ -1168,6 +1217,11 @@ type ConnectedServiceSpawnAdmissionInput = Readonly<{
   authGroupSwitchCoordinator?: ConnectedServiceAuthGroupPreTurnSwitchCoordinator | null;
   quotaProbeDeadlineAtMs?: number;
   credentialRefreshService?: ConnectedServiceSpawnCredentialRefreshService | null;
+  /**
+   * The launch was requested by the user (a `user_request` execution authorization). When no
+   * quota proof is available it proceeds on the current pool member instead of failing.
+   */
+  userInitiated?: boolean;
   signal?: AbortSignal;
 }>;
 
@@ -1191,6 +1245,7 @@ export async function admitConnectedServiceAuthForSpawn(params: ConnectedService
     authGroupSwitchCoordinator: params.authGroupSwitchCoordinator ?? null,
     predictiveSoftSwitchMode: credentialLifecycleDescriptor.predictiveSoftSwitch.mode,
     quotaProbeDeadlineAtMs: params.quotaProbeDeadlineAtMs,
+    userInitiated: params.userInitiated === true,
   });
   params.signal?.throwIfAborted();
 

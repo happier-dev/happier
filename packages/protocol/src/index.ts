@@ -745,6 +745,7 @@ export {
 } from './connect/normalizeConnectedServiceSelectionInput.js';
 
 export {
+  CONNECTED_SERVICE_MANUAL_OVERRIDABLE_RUNTIME_BLOCKER_KEYS,
   clearConnectedServiceAuthGroupMemberRuntimeBlockers,
   readConnectedServiceManualActiveProfileRuntimeBlocker,
   type ConnectedServiceManualActiveProfileRuntimeBlocker,

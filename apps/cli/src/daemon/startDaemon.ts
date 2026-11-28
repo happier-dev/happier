@@ -3737,6 +3737,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                       vendorResumeId: effectiveResume || null,
                       existingSessionMetadata: existingSessionPersistedMetadata,
                       resumeReachabilityRequired: spawnSharedStateContinuityRequested,
+                      userInitiated: normalizedOptions.executionAuthorization?.provenance === 'user_request',
                       sessionStateMode: normalizedOptions.handoffStateTransfer,
                       candidatePersistedSessionFile: normalizedOptions.handoffStateTransfer === 'existing'
                         ? null
