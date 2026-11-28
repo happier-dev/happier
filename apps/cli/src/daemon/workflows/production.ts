@@ -1953,6 +1953,8 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         accountId: params.accountId, restore: params.restoreManagedWorkspaceSource, signal: claim.signal }) ?? undefined;
       if (!workspaceSource) recoveryFailure = 'workspace_unavailable';
     }
+    const destinations = deriveWorkflowDestinationsV1({ definition: accepted.authoredDefinition, children: accepted.frozenChildren,
+      materializedLeaves: accepted.materializedLeaves, originSessionId: accepted.origin?.originSessionId }).leaves;
     let checkpoint: WorkflowCheckpointEnvelopeV1;
     let rootRecordId: string;
     let revision = initial.run.revision;
@@ -1968,7 +1970,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         frontier: { nextBlockOrdinal: 0, paused: false },
       });
       const rootProgress = WorkflowProgressEnvelopeV1Schema.parse({
-        stepProgress: { completed: 0, skipped: 0, total: countWorkflowStepsV1(accepted.authoredDefinition.blocks) },
+        stepProgress: { completed: 0, skipped: 0, total: countWorkflowStepsV1(accepted.authoredDefinition.blocks), destinations },
         kind: 'happier.workflow-progress.v1', invocationPath: { blockId: '$root', scope: [] },
         blockKind: 'root', attempt: '0', logicalInvocationRecordId: rootRecordId,
       });
@@ -2012,8 +2014,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       frozenChildren: accepted.frozenChildren,
       discussionRound: readWorkflowDiscussionRoundBindingV1(accepted),
       ...(createdRoot ? { createdRoot } : {}),
-      destinations: deriveWorkflowDestinationsV1({ definition: accepted.authoredDefinition, children: accepted.frozenChildren,
-        materializedLeaves: accepted.materializedLeaves, originSessionId: accepted.origin?.originSessionId }).leaves,
+      destinations,
     });
     await durableStore.refreshStepProgress();
     const rootAtStart = durableStore.rootIndex;

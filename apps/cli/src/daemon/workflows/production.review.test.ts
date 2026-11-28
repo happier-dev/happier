@@ -486,10 +486,20 @@ describe('durable review coordinator', () => {
     expect(boundary.rows()).toEqual(expect.arrayContaining([expect.objectContaining({ index: expect.objectContaining({ lifecycle: 'waiting_for_review' }) })]));
     // A fresh start reuses the claimed snapshot's key census for recipient
     // preparation and initializes its root already running: no census read and
-    // no separate running transition before the first admission.
+    // no separate running or root progress write before the first child.
     const startup = boundary.operations().slice(0, boundary.operations().indexOf('invocations.admit'));
-    expect(startup.filter(operation => operation === 'run-key.census' || operation === 'transition')).toEqual([]);
-    expect(boundary.calls.find(call => call.operation === 'initialize')).toMatchObject({ rootLifecycle: 'running' });
+    expect(startup.filter(operation =>
+      operation === 'run-key.census' || operation === 'transition' || operation === 'invocations.fact')).toEqual([]);
+    const initialized = boundary.calls.find(call => call.operation === 'initialize');
+    expect(initialized).toMatchObject({ rootLifecycle: 'running' });
+    if (!initialized) throw new Error('Workflow root was not initialized');
+    expect(openWorkflowProgressStoredEnvelopeV1({
+      ...prepared.runCrypto,
+      binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: initialized.rootInvocation.id,
+        sequence: '0', parentRecordId: null, memberOrdinal: '0', attempt: '0' },
+      envelope: parseWorkflowStoredContentEnvelopeV1(initialized.rootInvocation.contentEnvelope),
+    })).toMatchObject({ kind: 'available', content: { stepProgress: { completed: 0, skipped: 0, total: 1,
+      destinations: [{ sourceKey: '$root', blockId: 'human', sessionIds: [] }] } } });
     current.witness.version = 4;
     expect(await coordinate({ runId, attempt: 0, expectedRevision: boundary.run().revision,
       accountCurrentness: accountEncryption.witness, acceptedEnvelope })).toMatchObject({ state: 'waiting_for_review' });
