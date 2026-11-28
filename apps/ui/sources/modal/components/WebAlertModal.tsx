@@ -1,5 +1,6 @@
 import React from 'react';
 import { View } from 'react-native';
+import { HappierPressable, happierFocusRingStyle } from '@happier-dev/plugin-ui/presentation';
 import { BaseModal } from './BaseModal';
 import { AlertModalConfig, ConfirmModalConfig } from '../types';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
@@ -7,6 +8,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { SelectionCheckGlyph } from '@/components/ui/selection/SelectionCheckGlyph';
 import { ModalCardFrame } from './card/ModalCardFrame';
 import { ModalChoiceRow } from './card/ModalChoiceRow';
 import { ModalCommands } from './ModalCommands';
@@ -15,7 +17,7 @@ import { ModalCommands } from './ModalCommands';
 interface WebAlertModalProps {
     config: AlertModalConfig | ConfirmModalConfig;
     onClose: () => void;
-    onConfirm?: (value: boolean) => void;
+    onConfirm?: (confirmed: boolean, checked?: boolean) => void;
     showBackdrop?: boolean;
     /** False while the dialog leaves; the host unmounts it once the exit has played. */
     visible?: boolean;
@@ -50,6 +52,20 @@ const stylesheet = StyleSheet.create((theme) => ({
     irreversibleText: {
         color: theme.colors.state.warning.textForeground,
     },
+    toggle: {
+        marginTop: theme.space.s12,
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: theme.space.s8,
+        borderRadius: theme.borderRadius.sm,
+    },
+    toggleCopy: {
+        flex: 1,
+        gap: theme.space.s4,
+    },
+    toggleDescription: {
+        color: theme.colors.text.secondary,
+    },
     facts: {
         marginTop: theme.space.s12,
         gap: theme.space.s4,
@@ -71,13 +87,15 @@ const stylesheet = StyleSheet.create((theme) => ({
 }));
 
 export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true, visible = true, zIndexBase, onExited }: WebAlertModalProps) {
-    useUnistyles();
+    const { theme } = useUnistyles();
     const styles = stylesheet;
     const isConfirm = config.type === 'confirm';
+    const [checked, setChecked] = React.useState(false);
     
     const handleButtonPress = (buttonIndex: number) => {
         if (isConfirm && onConfirm) {
-            onConfirm(buttonIndex === 1);
+            if (config.toggle) onConfirm(buttonIndex === 1, checked);
+            else onConfirm(buttonIndex === 1);
             return;
         }
         if (!isConfirm && config.buttons?.[buttonIndex]?.onPress) {
@@ -149,6 +167,25 @@ export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true,
                         <Text variant="body" style={styles.message}>
                             {config.message}
                         </Text>
+                    ) : null}
+                    {isConfirm && config.toggle ? (
+                        <HappierPressable
+                            testID="web-modal-confirm-toggle"
+                            accessibilityRole="checkbox"
+                            accessibilityLabel={config.toggle.label}
+                            accessibilityHint={config.toggle.description}
+                            checked={checked}
+                            onPress={() => setChecked(value => !value)}
+                            style={({ focused }) => [styles.toggle, happierFocusRingStyle({ visible: focused, color: theme.colors.border.focus })]}
+                        >
+                            <SelectionCheckGlyph state={checked ? 'checked' : 'unchecked'} />
+                            <View style={styles.toggleCopy}>
+                                <Text variant="label">{config.toggle.label}</Text>
+                                {config.toggle.description ? (
+                                    <Text variant="body" style={styles.toggleDescription}>{config.toggle.description}</Text>
+                                ) : null}
+                            </View>
+                        </HappierPressable>
                     ) : null}
                     {/* What the choice changes, one fact per line: the label at the start, the value at the end in figures. */}
                     {isConfirm && config.facts && config.facts.length > 0 ? (

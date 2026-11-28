@@ -3499,7 +3499,9 @@ const apiTokenSettingsTranslations = { fr: translated({
             signOutEverywhere: {
                 title: 'Se déconnecter partout',
                 subtitle: 'Met fin à toutes les sessions connectées de ce compte.',
-                body: 'Toutes les sessions connectées dans les navigateurs et sur les appareils prendront fin. Les jetons API restent actifs ; révoque-les séparément depuis cet écran.',
+                body: 'Toutes les sessions connectées dans les navigateurs et sur les appareils prendront fin. Les appareils conservent les données déjà téléchargées et ta clé de récupération reste la même.',
+                revokeApiTokens: 'Révoquer aussi tous les jetons API',
+                revokeApiTokensDescription: 'Les scripts et intégrations qui les utilisent cesseront de fonctionner.',
                 confirm: 'Se déconnecter partout',
             },
             errors: {

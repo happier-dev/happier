@@ -3384,7 +3384,9 @@ const apiTokenSettingsTranslations = { 'zh-Hans': translated({
             signOutEverywhere: {
                 title: '在所有位置退出登录',
                 subtitle: '结束此帐户的所有已登录会话。',
-                body: '浏览器和设备上的所有已登录会话都将结束。API 令牌仍会保持有效；请在此屏幕中单独撤销它们。',
+                body: '浏览器和设备上的所有已登录会话都将结束。设备会保留已下载的数据，你的恢复密钥保持不变。',
+                revokeApiTokens: '同时撤销所有 API 令牌',
+                revokeApiTokensDescription: '使用这些令牌的脚本和集成将停止工作。',
                 confirm: '在所有位置退出登录',
             },
             errors: {

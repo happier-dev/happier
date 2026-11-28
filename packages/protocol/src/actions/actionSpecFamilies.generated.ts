@@ -1476,6 +1476,7 @@ export const ACTION_SPEC_MCP_TOOL_BINDINGS: readonly (readonly [name: string, id
   ["machines_pools_delete", "machines.pools.delete"],
   ["machines_pools_resolve", "machines.pools.resolve"],
   ["account_plugins_data_erase", "account.plugins.data.erase"],
+  ["account_sessions_sign_out_everywhere", "account.sessions.signOutEverywhere"],
   ["account_encryption_automation_templates_recover", "account.encryption.automationTemplates.recover"],
   ["account_encryption_historical_key_forget", "account.encryption.historicalKey.forget"],
   ["account_security_get", "account.security.get"],

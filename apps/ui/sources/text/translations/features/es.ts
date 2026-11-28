@@ -3376,7 +3376,9 @@ const apiTokenSettingsTranslations = { es: translated({
             signOutEverywhere: {
                 title: 'Cerrar sesión en todas partes',
                 subtitle: 'Finaliza todas las sesiones iniciadas de esta Cuenta.',
-                body: 'Finalizarán todas las sesiones iniciadas en navegadores y dispositivos. Los tokens de API seguirán activos; revócalos por separado desde esta pantalla.',
+                body: 'Finalizarán todas las sesiones iniciadas en navegadores y dispositivos. Los dispositivos conservan lo que ya descargaron y tu clave de recuperación sigue siendo la misma.',
+                revokeApiTokens: 'Revocar también todos los tokens de API',
+                revokeApiTokensDescription: 'Los scripts y las integraciones que los usan dejarán de funcionar.',
                 confirm: 'Cerrar sesión en todas partes',
             },
             errors: {

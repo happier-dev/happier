@@ -3493,7 +3493,9 @@ const apiTokenSettingsTranslations = { pl: translated({
             signOutEverywhere: {
                 title: 'Wyloguj wszędzie',
                 subtitle: 'Zakończ wszystkie zalogowane sesje tego konta.',
-                body: 'Wszystkie zalogowane sesje w przeglądarkach i na urządzeniach zostaną zakończone. Tokeny API pozostaną aktywne; unieważnij je osobno z tego ekranu.',
+                body: 'Wszystkie zalogowane sesje w przeglądarkach i na urządzeniach zostaną zakończone. Urządzenia zachowają pobrane dane, a Twój klucz odzyskiwania pozostanie bez zmian.',
+                revokeApiTokens: 'Unieważnij również wszystkie tokeny API',
+                revokeApiTokensDescription: 'Skrypty i integracje, które ich używają, przestaną działać.',
                 confirm: 'Wyloguj wszędzie',
             },
             errors: {

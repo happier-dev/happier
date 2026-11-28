@@ -102,7 +102,9 @@ export const english = {
         signOutEverywhere: {
             title: 'Sign out everywhere',
             subtitle: 'End all signed-in sessions for this Account.',
-            body: 'All signed-in browser and device sessions will end. API tokens remain active; revoke them separately from this screen.',
+            body: 'All signed-in browser and device sessions will end. Devices keep what they already downloaded, and your recovery key stays the same.',
+            revokeApiTokens: 'Also revoke all API tokens',
+            revokeApiTokensDescription: 'Scripts and integrations that use them stop working.',
             confirm: 'Sign out everywhere',
         },
         errors: {

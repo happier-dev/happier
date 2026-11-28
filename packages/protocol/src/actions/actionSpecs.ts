@@ -1162,9 +1162,9 @@ function normalizeActionPublicExposure(spec: PreNormalizedActionSpec): Normalize
       // undeclared client-owned Actions remain unavailable as CLI commands.
       cli: canExposeCli && spec.surfaces.cli,
       mcp: spec.surfaces.mcp || presentUserRequestable
-        || spec.id === 'account.apiTokens.list' || spec.id === 'account.security.get',
+        || spec.id === 'account.security.get',
       agent: spec.surfaces.agent || presentUserRequestable
-        || spec.id === 'account.apiTokens.list' || spec.id === 'account.security.get',
+        || spec.id === 'account.security.get',
       api: runtimeBacked && spec.surfaces.api !== false && !isInternal
         && !isPluginProvenanceOnly
         && !isHumanSecretApiExcluded

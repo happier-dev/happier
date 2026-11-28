@@ -3488,7 +3488,9 @@ const apiTokenSettingsTranslations = { it: translated({
             signOutEverywhere: {
                 title: 'Esci ovunque',
                 subtitle: 'Termina tutte le sessioni connesse di questo Account.',
-                body: 'Tutte le sessioni connesse nei browser e sui dispositivi verranno terminate. I token API restano attivi; revocali separatamente da questa schermata.',
+                body: 'Tutte le sessioni connesse nei browser e sui dispositivi verranno terminate. I dispositivi conservano i dati già scaricati e la chiave di recupero resta la stessa.',
+                revokeApiTokens: 'Revoca anche tutti i token API',
+                revokeApiTokensDescription: 'Gli script e le integrazioni che li usano smetteranno di funzionare.',
                 confirm: 'Esci ovunque',
             },
             errors: {

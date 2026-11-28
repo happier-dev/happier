@@ -71,25 +71,31 @@ function createAccountSecurityActionSpecs() {
   {
     id: 'account.sessions.signOutEverywhere', executionPlacement: 'account', approval: {result: 'required'},
     accountAuthorityRetirementStatuses: ['signed_out'],
+    bindings: { mcpToolName: 'account_sessions_sign_out_everywhere' },
     title: 'Sign out everywhere',
-    description: 'Invalidate all signed sessions for the current Account. API tokens remain active.',
+    description: 'Invalidate all signed sessions for the current Account and optionally revoke all its API tokens.',
     safety: 'danger',
     placements: [],
     surfaces: {
       ui: true,
       voice: false,
-      agent: false,
-      mcp: false,
+      agent: true,
+      mcp: true,
       cli: false,
       rpc: false,
     },
     sideEffectClass: 'danger',
     outputSchema: AccountSessionsSignOutEverywhereActionOutputV1Schema,
     inputSchema: AccountSessionsSignOutEverywhereActionInputV1Schema,
+    approvalPresentation: { summary: (input: unknown) =>
+      AccountSessionsSignOutEverywhereActionInputV1Schema.parse(input).revokeApiTokens === true
+        ? 'This invalidates signed sessions for the current Account. All API tokens will be revoked, and scripts and integrations that use them will stop working.'
+        : 'This invalidates signed sessions for the current Account. API tokens remain active.',
+    },
     inputHints: {
       title: 'Sign out everywhere',
-      description: 'This invalidates signed sessions for the current Account. API tokens remain active.',
-      fields: [],
+      description: 'End all signed sessions. API tokens stay active by default.',
+      fields: [{ path: 'revokeApiTokens', title: 'Also revoke all API tokens', widget: 'boolean' }],
     },
   } satisfies PreNormalizedActionSpec,
   {
@@ -269,8 +275,8 @@ function createAccountSecurityActionSpecs() {
     surfaces: {
       ui: true,
       voice: false,
-      agent: false,
-      mcp: false,
+      agent: true,
+      mcp: true,
       cli: true,
       rpc: false,
       // Signed Session roots can read summaries; PAT self-management stays on
@@ -346,8 +352,8 @@ function createAccountSecurityActionSpecs() {
     surfaces: {
       ui: true,
       voice: false,
-      agent: false,
-      mcp: false,
+      agent: true,
+      mcp: true,
       cli: true,
       rpc: false,
     },

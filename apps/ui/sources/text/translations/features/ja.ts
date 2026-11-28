@@ -3439,7 +3439,9 @@ const apiTokenSettingsTranslations = { ja: translated({
             signOutEverywhere: {
                 title: 'すべての場所でサインアウト',
                 subtitle: 'このアカウントでサインインしているすべてのセッションを終了します。',
-                body: 'ブラウザとデバイスでサインインしているすべてのセッションが終了します。API トークンは有効なままです。この画面から別途取り消してください。',
+                body: 'ブラウザとデバイスでサインインしているすべてのセッションが終了します。デバイスにダウンロード済みのデータは残り、リカバリーキーは変わりません。',
+                revokeApiTokens: 'すべての API トークンも取り消す',
+                revokeApiTokensDescription: 'これらのトークンを使うスクリプトや連携は動作しなくなります。',
                 confirm: 'すべての場所でサインアウト',
             },
             errors: {

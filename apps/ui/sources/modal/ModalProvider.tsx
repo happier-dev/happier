@@ -373,8 +373,8 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
                                         Modal.resolveConfirm(modal.id, false);
                                         hideModal(modal.id);
                                     }}
-                                    onConfirm={(value) => {
-                                        Modal.resolveConfirm(modal.id, value);
+                                    onConfirm={(confirmed, checked) => {
+                                        Modal.resolveConfirm(modal.id, confirmed, checked);
                                         hideModal(modal.id);
                                     }}
                                     showBackdrop={showBackdrop}

@@ -3481,7 +3481,9 @@ const apiTokenSettingsTranslations = { ca: translated({
             signOutEverywhere: {
                 title: 'Tanca la sessió a tot arreu',
                 subtitle: 'Finalitza totes les sessions iniciades en aquest compte.',
-                body: 'Totes les sessions iniciades al navegador i als dispositius acabaran. Els tokens d’API continuaran actius; revoca’ls per separat des d’aquesta pantalla.',
+                body: 'Totes les sessions iniciades al navegador i als dispositius acabaran. Els dispositius conserven el que ja han baixat i la clau de recuperació no canvia.',
+                revokeApiTokens: 'Revoca també tots els tokens d’API',
+                revokeApiTokensDescription: 'Els scripts i les integracions que els utilitzen deixaran de funcionar.',
                 confirm: 'Tanca la sessió a tot arreu',
             },
             errors: {

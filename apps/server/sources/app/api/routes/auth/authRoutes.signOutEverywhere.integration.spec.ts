@@ -2,13 +2,14 @@ import Fastify from "fastify";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 import { io as ioClient } from "socket.io-client";
+import { AccountSessionsSignOutEverywhereServerOutputV1Schema } from "@happier-dev/protocol/auth/accountSessions";
 
 import { auth } from "@/app/auth/auth";
 import { startSocket } from "@/app/api/socket";
 import type { Fastify as AppFastify } from "@/app/api/types";
 import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
 import { db } from "@/storage/db";
-import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { createDatabaseIntegrationHarness } from "@/testkit/databaseIntegrationHarness";
 
 import { authRoutes } from "./authRoutes";
 import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
@@ -96,10 +97,10 @@ async function waitForSocketDisconnect(socket: ReturnType<typeof ioClient>): Pro
 }
 
 describe("authRoutes (sign out everywhere) (integration)", () => {
-    let harness: LightSqliteHarness;
+    let harness: Awaited<ReturnType<typeof createDatabaseIntegrationHarness>>;
 
     beforeAll(async () => {
-        harness = await createLightSqliteHarness({
+        harness = await createDatabaseIntegrationHarness({
             tempDirPrefix: "happier-auth-sign-out-everywhere-",
             initAuth: true,
             env: {
@@ -111,6 +112,7 @@ describe("authRoutes (sign out everywhere) (integration)", () => {
 
     afterEach(async () => {
         harness.resetEnv();
+        await db.session.deleteMany();
         await db.machine.deleteMany();
         await db.account.deleteMany();
     });
@@ -190,7 +192,7 @@ describe("authRoutes (sign out everywhere) (integration)", () => {
                     method: "POST",
                     url: SIGN_OUT_EVERYWHERE_PATH,
                     headers: { authorization: `Bearer ${pat.token}` },
-                    payload: {},
+                    payload: { revokeApiTokens: true },
                 }),
                 app.inject({
                     method: "POST",
@@ -213,7 +215,7 @@ describe("authRoutes (sign out everywhere) (integration)", () => {
         }
     });
 
-    it("disconnects established user and user-machines Socket.IO sockets after the durable epoch bump", async () => {
+    it.each([false, true])("disconnects signed sockets and revokes API-token access only when requested (%s)", async (revokeApiTokens) => {
         const account = await db.account.create({
             data: { publicKey: "sign-out-everywhere-socket-owner" },
             select: { id: true },
@@ -231,6 +233,20 @@ describe("authRoutes (sign out everywhere) (integration)", () => {
             select: { id: true },
         });
         const token = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
+        const session = await db.session.create({
+            data: { accountId: account.id, tag: crypto.randomUUID(), metadata: "{}", encryptionMode: "plain" },
+        });
+        const pat = await auth.createApiToken({
+            accountId: account.id,
+            tokenId: crypto.randomUUID(),
+            label: await preparePlainAccountApiTokenLabel(account.id, "Automation socket"),
+            expiresAt: new Date(Date.now() + 60_000),
+            grant: {
+                v: 1, actions: { families: ["session_transcripts"], ids: [] },
+                targets: { sessions: [session.id], machines: [] }, approve: false,
+                origins: [], models: null, permissionModes: null, create: null,
+            },
+        });
         const app = createTestApp();
         await app.listen({ port: 0, host: "127.0.0.1" });
         const address = app.server.address();
@@ -258,29 +274,51 @@ describe("authRoutes (sign out everywhere) (integration)", () => {
                 machineId: "sign-out-everywhere-machine",
             },
         });
+        const patSocket = ioClient(`http://127.0.0.1:${port}`, {
+            path: "/v1/updates",
+            transports: ["websocket"],
+            reconnection: false,
+            autoConnect: false,
+            auth: { token: pat.token, clientType: "session-scoped", sessionId: session.id },
+        });
 
         try {
             const userConnected = waitForSocketConnection(userSocket);
             const machineConnected = waitForSocketConnection(machineSocket);
+            const patConnected = waitForSocketConnection(patSocket);
             userSocket.connect();
             machineSocket.connect();
-            await Promise.all([userConnected, machineConnected]);
-            await Promise.all([waitForSocketReady(userSocket), waitForSocketReady(machineSocket)]);
+            patSocket.connect();
+            await Promise.all([userConnected, machineConnected, patConnected]);
+            await Promise.all([waitForSocketReady(userSocket), waitForSocketReady(machineSocket), waitForSocketReady(patSocket)]);
 
             const userDisconnected = waitForSocketDisconnect(userSocket);
             const machineDisconnected = waitForSocketDisconnect(machineSocket);
+            const patDisconnected = waitForSocketDisconnect(patSocket);
             const response = await app.inject({
                 method: "POST",
                 url: SIGN_OUT_EVERYWHERE_PATH,
                 headers: { authorization: `Bearer ${token}` },
-                payload: {},
+                payload: { revokeApiTokens },
             });
 
             expect(response.statusCode).toBe(200);
-            expect(response.json()).toEqual({ status: "signed_out" });
-            await Promise.all([userDisconnected, machineDisconnected]);
+            expect(AccountSessionsSignOutEverywhereServerOutputV1Schema.parse(response.json())).toEqual({ status: "signed_out" });
+            await Promise.all([userDisconnected, machineDisconnected, patDisconnected]);
             expect(userSocket.connected).toBe(false);
             expect(machineSocket.connected).toBe(false);
+            if (revokeApiTokens) {
+                await expect(auth.verifyToken(pat.token)).resolves.toBeNull();
+                const patRejected = waitForSocketConnectionRejection(patSocket);
+                patSocket.connect();
+                await patRejected;
+            } else {
+                await expect(auth.verifyToken(pat.token)).resolves.toMatchObject({ userId: account.id, authTokenKind: "api_token" });
+                const patReconnected = waitForSocketConnection(patSocket);
+                patSocket.connect();
+                await patReconnected;
+                await waitForSocketReady(patSocket);
+            }
 
             const oldTokenReconnect = ioClient(`http://127.0.0.1:${port}`, {
                 path: "/v1/updates",
@@ -304,6 +342,7 @@ describe("authRoutes (sign out everywhere) (integration)", () => {
         } finally {
             userSocket.close();
             machineSocket.close();
+            patSocket.close();
             await app.close();
         }
     }, 30_000);

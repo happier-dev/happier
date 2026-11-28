@@ -1,6 +1,7 @@
 import { ACCOUNT_SESSIONS_SIGN_OUT_EVERYWHERE_HTTP_PATH_V1, AccountSessionsSignOutEverywhereActionInputV1Schema, AccountSessionsSignOutEverywhereServerErrorV1Schema, AccountSessionsSignOutEverywhereServerOutputV1Schema } from '@happier-dev/protocol/auth/accountSessions';
 
 import { auth } from "@/app/auth/auth";
+import { inTx } from "@/storage/inTx";
 import {
     PresentUserRequiredResponseSchema,
     requirePresentUser,
@@ -9,8 +10,8 @@ import {
 import { type Fastify } from "../../types";
 
 /**
- * One present-user route for revoking the authenticated Account's signed
- * sessions. The Account id is derived solely from verified bearer provenance.
+ * Retires the authenticated Account's signed sessions, with optional API-token
+ * revocation in the same transaction. Socket eviction follows the commit.
  */
 export function registerAccountSessionsSignOutEverywhereRoute(app: Fastify): void {
     app.post(
@@ -32,7 +33,12 @@ export function registerAccountSessionsSignOutEverywhereRoute(app: Fastify): voi
                 return await reply.code(400).send({ error: "invalid_request" });
             }
 
-            await auth.signOutEverywhere(request.userId);
+            if (request.body.revokeApiTokens === true) {
+                await inTx((tx) => auth.revokeAllAccountCredentialsInTx(tx, request.userId));
+            } else {
+                await auth.signOutEverywhere(request.userId);
+            }
+            // API-token viewers also join the Account revocation room.
             app.disconnectAccountSockets(request.userId);
             return await reply.send({ status: "signed_out" });
         },

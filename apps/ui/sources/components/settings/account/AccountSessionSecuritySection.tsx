@@ -15,6 +15,22 @@ import { completeApiTokenSettingsSignOutEverywhere } from '@/components/settings
 import { resolveApiTokenOperationErrorMessageKey } from '@/components/settings/apiTokens/apiTokenSettingsPresentation';
 import { confirmForCapturedAccount } from '@/components/settings/apiTokens/confirmForCapturedAccount';
 
+export function confirmAccountSignOutEverywhere() {
+    return Modal.confirm(
+        t('settingsApiTokens.signOutEverywhere.title'),
+        t('settingsApiTokens.signOutEverywhere.body'),
+        {
+            cancelText: t('common.cancel'),
+            confirmText: t('settingsApiTokens.signOutEverywhere.confirm'),
+            destructive: true,
+            toggle: {
+                label: t('settingsApiTokens.signOutEverywhere.revokeApiTokens'),
+                description: t('settingsApiTokens.signOutEverywhere.revokeApiTokensDescription'),
+            },
+        },
+    );
+}
+
 /**
  * Ends every signed-in session for this Account: a quiet bordered button in the page-closing row
  * (`patterns.md` → Leaving and destroying), never a red row inside a sheet.
@@ -27,14 +43,15 @@ export const AccountSignOutEverywhereButton = React.memo(function AccountSignOut
     React.useInsertionEffect(() => () => controller.retire(), [controller]);
 
     const signOut = async () => {
-        const target = await confirmForCapturedAccount(controller, () => Modal.confirm(
-            t('settingsApiTokens.signOutEverywhere.title'),
-            t('settingsApiTokens.signOutEverywhere.body'),
-            { cancelText: t('common.cancel'), confirmText: t('settingsApiTokens.signOutEverywhere.confirm'), destructive: true },
-        ));
+        let revokeApiTokens = false;
+        const target = await confirmForCapturedAccount(controller, async () => {
+            const decision = await confirmAccountSignOutEverywhere();
+            revokeApiTokens = decision.checked;
+            return decision.confirmed;
+        });
         if (!target) return;
         const completed = await completeApiTokenSettingsSignOutEverywhere({
-            signOutEverywhere: () => controller.signOutEverywhere(target),
+            signOutEverywhere: () => controller.signOutEverywhere(target, revokeApiTokens),
             logout: auth.logout,
             replace: (path) => router.replace(path),
         });

@@ -9646,7 +9646,10 @@ preview. Authenticated approval or exact-daemon replay delivers human authority
 through that existing live continuation, never through an Artifact field. A
 detached raw-input invocation cannot be replayed from durable history.
 Direct API-token mutations remain refused. `account.apiTokens.list`
-and `account.security.get` are ordinary Agent/MCP-exposed reads.
+and `account.security.get` are ordinary Agent/MCP-exposed reads. Agents and MCP
+clients can request `account.apiTokens.revokeAll` and
+`account.sessions.signOutEverywhere` through the normal approval flow. The
+sign-out approval shows whether the request also revokes all API tokens.
 The decision owner refuses an API token's approval of a person-class Action. A
 host agent with a waived decide may approve it, never its own request. Replay of a
 stored approval of a person-class Action still requires authenticated present-user

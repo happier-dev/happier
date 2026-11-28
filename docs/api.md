@@ -867,10 +867,12 @@ new writes retain their canonical strict schemas. Grant attenuation uses the sam
 conversational Action admission as execution, including Send's one-way implication
 of question-answer authority.
 
-`account.sessions.signOutEverywhere` invalidates
-signed sessions but intentionally leaves API Tokens active; revoke API Tokens
-through their individual or all-token controls instead. Server-origin
-verification sees revocation on its next verification. The daemon has only a
+`POST /v1/auth/sessions/sign-out-everywhere` uses the authenticated
+person-class credential's Account. In 0.3 development, the optional
+`revokeApiTokens: true` input also revokes every API token for that Account.
+Omit the field or send `false` to end signed sessions while keeping API tokens
+active. The server disconnects the affected sockets after commit and refuses
+the revoked credentials on their next verification. The daemon has a
 bounded, in-memory positive validation cache: at most 60 seconds and never
 extended while server introspection is unavailable.
 

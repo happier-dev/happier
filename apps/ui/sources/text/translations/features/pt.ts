@@ -3475,7 +3475,9 @@ const apiTokenSettingsTranslations = { pt: translated({
             signOutEverywhere: {
                 title: 'Sair de todos os lugares',
                 subtitle: 'Encerre todas as sessões conectadas desta Conta.',
-                body: 'Todas as sessões conectadas em navegadores e dispositivos serão encerradas. Os tokens de API continuam ativos; revogue-os separadamente nesta tela.',
+                body: 'Todas as sessões conectadas em navegadores e dispositivos serão encerradas. Os dispositivos mantêm os dados já transferidos e a tua chave de recuperação não muda.',
+                revokeApiTokens: 'Revogar também todos os tokens de API',
+                revokeApiTokensDescription: 'Os scripts e as integrações que os utilizam deixam de funcionar.',
                 confirm: 'Sair de todos os lugares',
             },
             errors: {

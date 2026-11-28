@@ -1,6 +1,6 @@
 import { Platform, Alert } from 'react-native';
 import { t } from '@/text';
-import { AlertButton, type ModalShowConfig, CustomModalConfig, IModal, type CustomModalShowConfig, type CustomModalComponentType, type CustomModalInjectedProps, type CustomModalCallerProps } from './types';
+import { AlertButton, type ModalShowConfig, CustomModalConfig, IModal, type CustomModalShowConfig, type CustomModalComponentType, type CustomModalInjectedProps, type CustomModalCallerProps, type ConfirmModalToggle, type ConfirmModalToggleDecision } from './types';
 
 type ModalProviderFunctions = Readonly<{
     showModal: (config: ModalShowConfig) => string;
@@ -14,13 +14,16 @@ type ModalProviderRegistration = Readonly<{
     functions: ModalProviderFunctions;
 }>;
 
+type ConfirmOptions = Parameters<IModal['confirm']>[2];
+type ConfirmWithToggleOptions = NonNullable<ConfirmOptions> & { toggle: ConfirmModalToggle };
+
 class ModalManagerClass implements IModal {
     private showModalFn: ((config: ModalShowConfig) => string) | null = null;
     private hideModalFn: ((id: string) => void) | null = null;
     private hideAllModalsFn: (() => void) | null = null;
     private providerRegistrations: ModalProviderRegistration[] = [];
     private nextProviderRegistrationId = 0;
-    private confirmResolvers: Map<string, (value: boolean) => void> = new Map();
+    private confirmResolvers: Map<string, (confirmed: boolean, checked: boolean) => void> = new Map();
     private promptResolvers: Map<string, (value: string | null) => void> = new Map();
     private alertResolvers: Map<string, () => void> = new Map();
 
@@ -158,19 +161,25 @@ class ModalManagerClass implements IModal {
         });
     }
 
+    confirm(title: string, message: string | undefined, options: ConfirmWithToggleOptions): Promise<ConfirmModalToggleDecision>;
+    confirm(title: string, message?: string, options?: ConfirmOptions): Promise<boolean>;
     async confirm(
         title: string,
         message?: string,
-        options?: Parameters<IModal['confirm']>[2]
-    ): Promise<boolean> {
+        options?: ConfirmOptions | ConfirmWithToggleOptions,
+    ): Promise<boolean | ConfirmModalToggleDecision> {
         const signal = options?.signal;
-        if (signal?.aborted) return false;
-        if (Platform.OS === 'web' || options?.messageParagraphs || options?.facts || signal || options?.commandBridge) {
+        const toggle = options && 'toggle' in options ? options.toggle : undefined;
+        const decision = (confirmed: boolean, checked = false) => toggle
+            ? { confirmed, checked: confirmed && checked }
+            : confirmed;
+        if (signal?.aborted) return decision(false);
+        if (Platform.OS === 'web' || toggle || options?.messageParagraphs || options?.facts || signal || options?.commandBridge) {
             // Native alerts cannot be dismissed by their invocation's cancellation owner.
             // The existing app dialog owns cancellable and structured confirmations everywhere.
             if (!this.showModalFn) {
                 console.error('ModalManager not initialized. Make sure ModalProvider is mounted.');
-                return false;
+                return decision(false);
             }
 
             const hideModal = this.hideModalFn;
@@ -180,6 +189,7 @@ class ModalManagerClass implements IModal {
                 message,
                 messageParagraphs: options?.messageParagraphs,
                 facts: options?.facts,
+                toggle,
                 cancelText: options?.cancelText,
                 confirmText: options?.confirmText,
                 destructive: options?.destructive,
@@ -187,14 +197,14 @@ class ModalManagerClass implements IModal {
                 commandBridge: options?.commandBridge,
             } as ModalShowConfig);
 
-            return new Promise<boolean>((resolve) => {
+            return new Promise<boolean | ConfirmModalToggleDecision>((resolve) => {
                 const abort = () => {
                     this.resolveConfirm(modalId, false);
                     hideModal?.(modalId);
                 };
-                this.confirmResolvers.set(modalId, value => {
+                this.confirmResolvers.set(modalId, (confirmed, checked) => {
                     signal?.removeEventListener('abort', abort);
-                    resolve(value);
+                    resolve(decision(confirmed, checked));
                 });
                 signal?.addEventListener('abort', abort, { once: true });
                 if (signal?.aborted) abort();
@@ -274,10 +284,10 @@ class ModalManagerClass implements IModal {
         this.hideAllModalsFn();
     }
 
-    resolveConfirm(id: string, value: boolean): void {
+    resolveConfirm(id: string, confirmed: boolean, checked = false): void {
         const resolver = this.confirmResolvers.get(id);
         if (resolver) {
-            resolver(value);
+            resolver(confirmed, checked);
             this.confirmResolvers.delete(id);
         }
     }

@@ -3494,7 +3494,9 @@ const apiTokenSettingsTranslations = { de: translated({
             signOutEverywhere: {
                 title: 'Überall abmelden',
                 subtitle: 'Alle angemeldeten Sitzungen für dieses Konto beenden.',
-                body: 'Alle angemeldeten Browser- und Gerätesitzungen werden beendet. API-Tokens bleiben aktiv; widerrufe sie separat auf diesem Bildschirm.',
+                body: 'Alle angemeldeten Browser- und Gerätesitzungen werden beendet. Geräte behalten bereits heruntergeladene Daten. Dein Wiederherstellungsschlüssel bleibt gleich.',
+                revokeApiTokens: 'Auch alle API-Tokens widerrufen',
+                revokeApiTokensDescription: 'Skripte und Integrationen, die sie verwenden, funktionieren dann nicht mehr.',
                 confirm: 'Überall abmelden',
             },
             errors: {

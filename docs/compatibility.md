@@ -11140,6 +11140,13 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+In 0.3 development, the strict `account.sessions.signOutEverywhere` Action
+and its HTTP route accept optional `revokeApiTokens`. Requests and stored
+approvals with the original empty input continue to end signed sessions
+while retaining API tokens. A checked request requires matching Protocol,
+client and server source on the 0.3 cut. The response shape and credential
+formats stay the same.
+
 Unreleased 0.3 native deployment failures retain an optional `statefulService`
 in the private Receipt when storage admission refuses a multi-Machine deployment.
 It identifies the Compose service for database recovery and confers no placement

@@ -156,7 +156,7 @@ export type ApiTokenSettingsController = Readonly<{
     captureDestructiveTarget(): ApiTokenSettingsDestructiveTarget | null;
     revokeToken(tokenId: string, target?: ApiTokenSettingsDestructiveTarget): Promise<boolean>;
     revokeAllTokens(target?: ApiTokenSettingsDestructiveTarget): Promise<number | null>;
-    signOutEverywhere(target?: ApiTokenSettingsDestructiveTarget): Promise<boolean>;
+    signOutEverywhere(target?: ApiTokenSettingsDestructiveTarget, revokeApiTokens?: boolean): Promise<boolean>;
     /** Starts editing a listed token's access from its current grant; false when it is not listed. */
     beginAccessEdit(tokenId: string): boolean;
     setAccessEditGrant(grant: ApiTokenGrantV1): void;
@@ -802,12 +802,12 @@ export function createApiTokenSettingsController(
             });
             return result.value.revokedCount;
         },
-        async signOutEverywhere(target) {
+        async signOutEverywhere(target, revokeApiTokens) {
             if (retired || activeRequest) return false;
             publish({ ...state, operation: 'signOutEverywhere', operationTokenId: null, operationError: null, operationNotice: null });
             const result = await run({
                 actionId: 'account.sessions.signOutEverywhere',
-                input: {},
+                input: revokeApiTokens ? { revokeApiTokens } : {},
                 target,
                 parse: parseWith(AccountSessionsSignOutEverywhereActionOutputV1Schema),
             });

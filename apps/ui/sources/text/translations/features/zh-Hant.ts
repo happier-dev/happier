@@ -3385,7 +3385,9 @@ const apiTokenSettingsTranslations = { 'zh-Hant': translated({
             signOutEverywhere: {
                 title: '在所有位置登出',
                 subtitle: '結束此帳戶的所有已登入工作階段。',
-                body: '瀏覽器和裝置上的所有已登入工作階段都會結束。API 權杖仍會保持有效；請在此畫面中個別撤銷它們。',
+                body: '瀏覽器和裝置上的所有已登入工作階段都會結束。裝置會保留已下載的資料，你的復原金鑰維持不變。',
+                revokeApiTokens: '同時撤銷所有 API 權杖',
+                revokeApiTokensDescription: '使用這些權杖的指令碼和整合功能將停止運作。',
                 confirm: '在所有位置登出',
             },
             errors: {

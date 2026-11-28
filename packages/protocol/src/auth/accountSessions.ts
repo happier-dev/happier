@@ -2,10 +2,12 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 
 /**
- * A present-user Action can revoke only the authenticated Account's signed
- * sessions. The Account is always derived below the Action boundary.
+ * Revokes the authenticated Account's signed sessions and, on explicit request,
+ * its API tokens. The Account is always derived below the Action boundary.
  */
-export const AccountSessionsSignOutEverywhereActionInputV1Schema = lazyZodSchema(() => z.strictObject({}));
+export const AccountSessionsSignOutEverywhereActionInputV1Schema = lazyZodSchema(() => z.strictObject({
+  revokeApiTokens: z.optional(z.boolean()),
+}));
 export type AccountSessionsSignOutEverywhereActionInputV1 = z.infer<
   typeof AccountSessionsSignOutEverywhereActionInputV1Schema
 >;

@@ -240,9 +240,11 @@ Use the token's overflow menu to revoke one token, or **Revoke all API tokens**
 when you need to remove every automation credential. Revocation takes effect on
 the server's next verification.
 
-**Sign out everywhere** is different: it invalidates signed sessions but leaves
-API tokens active. Revoke the token separately if the automation credential may
-be exposed.
+**Sign out everywhere** ends signed sessions and keeps API tokens active by
+default. In 0.3 development, select **Also revoke all API tokens** on the
+Security confirmation to revoke them in the same operation. Scripts and
+integrations that use those tokens stop working. Devices keep the data they
+already downloaded and the recovery key stays the same.
 
 The daemon-local Action API has a bounded positive validation cache. After a
 token is revoked, a daemon that already validated it can accept it for up to

@@ -45,6 +45,10 @@ export interface AlertModalConfig extends BaseModalConfig {
     buttons?: AlertButton[];
 }
 
+export type ConfirmModalToggle = Readonly<{ label: string; description?: string }>;
+
+export type ConfirmModalToggleDecision = Readonly<{ confirmed: boolean; checked: boolean }>;
+
 export interface ConfirmModalConfig extends BaseModalConfig {
     type: 'confirm';
     title: string;
@@ -53,6 +57,8 @@ export interface ConfirmModalConfig extends BaseModalConfig {
     messageParagraphs?: readonly Readonly<{ text: string; irreversible?: boolean; link?: Readonly<{ label: string; onPress: () => void }> }>[];
     /** What the choice changes, as label and value pairs under the message ("Frees" · "186 MB"). */
     facts?: readonly Readonly<{ label: string; value: string }>[];
+    /** Optional additional consequence. Every new confirmation starts unchecked. */
+    toggle?: ConfirmModalToggle;
     cancelText?: string;
     confirmText?: string;
     destructive?: boolean;

@@ -50,9 +50,8 @@ describe('completeApiTokenSettingsSignOutEverywhere', () => {
         expect(replace).not.toHaveBeenCalled();
     });
 
-    it('states the independent API-token and bounded local-daemon revocation contracts explicitly', () => {
+    it('states the bounded local-daemon revocation contract explicitly', () => {
         const copy = apiTokenSettingsTranslations.en.settingsApiTokens;
-        expect(copy.signOutEverywhere.body).toContain('API tokens remain active');
         expect(copy.revoke.body).toContain('up to one minute');
         expect(copy.revokeAll.body).toContain('up to one minute');
         expect(JSON.stringify(copy)).not.toMatch(/\bPATs?\b/);
