@@ -36,14 +36,21 @@ export function projectRailwayFailure(error: unknown, context: PluginAccountActi
   context.signal.throwIfAborted();
   const classified = projectDeploymentTargetHttpFailureV1(error, effectAttempted ? 'write' : 'read', phase);
   if (isPluginError(classified)) throw classified;
-  if (error instanceof RailwayNativeError && error.code === 'credential_unavailable') {
-    throw new PluginError({ code: 'deployment_access_denied', retryable: false, details: { phase } });
-  }
   const native = error instanceof RailwayNativeError ? error : null;
+  const status = native?.status;
+  const graphqlCode = native?.nativeErrorCode;
+  const refusal = native?.code === 'credential_unavailable' || status === 401 || status === 403
+      || graphqlCode === 'FORBIDDEN' || graphqlCode === 'UNAUTHENTICATED' ? 'deployment_access_denied'
+    : status === 404 ? 'deployment_unavailable'
+    : graphqlCode === 'ALREADY_EXISTS' || graphqlCode === 'CONFLICT' ? 'deployment_conflict'
+    : (status !== undefined && status >= 400 && status < 500 && status !== 408)
+      || graphqlCode === 'PROJECT_LIMIT_REACHED' || graphqlCode === 'ENVIRONMENT_LIMIT_REACHED' ? 'provider_request_failed'
+    : undefined;
   const failureCause = effectAttempted || native
     ? { ...projectActionFailureCauseV1(error, `deployment.railway.${phase}`, { allowUnknownErrorCode: native !== null }),
         ...(native?.nativeErrorCode === undefined ? {} : { nativeErrorCode: native.nativeErrorCode }) }
     : undefined;
+  if (refusal) throw new PluginError({ code: refusal, retryable: false, details: { phase }, failureCause });
   if (effectAttempted) throw new PluginError({ code: 'outcome_unknown', retryable: false, details: { phase }, failureCause });
   const code = native?.code === 'railway_invalid_response'
     ? 'provider_response_invalid' : 'provider_unavailable';

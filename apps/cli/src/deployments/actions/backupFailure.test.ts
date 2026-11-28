@@ -8,6 +8,22 @@ import { createDeploymentBackupActionForHost } from './backups';
 
 afterEach(() => vi.restoreAllMocks());
 
+it('projects an unexpected backup failure with its native step', async () => {
+    const identity = await withTempDir('backup-admission-', async root =>
+        identityStore.readOrCreateInstallationIdentitySync(join(root, 'identity.json')));
+    vi.spyOn(identityStore, 'readInstallationIdentityIfExistsSync').mockReturnValue(identity);
+    const backup = createDeploymentBackupActionForHost({
+        serverId: 'home', machineId: 'machine', assertCurrent: async () => {},
+        readBackupOperations: async () => { throw new TypeError('Unreadable backup history'); },
+        backup: async () => { throw new Error('Native backup must not run for a history read'); },
+    });
+    await expect(backup('deployments.backups.history', { serverId: 'home', environmentId: 'environment',
+        machineId: 'machine', installationId: identity.installationId, targetLinkId: 'target',
+        deploymentId: 'deployment', expectedRevision: 1, configRevision: 1 }, {}))
+        .resolves.toMatchObject({ ok: false, errorCode: 'action_failed',
+            details: { step: 'native', code: 'action_failed' } });
+});
+
 it('preserves the receipt owner’s typed unavailability through restore and backup history', async () => {
     await withTempDir('backup-history-refusal-', async root => {
         const identity = identityStore.readOrCreateInstallationIdentitySync(join(root, 'identity.json'));

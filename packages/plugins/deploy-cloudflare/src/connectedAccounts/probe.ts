@@ -57,6 +57,11 @@ class ProbeFailure extends Error {
   constructor(readonly result: Failure) { super(result.diagnostic.code); }
 }
 
+function invalidResponse(): ProbeFailure {
+  return new ProbeFailure({ status: 'unavailable',
+    diagnostic: diagnostic('cloudflare_invalid_response', 'Cloudflare returned an invalid verification response. Try again.') });
+}
+
 async function read(context: Context, token: string, path: string, signal: AbortSignal, purpose: 'resource' | 'verification' = 'resource'): Promise<unknown> {
   signal.throwIfAborted();
   const url = `${CLOUDFLARE_API_ORIGIN}/client/v4${path}`;
@@ -80,8 +85,10 @@ async function read(context: Context, token: string, path: string, signal: Abort
     ...diagnostic('cloudflare_http_error', 'Cloudflare refused verification. Check the provider status and this device’s network access, then retry.'),
     details: { failureCause: projectActionFailureCauseV1({ response: { status: response.status } }, 'cloudflare.verification') },
   } });
-  const body: unknown = JSON.parse(new TextDecoder().decode(response.body));
-  if (!isObject(body) || body.success !== true || !('result' in body)) throw new Error('Invalid Cloudflare response');
+  let body: unknown;
+  try { body = JSON.parse(new TextDecoder().decode(response.body)); }
+  catch { throw invalidResponse(); }
+  if (!isObject(body) || body.success !== true || !('result' in body)) throw invalidResponse();
   return body.result;
 }
 
@@ -107,11 +114,11 @@ export async function verifyCloudflareToken(token: string, context: Context, sig
     // https://developers.cloudflare.com/workers/ci-cd/builds/api-reference/
     const tokens = tokenOwner === 'account' ? `${base}/tokens` : '/user/tokens';
     const verified = await read(context, token, `${tokens}/verify`, signal, 'verification');
-    if (!isObject(verified) || !isCloudflareId(verified.id)) throw new Error('Invalid token verification');
+    if (!isObject(verified) || !isCloudflareId(verified.id)) throw invalidResponse();
     if (verified.status !== 'active') return { status: 'rejected', diagnostic: diagnostic('cloudflare_token_rejected', 'The Cloudflare token is not active. Create a new scoped token.') };
     let expiresAtMs: number | undefined;
     if (verified.expires_on !== undefined) {
-      if (typeof verified.expires_on !== 'string' || !Number.isFinite(Date.parse(verified.expires_on))) throw new Error('Invalid token expiry');
+      if (typeof verified.expires_on !== 'string' || !Number.isFinite(Date.parse(verified.expires_on))) throw invalidResponse();
       expiresAtMs = Date.parse(verified.expires_on);
       if (expiresAtMs <= Date.now()) return { status: 'rejected', diagnostic: diagnostic('cloudflare_token_rejected', 'The Cloudflare token has expired.') };
     }

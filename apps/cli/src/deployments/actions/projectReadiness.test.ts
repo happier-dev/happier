@@ -16,6 +16,20 @@ import { ProjectSourceV1Schema } from '@happier-dev/protocol/projects/sources/pr
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logger } from '@/ui/logger';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createProjectReadinessActionForHost } from './projectReadiness';
+
+it('preserves an admitted source refusal and adds the readiness step', async () => {
+  const errorCode = 'target_mismatch';
+  const details = { requiredFact: 'selectedSource', remedy: 'Select the source again.' };
+  const read = createProjectReadinessActionForHost({
+    readProjectSources: async () => { throw createActionExecuteFailureError({ ok: false, errorCode, error: errorCode, details }); },
+    readEnvironment: async () => { throw new Error('Unexpected environment read'); },
+    readHealthAndAlerts: async () => [],
+  });
+  await expect(read({ serverId: 'home', machineId: 'controller', projectId: 'project', environments: [] }, {}))
+    .resolves.toMatchObject({ ok: false, errorCode, details: { ...details, step: 'readiness', code: errorCode } });
+});
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -247,21 +261,9 @@ describe('Project readiness through the public Action', () => {
       environments: [{ environmentId: 'production', expectedRevision: 2 }],
     }, { surface: 'cli', serverId: 'home', runtimeAccountId: 'account' });
     expect(result).toMatchObject({ ok: false, errorCode: 'home_unreachable', error: 'home_unreachable',
-      details: { step: 'readiness', code: 'home_unreachable' } });
+      details: { step: 'readiness', code: 'home_unreachable' },
+      failureCause: { errorClass: 'Error' } });
     expect(JSON.stringify(result)).not.toContain('PRIVATE-');
-  });
-  it('records the readiness refusal cause once without native output', async () => {
-    const { logger: localLog } = await import('@/ui/logger');
-    const log = vi.spyOn(localLog, 'warnLocalFile').mockImplementation(() => {});
-    const { executor, metadata } = readinessFixture();
-    metadata.mockRejectedValue(Object.assign(new Error('PRIVATE-NATIVE-STDERR'), { code: 'stale_input', stderr: 'PRIVATE-NATIVE-STDERR' }));
-    await executor.execute('projects.readiness.read', {
-      serverId: 'home', machineId: 'controller', projectId: 'project',
-      environments: [{ environmentId: 'production', expectedRevision: 2 }],
-    }, { surface: 'cli', serverId: 'home', runtimeAccountId: 'account' });
-    const recorded = log.mock.calls.filter(([, data]) => (data as { phase?: string } | undefined)?.phase === 'deployment.project.readiness');
-    expect(recorded).toHaveLength(1);
-    expect(JSON.stringify(recorded)).not.toContain('PRIVATE-');
   });
   it('reports recorded current-source verification without opening the repository or acquiring secrets', async () => {
     const backup: DeploymentBackupConfigurationV1 = { configRevision: 2,

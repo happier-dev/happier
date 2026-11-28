@@ -14,7 +14,7 @@ import { readDeploymentDomainArtifactV1 } from '@happier-dev/deployments';
 import type { HostReviewedChildInvocationV1 } from '@happier-dev/protocol/actions/executor/types';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
-import { projectDeploymentFailure } from '../deploymentFailure';
+import { projectDeploymentException, projectDeploymentFailure } from '../deploymentFailure';
 import type { createAccountArtifactStore, ArtifactRequestAuthorizationHeaders } from '@/api/artifacts/accountArtifactStore';
 import type { createOwnServerDomainActions, ObservedDomainReview } from './ownServer/ownServerDomainActions';
 import type { createContributedDeploymentTargetForHost } from './contributedDeploymentTargetForHost';
@@ -145,6 +145,7 @@ export function createContributedDomainActionsForHost(host: NativeHost & Readonl
         const child = context.hostReviewedChild?.preparedChildren?.find(child => child.role === role
             && isRecord(child.input) && child.input.domainId === input.domainId);
         if (!child) return null;
+        let effectStarted = false;
         try {
             const add = 'targetLinkId' in input ? input : undefined;
             let retained: DeploymentDomainHeaderV1 | undefined;
@@ -179,9 +180,15 @@ export function createContributedDomainActionsForHost(host: NativeHost & Readonl
             const loaded = DeploymentActionOutputSchemasV1['deployments.domains.add'].parse(accepted);
             if (!loaded.ok) return projectDeploymentFailure(loaded.error);
             if (loaded.domain.deletedAtMs !== undefined) return { ok: true, result: loaded };
+            effectStarted = actionId !== 'deployments.domains.verify';
             return await settle(loaded.domain, content, child, input, actionId, context);
-        } catch (error) { return projectDeploymentFailure(context.signal?.aborted ? 'cancelled'
-            : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'outcome_unknown', error); }
+        } catch (error) {
+            if (effectStarted && !context.signal?.aborted
+                && !(error instanceof Error && 'code' in error && typeof error.code === 'string')) {
+                return projectDeploymentFailure('outcome_unknown', error);
+            }
+            return projectDeploymentException(error, { signal: context.signal });
+        }
     }
     return Object.assign(prepare, { retire, execute });
 }

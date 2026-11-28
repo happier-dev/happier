@@ -155,7 +155,7 @@ it('returns the typed Railway refusal if a remaining workspace disappears betwee
     expect(firstPage.nextCursor).toEqual(expect.any(String));
     removed = true;
     await expect(read('providerAccountId', draft, firstPage.nextCursor)).rejects.toMatchObject({
-      code: 'provider_unavailable',
+      code: 'deployment_access_denied',
       data: { failureCause: { errorCode: 'railway_graphql_unavailable', nativeErrorCode: 'FORBIDDEN', httpStatus: 200 } },
     });
     expect(requests.map(({ variables }) => variables)).toEqual([

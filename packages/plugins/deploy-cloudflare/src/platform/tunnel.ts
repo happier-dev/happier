@@ -81,11 +81,15 @@ const configureTunnel: PluginAccountActionHandler<ReturnType<typeof tunnelConfig
       throw error;
     });
     try {
-      if (response.status === 401 || response.status === 403) {
-        if (method === 'POST') createAttempted = false;
-        throw new PluginError({ code: response.status === 403 ? 'denied' : 'credential_unavailable' });
+      const status = response.status;
+      if (method === 'POST' && status >= 400 && status < 500 && status !== 408) {
+        createAttempted = false;
+        throw Object.assign(new CloudflareProviderRefusal(status === 409 ? 'deployment_conflict' : 'provider_request_failed'), { status });
       }
-      if (response.status < 200 || response.status >= 300) throw new PluginError({ code: 'provider_unavailable' });
+      if (status === 401 || status === 403) {
+        throw Object.assign(new CloudflareProviderRefusal(status === 403 ? 'denied' : 'credential_unavailable'), { status });
+      }
+      if (status < 200 || status >= 300) throw Object.assign(new CloudflareProviderRefusal('provider_unavailable'), { status });
       return readCloudflareResponse(response.body, cloudflareResponseOperation(method, url)).result;
     } finally { response.body.fill(0); }
   }

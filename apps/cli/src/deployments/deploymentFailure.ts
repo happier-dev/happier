@@ -65,12 +65,9 @@ export function projectDeploymentReceiptFailure(result: ActionExecuteFailure,
     const sourceAdmission = DeploymentSourceAdmissionFailureV1Schema.safeParse(authorDetails);
     const validation = readDeploymentOutputValidation(result);
     const recovery = DeploymentFailureRecoveryV1Schema.safeParse(result.details).data;
-    const retainedRecovery = recovery?.nativeCompose || recovery?.nativeActivation || recovery?.statefulService
-        || result.failureCause?.errorCode === 'deployment_docker_socket_access_denied'
-        ? recovery : undefined;
     return DeploymentReceiptFailureV1Schema.parse(projectDeploymentFailureRecoveryV1({ code: result.errorCode,
         phase: phase.success ? phase.data : fallbackPhase,
-        ...retainedRecovery,
+        ...recovery,
         ...(validation ? { validation } : {}),
         ...(sourceAdmission.success ? { sourceAdmission: sourceAdmission.data } : {}),
         failureCause: result.failureCause ?? normalizeActionExecutorThrownError(result, `deployment.${fallbackPhase}`).failureCause,
@@ -90,8 +87,11 @@ export function readProviderTeardownAbsenceFailure(
 /** Preserve typed owner diagnostics across deployment exceptions and child transport. */
 export function projectDeploymentFailure(errorCode: string, error?: unknown, phase = 'deployment.failure'): ActionExecuteFailure {
     const failure = readAuthoredDeploymentFailure(errorCode, error, phase);
-    const projected = failure.details === undefined
-        ? { ...failure, details: projectDeploymentFailureRecoveryV1({}, failure.errorCode) } : failure;
+    let projected = failure;
+    if (failure.details === undefined) {
+        const { requiredFact, remedy } = projectDeploymentFailureRecoveryV1({ failureCause: failure.failureCause }, failure.errorCode);
+        projected = { ...failure, details: { requiredFact, remedy } };
+    }
     // Terminal Actions promote a hidden cause into public output. Authored refusals
     // without that public member keep their shape and record closed facts locally.
     if (error !== undefined && projected.failureCause === undefined) {

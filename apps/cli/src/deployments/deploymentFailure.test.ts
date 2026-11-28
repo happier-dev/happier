@@ -293,6 +293,12 @@ describe('deployment filesystem failure diagnostics', () => {
     });
 });
 
+it('preserves authored recovery facts on a receipt without native diagnostics', () => {
+    const details = { requiredFact: 'deploymentActionResult', remedy: 'Select the original deployment target.' };
+    expect(projectDeploymentReceiptFailure({ ok: false, errorCode: 'target_mismatch',
+        error: 'target_mismatch', details }, 'admission')).toMatchObject(details);
+});
+
 describe('deployment exception projection', () => {
     afterEach(() => vi.restoreAllMocks());
 

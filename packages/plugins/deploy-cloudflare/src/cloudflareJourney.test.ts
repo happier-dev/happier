@@ -223,6 +223,15 @@ describe('Cloudflare Connected Account through plugin activation', () => {
     expect(h.staged.values.size).toBe(0);
   });
 
+  it.each(['<html>unexpected response</html>', '{"success":true}', '{"success":true,"result":{}}'])(
+    'reports a malformed HTTP 200 verification response without staging credentials', async body => {
+      const h = await harness();
+      h.request.mockImplementationOnce(async () => ({ status: 200, headers: {}, body: new TextEncoder().encode(body) }));
+      await expect(h.mode.complete({ fields: { token: 'test-token' } }, h.context))
+        .resolves.toMatchObject({ status: 'unavailable', diagnostic: { code: 'cloudflare_invalid_response' } });
+      expect(h.staged.values.size).toBe(0);
+    });
+
   it('keeps an unclassified selected-resource 403 unavailable without staging', async () => {
     const h = await harness(); const send = h.request.getMockImplementation()!;
     h.request.mockImplementation(async input => input.url.endsWith('/workers/scripts')

@@ -365,11 +365,14 @@ describe('Cloudflare controller create/adopt through the activated Account Actio
 
   // Only vendor HTTP and the invocation-private host custody service are
   // replaced. Public activation, schema admission and owned route logic run.
-  async function controller(options: FixtureOptions & { noGrant?: boolean; grantError?: Error; createRefusal?: PluginError } = {}) {
+  async function controller(options: FixtureOptions & { noGrant?: boolean; grantError?: Error; createRefusal?: PluginError; createStatus?: number } = {}) {
     const state = fixture(options);
     const buffers: Uint8Array[] = [], material: number[][] = [];
-    const http = createPluginHttpFixture({ request: (request, requestOptions) => {
-      if (request.method === 'POST' && request.url === collection && options.createRefusal) throw options.createRefusal;
+    const http = createPluginHttpFixture({ request: async (request, requestOptions) => {
+      if (request.method === 'POST' && request.url === collection) {
+        if (options.createRefusal) throw options.createRefusal;
+        if (options.createStatus) return { status: options.createStatus, headers: {}, body: new Uint8Array() };
+      }
       if (request.method === 'PUT') expect(buffers.every(bytes => bytes.every(byte => byte === 0))).toBe(true);
       return state.request.http.request(request, requestOptions);
     } });
@@ -466,6 +469,21 @@ describe('Cloudflare controller create/adopt through the activated Account Actio
       const result = await state.invoke({ ...state.input, tunnel: { kind: 'create', name: 'reviewed-tunnel' } });
       expect(result).toMatchObject({ kind: 'refused', code, failureCause: { errorCode: code } });
       expect(state.requests).toEqual([]);
+      expect(state.write).not.toHaveBeenCalled();
+    } finally { await state.kit.dispose(); }
+  });
+
+  it.each([
+    [400, 'refused', 'provider_request_failed'],
+    [409, 'refused', 'deployment_conflict'],
+    [429, 'refused', 'provider_request_failed'],
+    [408, 'unknown', 'outcome_unknown'],
+    [502, 'unknown', 'outcome_unknown'],
+  ])('keeps the HTTP %i tunnel creation outcome and status', async (createStatus, kind, code) => {
+    const state = await controller({ createStatus });
+    try {
+      await expect(state.invoke({ ...state.input, tunnel: { kind: 'create', name: 'reviewed-tunnel' } }))
+        .resolves.toMatchObject({ kind, code, failureCause: { httpStatus: createStatus } });
       expect(state.write).not.toHaveBeenCalled();
     } finally { await state.kit.dispose(); }
   });

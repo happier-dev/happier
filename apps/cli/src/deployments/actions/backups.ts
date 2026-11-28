@@ -1,4 +1,3 @@
-import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext, ActionExecuteFailure, ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { isDeepStrictEqual } from 'node:util';
@@ -16,7 +15,7 @@ import type { HostActionOperationRuntime } from '@/daemon/actionOperations/creat
 import type { OwnServerDeploymentTargetForHost } from '../targets/ownServer/ownServerDeploymentTarget';
 import { OwnServerRestorePreparationForHostSchema } from '../targets/ownServer/restorePreparation';
 import { projectDeploymentBackupHistory } from './backupHistory';
-import { projectDeploymentFailure } from '../deploymentFailure';
+import { projectDeploymentException } from '../deploymentFailure';
 import { carryActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { isDeploymentBackupReadActionIdV1, DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_BACKUP_TEST_ACTION_ID_V1,
     DEPLOYMENT_BACKUP_HISTORY_ACTION_ID_V1, DEPLOYMENT_BACKUP_INVENTORY_ACTION_ID_V1, DEPLOYMENT_BACKUP_VERIFY_ACTION_ID_V1,
@@ -143,12 +142,13 @@ export function createDeploymentBackupActionForHost(host: Readonly<{
                 retention: input.retention }, context, verification: verified, protectedSnapshotIds: [...protectedSnapshotIds] });
             return DeploymentBackupActionResultSchemasV1[actionId].parse(result) as DeploymentBackupActionResultV1<TId>;
         } catch (error) {
-            const code = context.signal?.aborted ? 'cancelled' : readActionErrorCodeV1(error) ?? 'deployment_unavailable';
             const step = error && typeof error === 'object' && 'step' in error && typeof error.step === 'string'
                 ? error.step : 'native';
             const partial = readDeploymentBackupMaintenanceFailureEvidenceV1(error);
-            const projected = projectDeploymentFailure(code, error, 'deployment.backup.native');
-            return carryActionFailureDiagnostic({ ...projected, details: { ...(isRecord(projected.details) ? projected.details : {}), step, code, ...partial } }, projected);
+            const projected = projectDeploymentException(error, { signal: context.signal, phase: 'deployment.backup.native' });
+            return carryActionFailureDiagnostic({ ...projected, details: {
+                ...(isRecord(projected.details) ? projected.details : {}), step, code: projected.errorCode, ...partial,
+            } }, projected);
         }
     };
 }

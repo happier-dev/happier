@@ -793,11 +793,10 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                     } };
             });
         } catch (error) {
-            const code = request.context.signal?.aborted ? 'cancelled'
-                : error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'deployment_failed';
-            return code === 'unsupported_action' ? { ...failure(code), details: {
+            const projected = projectDeploymentException(error, { signal: request.context.signal, phase: 'deployment.logs.prepare' });
+            return projected.errorCode === 'unsupported_action' ? { ...projected, details: {
                 requiredFact: `deploymentTarget.actions.logs.${request.input.kind}`,
-                remedy: 'Choose a log kind declared by this deployment target.' } } : failure(code, error);
+                remedy: 'Choose a log kind declared by this deployment target.' } } : projected;
         }
     }
     return { withTargetRole: withRole, prepareVariablesSyncChild, prepareCandidate, prepareAction, prepareTeardown, prepareTeardownChildren, prepareCancellation, prepareObservation, prepareLogs, execute };

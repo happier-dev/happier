@@ -1,4 +1,6 @@
-import { recordFailureCause } from '@/diagnostics/recordFailureCause';
+import { carryActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+import { isRecord } from '@happier-dev/protocol/common/records';
+import { projectDeploymentException } from '../deploymentFailure';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
   PROJECT_READINESS_FACT_OWNERS_V1,
@@ -8,7 +10,6 @@ import {
   type ProjectReadinessFactV1, type ProjectReadinessReadInputV1,
 } from '@happier-dev/protocol';
 import type { DeploymentBackupConfigurationV1, DeploymentEnvironmentBackupV1, DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
-import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { deploymentBackupTargetOperands, selectDeploymentRuntimeTargetLinkV1 } from '@happier-dev/deployments';
 
 export type ProjectReadinessEnvironmentV1 =
@@ -116,10 +117,10 @@ export function createProjectReadinessActionForHost(ports: ProjectReadinessHostP
         : facts.some(item => item.status === 'actionNeeded') ? 'actionNeeded' : 'ready';
       return { serverId: input.serverId, projectId: input.projectId, status, facts } as const;
     } catch (error) {
-      const code = context.signal?.aborted ? 'cancelled' : readRpcErrorCode(error)
-        ?? (error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'action_failed');
-      return recordFailureCause(error, 'deployment.project.readiness',
-        { ok: false, errorCode: code, error: code, details: { step: 'readiness', code } } as const);
+      const projected = projectDeploymentException(error, { signal: context.signal, phase: 'deployment.project.readiness' });
+      return carryActionFailureDiagnostic({ ...projected, details: {
+        ...(isRecord(projected.details) ? projected.details : {}), step: 'readiness', code: projected.errorCode,
+      } }, projected);
     }
   };
 }
