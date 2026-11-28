@@ -1,6 +1,5 @@
 import { buildAgentUniverseBackendTargetKey, listExecutableAgentUniverseIds } from '@/agents/catalog/agentUniverse';
 import { PERMISSION_MODES } from '@/constants/PermissionModes';
-import { defineAccountSettingAnalytics } from './accountSettingAnalyticsPresentation';
 
 function buildPermissionModeAnalyticsProperties(value: unknown): Record<string, string> {
     const record = (value && typeof value === 'object' && !Array.isArray(value))
@@ -16,13 +15,6 @@ function buildPermissionModeAnalyticsProperties(value: unknown): Record<string, 
     }));
 }
 
-export const ACCOUNT_PERMISSION_SETTING_ANALYTICS = defineAccountSettingAnalytics({
-    sessionDefaultPermissionModeByTargetKey: {
-        trackCurrentState: true,
-        trackChanges: true,
-        valueKind: 'enum',
-        privacy: 'safe',
-        identityScope: 'person',
-        serializeCurrentProperties: buildPermissionModeAnalyticsProperties,
-    },
-});
+export const ACCOUNT_PERMISSION_SETTING_ANALYTICS = {
+    sessionDefaultPermissionModeByTargetKey: buildPermissionModeAnalyticsProperties,
+};

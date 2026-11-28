@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { getAllAgentCatalogDefinitions } from '@happier-dev/agents';
 import { buildAgentUniverseBackendTargetKey, readAgentUniverseBackendTargetKey, listAgentUniverseIds, listExecutableAgentUniverseIds } from './agentUniverse';
-import { ACCOUNT_BACKEND_SETTING_ANALYTICS } from '@/sync/domains/settings/registry/account/accountBackendSettingDefinitions';
-import { ACCOUNT_PERMISSION_SETTING_ANALYTICS } from '@/sync/domains/settings/registry/account/accountPermissionSettingDefinitions';
+import { ACCOUNT_SETTING_ANALYTICS } from '@/sync/domains/settings/registry/account/accountSettingAnalytics';
 
 describe('agentUniverse', () => {
     it('classifies unresolvable presentation ids while strict key construction still rejects them', () => {
@@ -29,9 +28,9 @@ describe('agentUniverse', () => {
     });
 
     it('serializes executable backend preferences without a key for the abstract container', () => {
-        const serializers = [ACCOUNT_BACKEND_SETTING_ANALYTICS.backendEnabledByTargetKey.serializeCurrentProperties,
-            ACCOUNT_BACKEND_SETTING_ANALYTICS.backendCliSourcePreferenceByTargetKey.serializeCurrentProperties,
-            ACCOUNT_PERMISSION_SETTING_ANALYTICS.sessionDefaultPermissionModeByTargetKey.serializeCurrentProperties];
+        const serializers = [ACCOUNT_SETTING_ANALYTICS.backendEnabledByTargetKey.serializeCurrentProperties,
+            ACCOUNT_SETTING_ANALYTICS.backendCliSourcePreferenceByTargetKey.serializeCurrentProperties,
+            ACCOUNT_SETTING_ANALYTICS.sessionDefaultPermissionModeByTargetKey.serializeCurrentProperties];
         for (const serialize of serializers) {
             const properties = serialize({});
             expect(Object.keys(properties)).toContain('agent:happier.agent.claude/claude');

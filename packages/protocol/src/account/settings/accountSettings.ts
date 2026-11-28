@@ -1,3 +1,5 @@
+import { ActionToolExposureModeSchema, ActionToolExposureSchema, ActionToolExposureSurfaceSchema, type ActionToolExposureMode, type ActionToolExposureSurface } from '../../actions/metadata.js';
+import type { SettingAnalyticsMetadata } from '../../settings/registry/settingDefinition.js';
 import { ScmGitIdentitySchema } from '../../scm/gitIdentity.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION, migrateAccountSettingsFeaturePreferences } from './featurePreferenceMigration.js';
@@ -879,11 +881,397 @@ export const SessionCollectionRowDetailsSchema = lazyZodSchema(() => z.strictObj
 export type SessionCollectionRowDetails = Readonly<Required<z.infer<typeof SessionCollectionRowDetailsSchema>>>;
 export const CollectionPluginDetailPreferencesSchema = lazyZodSchema(() => z.record(z.string(), z.boolean()));
 
+function withAccountSettingAnalytics<TDefinition extends object>(definition: TDefinition, analytics: SettingAnalyticsMetadata) {
+    return Object.assign(definition, { analytics });
+}
+
+// Runtime registries supply the projected properties on the UI. A context-free
+// read can emit no properties from these settings.
+const emptyRuntimeSettingProperties = () => ({});
+
+const trackAccountBoolean = { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' } satisfies SettingAnalyticsMetadata;
+const trackAccountEnum = { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' } satisfies SettingAnalyticsMetadata;
+
+type ActionSettingsOverrideLike = Readonly<{
+    enabled?: boolean;
+    enabledPlacements?: ReadonlyArray<unknown>;
+    disabledSurfaces?: ReadonlyArray<unknown>;
+    disabledPlacements?: ReadonlyArray<unknown>;
+    approvalRequiredSurfaces?: ReadonlyArray<unknown>;
+    toolExposureModes?: unknown;
+}>;
+
+type NormalizedActionSettingsOverride = Readonly<{
+    enabled: boolean | null;
+    enabledPlacements: ReadonlyArray<string>;
+    disabledSurfaces: ReadonlyArray<string>;
+    disabledPlacements: ReadonlyArray<string>;
+    approvalRequiredSurfaces: ReadonlyArray<string>;
+    toolExposureModes: Partial<Record<ActionToolExposureSurface, ActionToolExposureMode>>;
+}>;
+
+const readActionToolExposureSurfaces = lazyDefinition(() =>
+    Object.keys(ActionToolExposureSchema.shape) as ActionToolExposureSurface[]);
+
+function normalizeStringSet(raw: ReadonlyArray<unknown> | undefined): ReadonlyArray<string> {
+    if (!Array.isArray(raw) || raw.length === 0)
+        return [];
+    const out = new Set<string>();
+    for (const entry of raw) {
+        if (typeof entry !== 'string')
+            continue;
+        const trimmed = entry.trim();
+        if (!trimmed)
+            continue;
+        out.add(trimmed);
+    }
+    return Array.from(out).sort();
+}
+
+function normalizeToolExposureModes(raw: unknown): Partial<Record<ActionToolExposureSurface, ActionToolExposureMode>> {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        return {};
+    }
+    const next: Partial<Record<ActionToolExposureSurface, ActionToolExposureMode>> = {};
+    for (const [surface, mode] of Object.entries(raw as Record<string, unknown>)) {
+        if (!ActionToolExposureSurfaceSchema.safeParse(surface).success)
+            continue;
+        const parsed = ActionToolExposureModeSchema.safeParse(mode);
+        if (!parsed.success)
+            continue;
+        next[surface as ActionToolExposureSurface] = parsed.data;
+    }
+    return next;
+}
+
+function normalizeOverride(raw: unknown): NormalizedActionSettingsOverride {
+    const value = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as ActionSettingsOverrideLike) : null;
+    const enabled = typeof value?.enabled === 'boolean' ? value.enabled : null;
+    return {
+        enabled,
+        enabledPlacements: normalizeStringSet(value?.enabledPlacements),
+        disabledSurfaces: normalizeStringSet(value?.disabledSurfaces),
+        disabledPlacements: normalizeStringSet(value?.disabledPlacements),
+        approvalRequiredSurfaces: normalizeStringSet(value?.approvalRequiredSurfaces),
+        toolExposureModes: normalizeToolExposureModes(value?.toolExposureModes),
+    };
+}
+
+function areOverridesEqual(a: NormalizedActionSettingsOverride, b: NormalizedActionSettingsOverride): boolean {
+    if (a.enabled !== b.enabled)
+        return false;
+    if (a.enabledPlacements.length !== b.enabledPlacements.length)
+        return false;
+    if (a.disabledSurfaces.length !== b.disabledSurfaces.length)
+        return false;
+    if (a.disabledPlacements.length !== b.disabledPlacements.length)
+        return false;
+    if (a.approvalRequiredSurfaces.length !== b.approvalRequiredSurfaces.length)
+        return false;
+    for (let i = 0; i < a.enabledPlacements.length; i += 1) {
+        if (a.enabledPlacements[i] !== b.enabledPlacements[i])
+            return false;
+    }
+    for (let i = 0; i < a.disabledSurfaces.length; i += 1) {
+        if (a.disabledSurfaces[i] !== b.disabledSurfaces[i])
+            return false;
+    }
+    for (let i = 0; i < a.disabledPlacements.length; i += 1) {
+        if (a.disabledPlacements[i] !== b.disabledPlacements[i])
+            return false;
+    }
+    for (let i = 0; i < a.approvalRequiredSurfaces.length; i += 1) {
+        if (a.approvalRequiredSurfaces[i] !== b.approvalRequiredSurfaces[i])
+            return false;
+    }
+    for (const surface of readActionToolExposureSurfaces) {
+        if (a.toolExposureModes[surface] !== b.toolExposureModes[surface])
+            return false;
+    }
+    return true;
+}
+
+function countAddedStrings(current: ReadonlyArray<string>, base: ReadonlyArray<string>): number {
+    if (current.length === 0)
+        return 0;
+    if (base.length === 0)
+        return current.length;
+    const baseSet = new Set(base);
+    let count = 0;
+    for (const entry of current) {
+        if (!baseSet.has(entry))
+            count += 1;
+    }
+    return count;
+}
+
+function countToolExposureOverrides(current: Partial<Record<ActionToolExposureSurface, ActionToolExposureMode>>, base: Partial<Record<ActionToolExposureSurface, ActionToolExposureMode>>): number {
+    let count = 0;
+    for (const surface of readActionToolExposureSurfaces) {
+        const mode = current[surface];
+        if (mode === base[surface])
+            continue;
+        count += 1;
+    }
+    return count;
+}
+
+function buildActionsSettingsSummaryProperties(value: unknown): Record<string, number> {
+    const actions = value && typeof value === 'object' && !Array.isArray(value) && 'actions' in (value as Record<string, unknown>)
+        ? (value as {
+            actions?: Record<string, {
+                enabled?: boolean;
+                enabledPlacements?: ReadonlyArray<unknown>;
+                disabledSurfaces?: ReadonlyArray<unknown>;
+                disabledPlacements?: ReadonlyArray<unknown>;
+                approvalRequiredSurfaces?: ReadonlyArray<unknown>;
+                toolExposureModes?: unknown;
+            }>;
+        }).actions ?? {}
+        : {};
+    const defaultActions = DEFAULT_ACTIONS_SETTINGS_V1.actions ?? {};
+    let enabledOverrideCount = 0;
+    let enabledPlacementCount = 0;
+    let disabledSurfaceCount = 0;
+    let disabledPlacementCount = 0;
+    let approvalRequiredSurfaceCount = 0;
+    let toolExposureOverrideCount = 0;
+    let overrideCount = 0;
+    for (const [actionId, rawOverride] of Object.entries(actions)) {
+        const normalized = normalizeOverride(rawOverride);
+        const normalizedDefault = normalizeOverride((defaultActions as Record<string, unknown>)[actionId]);
+        const isOverride = !areOverridesEqual(normalized, normalizedDefault);
+        if (!isOverride)
+            continue;
+        overrideCount += 1;
+        if (normalized.enabled !== null && normalized.enabled !== normalizedDefault.enabled) {
+            enabledOverrideCount += 1;
+        }
+        enabledPlacementCount += countAddedStrings(normalized.enabledPlacements, normalizedDefault.enabledPlacements);
+        disabledSurfaceCount += countAddedStrings(normalized.disabledSurfaces, normalizedDefault.disabledSurfaces);
+        disabledPlacementCount += countAddedStrings(normalized.disabledPlacements, normalizedDefault.disabledPlacements);
+        approvalRequiredSurfaceCount += countAddedStrings(normalized.approvalRequiredSurfaces, normalizedDefault.approvalRequiredSurfaces);
+        toolExposureOverrideCount += countToolExposureOverrides(normalized.toolExposureModes, normalizedDefault.toolExposureModes);
+    }
+    return {
+        overrideCount,
+        enabledOverrideCount,
+        enabledPlacementCount,
+        disabledSurfaceCount,
+        disabledPlacementCount,
+        approvalRequiredSurfaceCount,
+        toolExposureOverrideCount,
+    };
+}
+
+function buildSessionAgentSpawnPolicySummaryProperties(value: unknown): Record<string, number> {
+    const parsed = SessionAgentSpawnPolicyV1Schema.safeParse(value);
+    const policy: SessionAgentSpawnPolicyV1 = parsed.success
+        ? parsed.data
+        : DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1;
+    const booleanEntries = Object.entries(policy).filter(([, entry]) => typeof entry === 'boolean') as Array<[
+        string,
+        boolean
+    ]>;
+    return {
+        disabledOverrideCount: booleanEntries.filter(([, entry]) => entry === false).length,
+        hasPermissionCeiling: policy.permissionCeiling ? 1 : 0,
+    };
+}
+
+function arrayCount(value: unknown): number {
+    return Array.isArray(value) ? value.length : 0;
+}
+
+function objectKeyCount(value: unknown): number {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? Object.keys(value as Record<string, unknown>).length
+        : 0;
+}
+
+function buildPinnedMeterSummaryProperties(value: unknown): Record<string, number> {
+    const entries = value && typeof value === 'object' && !Array.isArray(value)
+        ? Object.entries(value as Record<string, unknown>)
+        : [];
+    let profilesWithPinsCount = 0;
+    let totalPinnedMeterCount = 0;
+    for (const [, pinnedMeterIds] of entries) {
+        if (!Array.isArray(pinnedMeterIds))
+            continue;
+        profilesWithPinsCount += 1;
+        totalPinnedMeterCount += pinnedMeterIds.length;
+    }
+    return {
+        profilesWithPinsCount,
+        totalPinnedMeterCount,
+    };
+}
+
+function buildQuotaSummaryStrategyProperties(value: unknown): Record<string, number> {
+    const entries = value && typeof value === 'object' && !Array.isArray(value)
+        ? Object.values(value as Record<string, unknown>)
+        : [];
+    let primaryCount = 0;
+    let minRemainingCount = 0;
+    for (const strategy of entries) {
+        if (strategy === 'primary')
+            primaryCount += 1;
+        if (strategy === 'min_remaining')
+            minRemainingCount += 1;
+    }
+    return {
+        primaryCount,
+        minRemainingCount,
+    };
+}
+
+function bucketNumericSetting(value: number, smallMax: number, mediumMax: number): 'small' | 'medium' | 'large' {
+    if (value <= smallMax)
+        return 'small';
+    if (value <= mediumMax)
+        return 'medium';
+    return 'large';
+}
+
+function buildProfileEnabledSummaryProperties(value: unknown): Record<string, number> {
+    const entries = value && typeof value === 'object' && !Array.isArray(value)
+        ? Object.values(value as Record<string, unknown>)
+        : [];
+    return {
+        overrideCount: entries.length,
+        enabledOverrideCount: entries.filter((entry) => entry === true).length,
+        disabledOverrideCount: entries.filter((entry) => entry === false).length,
+    };
+}
+
+function buildSessionTmuxOverrideSummaryProperties(value: unknown): Record<string, number> {
+    const entries = value && typeof value === 'object' && !Array.isArray(value)
+        ? Object.values(value as Record<string, unknown>)
+        : [];
+
+    let useTmuxCount = 0;
+    let isolatedCount = 0;
+    let customTmpDirCount = 0;
+
+    for (const entry of entries) {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+        const record = entry as Record<string, unknown>;
+
+        if (record.useTmux === true) useTmuxCount += 1;
+        if (record.isolated === true) isolatedCount += 1;
+        if (typeof record.tmpDir === 'string' && record.tmpDir.length > 0) customTmpDirCount += 1;
+    }
+
+    return {
+        overrideCount: entries.length,
+        useTmuxCount,
+        isolatedCount,
+        customTmpDirCount,
+    };
+}
+
+function buildInstallablesPolicySummaryProperties(value: unknown): Record<string, number> {
+    const machineEntries = value && typeof value === 'object' && !Array.isArray(value)
+        ? Object.values(value as Record<string, unknown>)
+        : [];
+
+    let totalInstallableOverrideCount = 0;
+    let autoInstallOverrideCount = 0;
+    let autoUpdateOffCount = 0;
+    let autoUpdateNotifyCount = 0;
+    let autoUpdateAutoCount = 0;
+
+    for (const machineEntry of machineEntries) {
+        if (!machineEntry || typeof machineEntry !== 'object' || Array.isArray(machineEntry)) continue;
+        const installableEntries = Object.values(machineEntry as Record<string, unknown>);
+
+        totalInstallableOverrideCount += installableEntries.length;
+
+        for (const installableEntry of installableEntries) {
+            if (!installableEntry || typeof installableEntry !== 'object' || Array.isArray(installableEntry)) continue;
+            const record = installableEntry as Record<string, unknown>;
+
+            if (record.autoInstallWhenNeeded === true) autoInstallOverrideCount += 1;
+            if (record.autoUpdateMode === 'off') autoUpdateOffCount += 1;
+            if (record.autoUpdateMode === 'notify') autoUpdateNotifyCount += 1;
+            if (record.autoUpdateMode === 'auto') autoUpdateAutoCount += 1;
+        }
+    }
+
+    return {
+        machineCount: machineEntries.length,
+        totalInstallableOverrideCount,
+        autoInstallOverrideCount,
+        autoUpdateOffCount,
+        autoUpdateNotifyCount,
+        autoUpdateAutoCount,
+    };
+}
+
+function buildPeerMediationPreferencesSummaryProperties(value: unknown): Record<string, number> {
+    const record = value && typeof value === 'object' && !Array.isArray(value)
+        ? value as { byMachineId?: unknown; flows?: unknown }
+        : {};
+    const accountFlows = record.flows && typeof record.flows === 'object' && !Array.isArray(record.flows)
+        ? Object.values(record.flows as Record<string, unknown>)
+        : [];
+    const machineEntries = record.byMachineId && typeof record.byMachineId === 'object' && !Array.isArray(record.byMachineId)
+        ? Object.values(record.byMachineId as Record<string, unknown>)
+        : [];
+
+    let accountDirectOverrideCount = 0;
+    let machineDirectOverrideCount = 0;
+    let directEnabledCount = 0;
+    let directDisabledCount = 0;
+
+    const countFlowPreference = (entry: unknown, scope: 'account' | 'machine') => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
+        const direct = (entry as Record<string, unknown>).direct;
+        if (direct !== 'enabled' && direct !== 'disabled') return;
+        if (scope === 'account') {
+            accountDirectOverrideCount += 1;
+        } else {
+            machineDirectOverrideCount += 1;
+        }
+        if (direct === 'enabled') directEnabledCount += 1;
+        if (direct === 'disabled') directDisabledCount += 1;
+    };
+
+    for (const entry of accountFlows) countFlowPreference(entry, 'account');
+    for (const machineEntry of machineEntries) {
+        if (!machineEntry || typeof machineEntry !== 'object' || Array.isArray(machineEntry)) continue;
+        const flows = (machineEntry as Record<string, unknown>).flows;
+        if (!flows || typeof flows !== 'object' || Array.isArray(flows)) continue;
+        for (const entry of Object.values(flows as Record<string, unknown>)) {
+            countFlowPreference(entry, 'machine');
+        }
+    }
+
+    return {
+        machineCount: machineEntries.length,
+        accountDirectOverrideCount,
+        machineDirectOverrideCount,
+        directEnabledCount,
+        directDisabledCount,
+    };
+}
+
+function serializeNumericSettingBucket(smallMax: number, mediumMax: number) {
+    return (value: number) => bucketNumericSetting(value, smallMax, mediumMax);
+}
+
+function buildOverrideCountSummaryProperties(value: unknown): Record<string, number> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return { overrideCount: 0 };
+    }
+    return { overrideCount: Object.keys(value as Record<string, unknown>).length };
+}
+
 const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
-    analyticsOptOut: accountPreference(z.boolean(), false, 'privacy'),
-    crashReportsOptOut: accountPreference(z.boolean(), false, 'privacy'),
-    experiments: accountPreference(z.boolean(), false, 'feature choices'),
-    useEnhancedSessionWizard: accountPreference(z.boolean(), false, 'session authoring'),
+    analyticsOptOut: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'privacy'), trackAccountBoolean),
+    crashReportsOptOut: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'privacy'), trackAccountBoolean),
+    experiments: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'feature choices'), trackAccountBoolean),
+    useEnhancedSessionWizard: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'session authoring'), trackAccountBoolean),
     memoryUseInNewSessions: accountPreference(z.boolean(), false, 'memory creation defaults'),
     memoryUpkeepInNewBots: accountPreference(z.boolean(), true, 'memory creation defaults'),
     memoryUseInNewBots: accountPreference(z.boolean(), true, 'memory creation defaults'),
@@ -893,27 +1281,41 @@ const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
     // the fork affordance entirely for exactly the sessions this setting exists
     // to serve. The same machinery is already default-on for the in-place Agent
     // switch. A user can still turn it off.
-    sessionReplayEnabled: accountPreference(z.boolean(), true, 'session replay'),
-    useProfiles: accountPreference(z.boolean(), false, 'profile presentation'),
-    sessionPermissionModeApplyTiming: accountPolicy(z.enum(['immediate', 'next_prompt']), 'immediate', 'permission mediation'),
-    sessionUseTmux: accountPreference(z.boolean(), false, 'session terminal defaults'),
-    sessionTerminalHost: accountPreference(z.enum(['legacy', 'none', 'tmux', 'zellij', 'herdr']), 'legacy', 'session terminal defaults'),
-    sessionWindowsRemoteSessionLaunchMode: accountPreference(z.enum(['hidden', 'windows_terminal', 'console']), 'hidden', 'session terminal defaults'),
+    sessionReplayEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'session replay'), trackAccountBoolean),
+    useProfiles: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'profile presentation'), trackAccountBoolean),
+    sessionPermissionModeApplyTiming: withAccountSettingAnalytics(accountPolicy(z.enum(['immediate', 'next_prompt']), 'immediate', 'permission mediation'), trackAccountEnum),
+    sessionUseTmux: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'session terminal defaults'), trackAccountBoolean),
+    sessionTerminalHost: withAccountSettingAnalytics(accountPreference(z.enum(['legacy', 'none', 'tmux', 'zellij', 'herdr']), 'legacy', 'session terminal defaults'), trackAccountEnum),
+    sessionWindowsRemoteSessionLaunchMode: withAccountSettingAnalytics(accountPreference(z.enum(['hidden', 'windows_terminal', 'console']), 'hidden', 'session terminal defaults'), trackAccountEnum),
     sessionWindowsTerminalWindowName: accountPreference(z.string().check(z.maxLength(256)), 'happier', 'session terminal defaults'),
     // Machine lists run to dozens of machines; the picker leads with search (lab m-pick).
-    useMachinePickerSearch: accountPreference(z.boolean(), true, 'picker presentation'),
-    usePathPickerSearch: accountPreference(z.boolean(), false, 'picker presentation'),
-    agentInputEnterToSend: accountPreference(z.boolean(), true, 'composer presentation'),
-    agentInputEnterToSendNative: accountPreference(z.boolean(), false, 'composer presentation'),
-    alwaysShowContextSize: accountPreference(z.boolean(), false, 'composer presentation'),
-    sessionComposerRememberBannerVisibility: accountPreference(z.boolean(), false, 'composer presentation'),
-    visualEffectsLevel: accountPreference(z.enum(['full', 'subtle', 'minimal']), 'full', 'motion presentation'),
-    contextGaugeStyle: accountPreference(z.enum(['gauge', 'text', 'hidden']), 'gauge', 'composer presentation'),
-    animatedNumbers: accountPreference(z.boolean(), true, 'motion presentation'),
-    agentInputHistoryScope: accountPreference(z.enum(['perSession', 'global']), 'perSession', 'composer history presentation'),
-    agentInputActionBarLayout: accountPreference(AgentInputActionBarLayoutSchema, 'auto', 'composer presentation'),
-    agentInputChipDensity: accountPreference(z.enum(['auto', 'labels', 'icons']), 'auto', 'composer presentation'),
-    sessionListDensity: accountPreference((<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform((raw): unknown => raw === 'compact' ? 'cozy' : raw), z.enum(['detailed', 'cozy', 'narrow'])), 'narrow', 'session list presentation'),
+    useMachinePickerSearch: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'picker presentation'), trackAccountBoolean),
+    usePathPickerSearch: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'picker presentation'), trackAccountBoolean),
+    agentInputEnterToSend: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'composer presentation'), trackAccountBoolean),
+    agentInputEnterToSendNative: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'composer presentation'), trackAccountBoolean),
+    alwaysShowContextSize: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'composer presentation'), trackAccountBoolean),
+    sessionComposerRememberBannerVisibility: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'composer presentation'), trackAccountBoolean),
+    visualEffectsLevel: withAccountSettingAnalytics(accountPreference(z.enum(['full', 'subtle', 'minimal']), 'full', 'motion presentation'), trackAccountEnum),
+    contextGaugeStyle: withAccountSettingAnalytics(accountPreference(z.enum(['gauge', 'text', 'hidden']), 'gauge', 'composer presentation'), trackAccountEnum),
+    animatedNumbers: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'motion presentation'), trackAccountBoolean),
+    agentInputHistoryScope: withAccountSettingAnalytics(accountPreference(z.enum(['perSession', 'global']), 'perSession', 'composer history presentation'), trackAccountEnum),
+    agentInputActionBarLayout: withAccountSettingAnalytics(accountPreference(AgentInputActionBarLayoutSchema, 'auto', 'composer presentation'), trackAccountEnum),
+    agentInputChipDensity: withAccountSettingAnalytics(accountPreference(z.enum(['auto', 'labels', 'icons']), 'auto', 'composer presentation'), trackAccountEnum),
+    sessionListDensity: withAccountSettingAnalytics(accountPreference((<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform((raw): unknown => raw === 'compact' ? 'cozy' : raw), z.enum(['detailed', 'cozy', 'narrow'])), 'narrow', 'session list presentation'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'enum',
+        privacy: 'safe',
+        identityScope: 'person',
+        derivedPropertyValueKinds: {
+            compact_session_view: 'boolean',
+            compact_session_view_minimal: 'boolean',
+        },
+        serializeDerivedProperties: (value: 'detailed' | 'cozy' | 'narrow') => ({
+            compact_session_view: value === 'cozy' || value === 'narrow',
+            compact_session_view_minimal: value === 'narrow',
+        }),
+    }),
     collectionSpacesV1: accountPreference(CollectionSpacesV1Schema, { v: 1, spaces: [] }, 'collection saved filters', ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES),
     // Presentation host owns column policy; Account storage carries its keyed JSON preferences.
     collectionColumnPreferencesV1: accountPreference(z.record(z.string(), StrictJsonValueSchema), {}, 'collection column presentation', ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES),
@@ -940,97 +1342,125 @@ const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
     workflowSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
     discussionSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
     deploymentEnvironmentSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
-    sessionListLayoutV1: accountPreference(z.enum(['projects', 'recent_activity']), 'projects', 'session list presentation'),
-    sessionListAttentionPlacementV1: accountPreference(z.enum(['both', 'top', 'inPlace']), 'both', 'session list presentation'),
-    sessionListRowContextV1: accountPreference(z.boolean(), true, 'session list presentation'),
+    sessionListLayoutV1: withAccountSettingAnalytics(accountPreference(z.enum(['projects', 'recent_activity']), 'projects', 'session list presentation'), trackAccountEnum),
+    sessionListAttentionPlacementV1: withAccountSettingAnalytics(accountPreference(z.enum(['both', 'top', 'inPlace']), 'both', 'session list presentation'), trackAccountEnum),
+    sessionListRowContextV1: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'session list presentation'), trackAccountBoolean),
     sessionListStatusWords: accountPreference(z.boolean(), false, 'work status presentation'),
     // Restored 0.2 choices (owner amendment 2026-11-01): the working row mark as a spinner or a pulsing dot, and
     // a playful working word when status words are on.
     sessionListNarrowWorkingIndicatorStyle: accountPreference(z.enum(['spinner', 'pulse']), 'spinner', 'work status presentation'),
     sessionListWorkingStatusAnimatedTextEnabled: accountPreference(z.boolean(), true, 'work status presentation'),
-    sessionListIdentityDisplay: accountPreference(SessionListIdentityDisplaySchema, 'auto', 'session list presentation'),
-    sessionHeaderIdentityDisplay: accountPreference(z.enum(['avatar', 'agentLogo', 'none']), 'avatar', 'session header presentation'),
-    sessionListBackgroundWorkAttentionModeV1: accountPreference(z.enum(SESSION_LIST_BACKGROUND_WORK_ATTENTION_MODE_VALUES), 'keepWorking', 'session list presentation'),
-    sessionListAttentionStandingDefaultV1: accountPreference(z.boolean(), false, 'session list presentation'),
-    workspaceFaviconsEnabled: accountPreference(z.boolean(), true, 'session list presentation'),
-    showFlavorIcons: accountPreference(z.boolean(), true, 'application chrome'),
-    avatarStyle: accountPreference(AvatarStyleSchema, 'brutalist', 'avatar presentation'),
-    botFaceStyle: accountPreference(BotFaceStyleSchema, 'dither', 'Bot face presentation'),
+    sessionListIdentityDisplay: withAccountSettingAnalytics(accountPreference(SessionListIdentityDisplaySchema, 'auto', 'session list presentation'), trackAccountEnum),
+    sessionHeaderIdentityDisplay: withAccountSettingAnalytics(accountPreference(z.enum(['avatar', 'agentLogo', 'none']), 'avatar', 'session header presentation'), trackAccountEnum),
+    sessionListBackgroundWorkAttentionModeV1: withAccountSettingAnalytics(accountPreference(z.enum(SESSION_LIST_BACKGROUND_WORK_ATTENTION_MODE_VALUES), 'keepWorking', 'session list presentation'), trackAccountEnum),
+    sessionListAttentionStandingDefaultV1: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'session list presentation'), trackAccountBoolean),
+    workspaceFaviconsEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'session list presentation'), trackAccountBoolean),
+    showFlavorIcons: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'application chrome'), trackAccountBoolean),
+    avatarStyle: withAccountSettingAnalytics(accountPreference(AvatarStyleSchema, 'brutalist', 'avatar presentation'), trackAccountEnum),
+    botFaceStyle: withAccountSettingAnalytics(accountPreference(BotFaceStyleSchema, 'dither', 'Bot face presentation'), trackAccountEnum),
     botMotion: accountPreference(BotMotionSchema, 'lively', 'Bot motion presentation'),
-    homeBotFacesEnabled: accountPreference(z.boolean(), true, 'Home presentation'),
-    hideInactiveSessions: accountPreference(z.boolean(), false, 'session list presentation'),
-    sessionListActiveColorModeV1: accountPreference(z.enum(['activityAndAttention', 'attentionOnly', 'allActive']), 'activityAndAttention', 'session list presentation'),
-    sessionMessageSendMode: accountPolicy(z.enum(['agent_queue', 'interrupt', 'server_pending']), 'server_pending', 'message delivery'),
-    sessionBusySteerSendPolicy: accountPolicy(z.enum(['steer_immediately', 'server_pending']), 'steer_immediately', 'message delivery'),
-    sessionNonSteerableSendPrompt: accountPreference(z.enum(['on', 'off']), 'on', 'message delivery'),
-    sessionProviderUsageGaugeMode: accountPreference(z.enum(['auto', 'hidden']), 'auto', 'usage presentation'),
-    sessionProviderUsageGaugeWindowModes: accountPreference(z.nullable(z.array(z.enum(SESSION_PROVIDER_USAGE_GAUGE_WINDOW_MODES)).check(z.minLength(1))), null, 'usage presentation'),
-    sessionUsageGaugeLabels: accountPreference(z.boolean(), false, 'usage presentation'),
-    sessionProviderUsageGaugeWindowMode: accountPreference(z.enum(SESSION_PROVIDER_USAGE_GAUGE_WINDOW_MODES), 'most_constrained', 'usage presentation'),
+    homeBotFacesEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'Home presentation'), trackAccountBoolean),
+    hideInactiveSessions: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'session list presentation'), trackAccountBoolean),
+    sessionListActiveColorModeV1: withAccountSettingAnalytics(accountPreference(z.enum(['activityAndAttention', 'attentionOnly', 'allActive']), 'activityAndAttention', 'session list presentation'), trackAccountEnum),
+    sessionMessageSendMode: withAccountSettingAnalytics(accountPolicy(z.enum(['agent_queue', 'interrupt', 'server_pending']), 'server_pending', 'message delivery'), trackAccountEnum),
+    sessionBusySteerSendPolicy: withAccountSettingAnalytics(accountPolicy(z.enum(['steer_immediately', 'server_pending']), 'steer_immediately', 'message delivery'), trackAccountEnum),
+    sessionNonSteerableSendPrompt: withAccountSettingAnalytics(accountPreference(z.enum(['on', 'off']), 'on', 'message delivery'), trackAccountEnum),
+    sessionProviderUsageGaugeMode: withAccountSettingAnalytics(accountPreference(z.enum(['auto', 'hidden']), 'auto', 'usage presentation'), trackAccountEnum),
+    sessionProviderUsageGaugeWindowModes: withAccountSettingAnalytics(accountPreference(z.nullable(z.array(z.enum(SESSION_PROVIDER_USAGE_GAUGE_WINDOW_MODES)).check(z.minLength(1))), null, 'usage presentation'), { trackCurrentState: false, trackChanges: false, valueKind: 'count', privacy: 'safe', identityScope: 'person' }),
+    sessionUsageGaugeLabels: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'usage presentation'), trackAccountBoolean),
+    sessionProviderUsageGaugeWindowMode: withAccountSettingAnalytics(accountPreference(z.enum(SESSION_PROVIDER_USAGE_GAUGE_WINDOW_MODES), 'most_constrained', 'usage presentation'), trackAccountEnum),
 } as const;
 const ACCOUNT_DISPLAY_CATALOG_DEFINITIONS = {
-    sessionThinkingDisplayMode: accountPreference(z.enum(['inline', 'tool', 'hidden']), 'inline', 'transcript presentation'),
-    sessionThinkingInlinePresentation: accountPreference(z.enum(['full', 'summary']), 'summary', 'transcript presentation'),
-    sessionThinkingInlineChrome: accountPreference(z.enum(['plain', 'card']), 'plain', 'transcript presentation'),
-    showLineNumbers: accountPreference(z.boolean(), true, 'code presentation'),
-    showLineNumbersInToolViews: accountPreference(z.boolean(), false, 'tool presentation'),
-    showChatCodeBlockWrapControls: accountPreference(z.boolean(), true, 'code presentation'),
-    wrapChatCodeBlocks: accountPreference(z.boolean(), false, 'code presentation'),
-    wrapLinesInDiffs: accountPreference(z.boolean(), false, 'code presentation'),
-    sessionReplayStrategy: accountPreference(z.enum(['recent_messages', 'summary_plus_recent']), 'recent_messages', 'session replay'),
+    sessionThinkingDisplayMode: withAccountSettingAnalytics(accountPreference(z.enum(['inline', 'tool', 'hidden']), 'inline', 'transcript presentation'), trackAccountEnum),
+    sessionThinkingInlinePresentation: withAccountSettingAnalytics(accountPreference(z.enum(['full', 'summary']), 'summary', 'transcript presentation'), trackAccountEnum),
+    sessionThinkingInlineChrome: withAccountSettingAnalytics(accountPreference(z.enum(['plain', 'card']), 'plain', 'transcript presentation'), trackAccountEnum),
+    showLineNumbers: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'code presentation'), trackAccountBoolean),
+    showLineNumbersInToolViews: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'tool presentation'), trackAccountBoolean),
+    showChatCodeBlockWrapControls: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'code presentation'), trackAccountBoolean),
+    wrapChatCodeBlocks: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'code presentation'), trackAccountBoolean),
+    wrapLinesInDiffs: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'code presentation'), trackAccountBoolean),
+    sessionReplayStrategy: withAccountSettingAnalytics(accountPreference(z.enum(['recent_messages', 'summary_plus_recent']), 'recent_messages', 'session replay'), trackAccountEnum),
     // Bounds come from the one Replay-budget owner. A stored value outside them
     // recovers to the default: a budget below the floor produced no seed at all.
-    sessionReplayRecentMessagesCount: accountPreference(HappierReplayRecentMessagesCountSchema, 250, 'session replay'),
-    sessionReplayMaxSeedChars: accountCatalogDefinition(z.union([HappierReplayWritableMaxSeedCharsSchema, z.pipe(HappierReplayWireMaxSeedCharsSchema, z.transform(() => 120000))]), 120000, {
+    sessionReplayRecentMessagesCount: withAccountSettingAnalytics(accountPreference(HappierReplayRecentMessagesCountSchema, 250, 'session replay'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: (value: number) => bucketNumericSetting(value, 100, 300),
+    }),
+    sessionReplayMaxSeedChars: withAccountSettingAnalytics(accountCatalogDefinition(z.union([HappierReplayWritableMaxSeedCharsSchema, z.pipe(HappierReplayWireMaxSeedCharsSchema, z.transform(() => 120000))]), 120000, {
         semanticDomain: 'session replay', classification: 'preference', maximumSerializedValueBytes: 4 * 1024,
         mutationSchema: HappierReplayWritableMaxSeedCharsSchema,
+    }), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: (value: number) => bucketNumericSetting(value, 80000, 200000),
     }),
-    executionRunsGuidanceEnabled: accountPreference(z.boolean(), true, 'execution guidance'),
-    executionRunsNotifyParentOnCompletionDefault: accountPreference(z.boolean(), false, 'execution guidance'),
-    filesAskWithoutSessionTarget: accountPreference(z.enum(['detached_run', 'session']), 'detached_run', 'file selection Ask'),
-    executionRunsGuidanceMaxChars: accountPreference(z.number().check(z.int(), z.minimum(1), z.maximum(64 * 1024)), 4000, 'execution guidance'),
-    attachmentsUploadsUploadLocation: accountPreference(z.enum(['workspace', 'os_temp']), 'workspace', 'attachment uploads'),
+    executionRunsGuidanceEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'execution guidance'), trackAccountBoolean),
+    executionRunsNotifyParentOnCompletionDefault: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'execution guidance'), trackAccountBoolean),
+    filesAskWithoutSessionTarget: withAccountSettingAnalytics(accountPreference(z.enum(['detached_run', 'session']), 'detached_run', 'file selection Ask'), trackAccountEnum),
+    executionRunsGuidanceMaxChars: withAccountSettingAnalytics(accountPreference(z.number().check(z.int(), z.minimum(1), z.maximum(64 * 1024)), 4000, 'execution guidance'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: (value: number) => bucketNumericSetting(value, 2000, 5000),
+    }),
+    attachmentsUploadsUploadLocation: withAccountSettingAnalytics(accountPreference(z.enum(['workspace', 'os_temp']), 'workspace', 'attachment uploads'), trackAccountEnum),
     attachmentsUploadsWorkspaceRelativeDir: accountCatalogDefinition(z.string().check(z.minLength(1), z.maxLength(4 * 1024)), '.happier/uploads', {
         semanticDomain: 'attachment uploads', classification: 'preference', maximumSerializedValueBytes: 4 * 1024,
         mutationSchema: z.pipe(z.pipe(z.string().check(z.minLength(1), z.maxLength(4 * 1024)),
             z.transform(normalizeAttachmentsUploadsWorkspaceRelativeDir)), z.string()),
     }),
-    attachmentsUploadsVcsIgnoreStrategy: accountPreference(z.enum(['git_info_exclude', 'gitignore', 'none']), 'git_info_exclude', 'attachment uploads'),
-    attachmentsUploadsVcsIgnoreWritesEnabled: accountPreference(z.boolean(), true, 'attachment uploads'),
-    attachmentsUploadsMaxFileBytes: accountPolicy(z.number().check(z.int(), z.minimum(1), z.maximum(MAX_ATTACHMENT_UPLOAD_FILE_BYTES_V1)), DEFAULT_ATTACHMENT_UPLOAD_MAX_FILE_BYTES_V1, 'attachment uploads'),
-    sessionTagsEnabled: accountPreference(z.boolean(), true, 'session list presentation'),
+    attachmentsUploadsVcsIgnoreStrategy: withAccountSettingAnalytics(accountPreference(z.enum(['git_info_exclude', 'gitignore', 'none']), 'git_info_exclude', 'attachment uploads'), trackAccountEnum),
+    attachmentsUploadsVcsIgnoreWritesEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'attachment uploads'), trackAccountBoolean),
+    attachmentsUploadsMaxFileBytes: withAccountSettingAnalytics(accountPolicy(z.number().check(z.int(), z.minimum(1), z.maximum(MAX_ATTACHMENT_UPLOAD_FILE_BYTES_V1)), DEFAULT_ATTACHMENT_UPLOAD_MAX_FILE_BYTES_V1, 'attachment uploads'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: (value: number) => bucketNumericSetting(value, 10 * 1024 * 1024, 50 * 1024 * 1024),
+    }),
+    sessionTagsEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'session list presentation'), trackAccountBoolean),
     // Tag ids belong to a Home; identical ids on another Home do not inherit this choice.
-    sessionListHiddenTagIdsWhileRecording: accountPreference(z.record(z.string(), z.array(z.string())), {}, 'session list presentation'),
-    mobileWorkspaceExperienceV1: accountPreference(z.enum(['classic', 'cockpit']), 'cockpit', 'mobile workspace presentation'),
-    workspaceTabsSyncEnabled: accountPreference(z.boolean(), true, 'workspace open tabs'),
-    sessionCockpitSwipeNavigationEnabled: accountPreference(z.boolean(), true, 'mobile workspace presentation'),
-    sessionCockpitSwipeAlwaysSessionsEnabled: accountPreference(z.boolean(), false, 'mobile workspace presentation'),
-    sessionCockpitSwipeSource: accountPreference(z.enum(['list', 'recent']), 'list', 'mobile workspace presentation'),
-    sessionSwitcherDragUpEnabled: accountPreference(z.boolean(), true, 'mobile workspace presentation'),
-    sessionSwitcherDragUpSource: accountPreference(z.enum(['recent', 'list']), 'recent', 'mobile workspace presentation'),
-    sessionSwitcherFlickEnabled: accountPreference(z.boolean(), true, 'mobile workspace presentation'),
-    sessionSwitcherHoldToDockEnabled: accountPreference(z.boolean(), true, 'mobile workspace presentation'),
-    sessionHeaderPullAllTabsEnabled: accountPreference(z.boolean(), true, 'mobile workspace presentation'),
-    tabBarGitBadgeMode: accountPreference(z.enum(['changedFiles', 'diffLines', 'off']), 'changedFiles', 'application chrome'),
-    tabBarFriendsBadgeEnabled: accountPreference(z.boolean(), true, 'application chrome'),
-    tabBarInboxBadgeEnabled: accountPreference(z.boolean(), true, 'application chrome'),
-    tabBarSessionsBadgeEnabled: accountPreference(z.boolean(), true, 'application chrome'),
-    tabBarOpenTabsBadgeEnabled: accountPreference(z.boolean(), true, 'application chrome'),
-    tabBarShowLabels: accountPreference(z.boolean(), false, 'application chrome'),
-    tabBarSize: accountPreference(z.enum(['compact', 'regular', 'large']), 'regular', 'application chrome'),
-    glassBlurEnabled: accountPreference(z.boolean(), true, 'application chrome'),
-    glassBlurIntensity: accountPreference(z.enum(['light', 'regular', 'strong']), 'regular', 'application chrome'),
-    glassTintIntensity: accountPreference(GlassTintIntensitySchema, DEFAULT_GLASS_TINT_INTENSITY, 'application chrome'),
+    sessionListHiddenTagIdsWhileRecording: withAccountSettingAnalytics(accountPreference(z.record(z.string(), z.array(z.string())), {}, 'session list presentation'), { trackCurrentState: false, trackChanges: false, valueKind: 'presence', privacy: 'forbidden', identityScope: 'person' }),
+    mobileWorkspaceExperienceV1: withAccountSettingAnalytics(accountPreference(z.enum(['classic', 'cockpit']), 'cockpit', 'mobile workspace presentation'), trackAccountEnum),
+    workspaceTabsSyncEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'workspace open tabs'), trackAccountBoolean),
+    sessionCockpitSwipeNavigationEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'mobile workspace presentation'), trackAccountBoolean),
+    sessionCockpitSwipeAlwaysSessionsEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'mobile workspace presentation'), trackAccountBoolean),
+    sessionCockpitSwipeSource: withAccountSettingAnalytics(accountPreference(z.enum(['list', 'recent']), 'list', 'mobile workspace presentation'), trackAccountEnum),
+    sessionSwitcherDragUpEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'mobile workspace presentation'), trackAccountBoolean),
+    sessionSwitcherDragUpSource: withAccountSettingAnalytics(accountPreference(z.enum(['recent', 'list']), 'recent', 'mobile workspace presentation'), trackAccountEnum),
+    sessionSwitcherFlickEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'mobile workspace presentation'), trackAccountBoolean),
+    sessionSwitcherHoldToDockEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'mobile workspace presentation'), trackAccountBoolean),
+    sessionHeaderPullAllTabsEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'mobile workspace presentation'), trackAccountBoolean),
+    tabBarGitBadgeMode: withAccountSettingAnalytics(accountPreference(z.enum(['changedFiles', 'diffLines', 'off']), 'changedFiles', 'application chrome'), trackAccountEnum),
+    tabBarFriendsBadgeEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'application chrome'), trackAccountBoolean),
+    tabBarInboxBadgeEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'application chrome'), trackAccountBoolean),
+    tabBarSessionsBadgeEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'application chrome'), trackAccountBoolean),
+    tabBarOpenTabsBadgeEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'application chrome'), trackAccountBoolean),
+    tabBarShowLabels: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'application chrome'), trackAccountBoolean),
+    tabBarSize: withAccountSettingAnalytics(accountPreference(z.enum(['compact', 'regular', 'large']), 'regular', 'application chrome'), trackAccountEnum),
+    glassBlurEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'application chrome'), trackAccountBoolean),
+    glassBlurIntensity: withAccountSettingAnalytics(accountPreference(z.enum(['light', 'regular', 'strong']), 'regular', 'application chrome'), trackAccountEnum),
+    glassTintIntensity: withAccountSettingAnalytics(accountPreference(GlassTintIntensitySchema, DEFAULT_GLASS_TINT_INTENSITY, 'application chrome'), { trackCurrentState: true, trackChanges: true, valueKind: 'count', privacy: 'safe', identityScope: 'person' }),
     glassSurfaceMaterials: accountCatalogDefinition(z.nullable(GlassSurfaceMaterialsStoredSchema), null, {
         semanticDomain: 'application chrome', classification: 'preference', maximumSerializedValueBytes: 4 * 1024,
         mutationSchema: z.nullable(GlassSurfaceMaterialsSchema),
     }),
-    homeAtmosphere: accountCatalogDefinition(HomeAtmosphereSchema, DEFAULT_HOME_ATMOSPHERE, {
+    homeAtmosphere: withAccountSettingAnalytics(accountCatalogDefinition(HomeAtmosphereSchema, DEFAULT_HOME_ATMOSPHERE, {
         semanticDomain: 'Home atmosphere', classification: 'preference',
         maximumSerializedValueBytes: ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES,
-    }),
+    }), { trackCurrentState: false, trackChanges: false, valueKind: 'presence', privacy: 'forbidden', identityScope: 'person' }),
     homeBackgroundField: accountPreference(z.enum(HOME_BACKGROUND_FIELD_MODES), 'animated', 'Home atmosphere'),
-    composerSurfaceStyle: accountPreference(z.enum(['standard', 'glass']), 'glass', 'composer presentation'),
+    composerSurfaceStyle: withAccountSettingAnalytics(accountPreference(z.enum(['standard', 'glass']), 'glass', 'composer presentation'), trackAccountEnum),
 } as const;
 const BoundedLegacyArraySchema = defineStoredReadProjection(lazyDefinition(() => z.array(BoundedLegacyJsonValueSchema).check(z.maxLength(256))), () => z.array(createStoredReadSchema(BoundedLegacyJsonValueSchema)));
 const BoundedLegacyRecordSchema = defineStoredReadProjection(lazyDefinition(() => z.record(z.string().check(z.maxLength(64 * 1024)), BoundedLegacyJsonValueSchema)), () => z.record(z.string(), createStoredReadSchema(BoundedLegacyJsonValueSchema)));
@@ -1114,8 +1544,22 @@ export function parseRetainedAccountSettingsEntitySourceV1(key: string, value: u
 
 const ACCOUNT_LEGACY_ROOT_CATALOG_DEFINITIONS = {
     // Rowless builtin enablement remains an ordinary Settings preference.
-    profileEnabledById: accountLegacy(BoundedLegacyRecordSchema, {}, 'profile entity state', 32 * 1024),
-    secrets: accountLegacy(SavedSecretsSchema, [], 'saved-secret records', ACCOUNT_SETTINGS_MAX_SAVED_SECRETS_BYTES, false),
+    profileEnabledById: withAccountSettingAnalytics(accountLegacy(BoundedLegacyRecordSchema, {}, 'profile entity state', 32 * 1024), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'count_only',
+        identityScope: 'person',
+        serializeCurrentProperties: buildProfileEnabledSummaryProperties,
+    }),
+    secrets: withAccountSettingAnalytics(accountLegacy(SavedSecretsSchema, [], 'saved-secret records', ACCOUNT_SETTINGS_MAX_SAVED_SECRETS_BYTES, false), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'count_only',
+        identityScope: 'person',
+        serializeCurrent: (value: unknown) => (Array.isArray(value) ? value.length : 0),
+    }),
     mcpServersStrictMode: accountPreference(z.boolean(), false, 'MCP server enforcement policy'),
     pinnedSessionKeysV1: accountLegacy(z.array(z.string().check(z.maxLength(1024))).check(z.maxLength(256)), [], 'session organization pins', 32 * 1024),
     workspaceLabelsV1: accountLegacy(BoundedLegacyRecordSchema, {}, 'workspace labels', 32 * 1024),
@@ -1124,30 +1568,95 @@ const ACCOUNT_LEGACY_ROOT_CATALOG_DEFINITIONS = {
     sessionWorkspaceOrderV1: accountLegacy(BoundedLegacyRecordSchema, {}, 'session organization ordering', 64 * 1024),
     sessionFoldersV1: accountLegacy(BoundedLegacyJsonValueSchema, { v: 1, folders: [] }, 'session folder entities', 128 * 1024),
     voiceSettingsV1: accountLegacy(BoundedLegacyJsonValueSchema, {}, 'voice configuration', 128 * 1024),
-    voice: accountLegacy(BoundedLegacyJsonValueSchema, {}, 'legacy voice configuration', 128 * 1024),
+    voice: withAccountSettingAnalytics(accountLegacy(BoundedLegacyJsonValueSchema, {}, 'legacy voice configuration', 128 * 1024), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'enum',
+        privacy: 'safe',
+        identityScope: 'person',
+        serializeCurrentProperties: emptyRuntimeSettingProperties,
+    }),
     voiceDiagnosticsV1: accountLegacy(BoundedLegacyJsonValueSchema, {}, 'voice diagnostics', 64 * 1024),
 } as const;
 const ACCOUNT_CONNECTED_SERVICES_CATALOG_DEFINITIONS = {
-    connectedServicesDefaultProfileByServiceId: accountPreference(z.record(z.string().check(z.maxLength(1024)), z.string().check(z.maxLength(1024))), {}, 'connected service defaults', 32 * 1024),
-    connectedServicesQuotaPinnedMeterIdsByKey: accountPreference(z.record(z.string().check(z.maxLength(1024)), z.array(z.string().check(z.maxLength(1024))).check(z.maxLength(256))), {}, 'connected service presentation', 64 * 1024),
-    connectedServicesQuotaSummaryStrategyByKey: accountPreference(z.record(z.string().check(z.maxLength(1024)), z.enum(['primary', 'min_remaining'])), {}, 'connected service presentation', 32 * 1024),
+    connectedServicesDefaultProfileByServiceId: withAccountSettingAnalytics(accountPreference(z.record(z.string().check(z.maxLength(1024)), z.string().check(z.maxLength(1024))), {}, 'connected service defaults', 32 * 1024), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'count_only',
+        identityScope: 'person',
+        serializeCurrent: objectKeyCount,
+    }),
+    connectedServicesQuotaPinnedMeterIdsByKey: withAccountSettingAnalytics(accountPreference(z.record(z.string().check(z.maxLength(1024)), z.array(z.string().check(z.maxLength(1024))).check(z.maxLength(256))), {}, 'connected service presentation', 64 * 1024), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'count_only',
+        identityScope: 'person',
+        serializeCurrentProperties: buildPinnedMeterSummaryProperties,
+    }),
+    connectedServicesQuotaSummaryStrategyByKey: withAccountSettingAnalytics(accountPreference(z.record(z.string().check(z.maxLength(1024)), z.enum(['primary', 'min_remaining'])), {}, 'connected service presentation', 32 * 1024), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'count_only',
+        identityScope: 'person',
+        serializeCurrentProperties: buildQuotaSummaryStrategyProperties,
+    }),
 } as const;
 const ACCOUNT_SIMPLE_COLLECTION_CATALOG_DEFINITIONS = {
-    favoriteDirectories: accountPreference(z.array(z.string().check(z.maxLength(16 * 1024))).check(z.maxLength(256)), [], 'favorite directories', 128 * 1024),
-    favoriteMachines: accountPreference(z.array(z.string().check(z.maxLength(1024))).check(z.maxLength(256)), [], 'favorite machines', 32 * 1024),
+    favoriteDirectories: withAccountSettingAnalytics(accountPreference(z.array(z.string().check(z.maxLength(16 * 1024))).check(z.maxLength(256)), [], 'favorite directories', 128 * 1024), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'count_only',
+        identityScope: 'person',
+        serializeCurrent: arrayCount,
+    }),
+    favoriteMachines: withAccountSettingAnalytics(accountPreference(z.array(z.string().check(z.maxLength(1024))).check(z.maxLength(256)), [], 'favorite machines', 32 * 1024), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'count_only',
+        identityScope: 'person',
+        serializeCurrent: arrayCount,
+    }),
     // Retained Profile identities and collection size come from the predecessor
     // favorite writer, not new Profile authoring. The Account document owns bytes.
-    favoriteProfiles: accountCatalogDefinition(z.array(z.string()), [], {
+    favoriteProfiles: withAccountSettingAnalytics(accountCatalogDefinition(z.array(z.string()), [], {
         semanticDomain: 'favorite profiles', classification: 'preference',
         maximumSerializedValueBytes: ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES,
         structuralBoundsOwner: 'domainOwned',
+    }), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'count_only',
+        identityScope: 'person',
+        serializeCurrent: arrayCount,
     }),
     // Preferences keep the bound, not the legacy carrier's size-tolerant read projection.
-    favoriteModelSelectionsV1: accountPreference(z.core.clone(BoundedLegacyArraySchema), [], 'favorite model selections', 64 * 1024),
-    favoriteBackendTargetKeysV1: accountCatalogDefinition(z.array(z.string().check(z.maxLength(1024))).check(z.maxLength(256)), [], {
+    favoriteModelSelectionsV1: withAccountSettingAnalytics(accountPreference(z.core.clone(BoundedLegacyArraySchema), [], 'favorite model selections', 64 * 1024), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'count_only',
+        identityScope: 'person',
+        serializeCurrent: arrayCount,
+    }),
+    // Read through the canonical key owner: 0.2's `agent:<id>` favorites read as the targets the catalog offers.
+    favoriteBackendTargetKeysV1: withAccountSettingAnalytics(accountCatalogDefinition(z.pipe(z.array(z.string().check(z.maxLength(1024))).check(z.maxLength(256)),
+        z.transform(value => FavoriteBackendTargetKeysV1Schema.parse(value))), [], {
         semanticDomain: 'favorite backend targets', classification: 'preference', maximumSerializedValueBytes: 32 * 1024,
         mutationSchema: z.pipe(z.array(z.pipe(z.string().check(z.trim(), z.maxLength(1024)), BackendTargetKeyV2Schema)).check(z.maxLength(256)),
             z.transform(value => FavoriteBackendTargetKeysV1Schema.parse(value))),
+    }), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'count_only',
+        identityScope: 'person',
+        serializeCurrent: arrayCount,
     }),
 } as const;
 const KeyboardShortcutRuleSchema = lazyDefinition(() => z.object({
@@ -1253,7 +1762,14 @@ const NewSessionWizardSectionPresentationByIdSchema = lazyDefinition(() => (<I e
     }));
 }), z._default(z.partialRecord(NewSessionWizardSectionIdSchema, NewSessionWizardSectionPresentationSchema), {})));
 const ACCOUNT_SESSION_AUTHORING_CATALOG_DEFINITIONS = {
-    sessionDefaultPermissionModeByTargetKey: accountPolicy(z.record(BackendTargetKeyV2InputSchema, z.enum(SESSION_PERMISSION_MODES)), {}, 'default permission mode', 32 * 1024),
+    sessionDefaultPermissionModeByTargetKey: withAccountSettingAnalytics(accountPolicy(z.record(BackendTargetKeyV2InputSchema, z.enum(SESSION_PERMISSION_MODES)), {}, 'default permission mode', 32 * 1024), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'enum',
+        privacy: 'safe',
+        identityScope: 'person',
+        serializeCurrentProperties: emptyRuntimeSettingProperties,
+    }),
     sessionIdleCompactionEnabledByTargetKey: accountPreference(z.record(BackendTargetKeyV2InputSchema, z.boolean()), {}, 'idle compaction', 32 * 1024),
     sessionIdleCompactionMinContextTokensByTargetKey: accountPreference(z.record(BackendTargetKeyV2InputSchema, z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER))), {}, 'idle compaction', 32 * 1024),
     sessionIdleCompactionCacheWindowOverrideMsByTargetKey: accountPreference(z.record(BackendTargetKeyV2InputSchema, z.number().check(z.int(), z.positive(), z.maximum(MAX_IDLE_COMPACTION_CACHE_WINDOW_MS))), {}, 'idle compaction', 32 * 1024),
@@ -1268,171 +1784,434 @@ const ACCOUNT_SESSION_AUTHORING_CATALOG_DEFINITIONS = {
     newSessionBackdropStrengthV1: accountPreference(z.enum(NEW_SESSION_BACKDROP_STRENGTHS), 'soft', 'session authoring'),
     newSessionWizardSectionPresentationV1: accountPreference(NewSessionWizardSectionPresentationByIdSchema, {}, 'session authoring'),
     newSessionWizardColumnsEnabled: accountPreference(z.boolean(), false, 'session authoring'),
-    commandPaletteEnabled: accountPreference(z.boolean(), false, 'keyboard shortcuts'),
-    keyboardShortcutsV2Enabled: accountPreference(z.boolean(), false, 'keyboard shortcuts'),
-    keyboardSingleKeyShortcutsEnabled: accountPreference(z.boolean(), false, 'keyboard shortcuts'),
-    keyboardShortcutOverridesV1: accountPreference(KeyboardShortcutOverridesSchema, {}, 'keyboard shortcuts', 64 * 1024),
-    keyboardShortcutDisabledCommandIdsV1: accountPreference(KeyboardShortcutDisabledCommandIdsSchema, [], 'keyboard shortcuts', 32 * 1024),
-    petsEnabled: accountPreference(z.boolean(), false, 'pet preferences'),
+    commandPaletteEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'keyboard shortcuts'), trackAccountBoolean),
+    keyboardShortcutsV2Enabled: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'keyboard shortcuts'), trackAccountBoolean),
+    keyboardSingleKeyShortcutsEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'keyboard shortcuts'), trackAccountBoolean),
+    keyboardShortcutOverridesV1: withAccountSettingAnalytics(accountPreference(KeyboardShortcutOverridesSchema, {}, 'keyboard shortcuts', 64 * 1024), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'count_only',
+        identityScope: 'person',
+        serializeCurrent: objectKeyCount,
+    }),
+    keyboardShortcutDisabledCommandIdsV1: withAccountSettingAnalytics(accountPreference(KeyboardShortcutDisabledCommandIdsSchema, [], 'keyboard shortcuts', 32 * 1024), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'count_only',
+        identityScope: 'person',
+        serializeCurrent: (value: readonly unknown[]) => value.length,
+    }),
+    petsEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'pet preferences'), trackAccountBoolean),
     petsSelectedPetRef: accountPreference(PetAccountReferenceV1Schema, { kind: 'builtIn', petId: 'blink' }, 'pet preferences'),
-    petsDesktopOverlayDefaultEnabled: accountPreference(z.boolean(), true, 'pet preferences'),
+    petsDesktopOverlayDefaultEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'pet preferences'), trackAccountBoolean),
 } as const;
 const ACCOUNT_SCM_AND_FILES_CATALOG_DEFINITIONS = {
     scmGitIdentity: accountPreference(z.nullable(ScmGitIdentitySchema), null, 'source control'),
-    scmCommitStrategy: accountPreference(z.enum(['atomic', 'git_staging']), 'atomic', 'source control'),
-    scmGitRepoPreferredBackend: accountPreference(z.enum(['git', 'sapling']), 'git', 'source control'),
-    scmGitRepoPreferredBackendQualifiedId: accountPreference(z.nullable(ScmBackendQualifiedIdSchema), null, 'source control'),
-    scmRemoteConfirmPolicy: accountPreference(z.enum(['always', 'pull_only', 'push_only', 'never']), 'always', 'source control'),
-    scmPushRejectPolicy: accountPreference(z.enum(['prompt_fetch', 'auto_fetch', 'manual']), 'prompt_fetch', 'source control'),
-    scmUncommittedChangesStrategy: accountPreference(z.enum(['ask', 'always_bring', 'always_stash']), 'ask', 'source control'),
-    scmDefaultDiffModeByBackend: accountPreference(z._default(z.record(accountBoundedString(256), z.enum(['included', 'pending', 'both'])), {}), {}, 'source control', 32 * 1024),
-    scmAskBeforeOverwritingBranchStash: accountPreference(z.boolean(), true, 'source control'),
-    scmReviewMaxFiles: accountPreference(accountNonNegativeInteger(), 25, 'source control'),
-    scmReviewMaxChangedLines: accountPreference(accountNonNegativeInteger(), 2000, 'source control'),
-    scmDiffCacheMaxEntries: accountPreference(accountNonNegativeInteger(), 30, 'source control'),
-    scmDiffCacheMaxTotalBytes: accountPreference(accountNonNegativeInteger(), 20 * 1024 * 1024, 'source control'),
-    scmReviewPrefetchAheadCountWeb: accountPreference(accountNonNegativeInteger(), 14, 'source control'),
-    scmReviewPrefetchBehindCountWeb: accountPreference(accountNonNegativeInteger(), 8, 'source control'),
-    scmReviewPrefetchAheadCountNative: accountPreference(accountNonNegativeInteger(), 8, 'source control'),
-    scmReviewPrefetchBehindCountNative: accountPreference(accountNonNegativeInteger(), 4, 'source control'),
-    scmReviewPrefetchConcurrency: accountPreference(accountNonNegativeInteger(), 3, 'source control'),
-    scmReviewPrefetchDebounceMs: accountPreference(accountNonNegativeInteger(), 150, 'source control'),
-    scmSessionAutoRefreshIntervalMs: accountPreference(accountNonNegativeInteger(), 300000, 'source control'),
-    scmFilesAutoRefreshIntervalMs: accountPreference(accountNonNegativeInteger(), 60000, 'source control'),
-    scmCommitMessageGeneratorEnabled: accountPreference(z.boolean(), true, 'source control'),
+    scmCommitStrategy: withAccountSettingAnalytics(accountPreference(z.enum(['atomic', 'git_staging']), 'atomic', 'source control'), trackAccountEnum),
+    scmGitRepoPreferredBackend: withAccountSettingAnalytics(accountPreference(z.enum(['git', 'sapling']), 'git', 'source control'), trackAccountEnum),
+    scmGitRepoPreferredBackendQualifiedId: withAccountSettingAnalytics(accountPreference(z.nullable(ScmBackendQualifiedIdSchema), null, 'source control'), trackAccountEnum),
+    scmRemoteConfirmPolicy: withAccountSettingAnalytics(accountPreference(z.enum(['always', 'pull_only', 'push_only', 'never']), 'always', 'source control'), trackAccountEnum),
+    scmPushRejectPolicy: withAccountSettingAnalytics(accountPreference(z.enum(['prompt_fetch', 'auto_fetch', 'manual']), 'prompt_fetch', 'source control'), trackAccountEnum),
+    scmUncommittedChangesStrategy: withAccountSettingAnalytics(accountPreference(z.enum(['ask', 'always_bring', 'always_stash']), 'ask', 'source control'), trackAccountEnum),
+    scmDefaultDiffModeByBackend: withAccountSettingAnalytics(accountPreference(z._default(z.record(accountBoundedString(256), z.enum(['included', 'pending', 'both'])), {}), {}, 'source control', 32 * 1024), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'count_only',
+        identityScope: 'person',
+        serializeCurrentProperties: buildOverrideCountSummaryProperties,
+    }),
+    scmAskBeforeOverwritingBranchStash: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'source control'), trackAccountBoolean),
+    scmReviewMaxFiles: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 25, 'source control'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: serializeNumericSettingBucket(25, 50),
+    }),
+    scmReviewMaxChangedLines: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 2000, 'source control'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: serializeNumericSettingBucket(2000, 4000),
+    }),
+    scmDiffCacheMaxEntries: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 30, 'source control'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: serializeNumericSettingBucket(10, 30),
+    }),
+    scmDiffCacheMaxTotalBytes: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 20 * 1024 * 1024, 'source control'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: serializeNumericSettingBucket(10 * 1024 * 1024, 50 * 1024 * 1024),
+    }),
+    scmReviewPrefetchAheadCountWeb: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 14, 'source control'), { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeNumericSettingBucket(14, 24) }),
+    scmReviewPrefetchBehindCountWeb: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 8, 'source control'), { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeNumericSettingBucket(4, 8) }),
+    scmReviewPrefetchAheadCountNative: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 8, 'source control'), { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeNumericSettingBucket(8, 14) }),
+    scmReviewPrefetchBehindCountNative: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 4, 'source control'), { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeNumericSettingBucket(2, 4) }),
+    scmReviewPrefetchConcurrency: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 3, 'source control'), { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeNumericSettingBucket(3, 5) }),
+    scmReviewPrefetchDebounceMs: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 150, 'source control'), { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeNumericSettingBucket(50, 150) }),
+    scmSessionAutoRefreshIntervalMs: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 300000, 'source control'), { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeNumericSettingBucket(60000, 300000) }),
+    scmFilesAutoRefreshIntervalMs: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 60000, 'source control'), { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeNumericSettingBucket(15000, 60000) }),
+    scmCommitMessageGeneratorEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'source control'), trackAccountBoolean),
     /** Null or `{ mode: 'auto' }`: the task runner owner picks on the executing machine. */
-    scmCommitMessageGeneratorRunnerV1: accountPreference(z.nullable(LlmTaskRunnerChoiceV1Schema), null, 'source control', 64 * 1024),
+    /** Deploy planning uses the same background-task choice owner; null is Auto. */
     deploySuggestionRunnerV1: accountPreference(z.nullable(LlmTaskRunnerChoiceV1Schema), null, 'deploy suggestions', 64 * 1024),
+    scmCommitMessageGeneratorRunnerV1: accountPreference(z.nullable(LlmTaskRunnerChoiceV1Schema), null, 'source control', 64 * 1024),
     scmCommitMessageGeneratorInstructions: accountPreference(accountBoundedString(16 * 1024), '', 'source control', 16 * 1024),
-    'scm.diffSummary.enabled': accountPreference(z.boolean(), true, 'source control'),
-    'scm.diffSummary.prefetch': accountPreference(z.boolean(), false, 'source control'),
+    'scm.diffSummary.enabled': withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'source control'), trackAccountBoolean),
+    'scm.diffSummary.prefetch': withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'source control'), trackAccountBoolean),
     'scm.diffSummary.investigateSurroundingFiles': accountPreference(z.boolean(), false, 'source control'),
     /** The summary runner choice; null is Auto. */
     'scm.diffSummary.runnerV1': accountPreference(z.nullable(LlmTaskRunnerChoiceV1Schema), null, 'source control', 64 * 1024),
     // Reuse the Account language preference's scalar storage boundary; empty follows the UI locale.
     'scm.diffSummary.outputLanguage': accountPreference(accountBoundedString(256), '', 'source control'),
-    filesDiffSyntaxHighlightingMode: accountPreference(z.enum(['off', 'simple', 'advanced']), 'advanced', 'file presentation'),
-    filesDiffRendererMode: accountPreference(z.enum(['happier', 'pierre']), 'pierre', 'file presentation'),
-    filesDiffPresentationStyle: accountPreference(z.enum(['unified', 'split']), 'unified', 'file presentation'),
-    filesDiffFileListVirtualizationMinFiles: accountPreference(accountNonNegativeInteger(), 20, 'file presentation'),
-    filesDiffInlineVirtualizationLineThreshold: accountPreference(accountNonNegativeInteger(), 400, 'file presentation'),
-    filesDiffReviewCommentsInlineVirtualizationLineThreshold: accountPreference(accountNonNegativeInteger(), 120, 'file presentation'),
-    filesDiffInlineVirtualizationByteThreshold: accountPreference(accountNonNegativeInteger(), 120000, 'file presentation'),
-    filesChangedFilesRowDensity: accountPreference(z.enum(['comfortable', 'compact']), 'comfortable', 'file presentation'),
+    filesDiffSyntaxHighlightingMode: withAccountSettingAnalytics(accountPreference(z.enum(['off', 'simple', 'advanced']), 'advanced', 'file presentation'), trackAccountEnum),
+    filesDiffRendererMode: withAccountSettingAnalytics(accountPreference(z.enum(['happier', 'pierre']), 'pierre', 'file presentation'), trackAccountEnum),
+    filesDiffPresentationStyle: withAccountSettingAnalytics(accountPreference(z.enum(['unified', 'split']), 'unified', 'file presentation'), trackAccountEnum),
+    filesDiffFileListVirtualizationMinFiles: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 20, 'file presentation'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: serializeNumericSettingBucket(10, 30),
+    }),
+    filesDiffInlineVirtualizationLineThreshold: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 400, 'file presentation'), { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeNumericSettingBucket(400, 800) }),
+    filesDiffReviewCommentsInlineVirtualizationLineThreshold: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 120, 'file presentation'), { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeNumericSettingBucket(120, 240) }),
+    filesDiffInlineVirtualizationByteThreshold: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 120000, 'file presentation'), { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeNumericSettingBucket(120000, 250000) }),
+    filesChangedFilesRowDensity: withAccountSettingAnalytics(accountPreference(z.enum(['comfortable', 'compact']), 'comfortable', 'file presentation'), trackAccountEnum),
     /** The session Git pane: one scroll (changes → commit → timeline) or two views (Changes | History). */
-    scmGitPaneLayout: accountPreference(z.enum(['unified', 'tabs']), 'unified', 'file presentation'),
+    scmGitPaneLayout: withAccountSettingAnalytics(accountPreference(z.enum(['unified', 'tabs']), 'unified', 'file presentation'), trackAccountEnum),
     /** Changed files in the Git pane as a flat list or a folder tree. */
-    scmChangedFilesLayout: accountPreference(z.enum(['list', 'tree']), 'list', 'file presentation'),
+    scmChangedFilesLayout: withAccountSettingAnalytics(accountPreference(z.enum(['list', 'tree']), 'list', 'file presentation'), trackAccountEnum),
     /** Where a new pull request form opens: in the Git sidebar, or as a Details pane. */
-    scmPullRequestPlacement: accountPreference(z.enum(['sidebar', 'details']), 'sidebar', 'file presentation'),
+    scmPullRequestPlacement: withAccountSettingAnalytics(accountPreference(z.enum(['sidebar', 'details']), 'sidebar', 'file presentation'), trackAccountEnum),
     /** Preferred destination for supported forge resource links; core owns external fallback. */
-    scmResourceOpenLocation: accountPreference(z.enum(['happier', 'github']), 'happier', 'source control'),
-    filesDiffFoldingEnabled: accountPreference(z.boolean(), true, 'file presentation'),
-    filesDiffFoldingContextThreshold: accountPreference(accountNonNegativeInteger(), 12, 'file presentation'),
-    filesDiffFoldingContextRadius: accountPreference(accountNonNegativeInteger(), 3, 'file presentation'),
-    filesDiffIntraLineWordDiffEnabled: accountPreference(z.boolean(), true, 'file presentation'),
-    filesDiffIntraLineWordDiffMaxPatchLines: accountPreference(accountNonNegativeInteger(), 2000, 'file presentation'),
-    filesDiffIntraLineWordDiffMaxPairs: accountPreference(accountNonNegativeInteger(), 500, 'file presentation'),
-    filesDiffIntraLineWordDiffMaxLineLength: accountPreference(accountNonNegativeInteger(), 800, 'file presentation'),
-    filesDiffTokenizationMaxBytes: accountPreference(accountNonNegativeInteger(), 250000, 'file presentation'),
-    filesDiffTokenizationMaxLines: accountPreference(accountNonNegativeInteger(), 5000, 'file presentation'),
-    filesDiffTokenizationMaxLineLength: accountPreference(accountNonNegativeInteger(), 2000, 'file presentation'),
-    filesCodeViewJsonInferenceMaxBytes: accountPreference(accountNonNegativeInteger(), 40000, 'file presentation'),
-    filesRepositoryTreeWarmCacheEnabled: accountPreference(z.boolean(), true, 'file presentation'),
-    filesImagePreviewCacheMaxEntries: accountPreference(accountNonNegativeInteger(), 32, 'file presentation'),
-    filesImagePreviewCacheMaxTotalBytes: accountPreference(accountNonNegativeInteger(), 96 * 1024 * 1024, 'file presentation'),
-    filesImagePreviewMaxBytes: accountPreference(accountNonNegativeInteger(), 16 * 1024 * 1024, 'file presentation'),
-    filesEditorAutoSave: accountPreference(z.boolean(), false, 'file editing'),
-    filesEditorFormatOnSave: accountPreference(z.boolean(), false, 'file editing'),
-    filesEditorInlayHints: accountPreference(z.enum(['off', 'parameters', 'all']), 'off', 'file editing'),
-    filesEditorSemanticHighlighting: accountPreference(z.boolean(), true, 'file editing'),
+    scmResourceOpenLocation: withAccountSettingAnalytics(accountPreference(z.enum(['happier', 'github']), 'happier', 'source control'), trackAccountEnum),
+    filesDiffFoldingEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'file presentation'), trackAccountBoolean),
+    filesDiffFoldingContextThreshold: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 12, 'file presentation'), { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeNumericSettingBucket(12, 24) }),
+    filesDiffFoldingContextRadius: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 3, 'file presentation'), { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeNumericSettingBucket(3, 6) }),
+    filesDiffIntraLineWordDiffEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'file presentation'), trackAccountBoolean),
+    filesDiffIntraLineWordDiffMaxPatchLines: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 2000, 'file presentation'), { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeNumericSettingBucket(2000, 4000) }),
+    filesDiffIntraLineWordDiffMaxPairs: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 500, 'file presentation'), { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeNumericSettingBucket(500, 800) }),
+    filesDiffIntraLineWordDiffMaxLineLength: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 800, 'file presentation'), { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeNumericSettingBucket(800, 2000) }),
+    filesDiffTokenizationMaxBytes: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 250000, 'file presentation'), { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeNumericSettingBucket(250000, 500000) }),
+    filesDiffTokenizationMaxLines: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 5000, 'file presentation'), { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeNumericSettingBucket(5000, 10000) }),
+    filesDiffTokenizationMaxLineLength: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 2000, 'file presentation'), { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeNumericSettingBucket(2000, 4000) }),
+    filesCodeViewJsonInferenceMaxBytes: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 40000, 'file presentation'), { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeNumericSettingBucket(40000, 80000) }),
+    filesRepositoryTreeWarmCacheEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'file presentation'), trackAccountBoolean),
+    filesImagePreviewCacheMaxEntries: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 32, 'file presentation'), { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeNumericSettingBucket(32, 64) }),
+    filesImagePreviewCacheMaxTotalBytes: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 96 * 1024 * 1024, 'file presentation'), { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeNumericSettingBucket(96 * 1024 * 1024, 128 * 1024 * 1024) }),
+    filesImagePreviewMaxBytes: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 16 * 1024 * 1024, 'file presentation'), { trackCurrentState: true, trackChanges: true, valueKind: 'bucket', privacy: 'bucketed', identityScope: 'person', serializeCurrent: serializeNumericSettingBucket(16 * 1024 * 1024, 32 * 1024 * 1024) }),
+    filesEditorAutoSave: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'file editing'), trackAccountBoolean),
+    filesEditorFormatOnSave: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'file editing'), trackAccountBoolean),
+    filesEditorInlayHints: withAccountSettingAnalytics(accountPreference(z.enum(['off', 'parameters', 'all']), 'off', 'file editing'), trackAccountEnum),
+    filesEditorSemanticHighlighting: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'file editing'), trackAccountBoolean),
     filesEditorAiSuggestionsV1: accountPolicy(FilesEditorAiSuggestionsV1Schema, DEFAULT_FILES_EDITOR_AI_SUGGESTIONS_V1, 'file editing'),
-    markdownDefaultEditMode: accountPreference(z.enum(['raw', 'rich']), 'rich', 'file editing'),
-    filesMarkdownRichEditorMaxBytes: accountPreference(accountNonNegativeInteger(), 256000, 'file editing'),
-    filesMarkdownRichEditorHtmlRoundTripMaxBytes: accountPreference(accountNonNegativeInteger(), 50000, 'file editing'),
-    filesEditorChangeDebounceMs: accountPreference(accountNonNegativeInteger(), 250, 'file editing'),
-    filesEditorBridgeMaxChunkBytes: accountPreference(accountNonNegativeInteger(), 64000, 'file editing'),
-    filesEditorWebMonacoEnabled: accountPreference(z.boolean(), true, 'file editing'),
-    filesEditorNativeCodeMirrorEnabled: accountPreference(z.boolean(), true, 'file editing'),
+    markdownDefaultEditMode: withAccountSettingAnalytics(accountPreference(z.enum(['raw', 'rich']), 'rich', 'file editing'), trackAccountEnum),
+    filesMarkdownRichEditorMaxBytes: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 256000, 'file editing'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: serializeNumericSettingBucket(256000, 512000),
+    }),
+    filesMarkdownRichEditorHtmlRoundTripMaxBytes: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 50000, 'file editing'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: serializeNumericSettingBucket(50000, 100000),
+    }),
+    filesEditorChangeDebounceMs: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 250, 'file editing'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: serializeNumericSettingBucket(100, 250),
+    }),
+    filesEditorBridgeMaxChunkBytes: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 64000, 'file editing'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: serializeNumericSettingBucket(64000, 96000),
+    }),
+    filesEditorWebMonacoEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'file editing'), trackAccountBoolean),
+    filesEditorNativeCodeMirrorEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'file editing'), trackAccountBoolean),
 } as const;
 const ACCOUNT_TRANSCRIPT_AND_TOOL_CATALOG_DEFINITIONS = {
     agentHtmlNetworkPolicy: accountPolicy(z.catch(z.enum(['allowed', 'ask', 'off']), 'ask'), 'allowed', 'agent HTML network pre-approval'),
-    toolViewDetailLevelDefault: accountPreference(z.enum(['default', 'title', 'compact', 'summary', 'full']), 'default', 'tool presentation'),
-    toolViewDetailLevelDefaultLocalControl: accountPreference(z.enum(['title', 'compact', 'summary', 'full']), 'title', 'tool presentation'),
-    toolViewShowDebugByDefault: accountPreference(z.boolean(), false, 'tool presentation'),
-    toolViewTapAction: accountPreference(z.enum(['expand', 'open']), 'expand', 'tool presentation'),
-    toolViewExpandedDetailLevelDefault: accountPreference(z.enum(['default', 'summary', 'full']), 'default', 'tool presentation'),
-    toolViewDetailLevelByToolName: accountPreference(z._default(z.record(accountBoundedString(1024), z.enum(['title', 'compact', 'summary', 'full'])), {}), {}, 'tool presentation', 32 * 1024),
-    toolViewExpandedDetailLevelByToolName: accountPreference(z._default(z.record(accountBoundedString(1024), z.enum(['summary', 'full'])), {}), {}, 'tool presentation', 32 * 1024),
-    transcriptGroupingMode: accountPreference(z.enum(['linear', 'turns']), 'turns', 'transcript presentation'),
-    transcriptShowToolCalls: accountPreference(z.boolean(), true, 'transcript presentation'),
-    transcriptGroupToolCalls: accountPreference(z.boolean(), true, 'transcript presentation'),
-    transcriptTurnToolCallsGroupStrategy: accountPreference(z.enum(['consecutive_tools', 'all_tools_in_turn']), 'consecutive_tools', 'transcript presentation'),
-    transcriptToolCallsCollapsedPreviewCount: accountPreference((<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform((value): unknown => typeof value === 'number' && Number.isFinite(value)
+    toolViewDetailLevelDefault: withAccountSettingAnalytics(accountPreference(z.enum(['default', 'title', 'compact', 'summary', 'full']), 'default', 'tool presentation'), trackAccountEnum),
+    toolViewDetailLevelDefaultLocalControl: withAccountSettingAnalytics(accountPreference(z.enum(['title', 'compact', 'summary', 'full']), 'title', 'tool presentation'), trackAccountEnum),
+    toolViewShowDebugByDefault: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'tool presentation'), trackAccountBoolean),
+    toolViewTapAction: withAccountSettingAnalytics(accountPreference(z.enum(['expand', 'open']), 'expand', 'tool presentation'), trackAccountEnum),
+    toolViewExpandedDetailLevelDefault: withAccountSettingAnalytics(accountPreference(z.enum(['default', 'summary', 'full']), 'default', 'tool presentation'), trackAccountEnum),
+    toolViewDetailLevelByToolName: withAccountSettingAnalytics(accountPreference(z._default(z.record(accountBoundedString(1024), z.enum(['title', 'compact', 'summary', 'full'])), {}), {}, 'tool presentation', 32 * 1024), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'count_only',
+        identityScope: 'person',
+        serializeCurrentProperties: buildOverrideCountSummaryProperties,
+    }),
+    toolViewExpandedDetailLevelByToolName: withAccountSettingAnalytics(accountPreference(z._default(z.record(accountBoundedString(1024), z.enum(['summary', 'full'])), {}), {}, 'tool presentation', 32 * 1024), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'count_only',
+        identityScope: 'person',
+        serializeCurrentProperties: buildOverrideCountSummaryProperties,
+    }),
+    transcriptGroupingMode: withAccountSettingAnalytics(accountPreference(z.enum(['linear', 'turns']), 'turns', 'transcript presentation'), trackAccountEnum),
+    transcriptShowToolCalls: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'transcript presentation'), trackAccountBoolean),
+    transcriptGroupToolCalls: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'transcript presentation'), trackAccountBoolean),
+    transcriptTurnToolCallsGroupStrategy: withAccountSettingAnalytics(accountPreference(z.enum(['consecutive_tools', 'all_tools_in_turn']), 'consecutive_tools', 'transcript presentation'), trackAccountEnum),
+    transcriptToolCallsCollapsedPreviewCount: withAccountSettingAnalytics(accountPreference((<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform((value): unknown => typeof value === 'number' && Number.isFinite(value)
         ? Math.max(0, Math.min(15, Math.trunc(value)))
-        : value), accountNonNegativeInteger(15)), DEFAULT_TRANSCRIPT_TOOL_CALLS_COLLAPSED_PREVIEW_COUNT, 'transcript presentation'),
-    transcriptToolCallsGroupShowBackground: accountPreference(z.boolean(), false, 'transcript presentation'),
-    transcriptMessageTimestampDisplayMode: accountPreference(z.enum(TRANSCRIPT_MESSAGE_TIMESTAMP_DISPLAY_MODE_VALUES), 'hover_web_hidden_mobile', 'transcript presentation'),
+        : value), accountNonNegativeInteger(15)), DEFAULT_TRANSCRIPT_TOOL_CALLS_COLLAPSED_PREVIEW_COUNT, 'transcript presentation'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: serializeNumericSettingBucket(3, 5),
+    }),
+    transcriptToolCallsGroupShowBackground: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'transcript presentation'), trackAccountBoolean),
+    transcriptMessageTimestampDisplayMode: withAccountSettingAnalytics(accountPreference(z.enum(TRANSCRIPT_MESSAGE_TIMESTAMP_DISPLAY_MODE_VALUES), 'hover_web_hidden_mobile', 'transcript presentation'), trackAccountEnum),
     /** "Worked for 1m 12s" / "Stopped after 40s" at the end of each settled turn, from the turn's recorded start and end. */
-    transcriptShowTurnDuration: accountPreference(z.boolean(), true, 'transcript presentation'),
-    transcriptLinkAgentNames: accountPreference(z.boolean(), true, 'transcript presentation'),
-    transcriptMessageSelectionEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
-    transcriptMessageCopyActionEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
-    transcriptMessageForkActionEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
-    transcriptMessageRollbackActionEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
-    transcriptMessagePinActionEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
-    transcriptMessageSavePromptActionEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
-    transcriptMessageMakeRepeatableActionEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
-    transcriptMessagePluginActionsEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
-    transcriptMessageSendToSessionEnabled: accountPreference(z.boolean(), false, 'transcript presentation'),
-    transcriptMessageSendToSessionTemplate: accountPreference(accountBoundedString(2000), '{{MESSAGES}}', 'transcript presentation'),
-    transcriptBulkCopyFormat: accountPreference(z.enum(['markdown_labeled', 'plain']), 'markdown_labeled', 'transcript presentation'),
-    transcriptPendingQueueMaxHeightPx: accountPreference(accountNonNegativeInteger(), 80, 'transcript presentation'),
-    transcriptPendingQueueExpandedMaxHeightPx: accountPreference(accountNonNegativeInteger(), 520, 'transcript presentation'),
-    transcriptPendingQueueReorderRowHeightPx: accountPreference(accountNonNegativeInteger(), 72, 'transcript presentation'),
-    transcriptPendingMessageCollapseThresholdChars: accountPreference(accountNonNegativeInteger(), 160, 'transcript presentation'),
-    transcriptPendingMessageCollapsedLines: accountPreference(accountNonNegativeInteger(), 2, 'transcript presentation'),
-    transcriptStreamingCoalesceEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
-    transcriptStreamingCoalesceWindowMs: accountPreference(accountNonNegativeInteger(), 16, 'transcript presentation'),
-    transcriptStreamingCoalesceMaxBatchSize: accountPreference(accountNonNegativeInteger(), 200, 'transcript presentation'),
-    transcriptThinkingPulseStaleMs: accountPreference(accountNonNegativeInteger(), 120000, 'transcript presentation'),
-    toolViewTimelineChromeMode: accountPreference(z.enum(['cards', 'activity_feed']), 'activity_feed', 'tool presentation'),
-    toolViewTimelineFeedDefaultExpanded: accountPreference(z.boolean(), false, 'tool presentation'),
-    transcriptMotionPreset: accountPreference(z.enum(['off', 'subtle', 'full']), 'subtle', 'transcript presentation'),
-    transcriptMotionFreshnessMs: accountPreference(accountNonNegativeInteger(), 60000, 'transcript presentation'),
-    transcriptAnimateNewItemsEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
-    transcriptAnimateToolExpandCollapseEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
-    transcriptAnimateToolExpandCollapseFreshOnly: accountPreference(z.boolean(), true, 'transcript presentation'),
-    transcriptAnimateThinkingEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
-    transcriptStreamingSmoothingEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
-    transcriptStreamingSettleDelayMs: accountPreference(accountNonNegativeInteger(), 250, 'transcript presentation'),
-    transcriptStreamingPartialOutputEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
-    transcriptStreamingMarkdownRenderingEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
-    transcriptScrollPinEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
-    transcriptScrollPinOffsetThresholdPx: accountPreference(accountNonNegativeInteger(), 72, 'transcript presentation'),
-    transcriptScrollAutoFollowWhenPinned: accountPreference(z.boolean(), true, 'transcript presentation'),
-    transcriptScrollJumpToBottomEnabled: accountPreference(z.boolean(), true, 'transcript presentation'),
-    transcriptScrollJumpToBottomMinNewCount: accountPreference(accountNonNegativeInteger(), 1, 'transcript presentation'),
-    transcriptScrollJumpToBottomRevealViewportRatio: accountPreference(z.number().check(z.minimum(0), z.maximum(1)), 0.4, 'transcript presentation'),
-    transcriptScrollJumpToBottomAnimateScroll: accountPreference(z.boolean(), true, 'transcript presentation'),
-    permissionPromptSurface: accountPreference(z.enum(['composer', 'transcript', 'both']), 'composer', 'permission mediation'),
+    transcriptShowTurnDuration: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'transcript presentation'), trackAccountBoolean),
+    transcriptLinkAgentNames: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'transcript presentation'), trackAccountBoolean),
+    transcriptMessageSelectionEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'transcript presentation'), trackAccountBoolean),
+    transcriptMessageCopyActionEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'transcript presentation'), trackAccountBoolean),
+    transcriptMessageForkActionEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'transcript presentation'), trackAccountBoolean),
+    transcriptMessageRollbackActionEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'transcript presentation'), trackAccountBoolean),
+    transcriptMessagePinActionEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'transcript presentation'), trackAccountBoolean),
+    transcriptMessageSavePromptActionEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'transcript presentation'), trackAccountBoolean),
+    transcriptMessageMakeRepeatableActionEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'transcript presentation'), trackAccountBoolean),
+    transcriptMessagePluginActionsEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'transcript presentation'), trackAccountBoolean),
+    transcriptMessageSendToSessionEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'transcript presentation'), trackAccountBoolean),
+    transcriptMessageSendToSessionTemplate: withAccountSettingAnalytics(accountPreference(accountBoundedString(2000), '{{MESSAGES}}', 'transcript presentation'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: (value: unknown) => bucketNumericSetting(typeof value === 'string' ? value.length : 0, 128, 512),
+    }),
+    transcriptBulkCopyFormat: withAccountSettingAnalytics(accountPreference(z.enum(['markdown_labeled', 'plain']), 'markdown_labeled', 'transcript presentation'), trackAccountEnum),
+    transcriptPendingQueueMaxHeightPx: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 80, 'transcript presentation'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: serializeNumericSettingBucket(80, 96),
+    }),
+    transcriptPendingQueueExpandedMaxHeightPx: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 520, 'transcript presentation'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: serializeNumericSettingBucket(400, 600),
+    }),
+    transcriptPendingQueueReorderRowHeightPx: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 72, 'transcript presentation'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: serializeNumericSettingBucket(60, 80),
+    }),
+    transcriptPendingMessageCollapseThresholdChars: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 160, 'transcript presentation'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: serializeNumericSettingBucket(160, 320),
+    }),
+    transcriptPendingMessageCollapsedLines: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 2, 'transcript presentation'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: serializeNumericSettingBucket(2, 4),
+    }),
+    transcriptStreamingCoalesceEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'transcript presentation'), trackAccountBoolean),
+    transcriptStreamingCoalesceWindowMs: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 16, 'transcript presentation'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: serializeNumericSettingBucket(16, 33),
+    }),
+    transcriptStreamingCoalesceMaxBatchSize: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 200, 'transcript presentation'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: serializeNumericSettingBucket(200, 350),
+    }),
+    transcriptThinkingPulseStaleMs: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 120000, 'transcript presentation'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: serializeNumericSettingBucket(120000, 240000),
+    }),
+    toolViewTimelineChromeMode: withAccountSettingAnalytics(accountPreference(z.enum(['cards', 'activity_feed']), 'activity_feed', 'tool presentation'), trackAccountEnum),
+    toolViewTimelineFeedDefaultExpanded: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'tool presentation'), trackAccountBoolean),
+    transcriptMotionPreset: withAccountSettingAnalytics(accountPreference(z.enum(['off', 'subtle', 'full']), 'subtle', 'transcript presentation'), trackAccountEnum),
+    transcriptMotionFreshnessMs: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 60000, 'transcript presentation'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: serializeNumericSettingBucket(15000, 60000),
+    }),
+    transcriptAnimateNewItemsEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'transcript presentation'), trackAccountBoolean),
+    transcriptAnimateToolExpandCollapseEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'transcript presentation'), trackAccountBoolean),
+    transcriptAnimateToolExpandCollapseFreshOnly: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'transcript presentation'), trackAccountBoolean),
+    transcriptAnimateThinkingEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'transcript presentation'), trackAccountBoolean),
+    transcriptStreamingSmoothingEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'transcript presentation'), trackAccountBoolean),
+    transcriptStreamingSettleDelayMs: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 250, 'transcript presentation'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: serializeNumericSettingBucket(150, 250),
+    }),
+    transcriptStreamingPartialOutputEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'transcript presentation'), trackAccountBoolean),
+    transcriptStreamingMarkdownRenderingEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'transcript presentation'), trackAccountBoolean),
+    transcriptScrollPinEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'transcript presentation'), trackAccountBoolean),
+    transcriptScrollPinOffsetThresholdPx: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 72, 'transcript presentation'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: serializeNumericSettingBucket(72, 120),
+    }),
+    transcriptScrollAutoFollowWhenPinned: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'transcript presentation'), trackAccountBoolean),
+    transcriptScrollJumpToBottomEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'transcript presentation'), trackAccountBoolean),
+    transcriptScrollJumpToBottomMinNewCount: withAccountSettingAnalytics(accountPreference(accountNonNegativeInteger(), 1, 'transcript presentation'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: serializeNumericSettingBucket(1, 3),
+    }),
+    transcriptScrollJumpToBottomRevealViewportRatio: withAccountSettingAnalytics(accountPreference(z.number().check(z.minimum(0), z.maximum(1)), 0.4, 'transcript presentation'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'bucket',
+        privacy: 'bucketed',
+        identityScope: 'person',
+        serializeCurrent: (value: number) => bucketNumericSetting(Math.round(value * 100), 50, 100),
+    }),
+    transcriptScrollJumpToBottomAnimateScroll: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'transcript presentation'), trackAccountBoolean),
+    permissionPromptSurface: withAccountSettingAnalytics(accountPreference(z.enum(['composer', 'transcript', 'both']), 'composer', 'permission mediation'), trackAccountEnum),
 } as const;
 const ACCOUNT_RUNTIME_AND_WORKFLOW_CATALOG_DEFINITIONS = {
     // PROGRAM D21: deliberate visible Activity cadence; zero disables automatic refresh.
     sessionReminderAutoClearOnOpen: accountPreference(z.boolean(), true, 'session reminders'),
     sessionReminderPresetsV1: accountPreference(SessionReminderPresetsV1Schema, [], 'session reminders', 16 * 1024),
-    externalSessionsSettingsV1: accountPreference(ExternalSessionsSettingsV1Schema, ExternalSessionsSettingsV1Schema.parse({}), 'external session policy', 64 * 1024),
+    externalSessionsSettingsV1: withAccountSettingAnalytics(accountPreference(ExternalSessionsSettingsV1Schema, ExternalSessionsSettingsV1Schema.parse({}), 'external session policy', 64 * 1024), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'enum',
+        privacy: 'count_only',
+        identityScope: 'person',
+        currentPropertyValueKinds: {
+            keepPassivelyFollowingAfterRestart: 'boolean',
+            autoLinkSourcePolicyEnabledCount: 'count',
+        },
+        serializeCurrentProperties: (value: z.infer<typeof ExternalSessionsSettingsV1Schema>) => ({
+            keepPassivelyFollowingAfterRestart: value.keepPassivelyFollowingAfterRestart,
+            autoLinkSourcePolicyEnabledCount: value.autoLinkSourcePolicies.length,
+        }),
+    }),
     pluginUpdateReviewModeV1: accountPreference(PluginUpdateReviewModeV1Schema, DEFAULT_PLUGIN_UPDATE_REVIEW_MODE_V1, 'plugin update review'),
-    preferredLanguage: accountPreference(z.nullable(accountBoundedString(256)), null, 'language preference'),
-    sessionHandoffDefaultsV1: accountPreference(SessionHandoffDefaultsV1Schema, DEFAULT_SESSION_HANDOFF_DEFAULTS_V1, 'session handoff defaults', 32 * 1024),
+    preferredLanguage: withAccountSettingAnalytics(accountPreference(z.nullable(accountBoundedString(256)), null, 'language preference'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'enum',
+        privacy: 'safe',
+        identityScope: 'person',
+        serializeCurrent: (value: string | null): string => value ?? 'auto',
+    }),
+    sessionHandoffDefaultsV1: withAccountSettingAnalytics(accountPreference(SessionHandoffDefaultsV1Schema, DEFAULT_SESSION_HANDOFF_DEFAULTS_V1, 'session handoff defaults', 32 * 1024), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'enum',
+        privacy: 'safe',
+        identityScope: 'person',
+        serializeCurrentProperties: (value: z.infer<typeof SessionHandoffDefaultsV1Schema>) => ({
+            workspaceSyncMode: value.workspaceSyncMode,
+            includeIgnoredMode: value.includeIgnoredMode,
+            directTargetMode: value.directTargetMode,
+        }),
+    }),
     // Null or Auto: the background-task runner owner picks on the executing machine.
-    sessionReplaySummaryRunnerV1: accountPreference(z.nullable(LlmTaskRunnerChoiceV1Schema), null, 'session replay', 64 * 1024),
-    sessionTmuxByMachineId: accountPreference(z._default(z.record(accountBoundedString(1024), SessionTmuxMachineOverrideSchema), {}), {}, 'session terminal defaults', 64 * 1024),
+    sessionReplaySummaryRunnerV1: withAccountSettingAnalytics(accountPreference(z.nullable(LlmTaskRunnerChoiceV1Schema), null, 'session replay', 64 * 1024), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'presence',
+        privacy: 'presence_only',
+        identityScope: 'person',
+        serializeCurrent: (value) => value !== null,
+    }),
+    sessionTmuxByMachineId: withAccountSettingAnalytics(accountPreference(z._default(z.record(accountBoundedString(1024), SessionTmuxMachineOverrideSchema), {}), {}, 'session terminal defaults', 64 * 1024), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'count_only',
+        identityScope: 'person',
+        serializeCurrentProperties: buildSessionTmuxOverrideSummaryProperties,
+    }),
     sessionTerminalHostByMachineId: accountPreference(z._default(z.record(accountBoundedString(1024), z.enum(['zellij', 'herdr'])), {}), {}, 'session terminal defaults', 64 * 1024),
     sessionTmuxSessionName: accountPreference(accountBoundedString(256), 'happy', 'session terminal defaults'),
-    sessionTmuxIsolated: accountPreference(z.boolean(), true, 'session terminal defaults'),
+    sessionTmuxIsolated: withAccountSettingAnalytics(accountPreference(z.boolean(), true, 'session terminal defaults'), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'boolean',
+        privacy: 'safe',
+        identityScope: 'person',
+    }),
     sessionTmuxTmpDir: accountPreference(z.nullable(accountBoundedString(16 * 1024)), null, 'session terminal defaults', 16 * 1024),
-    installablesPolicyByMachineId: accountPolicy(AccountInstallablePoliciesByMachineIdSchema, {}, 'installable policy', 64 * 1024),
+    installablesPolicyByMachineId: withAccountSettingAnalytics(accountPolicy(AccountInstallablePoliciesByMachineIdSchema, {}, 'installable policy', 64 * 1024), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'count_only',
+        identityScope: 'person',
+        serializeCurrentProperties: buildInstallablesPolicySummaryProperties,
+    }),
     computerUseByMachineId: accountCatalogDefinition(ComputerUseByMachineIdV1Schema, {}, {
         semanticDomain: 'machine computer-use providers', classification: 'preference',
         maximumSerializedValueBytes: ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES,
@@ -1459,22 +2238,101 @@ const ACCOUNT_SETTING_CANDIDATES = {
     schemaVersion: accountCatalogDefinition(z._default(z.catch(z.number().check(z.int(), z.minimum(0)), ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION), ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION), ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION, { semanticDomain: 'settings compatibility', classification: 'policy', maximumSerializedValueBytes: 32 }),
     clientEncryptionRequirementV1: accountCatalogDefinition(ClientEncryptionRequirementSchema, 'follow_account', { semanticDomain: 'client encryption policy', classification: 'policy', maximumSerializedValueBytes: 32 }),
     featureToggles: accountCatalogDefinition(FeatureTogglesSchema, {}, { semanticDomain: 'feature choices', classification: 'preference', maximumSerializedValueBytes: 16 * 1024 }),
-    backendEnabledByTargetKey: accountCatalogDefinition(z._default(BackendEnabledByTargetKeySchema, {}), {}, { semanticDomain: 'backend availability', classification: 'preference', maximumSerializedValueBytes: 16 * 1024 }),
-    backendCliSourcePreferenceByTargetKey: accountCatalogDefinition(BackendCliSourcePreferenceByTargetKeySchema, {}, { semanticDomain: 'backend installation policy', classification: 'preference', maximumSerializedValueBytes: 16 * 1024 }),
-    scmIncludeCoAuthoredBy: accountCatalogDefinition(z.catch(z.optional(z.boolean()), undefined), undefined, { semanticDomain: 'source control', classification: 'preference', maximumSerializedValueBytes: 8 }),
-    actionsSettingsV1: accountCatalogDefinition(z.transform((value) => migrateLegacyDefaultActionsSettingsV1(tryNormalizeActionsSettingsV1(value) ?? DEFAULT_ACTIONS_SETTINGS_V1)), DEFAULT_ACTIONS_SETTINGS_V1, { semanticDomain: 'action policy', classification: 'policy', structuralBoundsOwner: 'domainOwned', maximumSerializedValueBytes: 64 * 1024 }),
-    notificationsSettingsV1: accountCatalogDefinition(z._default(NotificationsSettingsV1Schema, DEFAULT_NOTIFICATIONS_SETTINGS_V1), DEFAULT_NOTIFICATIONS_SETTINGS_V1, {
+    backendEnabledByTargetKey: withAccountSettingAnalytics(accountCatalogDefinition(z._default(BackendEnabledByTargetKeySchema, {}), {}, { semanticDomain: 'backend availability', classification: 'preference', maximumSerializedValueBytes: 16 * 1024 }), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'boolean',
+        privacy: 'safe',
+        identityScope: 'person',
+        serializeCurrentProperties: emptyRuntimeSettingProperties,
+    }),
+    backendCliSourcePreferenceByTargetKey: withAccountSettingAnalytics(accountCatalogDefinition(BackendCliSourcePreferenceByTargetKeySchema, {}, { semanticDomain: 'backend installation policy', classification: 'preference', maximumSerializedValueBytes: 16 * 1024 }), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'enum',
+        privacy: 'safe',
+        identityScope: 'person',
+        serializeCurrentProperties: emptyRuntimeSettingProperties,
+    }),
+    scmIncludeCoAuthoredBy: withAccountSettingAnalytics(accountCatalogDefinition(z.catch(z.optional(z.boolean()), undefined), undefined, { semanticDomain: 'source control', classification: 'preference', maximumSerializedValueBytes: 8 }), trackAccountBoolean),
+    actionsSettingsV1: withAccountSettingAnalytics(accountCatalogDefinition(z.transform((value) => migrateLegacyDefaultActionsSettingsV1(tryNormalizeActionsSettingsV1(value) ?? DEFAULT_ACTIONS_SETTINGS_V1)), DEFAULT_ACTIONS_SETTINGS_V1, { semanticDomain: 'action policy', classification: 'policy', structuralBoundsOwner: 'domainOwned', maximumSerializedValueBytes: 64 * 1024 }), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'count_only',
+        identityScope: 'person',
+        serializeCurrentProperties: buildActionsSettingsSummaryProperties,
+    }),
+    notificationsSettingsV1: withAccountSettingAnalytics(accountCatalogDefinition(z._default(NotificationsSettingsV1Schema, DEFAULT_NOTIFICATIONS_SETTINGS_V1), DEFAULT_NOTIFICATIONS_SETTINGS_V1, {
         semanticDomain: 'legacy notification preferences',
         classification: 'legacy',
         maximumSerializedValueBytes: 4 * 1024,
         compatibility: LEGACY_COMPATIBILITY,
+    }), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'enum',
+        privacy: 'safe',
+        identityScope: 'person',
+        serializeCurrentProperties: (value: z.infer<typeof NotificationsSettingsV1Schema>) => ({
+            pushEnabled: value.pushEnabled,
+            ready: value.ready,
+            readyIncludeMessageText: value.readyIncludeMessageText,
+            permissionRequest: value.permissionRequest,
+            userActionRequest: value.userActionRequest,
+            foregroundBehavior: value.foregroundBehavior,
+        }),
     }),
-    codingPromptBehaviorV1: accountCatalogDefinition(z._default(CodingPromptBehaviorV1Schema, DEFAULT_CODING_PROMPT_BEHAVIOR_V1), DEFAULT_CODING_PROMPT_BEHAVIOR_V1, { semanticDomain: 'coding prompts', classification: 'preference', maximumSerializedValueBytes: 4 * 1024 }),
+    codingPromptBehaviorV1: withAccountSettingAnalytics(accountCatalogDefinition(z._default(CodingPromptBehaviorV1Schema, DEFAULT_CODING_PROMPT_BEHAVIOR_V1), DEFAULT_CODING_PROMPT_BEHAVIOR_V1, { semanticDomain: 'coding prompts', classification: 'preference', maximumSerializedValueBytes: 4 * 1024 }), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'enum',
+        privacy: 'safe',
+        identityScope: 'person',
+        serializeCurrentProperties: (value: unknown) => {
+            const parsed = CodingPromptBehaviorV1Schema.parse(value);
+            return {
+                sessionTitleUpdates: parsed.sessionTitleUpdates,
+                sessionCompactionNudge: parsed.sessionCompactionNudge,
+                responseOptions: parsed.responseOptions,
+            };
+        },
+    }),
     sessionRemoteAlertsEnabled: accountCatalogDefinition(z.catch(z._default(z.boolean(), false), false), false, { semanticDomain: 'remote alert policy disclosure', classification: 'policy', maximumSerializedValueBytes: 5 }),
     machineOfflineAlertsV1: accountPolicy(MachineOfflineAlertsV1Schema, DEFAULT_MACHINE_OFFLINE_ALERTS_V1, 'machine offline alert enrollment', ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES),
-    attentionDeliveryPolicyV1: accountCatalogDefinition(z._default(z.catch(AttentionDeliveryPolicyV1Schema, DEFAULT_ATTENTION_DELIVERY_POLICY_V1), DEFAULT_ATTENTION_DELIVERY_POLICY_V1), DEFAULT_ATTENTION_DELIVERY_POLICY_V1, { semanticDomain: 'attention delivery', classification: 'policy', maximumSerializedValueBytes: 32 * 1024 }),
-    peerMediationPreferencesV1: accountCatalogDefinition(z._default(z.catch(PeerMediationPreferencesV1Schema, DEFAULT_PEER_MEDIATION_PREFERENCES_V1), DEFAULT_PEER_MEDIATION_PREFERENCES_V1), DEFAULT_PEER_MEDIATION_PREFERENCES_V1, { semanticDomain: 'peer mediation', classification: 'policy', maximumSerializedValueBytes: 32 * 1024 }),
-    usageLimitRecoverySettingsV1: accountCatalogDefinition(z._default(UsageLimitRecoverySettingsV1Schema, DEFAULT_USAGE_LIMIT_RECOVERY_SETTINGS_V1), DEFAULT_USAGE_LIMIT_RECOVERY_SETTINGS_V1, { semanticDomain: 'usage recovery', classification: 'policy', maximumSerializedValueBytes: 8 * 1024 }),
+    attentionDeliveryPolicyV1: withAccountSettingAnalytics(accountCatalogDefinition(z._default(z.catch(AttentionDeliveryPolicyV1Schema, DEFAULT_ATTENTION_DELIVERY_POLICY_V1), DEFAULT_ATTENTION_DELIVERY_POLICY_V1), DEFAULT_ATTENTION_DELIVERY_POLICY_V1, { semanticDomain: 'attention delivery', classification: 'policy', maximumSerializedValueBytes: 32 * 1024 }), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'enum',
+        privacy: 'safe',
+        identityScope: 'person',
+        serializeCurrentProperties: (value: z.infer<typeof AttentionDeliveryPolicyV1Schema>) => ({
+            quietHoursEnabled: value.quietHours.enabled,
+            foregroundBehavior: value.foregroundBehavior,
+            expoPushEnabled: value.channels.expo_push.enabled,
+            localNotificationEnabled: value.channels.local_notification.enabled,
+            liveActivityEnabled: value.channels.live_activity.enabled,
+            liveActivityRemoteMode: value.liveActivityRemoteUpdates.preferredMode,
+        }),
+    }),
+    peerMediationPreferencesV1: withAccountSettingAnalytics(accountCatalogDefinition(z._default(z.catch(PeerMediationPreferencesV1Schema, DEFAULT_PEER_MEDIATION_PREFERENCES_V1), DEFAULT_PEER_MEDIATION_PREFERENCES_V1), DEFAULT_PEER_MEDIATION_PREFERENCES_V1, { semanticDomain: 'peer mediation', classification: 'policy', maximumSerializedValueBytes: 32 * 1024 }), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'count_only',
+        identityScope: 'person',
+        serializeCurrentProperties: buildPeerMediationPreferencesSummaryProperties,
+    }),
+    usageLimitRecoverySettingsV1: withAccountSettingAnalytics(accountCatalogDefinition(z._default(UsageLimitRecoverySettingsV1Schema, DEFAULT_USAGE_LIMIT_RECOVERY_SETTINGS_V1), DEFAULT_USAGE_LIMIT_RECOVERY_SETTINGS_V1, { semanticDomain: 'usage recovery', classification: 'policy', maximumSerializedValueBytes: 8 * 1024 }), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'enum',
+        privacy: 'safe',
+        identityScope: 'person',
+        serializeCurrent: (value: {
+            mode: string;
+        }) => value.mode,
+    }),
     usagePacingTargetsV1: accountPreference(UsagePacingTargetsV1Schema, [], 'usage pacing advice', ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES),
     usageNightHoursV1: accountPreference(z.nullable(UsageNightHoursV1Schema), null, 'recorded activity night hours'),
     usageQuotaNotificationsV1: accountPreference(UsageQuotaNotificationsV1Schema, DEFAULT_USAGE_QUOTA_NOTIFICATIONS_V1, 'usage notifications'),
@@ -1487,9 +2345,16 @@ const ACCOUNT_SETTING_CANDIDATES = {
     }),
     usageModelPriceOverridesV1: accountPreference(UsageModelPriceOverridesV1Schema, {}, 'usage model price overrides', ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES),
     sessionPendingQueueDrainMode: accountCatalogDefinition(z._default(SessionPendingQueueDrainModeSchema, DEFAULT_SESSION_PENDING_QUEUE_DRAIN_MODE), DEFAULT_SESSION_PENDING_QUEUE_DRAIN_MODE, { semanticDomain: 'pending queue delivery', classification: 'policy', maximumSerializedValueBytes: 64 }),
-    sessionInactiveResumePolicy: accountCatalogDefinition(z._default(SessionInactiveResumePolicySchema, DEFAULT_SESSION_INACTIVE_RESUME_POLICY), DEFAULT_SESSION_INACTIVE_RESUME_POLICY, { semanticDomain: 'pending queue activation', classification: 'preference', maximumSerializedValueBytes: 32 }),
-    sessionPendingQueueDeliveryTiming: accountCatalogDefinition(z._default(SessionPendingQueueDeliveryTimingSchema, DEFAULT_SESSION_PENDING_QUEUE_DELIVERY_TIMING), DEFAULT_SESSION_PENDING_QUEUE_DELIVERY_TIMING, { semanticDomain: 'pending queue delivery', classification: 'policy', maximumSerializedValueBytes: 64 }),
-    sessionAgentSpawnPolicyV1: accountCatalogDefinition(z._default(SessionAgentSpawnPolicyV1Schema, DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1), DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, { semanticDomain: 'agent spawn policy', classification: 'policy', maximumSerializedValueBytes: 8 * 1024, recoverMalformed: false, mutationSchema: SessionAgentSpawnPolicyV1StrictSchema }),
+    sessionInactiveResumePolicy: withAccountSettingAnalytics(accountCatalogDefinition(z._default(SessionInactiveResumePolicySchema, DEFAULT_SESSION_INACTIVE_RESUME_POLICY), DEFAULT_SESSION_INACTIVE_RESUME_POLICY, { semanticDomain: 'pending queue activation', classification: 'preference', maximumSerializedValueBytes: 32 }), trackAccountEnum),
+    sessionPendingQueueDeliveryTiming: withAccountSettingAnalytics(accountCatalogDefinition(z._default(SessionPendingQueueDeliveryTimingSchema, DEFAULT_SESSION_PENDING_QUEUE_DELIVERY_TIMING), DEFAULT_SESSION_PENDING_QUEUE_DELIVERY_TIMING, { semanticDomain: 'pending queue delivery', classification: 'policy', maximumSerializedValueBytes: 64 }), trackAccountEnum),
+    sessionAgentSpawnPolicyV1: withAccountSettingAnalytics(accountCatalogDefinition(z._default(SessionAgentSpawnPolicyV1Schema, DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1), DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, { semanticDomain: 'agent spawn policy', classification: 'policy', maximumSerializedValueBytes: 8 * 1024, recoverMalformed: false, mutationSchema: SessionAgentSpawnPolicyV1StrictSchema }), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'count_only',
+        identityScope: 'person',
+        serializeCurrentProperties: buildSessionAgentSpawnPolicySummaryProperties,
+    }),
     sessionAgentStartAllowListsV1: accountCatalogDefinition(z._default(SessionAgentStartAllowListsV1Schema, DEFAULT_SESSION_AGENT_START_ALLOW_LISTS_V1), DEFAULT_SESSION_AGENT_START_ALLOW_LISTS_V1, { semanticDomain: 'agent start allow-lists', classification: 'policy', maximumSerializedValueBytes: 8 * 1024, recoverMalformed: false, mutationSchema: SessionAgentStartAllowListsV1StrictSchema }),
     approvalReviewerEnabled: accountCatalogDefinition(z.catch(z._default(z.boolean(), false), false), false, { semanticDomain: 'approval reviewer', classification: 'policy', maximumSerializedValueBytes: 64 }),
     coordinationAutonomousCheckIn: accountPreference(
@@ -1503,15 +2368,40 @@ const ACCOUNT_SETTING_CANDIDATES = {
     coordinationCoordinatorSuggestHomeRule: accountPreference(z.boolean(), true, 'new coordinator Home rule suggestion'),
     coordinationCoordinatorAnswersWorkerQuestions: accountPreference(z.boolean(), true, 'new coordinator worker questions'),
     workDepthLimit: accountCatalogDefinition(z.catch(z._default(z.number().check(z.int(), z.nonnegative()), 4), 4), 4, { semanticDomain: 'agent delegation depth', classification: 'policy', maximumSerializedValueBytes: 64 }),
-    connectedServicesProviderStateSharingSettingsV1: accountCatalogDefinition(z._default(ConnectedServicesProviderStateSharingSettingsV1Schema, DEFAULT_CONNECTED_SERVICES_PROVIDER_STATE_SHARING_SETTINGS_V1), DEFAULT_CONNECTED_SERVICES_PROVIDER_STATE_SHARING_SETTINGS_V1, { semanticDomain: 'connected service state sharing', classification: 'policy', maximumSerializedValueBytes: 16 * 1024 }),
-    providerDefaultModelSelectionsByAgentTargetKeyV1: accountCatalogDefinition(z._default(z.catch(ProviderDefaultModelSelectionsByAgentTargetKeyV1Schema, {}), {}), {}, {
+    connectedServicesProviderStateSharingSettingsV1: withAccountSettingAnalytics(accountCatalogDefinition(z._default(ConnectedServicesProviderStateSharingSettingsV1Schema, DEFAULT_CONNECTED_SERVICES_PROVIDER_STATE_SHARING_SETTINGS_V1), DEFAULT_CONNECTED_SERVICES_PROVIDER_STATE_SHARING_SETTINGS_V1, { semanticDomain: 'connected service state sharing', classification: 'policy', maximumSerializedValueBytes: 16 * 1024 }), {
+        trackCurrentState: true,
+        trackChanges: true,
+        valueKind: 'count',
+        privacy: 'safe',
+        identityScope: 'person',
+        serializeCurrentProperties: (value: unknown) => {
+            const parsed = ConnectedServicesProviderStateSharingSettingsV1Schema.parse(value);
+            return {
+                overrideCount: objectKeyCount(parsed.byAgentId),
+                acknowledgedRiskCount: objectKeyCount(parsed.acknowledgedRisksByAgentId),
+                defaultsConfigLinked: parsed.defaults.configMode === 'linked' ? 1 : 0,
+                defaultsConfigCopied: parsed.defaults.configMode === 'copied' ? 1 : 0,
+                defaultsConfigIsolated: parsed.defaults.configMode === 'isolated' ? 1 : 0,
+                defaultsStateShared: parsed.defaults.stateMode === 'shared' ? 1 : 0,
+            };
+        },
+    }),
+    providerDefaultModelSelectionsByAgentTargetKeyV1: withAccountSettingAnalytics(accountCatalogDefinition(z._default(z.catch(ProviderDefaultModelSelectionsByAgentTargetKeyV1Schema, {}), {}), {}, {
         semanticDomain: 'provider default model selections', classification: 'preference',
         maximumSerializedValueBytes: ACCOUNT_SETTINGS_MAX_PROVIDER_SUBTREE_BYTES, structuralBoundsOwner: 'domainOwned',
+    }), {
+        valueKind: 'presence',
+        privacy: 'forbidden',
+        identityScope: 'person',
     }),
     machineRetentionDefaultsV1: accountCatalogDefinition(MachineRetentionDefaultsV1Schema, DEFAULT_MACHINE_RETENTION_DEFAULTS_V1, { semanticDomain: 'managed machine category defaults', classification: 'preference', maximumSerializedValueBytes: ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES }),
     managedMachineDeletionReminderLeadTimeMs: accountPreference(z.number().check(z.int(), z.nonnegative()), 2 * 24 * 60 * 60 * 1_000, 'managed machine deletion reminder lead time'),
     managedMachineCreationEnabled: accountCatalogDefinition(z._default(z.boolean(), true), true, { semanticDomain: 'managed machine acquisition', classification: 'policy', maximumSerializedValueBytes: 5 }),
-    workspaceFileViewerPreferencesV1: accountCatalogDefinition(z._default(z.catch(WorkspaceFileViewerPreferencesV1Schema, DEFAULT_WORKSPACE_FILE_VIEWER_PREFERENCES_V1), DEFAULT_WORKSPACE_FILE_VIEWER_PREFERENCES_V1), DEFAULT_WORKSPACE_FILE_VIEWER_PREFERENCES_V1, { semanticDomain: 'workspace file viewing', classification: 'preference', maximumSerializedValueBytes: WORKSPACE_FILE_VIEWER_PREFERENCES_V1_MAX_ENCODED_BYTES }),
+    workspaceFileViewerPreferencesV1: withAccountSettingAnalytics(accountCatalogDefinition(z._default(z.catch(WorkspaceFileViewerPreferencesV1Schema, DEFAULT_WORKSPACE_FILE_VIEWER_PREFERENCES_V1), DEFAULT_WORKSPACE_FILE_VIEWER_PREFERENCES_V1), DEFAULT_WORKSPACE_FILE_VIEWER_PREFERENCES_V1, { semanticDomain: 'workspace file viewing', classification: 'preference', maximumSerializedValueBytes: WORKSPACE_FILE_VIEWER_PREFERENCES_V1_MAX_ENCODED_BYTES }), {
+        valueKind: 'presence',
+        privacy: 'forbidden',
+        identityScope: 'person',
+    }),
 } as const;
 
 export const ACCOUNT_SETTING_ARTIFACTS: SettingArtifacts<typeof ACCOUNT_SETTING_CANDIDATES> = lazyDefinition(() => buildAccountSettingArtifacts(ACCOUNT_SETTING_CANDIDATES));

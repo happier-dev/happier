@@ -7,7 +7,20 @@ import { listUiFeatureToggleDefinitions } from './featurePreferenceMutations.js'
 import { BUILT_IN_SETTINGS_DECLARATIONS_V1, readBuiltInSettingDeclarationV1,
   parseBuiltInAccountSettingValueV1, readBuiltInAccountSettingValueV1,
   buildBuiltInAccountSettingMutationV1, readPortablePlatformAccountSettingBindingV1,
-  readBuiltInSettingsOperationPolicyV1, resolveBuiltInAccountSettingResetValueV1 } from './settingsDeclarations.js';
+  readBuiltInSettingsOperationPolicyV1, resolveBuiltInAccountSettingResetValueV1, readBuiltInSettingsWriteSafetyV1 } from './settingsDeclarations.js';
+
+it('keeps anchor-level access and Agent safety for fields in the same Account setting', () => {
+  const source = { anchor: 'appearance.atmosphereSource' };
+  const picture = { anchor: 'appearance.atmospherePictureRef' };
+  expect(readBuiltInSettingDeclarationV1(source.anchor)).toMatchObject({
+    storage: { scope: 'account', key: 'homeAtmosphere', path: ['source'], access: 'read_write' },
+  });
+  expect(readBuiltInSettingDeclarationV1(picture.anchor)).toMatchObject({
+    storage: { scope: 'account', key: 'homeAtmosphere', path: ['picture', 'ref'], access: 'read_write' },
+  });
+  expect(readBuiltInSettingsWriteSafetyV1(source)).toBe('safe');
+  expect(readBuiltInSettingsWriteSafetyV1(picture)).toBe('danger');
+});
 
 it('declares catalog-derived keyboard shortcuts through the existing command preference owner', () => {
   for (const commandId of ['action:review.start', 'session.action:ui.session.rename', 'action:acme.tools/actions/run']) {

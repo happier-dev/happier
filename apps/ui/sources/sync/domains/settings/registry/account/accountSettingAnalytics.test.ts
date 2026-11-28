@@ -28,6 +28,16 @@ describe('Account setting analytics presentation', () => {
         expect(ACCOUNT_SETTING_ANALYTICS_ARTIFACTS).not.toHaveProperty('defaults');
     });
 
+    it('reads privacy policy and pure serializers from the canonical Account setting definitions', () => {
+        expect(ACCOUNT_SETTING_DEFINITIONS.sessionListDensity.analytics).toBe(ACCOUNT_SETTING_ANALYTICS.sessionListDensity);
+        expect(ACCOUNT_SETTING_DEFINITIONS.workspaceFileViewerPreferencesV1.analytics).toMatchObject({
+            privacy: 'forbidden', identityScope: 'person',
+        });
+        expect(ACCOUNT_SETTING_DEFINITIONS.codingPromptBehaviorV1.analytics?.serializeCurrentProperties?.({
+            sessionCompactionNudge: true, privateText: 'not telemetry',
+        })).toEqual({ sessionTitleUpdates: 'initial', responseOptions: 'agent', sessionCompactionNudge: true });
+    });
+
     it('keeps non-Voice account presentation modules free of schema/default constructors', () => {
         const violations = readdirSync(ACCOUNT_REGISTRY_DIRECTORY)
             .filter((entry) => entry.endsWith('.ts'))

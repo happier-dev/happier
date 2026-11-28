@@ -1,5 +1,4 @@
 import { buildAgentUniverseBackendTargetKey, listExecutableAgentUniverseIds } from '@/agents/catalog/agentUniverse';
-import { defineAccountSettingAnalytics } from './accountSettingAnalyticsPresentation';
 
 function buildBackendEnabledAnalyticsProperties(value: unknown): Record<string, boolean> {
     const record = (value && typeof value === 'object' && !Array.isArray(value))
@@ -25,21 +24,7 @@ function buildBackendCliSourcePreferenceAnalyticsProperties(value: unknown): Rec
     }));
 }
 
-export const ACCOUNT_BACKEND_SETTING_ANALYTICS = defineAccountSettingAnalytics({
-    backendEnabledByTargetKey: {
-        trackCurrentState: true,
-        trackChanges: true,
-        valueKind: 'boolean',
-        privacy: 'safe',
-        identityScope: 'person',
-        serializeCurrentProperties: buildBackendEnabledAnalyticsProperties,
-    },
-    backendCliSourcePreferenceByTargetKey: {
-        trackCurrentState: true,
-        trackChanges: true,
-        valueKind: 'enum',
-        privacy: 'safe',
-        identityScope: 'person',
-        serializeCurrentProperties: buildBackendCliSourcePreferenceAnalyticsProperties,
-    },
-});
+export const ACCOUNT_BACKEND_SETTING_ANALYTICS = {
+    backendEnabledByTargetKey: buildBackendEnabledAnalyticsProperties,
+    backendCliSourcePreferenceByTargetKey: buildBackendCliSourcePreferenceAnalyticsProperties,
+};

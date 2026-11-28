@@ -3,9 +3,9 @@ import { describe, expect, it } from 'vitest';
 
 describe('Account runtime settings analytics presentation', () => {
     it('attaches count-only peer mediation analytics to the canonical Protocol definition without re-declaring persistence', async () => {
-        const { ACCOUNT_RUNTIME_SETTING_ANALYTICS } = await import('./accountRuntimeSettingDefinitions');
+        const { ACCOUNT_SETTING_ANALYTICS } = await import('./accountSettingAnalytics');
 
-        expect(ACCOUNT_RUNTIME_SETTING_ANALYTICS.peerMediationPreferencesV1).toEqual(expect.objectContaining({
+        expect(ACCOUNT_SETTING_ANALYTICS.peerMediationPreferencesV1).toEqual(expect.objectContaining({
             privacy: 'count_only',
             valueKind: 'count',
             identityScope: 'person',
@@ -26,13 +26,13 @@ describe('Account runtime settings analytics presentation', () => {
         });
 
         expect(parsed.byMachineId.machine_1?.flows?.tcp_tunnel?.direct).toBe('disabled');
-        expect(ACCOUNT_RUNTIME_SETTING_ANALYTICS.peerMediationPreferencesV1).not.toHaveProperty('schema');
-        expect(ACCOUNT_RUNTIME_SETTING_ANALYTICS.peerMediationPreferencesV1).not.toHaveProperty('default');
-        expect(ACCOUNT_RUNTIME_SETTING_ANALYTICS.peerMediationPreferencesV1).not.toHaveProperty('storageScope');
+        expect(ACCOUNT_SETTING_ANALYTICS.peerMediationPreferencesV1).not.toHaveProperty('schema');
+        expect(ACCOUNT_SETTING_ANALYTICS.peerMediationPreferencesV1).not.toHaveProperty('default');
+        expect(ACCOUNT_SETTING_ANALYTICS.peerMediationPreferencesV1).not.toHaveProperty('storageScope');
     });
 
     it('excludes transferred execution guidance from preference parsing and analytics', async () => {
-        const { ACCOUNT_RUNTIME_SETTING_ANALYTICS } = await import('./accountRuntimeSettingDefinitions');
+        const { ACCOUNT_SETTING_ANALYTICS } = await import('./accountSettingAnalytics');
         const { settingsParse } = await import('../../settings');
 
         const parsed = settingsParse({ executionRunsGuidanceEntries: [
@@ -47,6 +47,6 @@ describe('Account runtime settings analytics presentation', () => {
 
         expect(parsed).not.toHaveProperty('executionRunsGuidanceEntries');
         expect(ACCOUNT_SETTING_ARTIFACTS.shape).not.toHaveProperty('executionRunsGuidanceEntries');
-        expect(ACCOUNT_RUNTIME_SETTING_ANALYTICS).not.toHaveProperty('executionRunsGuidanceEntries');
+        expect(ACCOUNT_SETTING_ANALYTICS).not.toHaveProperty('executionRunsGuidanceEntries');
     });
 });
