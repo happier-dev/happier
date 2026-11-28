@@ -447,10 +447,10 @@ describe('sessionRegistry', () => {
     ]);
   });
 
-  it('merges non-secret managed-dependency retention under exact live runner marker ownership', async () => {
+  it('pins Agent custody and merges non-secret dependency retention under exact live runner marker ownership', async () => {
     const {
       listSessionMarkers,
-      updateSessionMarkerRunnerManagedDependencyRetention,
+      updateSessionMarkerRunnerAgentCustody,
       writeSessionMarker,
     } = await import('./sessionRegistry');
     const processCommandHash = 'c'.repeat(64);
@@ -468,41 +468,43 @@ describe('sessionRegistry', () => {
       },
     });
 
-    await expect(
-      updateSessionMarkerRunnerManagedDependencyRetention({
-        trackingKey: legacyPidSessionTrackingKey(12349), pid: 12349,
-        sessionId: 'session-managed-dependency-retention',
-        processCommandHash: 'd'.repeat(64),
-        processStartTimeMs,
-        retention: {
-          v: 1,
-          sourceCustodies: [{ kind: 'managed', immutableGenerationId: 'registry:h', installSource: 'localPath' }],
-          qualifiedDependencyIds: ['acme.plugin/tool-h'],
-          adoptedManagedProviderAuthority: {
-            pluginId: 'acme.plugin',
-            sourceCustody: { kind: 'managed', immutableGenerationId: 'provider-generation-stale', installSource: 'localPath' },
-            manifestAuthority: 'external',
-            hardRevocationRevisionAtAdmission: 0,
-          },
+    const sourceCustody = { kind: 'managed', immutableGenerationId: 'registry:agent', installSource: 'localPath' } as const;
+    const acceptedCustody = {
+      trackingKey: legacyPidSessionTrackingKey(12349), pid: 12349,
+      sessionId: 'session-managed-dependency-retention',
+      processCommandHash: 'd'.repeat(64),
+      processStartTimeMs,
+      sourceCustody,
+      retention: {
+        v: 1 as const,
+        sourceCustodies: [{ kind: 'managed', immutableGenerationId: 'registry:h', installSource: 'localPath' } as const],
+        qualifiedDependencyIds: ['acme.plugin/tool-h'],
+        adoptedManagedProviderAuthority: {
+          pluginId: 'acme.plugin',
+          sourceCustody: { kind: 'managed', immutableGenerationId: 'provider-generation-stale', installSource: 'localPath' } as const,
+          manifestAuthority: 'external' as const,
+          hardRevocationRevisionAtAdmission: 0,
         },
-      }),
-    ).resolves.toBe(true);
-    await expect(
-      updateSessionMarkerRunnerManagedDependencyRetention({
-        trackingKey: legacyPidSessionTrackingKey(12349), pid: 12349,
-        sessionId: 'session-managed-dependency-retention',
-        processCommandHash,
-        processStartTimeMs: processStartTimeMs + 1,
-        retention: {
-          v: 1,
-          sourceCustodies: [{ kind: 'managed', immutableGenerationId: 'registry:must-not-write', installSource: 'localPath' }],
-          qualifiedDependencyIds: ['acme.plugin/must-not-write'],
-        },
-      }),
-    ).resolves.toBe(false);
+      },
+    };
+    await expect(updateSessionMarkerRunnerAgentCustody(acceptedCustody)).resolves.toBe(true);
+    const rejectedCustody = {
+      trackingKey: legacyPidSessionTrackingKey(12349), pid: 12349,
+      sessionId: 'session-managed-dependency-retention',
+      processCommandHash,
+      processStartTimeMs: processStartTimeMs + 1,
+      sourceCustody,
+      retention: {
+        v: 1 as const,
+        sourceCustodies: [{ kind: 'managed', immutableGenerationId: 'registry:must-not-write', installSource: 'localPath' } as const],
+        qualifiedDependencyIds: ['acme.plugin/must-not-write'],
+      },
+    };
+    await expect(updateSessionMarkerRunnerAgentCustody(rejectedCustody)).resolves.toBe(false);
 
     const [marker] = await listSessionMarkers();
     expect(marker).toMatchObject({
+      runnerAgentSourceCustodyV1: sourceCustody,
       runnerManagedDependencyRetentionV1: {
         v: 1,
         sourceCustodies: [
@@ -637,7 +639,7 @@ describe('sessionRegistry', () => {
   it('pins one exact non-authorizing Runner Agent generation for each process identity', async () => {
     const {
       listSessionMarkers,
-      updateSessionMarkerRunnerAgentSourceCustody,
+      updateSessionMarkerRunnerAgentCustody,
       writeSessionMarker,
     } = await import('./sessionRegistry');
     const processCommandHash = 'd'.repeat(64);
@@ -651,29 +653,32 @@ describe('sessionRegistry', () => {
     });
 
     await expect(
-      updateSessionMarkerRunnerAgentSourceCustody({
+      updateSessionMarkerRunnerAgentCustody({
         trackingKey: legacyPidSessionTrackingKey(12350), pid: 12350,
         sessionId: 'session-runner-agent-generation',
         processCommandHash,
         processStartTimeMs,
+        retention: { v: 1, sourceCustodies: [], qualifiedDependencyIds: [] },
         sourceCustody: { kind: 'managed', immutableGenerationId: 'registry:g', installSource: 'localPath' },
       }),
     ).resolves.toBe(true);
     await expect(
-      updateSessionMarkerRunnerAgentSourceCustody({
+      updateSessionMarkerRunnerAgentCustody({
         trackingKey: legacyPidSessionTrackingKey(12350), pid: 12350,
         sessionId: 'session-runner-agent-generation',
         processCommandHash,
         processStartTimeMs,
+        retention: { v: 1, sourceCustodies: [], qualifiedDependencyIds: [] },
         sourceCustody: { kind: 'managed', immutableGenerationId: 'registry:g', installSource: 'localPath' },
       }),
     ).resolves.toBe(true);
     await expect(
-      updateSessionMarkerRunnerAgentSourceCustody({
+      updateSessionMarkerRunnerAgentCustody({
         trackingKey: legacyPidSessionTrackingKey(12350), pid: 12350,
         sessionId: 'session-runner-agent-generation',
         processCommandHash,
         processStartTimeMs,
+        retention: { v: 1, sourceCustodies: [], qualifiedDependencyIds: [] },
         sourceCustody: { kind: 'managed', immutableGenerationId: 'registry:h', installSource: 'localPath' },
       }),
     ).resolves.toBe(false);

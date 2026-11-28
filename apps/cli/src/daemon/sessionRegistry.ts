@@ -765,45 +765,6 @@ export async function clearSessionMarkerAgentRuntimeDaemonServicePromotionIfOwne
   });
 }
 
-export async function updateSessionMarkerRunnerManagedDependencyRetention(
-  params: Readonly<{
-    pid: number;
-    trackingKey: SessionTrackingKey;
-    sessionId: string;
-    processCommandHash: string;
-    processStartTimeMs: number;
-    retention: RunnerManagedDependencyRetentionV1;
-  }>,
-): Promise<boolean> {
-  return await runWithSessionMarkerMutationLock(params.trackingKey, async () => {
-    const existing = await readSessionMarker(params.trackingKey);
-    if (
-      !existing
-      || !sessionMarkerRunnerMutationMatches(existing, params)
-    ) {
-      return false;
-    }
-    const {
-      happyHomeDir: _happyHomeDir,
-      updatedAt: _updatedAt,
-      ...rest
-    } = existing;
-    await writeSessionMarkerUnlocked({
-      ...rest,
-      runnerManagedDependencyRetentionV1:
-        withRunnerManagedProviderAuthorityRetention(
-          mergeRunnerManagedDependencyRetentionV1(
-            existing.runnerManagedDependencyRetentionV1,
-            params.retention,
-          ),
-          existing.runnerManagedDependencyRetentionV1
-            ?.adoptedManagedProviderAuthority ?? null,
-        ),
-    });
-    return true;
-  });
-}
-
 export async function updateSessionMarkerRunnerManagedProviderAuthority(
   params: Readonly<{
     pid: number;
@@ -881,7 +842,7 @@ export async function updateSessionMarkerRunnerManagedProviderAuthority(
   });
 }
 
-export async function updateSessionMarkerRunnerAgentSourceCustody(
+export async function updateSessionMarkerRunnerAgentCustody(
   params: Readonly<{
     pid: number;
     trackingKey: SessionTrackingKey;
@@ -889,6 +850,7 @@ export async function updateSessionMarkerRunnerAgentSourceCustody(
     processCommandHash: string;
     processStartTimeMs: number;
     sourceCustody: PluginSourceCustodyV1;
+    retention: RunnerManagedDependencyRetentionV1;
     materializedStateObservationBinding?: ConnectedServiceMaterializedStateObservationBinding;
     requesterWorkAttributionV1?: RequesterWorkAttributionV1;
   }>,
@@ -919,6 +881,15 @@ export async function updateSessionMarkerRunnerAgentSourceCustody(
     await writeSessionMarkerUnlocked({
       ...rest,
       runnerAgentSourceCustodyV1: params.sourceCustody,
+      runnerManagedDependencyRetentionV1:
+        withRunnerManagedProviderAuthorityRetention(
+          mergeRunnerManagedDependencyRetentionV1(
+            existing.runnerManagedDependencyRetentionV1,
+            params.retention,
+          ),
+          existing.runnerManagedDependencyRetentionV1
+            ?.adoptedManagedProviderAuthority ?? null,
+        ),
       ...(params.materializedStateObservationBinding
         ? { materializedStateObservationBinding: params.materializedStateObservationBinding } : {}),
       ...(params.requesterWorkAttributionV1

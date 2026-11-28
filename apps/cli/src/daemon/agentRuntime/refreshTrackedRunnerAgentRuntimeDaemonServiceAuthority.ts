@@ -24,8 +24,7 @@ import { logger } from '@/ui/logger';
 import { resolveTrackedSessionRunnerIdentity } from '@/daemon/sessions/sessionReportCorrelation';
 import {
   readSessionMarker,
-  updateSessionMarkerRunnerAgentSourceCustody,
-  updateSessionMarkerRunnerManagedDependencyRetention,
+  updateSessionMarkerRunnerAgentCustody,
   updateSessionMarkerRunnerManagedProviderAuthority,
 } from '@/daemon/sessionRegistry';
 import {
@@ -235,10 +234,7 @@ export async function refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority(
       retention: RunnerManagedDependencyRetentionV1;
       release(): void;
     }>>;
-    persistRunnerManagedDependencyRetention?:
-      typeof updateSessionMarkerRunnerManagedDependencyRetention;
-    persistRunnerAgentSourceCustody?:
-      typeof updateSessionMarkerRunnerAgentSourceCustody;
+    persistRunnerAgentCustody?: typeof updateSessionMarkerRunnerAgentCustody;
     attachRunnerRetainedPluginGenerations?:
       typeof attachExactRunnerRetainedPluginGenerations;
     readProcessIdentityByPidFn?: typeof readProcessIdentityByPid;
@@ -500,43 +496,17 @@ export async function refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority(
             .adoptedManagedProviderAuthority.sourceCustody.immutableGenerationId]
           : []),
       ],
-      attach: async () => {
-        if (
-          !await (
-            input.persistRunnerAgentSourceCustody
-            ?? updateSessionMarkerRunnerAgentSourceCustody
-          )({
-            pid: runner.pid,
-            trackingKey: input.tracked.trackingKey,
-            sessionId,
-            processCommandHash: runner.processCommandHash,
-            processStartTimeMs: runner.processStartTimeMs,
-            sourceCustody: retainedAgent.sourceCustody,
-          })
-        ) {
-          throw new Error(
-            'Runner Agent source custody retention attachment is unavailable',
-          );
-        }
-        if (
-          !await (
-            input.persistRunnerManagedDependencyRetention
-            ?? updateSessionMarkerRunnerManagedDependencyRetention
-          )({
-            pid: runner.pid,
-            trackingKey: input.tracked.trackingKey,
-            sessionId,
-            processCommandHash: runner.processCommandHash,
-            processStartTimeMs: runner.processStartTimeMs,
-            retention: runnerManagedDependencyRetentionV1,
-          })
-        ) {
-          throw new Error(
-            'Runner Agent managed-dependency retention attachment is unavailable',
-          );
-        }
-        return true;
-      },
+      attach: async () => await (
+        input.persistRunnerAgentCustody ?? updateSessionMarkerRunnerAgentCustody
+      )({
+        pid: runner.pid,
+        trackingKey: input.tracked.trackingKey,
+        sessionId,
+        processCommandHash: runner.processCommandHash,
+        processStartTimeMs: runner.processStartTimeMs,
+        sourceCustody: retainedAgent.sourceCustody,
+        retention: runnerManagedDependencyRetentionV1,
+      }),
     });
     if (!custodyPersisted) {
       throw new Error(

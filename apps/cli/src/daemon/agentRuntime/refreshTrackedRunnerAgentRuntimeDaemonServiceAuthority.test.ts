@@ -290,8 +290,7 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority', () => {
         resolveCurrentRetainedAgent: async () => retainedAgent,
         readProcessIdentityByPidFn: async (pid) => ({ pid, command, processStartTimeMs: 12_346 }),
         readPluginHardRevocationRevision: async () => 0,
-        persistRunnerAgentSourceCustody: async () => true,
-        persistRunnerManagedDependencyRetention: async () => true,
+        persistRunnerAgentCustody: async () => true,
         attachRunnerRetainedPluginGenerations: async ({ attach }) => await attach(),
         bundledAttestationModuleUrl: pathToFileURL(join(daemonSnapshot.root, 'package-dist', 'daemon.mjs')).href,
       });

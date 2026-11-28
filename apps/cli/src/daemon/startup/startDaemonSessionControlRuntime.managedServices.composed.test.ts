@@ -249,8 +249,7 @@ it.each([
     httpPort: 43129, sessionId: h.sessionId, tracked: h.tracked,
     resolveCurrentRetainedAgent: () => retainedAgent,
     readProcessIdentityByPidFn: async pid => ({ pid, processStartTimeMs: h.tracked.processStartTimeMs!, command }),
-    persistRunnerAgentSourceCustody: async () => true,
-    persistRunnerManagedDependencyRetention: async () => true,
+    persistRunnerAgentCustody: async () => true,
   });
   phase = 'predecessor_authority';
   const predecessor = await refresh();

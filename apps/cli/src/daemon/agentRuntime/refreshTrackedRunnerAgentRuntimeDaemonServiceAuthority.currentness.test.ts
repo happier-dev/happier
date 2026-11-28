@@ -17,7 +17,7 @@ vi.mock('@/daemon/sessionRegistry', async (importOriginal) => ({
 
 import type { TrackedSession } from '@/daemon/types';
 import type {
-  updateSessionMarkerRunnerManagedDependencyRetention,
+  updateSessionMarkerRunnerAgentCustody,
   updateSessionMarkerRunnerManagedProviderAuthority,
 } from '@/daemon/sessionRegistry';
 import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
@@ -107,8 +107,7 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority currentness', (
         resolveCurrentRetainedAgent: async () => {
           throw new Error('Reattached runner must retain its pinned Agent');
         },
-        persistRunnerAgentSourceCustody: async () => true,
-        persistRunnerManagedDependencyRetention: async () => true,
+        persistRunnerAgentCustody: async () => true,
         attachRunnerRetainedPluginGenerations: async ({ attach }) => await attach(),
         readProcessIdentityByPidFn: async (pid) => ({
           pid,
@@ -184,8 +183,7 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority currentness', (
           sessionId: 'session-final-currentness',
           tracked,
           resolveCurrentRetainedAgent: async () => retainedAgent(),
-          persistRunnerAgentSourceCustody: async () => true,
-          persistRunnerManagedDependencyRetention: async () => true,
+          persistRunnerAgentCustody: async () => true,
           attachRunnerRetainedPluginGenerations: async ({ attach }) =>
             await attach(),
           readProcessIdentityByPidFn: async (pid) => ({
@@ -278,7 +276,7 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority currentness', (
       };
       let retainedPRevision = 0;
       let retainedPRevocationInjected = false;
-      const persistRunnerManagedDependencyRetention = vi.fn(
+      const persistRunnerAgentCustody = vi.fn(
         async () => true,
       );
 
@@ -290,8 +288,7 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority currentness', (
           sessionId: 'session-retained-p-final-currentness',
           tracked,
           resolveCurrentRetainedAgent: async () => retainedAgent(),
-          persistRunnerAgentSourceCustody: async () => true,
-          persistRunnerManagedDependencyRetention,
+          persistRunnerAgentCustody,
           attachRunnerRetainedPluginGenerations: async ({ attach }) =>
             await attach(),
           readProcessIdentityByPidFn: async (pid) => ({
@@ -318,7 +315,7 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority currentness', (
       ).rejects.toThrow(/retained Provider authority is hard-revoked/i);
 
       expect(retainedPRevocationInjected).toBe(true);
-      expect(persistRunnerManagedDependencyRetention).not.toHaveBeenCalled();
+      expect(persistRunnerAgentCustody).not.toHaveBeenCalled();
       expect(tracked.agentRuntimeDaemonServiceCapabilityHash).toBeUndefined();
       await expect(access(authorityPath)).rejects.toMatchObject({
         code: 'ENOENT',
@@ -398,9 +395,9 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority currentness', (
       let retainedPRevision = 0;
       let retainedPRevocationInjected = false;
       let persistedRetainedP = false;
-      const persistRunnerManagedDependencyRetention = vi.fn(async (
+      const persistRunnerAgentCustody = vi.fn(async (
         input: Parameters<
-          typeof updateSessionMarkerRunnerManagedDependencyRetention
+          typeof updateSessionMarkerRunnerAgentCustody
         >[0],
       ) => {
         persistedRetainedP = input.retention
@@ -430,8 +427,7 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority currentness', (
           sessionId: 'session-retained-p-post-attachment-currentness',
           tracked,
           resolveCurrentRetainedAgent: async () => retainedAgent(),
-          persistRunnerAgentSourceCustody: async () => true,
-          persistRunnerManagedDependencyRetention,
+          persistRunnerAgentCustody,
           attachRunnerRetainedPluginGenerations: async ({ attach }) =>
             await attach(),
           readProcessIdentityByPidFn: async (pid) => ({
@@ -446,7 +442,7 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority currentness', (
       ).rejects.toThrow(/hard-revoked/i);
 
       expect(retainedPRevocationInjected).toBe(true);
-      expect(persistRunnerManagedDependencyRetention).toHaveBeenCalledOnce();
+      expect(persistRunnerAgentCustody).toHaveBeenCalledOnce();
       expect(
         boundaries.updateSessionMarkerRunnerManagedProviderAuthority,
       ).toHaveBeenCalledOnce();
@@ -556,9 +552,9 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority currentness', (
       let retainedPRevisionReads = 0;
       let retentionPersisted = false;
       let persistedRetainedP = false;
-      const persistRunnerManagedDependencyRetention = vi.fn(async (
+      const persistRunnerAgentCustody = vi.fn(async (
         input: Parameters<
-          typeof updateSessionMarkerRunnerManagedDependencyRetention
+          typeof updateSessionMarkerRunnerAgentCustody
         >[0],
       ) => {
         persistedRetainedP = input.retention
@@ -586,8 +582,7 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority currentness', (
         sessionId: 'session-retained-p-final-read-unavailable',
         tracked,
         resolveCurrentRetainedAgent: async () => retainedAgent(),
-        persistRunnerAgentSourceCustody: async () => true,
-        persistRunnerManagedDependencyRetention,
+        persistRunnerAgentCustody,
         attachRunnerRetainedPluginGenerations: async ({ attach }) =>
           await attach(),
         readProcessIdentityByPidFn: async (pid) => ({

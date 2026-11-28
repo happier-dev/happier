@@ -5,8 +5,7 @@ import type {
 import {
   clearSessionMarkerAgentRuntimeDaemonServicePromotionIfOwned,
   updateSessionMarkerAgentRuntimeDaemonServiceAuthorityPath,
-  updateSessionMarkerRunnerAgentSourceCustody,
-  updateSessionMarkerRunnerManagedDependencyRetention,
+  updateSessionMarkerRunnerAgentCustody,
 } from '@/daemon/sessionRegistry';
 import {
   type AgentSessionRunnerBindingV1,
@@ -93,10 +92,7 @@ export async function promoteForegroundDaemonServiceAuthority(input: Readonly<{
   capabilityDigest: string;
   invocationContext: RunnerAgentInvocationContext;
   persistAuthorityPath?: typeof updateSessionMarkerAgentRuntimeDaemonServiceAuthorityPath;
-  persistRunnerAgentSourceCustody?:
-    typeof updateSessionMarkerRunnerAgentSourceCustody;
-  persistRunnerManagedDependencyRetention?:
-    typeof updateSessionMarkerRunnerManagedDependencyRetention;
+  persistRunnerAgentCustody?: typeof updateSessionMarkerRunnerAgentCustody;
   attachRunnerRetainedPluginGenerations?:
     typeof attachExactRunnerRetainedPluginGenerations;
   clearPersistedPromotion?:
@@ -306,34 +302,20 @@ export async function promoteForegroundDaemonServiceAuthority(input: Readonly<{
           .adoptedManagedProviderAuthority.sourceCustody.immutableGenerationId]
         : []),
     ],
-    attach: async () => {
-      const sourceCustodyPersisted = await (
-        input.persistRunnerAgentSourceCustody
-        ?? updateSessionMarkerRunnerAgentSourceCustody
-      )({
-        pid: input.foregroundPid,
-        trackingKey: tracked.trackingKey,
-        sessionId: input.canonicalSessionId,
-        processCommandHash: runner.processCommandHash,
-        processStartTimeMs: runner.processStartTimeMs,
-        sourceCustody: input.retainedAgent.sourceCustody,
-        ...(input.materializedStateObservationBinding
-          ? { materializedStateObservationBinding: input.materializedStateObservationBinding } : {}),
-        ...(requester ? { requesterWorkAttributionV1: requester.bootstrap.attribution } : {}),
-      });
-      if (!sourceCustodyPersisted) return false;
-      return await (
-        input.persistRunnerManagedDependencyRetention
-        ?? updateSessionMarkerRunnerManagedDependencyRetention
-      )({
-        pid: input.foregroundPid,
-        trackingKey: tracked.trackingKey,
-        sessionId: input.canonicalSessionId,
-        processCommandHash: runner.processCommandHash,
-        processStartTimeMs: runner.processStartTimeMs,
-        retention: runnerManagedDependencyRetentionV1,
-      });
-    },
+    attach: async () => await (
+      input.persistRunnerAgentCustody ?? updateSessionMarkerRunnerAgentCustody
+    )({
+      pid: input.foregroundPid,
+      trackingKey: tracked.trackingKey,
+      sessionId: input.canonicalSessionId,
+      processCommandHash: runner.processCommandHash,
+      processStartTimeMs: runner.processStartTimeMs,
+      sourceCustody: input.retainedAgent.sourceCustody,
+      retention: runnerManagedDependencyRetentionV1,
+      ...(input.materializedStateObservationBinding
+        ? { materializedStateObservationBinding: input.materializedStateObservationBinding } : {}),
+      ...(requester ? { requesterWorkAttributionV1: requester.bootstrap.attribution } : {}),
+    }),
   });
   if (!custodyPersisted) {
     await clearPersistedPromotion(false);

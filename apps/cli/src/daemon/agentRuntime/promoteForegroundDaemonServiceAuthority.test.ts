@@ -8,8 +8,7 @@ import type { TrackedSession } from '@/daemon/types';
 import type {
   clearSessionMarkerAgentRuntimeDaemonServicePromotionIfOwned,
   updateSessionMarkerAgentRuntimeDaemonServiceAuthorityPath,
-  updateSessionMarkerRunnerAgentSourceCustody,
-  updateSessionMarkerRunnerManagedDependencyRetention,
+  updateSessionMarkerRunnerAgentCustody,
 } from '@/daemon/sessionRegistry';
 import {
   createAgentSessionRunnerFactoryBinding,
@@ -214,8 +213,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
           providerBindingActive: false,
         },
         persistAuthorityPath: async () => true,
-        persistRunnerAgentSourceCustody: async () => true,
-        persistRunnerManagedDependencyRetention: async () => true,
+        persistRunnerAgentCustody: async () => true,
         attachRunnerRetainedPluginGenerations,
         readPluginImmutableGenerationIntegrityCurrentness,
       })).resolves.toBe(true);
@@ -267,9 +265,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
         processCommandHash: 'a'.repeat(64),
       };
       const persistAuthorityPath = vi.fn(async () => true);
-      const persistRunnerAgentSourceCustody =
-        vi.fn(async () => true);
-      const persistRunnerManagedDependencyRetention =
+      const persistRunnerAgentCustody =
         vi.fn(async () => true);
       type CurrentnessAwarePromotionInput = Parameters<
         typeof promoteForegroundDaemonServiceAuthority
@@ -300,17 +296,14 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
           providerBindingActive: false,
         },
         persistAuthorityPath,
-        persistRunnerAgentSourceCustody,
-        persistRunnerManagedDependencyRetention,
+        persistRunnerAgentCustody,
         attachRunnerRetainedPluginGenerations,
         readPluginImmutableGenerationIntegrityCurrentness:
           async () => true,
       })).resolves.toBe(false);
 
       expect(persistAuthorityPath).not.toHaveBeenCalled();
-      expect(persistRunnerAgentSourceCustody)
-        .not.toHaveBeenCalled();
-      expect(persistRunnerManagedDependencyRetention)
+      expect(persistRunnerAgentCustody)
         .not.toHaveBeenCalled();
       expect(tracked).not.toHaveProperty(
         'agentRuntimeDaemonServiceCapabilityHash',
@@ -346,8 +339,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
         releaseMarkerPersistence = resolve;
       });
       const persistAuthorityPath = vi.fn(async () => true);
-      const persistRunnerAgentSourceCustody = vi.fn(async () => true);
-      const persistRunnerManagedDependencyRetention = vi.fn(async () => true);
+      const persistRunnerAgentCustody = vi.fn(async () => true);
       const readPluginImmutableGenerationIntegrityCurrentness = vi.fn(async () => true);
 
       const promotion = promoteForegroundDaemonServiceAuthority({
@@ -366,8 +358,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
           providerBindingActive: false,
         },
         persistAuthorityPath,
-        persistRunnerAgentSourceCustody,
-        persistRunnerManagedDependencyRetention,
+        persistRunnerAgentCustody,
         attachRunnerRetainedPluginGenerations,
         readPluginImmutableGenerationIntegrityCurrentness,
       });
@@ -380,8 +371,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
 
       await expect(promotion).resolves.toBe(false);
       expect(persistAuthorityPath).not.toHaveBeenCalled();
-      expect(persistRunnerAgentSourceCustody).not.toHaveBeenCalled();
-      expect(persistRunnerManagedDependencyRetention).not.toHaveBeenCalled();
+      expect(persistRunnerAgentCustody).not.toHaveBeenCalled();
       expect(tracked).not.toHaveProperty(
         'agentRuntimeDaemonServiceCapabilityHash',
       );
@@ -442,8 +432,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
         persistedAuthorityPath = undefined;
         return true;
       });
-      const persistRunnerAgentSourceCustody = vi.fn(async () => true);
-      const persistRunnerManagedDependencyRetention = vi.fn(async () => true);
+      const persistRunnerAgentCustody = vi.fn(async () => true);
 
       const promotion = promoteForegroundDaemonServiceAuthority({
         happyHomeDir: fixture.happyHomeDir,
@@ -461,8 +450,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
           providerBindingActive: false,
         },
         persistAuthorityPath,
-        persistRunnerAgentSourceCustody,
-        persistRunnerManagedDependencyRetention,
+        persistRunnerAgentCustody,
         attachRunnerRetainedPluginGenerations,
         clearPersistedPromotion,
         readPluginImmutableGenerationIntegrityCurrentness:
@@ -485,8 +473,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
         authorityFilePath: fixture.authorityFilePath,
       });
       expect(persistedAuthorityPath).toBeUndefined();
-      expect(persistRunnerAgentSourceCustody).not.toHaveBeenCalled();
-      expect(persistRunnerManagedDependencyRetention).not.toHaveBeenCalled();
+      expect(persistRunnerAgentCustody).not.toHaveBeenCalled();
       await expect(
         readAgentRuntimeDaemonServiceAuthorityForVerifiedMarker({
           happyHomeDir: fixture.happyHomeDir,
@@ -521,7 +508,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
       const persisted = {
         authorityFilePath: undefined as string | undefined,
         sourceCustody: undefined as Parameters<
-          typeof updateSessionMarkerRunnerAgentSourceCustody
+          typeof updateSessionMarkerRunnerAgentCustody
         >[0]['sourceCustody'] | undefined,
         retention: undefined as typeof retention | undefined,
       };
@@ -537,19 +524,13 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
         persisted.authorityFilePath = authorityFilePath;
         return true;
       });
-      const persistRunnerAgentSourceCustody = vi.fn(async ({
+      const persistRunnerAgentCustody = vi.fn(async ({
         sourceCustody,
-      }: Parameters<
-        typeof updateSessionMarkerRunnerAgentSourceCustody
-      >[0]) => {
-        persisted.sourceCustody = sourceCustody;
-        return true;
-      });
-      const persistRunnerManagedDependencyRetention = vi.fn(async ({
         retention: nextRetention,
       }: Parameters<
-        typeof updateSessionMarkerRunnerManagedDependencyRetention
+        typeof updateSessionMarkerRunnerAgentCustody
       >[0]) => {
+        persisted.sourceCustody = sourceCustody;
         persisted.retention = nextRetention;
         return true;
       });
@@ -598,8 +579,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
           providerBindingActive: false,
         },
         persistAuthorityPath,
-        persistRunnerAgentSourceCustody,
-        persistRunnerManagedDependencyRetention,
+        persistRunnerAgentCustody,
         attachRunnerRetainedPluginGenerations,
         clearPersistedPromotion,
         readPluginImmutableGenerationIntegrityCurrentness:
@@ -607,7 +587,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
       });
 
       await vi.waitFor(() => {
-        expect(persistRunnerManagedDependencyRetention).toHaveBeenCalledOnce();
+        expect(persistRunnerAgentCustody).toHaveBeenCalledOnce();
       });
       expect(persisted).toEqual({
         authorityFilePath: fixture.authorityFilePath,
@@ -670,7 +650,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
       const persisted = {
         authorityFilePath: undefined as string | undefined,
         sourceCustody: undefined as Parameters<
-          typeof updateSessionMarkerRunnerAgentSourceCustody
+          typeof updateSessionMarkerRunnerAgentCustody
         >[0]['sourceCustody'] | undefined,
         retention: undefined as typeof retention | undefined,
       };
@@ -682,19 +662,13 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
         persisted.authorityFilePath = authorityFilePath;
         return true;
       });
-      const persistRunnerAgentSourceCustody = vi.fn(async ({
+      const persistRunnerAgentCustody = vi.fn(async ({
         sourceCustody,
-      }: Parameters<
-        typeof updateSessionMarkerRunnerAgentSourceCustody
-      >[0]) => {
-        persisted.sourceCustody = sourceCustody;
-        return true;
-      });
-      const persistRunnerManagedDependencyRetention = vi.fn(async ({
         retention: nextRetention,
       }: Parameters<
-        typeof updateSessionMarkerRunnerManagedDependencyRetention
+        typeof updateSessionMarkerRunnerAgentCustody
       >[0]) => {
+        persisted.sourceCustody = sourceCustody;
         persisted.retention = nextRetention;
         return true;
       });
@@ -738,8 +712,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
           providerBindingActive: false,
         },
         persistAuthorityPath,
-        persistRunnerAgentSourceCustody,
-        persistRunnerManagedDependencyRetention,
+        persistRunnerAgentCustody,
         attachRunnerRetainedPluginGenerations,
         clearPersistedPromotion,
         readPluginImmutableGenerationIntegrityCurrentness: async () => {
@@ -800,8 +773,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
       processStartTimeMs: 2_000,
       processCommandHash: 'a'.repeat(64),
     };
-    const persistRunnerManagedDependencyRetention =
-      vi.fn(async () => true);
+    const persistRunnerAgentCustody = vi.fn(async () => false);
 
     await expect(
       promoteForegroundDaemonServiceAuthority({
@@ -820,9 +792,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
           providerBindingActive: false,
         },
         persistAuthorityPath: async () => true,
-        persistRunnerAgentSourceCustody:
-          async () => false,
-        persistRunnerManagedDependencyRetention,
+        persistRunnerAgentCustody,
         attachRunnerRetainedPluginGenerations,
         readPluginImmutableGenerationIntegrityCurrentness:
           async () => true,
@@ -830,8 +800,8 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
     ).resolves.toBe(false);
 
     expect(
-      persistRunnerManagedDependencyRetention,
-    ).not.toHaveBeenCalled();
+      persistRunnerAgentCustody,
+    ).toHaveBeenCalledOnce();
     expect(tracked).not.toHaveProperty(
       'agentRuntimeDaemonServiceCapabilityHash',
     );
