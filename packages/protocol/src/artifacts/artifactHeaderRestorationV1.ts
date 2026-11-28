@@ -11,7 +11,7 @@ import { buildWidgetDefinitionArtifactHeaderV1, readWidgetDefinitionArtifactV1 }
 import { WidgetDefinitionV1Schema } from '../widgets/widgetDefinitionV1.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { ACCOUNT_NOTICE_ARTIFACT_KIND_V1, readAccountNoticeArtifactV1 } from '../activity/usageNoticeArtifactV1.js';
-import { readSkillBundleContentV1 } from '../prompts/library/promptBundleSchemas.js';
+import { readSkillBundleContentV1 } from '../prompts/library/promptBundleShapeV1.js';
 import { buildSkillListSummaryV1 } from '../prompts/library/skills/skillListSummaryV1.js';
 
 type ArtifactSharedWriteContextV1 = Readonly<{ current: ArtifactSharingResourceV1; shared: boolean }>;

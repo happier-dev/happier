@@ -3,7 +3,7 @@ import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex } from '@noble/hashes/utils';
 import { decodeBase64 } from '../../crypto/base64.js';
 import { computePromptBundleDigestV1 } from '../../prompts/library/promptLibraryDigests.js';
-import { validatePromptBundleBodyV1AgainstSchemaId } from '../../prompts/library/promptBundleSchemas.js';
+import { validatePromptBundleBodyV1AgainstSchemaId } from '../../prompts/library/promptBundleShapeV1.js';
 import { readSkillFrontmatterV1 } from '../../prompts/library/skills/skillLibraryItemV1.js';
 import { readSkillZipFilesV1, skillFileFromBytesV1 } from '../../prompts/library/skills/skillZipV1.js';
 import { computeGitBlobShaV1, type RegistrySkillFileBytesV1 } from '../registryGitTreeV1.js';

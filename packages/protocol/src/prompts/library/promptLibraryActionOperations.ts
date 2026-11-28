@@ -19,12 +19,11 @@ import {
   PromptBundleCreateActionInputV1Schema,
   validatePromptBundleBodyV1AgainstSchemaId,
   readSkillBundleContentV1,
-  readReadOnlySkillContentV1,
   projectPromptBundleActionEntriesV1,
   type PromptBundleBodyV1,
   type PromptBundleEntryV1,
   type PromptBundleCreateActionInputV1,
-} from './promptBundleSchemas.js';
+} from './promptBundleShapeV1.js';
 import { PromptDocArtifactHeaderV1Schema, PromptDocBodyV1Schema, type PromptDocBodyV1 } from './promptDocV2.js';
 import { computePromptBundleDigestV1 } from './promptLibraryDigests.js';
 import { SKILL_ACTION_OUTPUT_SCHEMAS_V1, SkillActionFailureResultV1Schema, SkillInstallAcknowledgedEffectsV1Schema } from './skills/skillActionSchemasV1.js';
@@ -130,6 +129,8 @@ export async function readSkillInLibrary(params: Readonly<{
   if (request.sessionId && !sessionItem) return notFound;
   const skillId = 'skillId' in request ? request.skillId : sessionItem?.skillId;
   if (!skillId) return notFound;
+  const { readReadOnlySkillContentV1 } = await import('./promptBundleSchemas.js');
+  throwIfAborted(params.signal);
   const bundled = readReadOnlySkillContentV1(skillId, params.pluginSkills);
   if (!bundled && isPluginSkillIdV1(skillId)) return notFound;
   const artifact = bundled ? null : await params.store.read(skillId, params.signal ? { signal: params.signal } : undefined);

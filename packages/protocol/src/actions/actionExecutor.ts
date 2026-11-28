@@ -196,7 +196,7 @@ import { MemoryWindowRequestV1Schema } from '../memory/memoryWindow.js';
 import { isWorkflowAuthoringActionId, WORKFLOW_AUTHORING_ACTION_ID } from './workflowAuthoringActionIds.js';
 import { isWorkflowHostAdmittedChildActionIdV1, isWorkflowObservationSetupChildActionV1 } from './clientDispatchV1.js';
 import { PromptDocRevisionV1Schema, PromptDocCreateActionInputV1Schema } from '../prompts/library/promptDocV2.js';
-import { PromptBundleUpdateActionInputV1Schema } from '../prompts/library/promptBundleSchemas.js';
+import { PromptBundleUpdateActionInputV1Schema } from '../prompts/library/promptBundleShapeV1.js';
 import { SKILL_ACTION_INPUT_SCHEMAS_V1, SKILL_MACHINE_ACTION_INPUT_SCHEMAS_V1 } from '../prompts/library/skills/skillActionSchemasV1.js';
 import { SkillReadInputV1Schema } from '../prompts/library/skills/skillReadV1.js';
 import { ArtifactFolderMutationResultV1Schema } from '../prompts/library/promptFolderActionSchemasV1.js';

@@ -26,7 +26,7 @@ import { WidgetDefinitionV1StoredSchema } from '../widgets/widgetDefinitionV1.js
 import { PromptDocArtifactHeaderV1Schema, PromptDocBodyV1Schema } from '../prompts/library/promptDocV2.js';
 import { MemoryDocArtifactHeaderV1StoredSchema, MemoryDocBodyV1StoredSchema } from '../prompts/library/memoryDocV1.js';
 import { PromptBundleBodyV1Schema, PromptBundleSchemaIdV1Schema,
-  validatePromptBundleBodyV1AgainstSchemaId } from '../prompts/library/promptBundleSchemas.js';
+  validatePromptBundleBodyV1AgainstSchemaId } from '../prompts/library/promptBundleShapeV1.js';
 
 import { REVIEW_ARTIFACT_KIND_V1, ReviewArtifactHeaderV1Schema, ReviewArtifactBodyV1Schema } from '../reviews/reviewArtifactV1.js';
 

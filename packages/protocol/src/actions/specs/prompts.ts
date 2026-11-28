@@ -2,7 +2,7 @@ import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ArtifactSavedByV1Schema } from '../../artifacts/artifactBinaryV1.js';
 import { PromptDocRevisionV1Schema, PromptDocCreateActionInputV1Schema, PromptDocReadResultV1Schema } from '../../prompts/library/promptDocV2.js';
-import { PromptBundleUpdateActionInputV1Schema } from '../../prompts/library/promptBundleSchemas.js';
+import { PromptBundleUpdateActionInputV1Schema } from '../../prompts/library/promptBundleShapeV1.js';
 import { PromptLibrarySaveOrganizationFieldsV1, isPromptLibrarySaveFolderAssignmentV1 } from '../../prompts/library/promptFolderActionSchemasV1.js';
 import { PromptLibraryStackUpdateInputV1Schema, PromptLibraryStackUpdateResultV1Schema } from '../../prompts/library/promptStacksV1.js';
 import { readRecord } from '../../inputs/inputRecords.js';

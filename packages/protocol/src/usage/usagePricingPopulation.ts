@@ -1,6 +1,6 @@
 import type { UsageAnalyticsContribution, UsageObservationCost, UsageObservationTokens, UsagePricingPopulation } from './usageAnalyticsContracts.js';
 import { addUsageCost, aggregateUsageContributionCosts, addUsageMeasuredTokens, createUsageCostAccumulator, createUsageCostPartitionAccumulator, addUsageTokens, createEmptyUsageCost, resolveUsageContributionCosts, selectResolvedUsageCost, usageCostAggregationBasis, type AggregatedUsageCost } from './usageAggregation.js';
-import { createUsageModelCostEstimator, priceUsageObservation } from './usageCost.js';
+import { createUsageModelCostEstimator, priceUsageObservation } from './usageCostProjection.js';
 import type { UsagePricingReuse } from './usagePricingReuse.js';
 import { hasUnresolvedUsageReportedTotalScope, resolveUsageCostBasis, resolveUsageCostFacts, serializeUsageCostBasis, type UsageCostMode } from './usageCostFacts.js';
 import { createUsageSourceCostFacts } from './usageCostFactTotals.js';

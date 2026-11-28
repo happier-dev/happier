@@ -151,6 +151,11 @@
       "types": "./dist/session/state/bindings/metadataKeys.d.ts",
       "default": "./dist/session/state/bindings/metadataKeys.js"
     },
+    "./runtime/identity/routing": {
+      "happier-source": "./src/agentRoutingIdentity.ts",
+      "types": "./dist/agentRoutingIdentity.d.ts",
+      "default": "./dist/agentRoutingIdentity.js"
+    },
     "./runtime/identity/resolveAgentIdFromSessionMetadata": {
       "happier-source": "./src/resolveAgentIdFromSessionMetadata.ts",
       "types": "./dist/resolveAgentIdFromSessionMetadata.d.ts",

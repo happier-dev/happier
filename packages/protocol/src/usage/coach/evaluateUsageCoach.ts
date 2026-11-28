@@ -1,7 +1,7 @@
 import type { UsageCoachSuppressionStateV1 } from './coachActions.js';
 import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDigest.js';
 import { selectLatestUsageMcpBindingWindows } from './usageMcpBindingUsage.js';
-import { resolveUsageCostBasis, createUsageModelCostEstimator } from '../usageCost.js';
+import { resolveUsageCostBasis, createUsageModelCostEstimator } from '../usageCostProjection.js';
 import type { UsageModelPriceCatalog } from '../usageModelPriceSchemas.js';
 import { LITELLM_MODEL_PRICE_URL } from '../usageModelPriceSchemas.js';
 import { COACH_VENDOR_FACTS as facts, COACH_RESEARCH_SOURCES as research } from './coachVendorFacts.js';

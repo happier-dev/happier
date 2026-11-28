@@ -1,6 +1,6 @@
 import { decodeBase64 } from '../../crypto/base64.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
-import { PromptBundleArtifactHeaderV1Schema, PromptBundleBodyV1Schema, validatePromptBundleBodyV1AgainstSchemaId } from './promptBundleSchemas.js';
+import { PromptBundleArtifactHeaderV1Schema, PromptBundleBodyV1Schema, validatePromptBundleBodyV1AgainstSchemaId } from './promptBundleShapeV1.js';
 import { PromptDocArtifactHeaderV1Schema, PromptDocBodyV1Schema } from './promptDocV2.js';
 import { MemoryDocArtifactHeaderV1StoredSchema, MemoryDocBodyV1StoredSchema, renderMemoryDocV1 } from './memoryDocV1.js';
 import type { PromptStackEntryV1, PromptStacksV1 } from './promptStacksV1.js';

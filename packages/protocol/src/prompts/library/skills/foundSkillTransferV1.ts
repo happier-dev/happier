@@ -3,7 +3,7 @@ import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { AgentIdV1Schema } from '../../../agents/agentIdV1.js';
 import { SkillFileInputV1Schema } from './skillActionSchemasV1.js';
 import { readCanonicalPaddedBase64DecodedLength } from '../../../crypto/base64.js';
-import { validatePromptBundleBodyV1AgainstSchemaId } from '../promptBundleSchemas.js';
+import { validatePromptBundleBodyV1AgainstSchemaId } from '../promptBundleShapeV1.js';
 
 /** Found identifies the skill directory returned by the native-root scanner. */
 export const FoundSkillDownloadRequestV1Schema = lazyZodSchema(() => z.strictObject({ path: z.string().check(z.minLength(1)) }));

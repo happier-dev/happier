@@ -3,7 +3,7 @@ import type {
   CatalogAgentLookupId,
 } from './types';
 import type { ConnectedAccountServiceKey, ConnectedServiceId, PluginAgentContributionV2 } from '@happier-dev/protocol';
-import { resolveAgentIdFromSessionMetadata, type AgentStateRequestCoverageOptions } from '@happier-dev/agents';
+import { resolveAgentIdFromSessionMetadata, type AgentStateRequestCoverageOptions } from '@happier-dev/agents/runtime/identity/resolveAgentIdFromSessionMetadata';
 import { readAgentCatalogSnapshot } from './snapshot';
 import { readHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 

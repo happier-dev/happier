@@ -1,7 +1,7 @@
 import type { PromptArtifactRefV1 } from '../promptArtifactRefsV1.js';
 import type { PromptStackEntryV1 } from '../promptStacksV1.js';
 import { isPromptStackSystemAppendPlacementV1 } from '../promptPlacementV1.js';
-import { PromptBundleArtifactHeaderV1Schema } from '../promptBundleSchemas.js';
+import { PromptBundleArtifactHeaderV1Schema } from '../promptBundleShapeV1.js';
 import { MIGRATED_STACK_RULE_ID_PREFIX_V1, reachRuleKeyV1 } from '../../../reach/reachRulesChangeV1.js';
 import type { SkillRuleV1 } from '../../../reach/reachRuleV1.js';
 import type { SkillRulesRecordV1 } from '../promptLibrarySchemasV1.js';

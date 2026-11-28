@@ -20,7 +20,7 @@ import { createUsageCoachDigestSuggestion } from './coach/coachDigestSuggestion.
 import { UsageCoachEvaluationSchema } from './coach/coachFinding.js';
 import { QualifiedConnectedAccountGroupRefSchema } from '../connect/qualifiedConnectedAccountProjectionsV4.js';
 import { ConnectedServicePoolSelectionGetResponseV1Schema } from '../connect/connectedServicePoolSelection.js';
-import { createUsagePricingReuse, projectUsageAnalyticsSummary, repriceUsageAnalyticsResponse, type UsagePricingReuse, type UsagePricingReuseSource } from './usageCost.js';
+import { createUsagePricingReuse, projectUsageAnalyticsSummary, repriceUsageAnalyticsResponse, type UsagePricingReuse, type UsagePricingReuseSource } from './usageCostProjection.js';
 import type { UsageModelPriceCatalog, UsageModelPriceOverridesV1 } from './usageModelPriceCatalog.js';
 import { projectUsagePlanInsights, UsagePlanInsightsSchema } from './usagePlanInsights.js';
 import { hasSameUsageQueryWorkEvidenceMembership } from './usageWorkEvidence.js';

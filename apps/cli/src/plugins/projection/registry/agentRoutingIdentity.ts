@@ -8,7 +8,7 @@ export {
     indexAgentRoutingIdsByContributionIdentity,
     readAgentRoutingIdForContributionIdentity,
     resolveAgentRoutingId,
-} from '@happier-dev/agents';
+} from '@happier-dev/agents/runtime/identity/routing';
 
 /**
  * Resolves the host routing id for one contributed Agent.

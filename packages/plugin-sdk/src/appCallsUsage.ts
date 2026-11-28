@@ -1,6 +1,6 @@
 import type { UsageAnalyticsBreakdownEntry, UsageAnalyticsContribution, UsageAnalyticsQueryResponse, UsageAnalyticsSeriesBucket, UsageAnalyticsTotals, UsageObservationTokens } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { addUsageMeasuredTokens, aggregateUsageCosts, createEmptyUsageCost, createEmptyUsageTokens } from '@happier-dev/protocol/usage/usageAggregation';
-import { repriceUsageAnalyticsResponse } from '@happier-dev/protocol/usage/usageCost';
+import { repriceUsageAnalyticsResponse } from '@happier-dev/protocol/usage/usageCostProjection';
 import { resolveUsageCostBasis, type UsageCostMode } from '@happier-dev/protocol/usage/usageCostFacts';
 import { buildUsageBreakdownList } from '@happier-dev/protocol/usage/usageLeaderProjection';
 import type { UsageModelPriceCatalog, UsageModelPriceOverridesV1 } from '@happier-dev/protocol/usage/usageModelPriceSchemas';

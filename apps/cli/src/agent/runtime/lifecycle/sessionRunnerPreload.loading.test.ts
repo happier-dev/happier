@@ -16,13 +16,23 @@ it('warms the Session runner and loads its attach owner without loading the turn
     const script = [
       "import { registerHooks } from 'node:module';",
       'let turnLifecycleLoaded = false;',
+      'const deferredLoaded = new Set();',
+      'const deferredFiles = ' + JSON.stringify({
+        'Agents barrel': '/packages/agents/src/index.ts',
+        'built-in skill content': '/prompts/library/skills/hatchPetSkillV1.ts',
+        'model pricing snapshot': '/usage/usageModelPriceSnapshot.json',
+      }) + ';',
       'registerHooks({ load(url, context, next) {',
       "  if (url.endsWith('/agent/runtime/session/loop/lifecycle.ts')) turnLifecycleLoaded = true;",
+      '  for (const [name, path] of Object.entries(deferredFiles)) {',
+      '    if (url.endsWith(path)) deferredLoaded.add(name);',
+      '  }',
       '  return next(url, context);',
       '}});',
       'const { preloadSessionRunner } = await import(' + JSON.stringify(preload.href) + ');',
       'await preloadSessionRunner();',
       "console.log('hold: turnLifecycleLoaded=' + turnLifecycleLoaded);",
+      "console.log('hold: deferredLoaded=' + JSON.stringify([...deferredLoaded].sort()));",
       'await import(' + JSON.stringify(runtime.href) + ');',
       "console.log('attach: turnLifecycleLoaded=' + turnLifecycleLoaded);",
     ].join('\n');
@@ -36,5 +46,6 @@ it('warms the Session runner and loads its attach owner without loading the turn
       HAPPIER_SERVER_URL: 'https://runner.test.invalid', TSX_TSCONFIG_PATH: resolve(repo, 'apps/cli/tsconfig.json') } });
     expect(stdout).toContain('hold: turnLifecycleLoaded=false\n');
     expect(stdout).toContain('attach: turnLifecycleLoaded=false\n');
+    expect(stdout.match(/^hold: deferredLoaded=(.+)$/m)?.[1]).toBe('[]');
   });
 }, 120_000);
