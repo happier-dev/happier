@@ -1,3 +1,4 @@
+import { paneGeometryDefaults, readPaneGeometry, writePaneGeometry } from '@/sync/domains/state/paneGeometryUiState';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -49,13 +50,15 @@ function hostProps(): React.ComponentProps<typeof MultiPaneHostWithBottom> {
     // Query the real layout host through the component-typed renderer boundary.
     return currentScreen.findByType<typeof MultiPaneHostWithBottom>(MultiPaneHostWithBottom).props;
 }
-function useSettings(settings: Partial<ReturnType<typeof storage.getState>['localSettings']>) {
-    storage.setState({ localSettings: { ...storage.getState().localSettings, uiMultiPanePanelsEnabled: true, ...settings } });
+function setPaneFixture(widths: Partial<Record<'detailsPaneWidthPx' | 'rightPaneWidthPx', number>>) {
+    storage.setState({ localSettings: { ...storage.getState().localSettings, uiMultiPanePanelsEnabled: true } });
+    writePaneGeometry('detailsPaneWidthPx', widths.detailsPaneWidthPx ?? paneGeometryDefaults.detailsPaneWidthPx);
+    writePaneGeometry('rightPaneWidthPx', widths.rightPaneWidthPx ?? paneGeometryDefaults.rightPaneWidthPx);
 }
 
 describe('DetailsPaneHost', () => {
     it('opens a tabless details pane with its header, and closes it when the destination clears the selection', async () => {
-        useSettings({ detailsPaneWidthPx: 520 });
+        setPaneFixture({ detailsPaneWidthPx: 520 });
         const onClose = vi.fn();
         const screen = await renderScreen((<DetailsPaneHost
             main={<div />}
@@ -81,7 +84,7 @@ describe('DetailsPaneHost', () => {
     });
 
     it('never squeezes the main content below the minimum the destination declares: it clamps, then overlays', async () => {
-        useSettings({ detailsPaneWidthPx: 520 });
+        setPaneFixture({ detailsPaneWidthPx: 520 });
         const details = { content: React.createElement('PluginDetailStub') };
 
         // 1200 − 520 leaves 680 for main: enough for the canonical minimum…
@@ -101,7 +104,7 @@ describe('DetailsPaneHost', () => {
     });
 
     it('persists a fixed resized width for every details pane', async () => {
-        useSettings({ detailsPaneWidthPx: 520 });
+        setPaneFixture({ detailsPaneWidthPx: 520 });
         await renderScreen((<DetailsPaneHost
             main={<div />}
             details={{ content: React.createElement('PluginDetailStub') }}
@@ -110,13 +113,13 @@ describe('DetailsPaneHost', () => {
 
         await act(async () => { hostProps().onCommitDetailsDockWidthPx?.(610); });
         // (The pane provider persists its own scopes too; only the width writes are this contract.)
-        expect(storage.getState().localSettings).toMatchObject({ detailsPaneWidthPx: 610 });
+        expect(readPaneGeometry('detailsPaneWidthPx')).toBe(610);
     });
 
     it('budgets the docked pane from its own container, so the shell column beside it is a fixed claim', async () => {
         // Window 1440, but the shell's rail and contextual column take 450 of it: the page gets 990.
         state.windowWidthPx = 1440;
-        useSettings({ detailsPaneWidthPx: 400 });
+        setPaneFixture({ detailsPaneWidthPx: 400 });
         const screen = await renderScreen((<DetailsPaneHost
             main={<div />}
             details={{ content: React.createElement('PluginDetailStub') }}
@@ -134,7 +137,7 @@ describe('DetailsPaneHost', () => {
 
     it('never docks wider than main allows while dragging: pulled past the threshold it becomes an overlay and stays one', async () => {
         state.windowWidthPx = 990;
-        useSettings({ detailsPaneWidthPx: 400 });
+        setPaneFixture({ detailsPaneWidthPx: 400 });
         await renderScreen((<DetailsPaneHost
             main={<div />}
             details={{ content: React.createElement('PluginDetailStub') }}
@@ -161,11 +164,11 @@ describe('DetailsPaneHost', () => {
         await act(async () => {
             hostProps().onDragDetailsDockWidthPx?.(null, null);
         });
-        expect(storage.getState().localSettings.detailsPaneWidthPx).toBe(600);
+        expect(readPaneGeometry('detailsPaneWidthPx')).toBe(600);
     });
 
     it("stands a destination's details and the App's right sidebar in one pane host", async () => {
-        useSettings({ detailsPaneWidthPx: 420, rightPaneWidthPx: 360 });
+        setPaneFixture({ detailsPaneWidthPx: 420, rightPaneWidthPx: 360 });
         await renderScreen(<DetailsPaneHost
             main={<div />}
             details={{ content: React.createElement('PluginDetailStub') }}
@@ -183,7 +186,7 @@ describe('DetailsPaneHost', () => {
     });
 
     it('reports no side pane on phones so the destination pushes a page instead', async () => {
-        useSettings({});
+        setPaneFixture({});
         const { useDetailsPaneAvailable } = await import('./detailsPaneAvailability');
         const seen: boolean[] = [];
         const Probe = () => { seen.push(useDetailsPaneAvailable()); return null; };

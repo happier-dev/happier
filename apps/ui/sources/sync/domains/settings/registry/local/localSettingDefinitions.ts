@@ -8,7 +8,6 @@ import {
     HAPPIER_SPINNER_SPEED_IDS,
     HAPPIER_SPINNER_STYLE_IDS,
 } from '@happier-dev/plugin-ui/presentation';
-import { HAPPIER_SHELL_COLUMN_DEFAULT_WIDTH_PX } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import { z } from 'zod/mini';
 import { ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS } from './localSettingDefinitions.activitySurfaces';
 import { LAYOUT_LOCAL_SETTING_DEFINITIONS } from './localSettingDefinitions.layout';
@@ -238,24 +237,12 @@ const localSettingInputs = {
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
     },
-    sidebarWidthPx: {
-        schema: z.number(),
-        default: HAPPIER_SHELL_COLUMN_DEFAULT_WIDTH_PX,
-        description: 'Preferred sidebar width in px',
-        storageScope: 'local',
-    },
     settingsNavSidebarEnabled: {
         schema: z.boolean(),
         default: true,
         description: 'Enable the settings navigation sidebar on tablet/desktop layouts',
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
-    },
-    settingsNavSidebarWidthPx: {
-        schema: z.number(),
-        default: 230,
-        description: 'Preferred settings navigation sidebar width in px',
-        storageScope: 'local',
     },
     uiMultiPanePanelsEnabled: {
         schema: z.boolean(),

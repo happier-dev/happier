@@ -105,49 +105,12 @@ describe('localSettingsParse', () => {
         });
         expect(localSettingsParse(applyLocalSettings(localSettingsParse({}), { filesTrackAgentEdits: true })).filesTrackAgentEdits).toBe(true);
     });
-    it('keeps arrangement and collection geometry device-local and tolerates an unknown arrangement', () => {
-        expect(localSettingsParse({})).toMatchObject({ paneArrangement: 'session', sessionColumnWidthPx: 440, collectionRailWidthsV1: {} });
-        const parsed = localSettingsParse({ paneArrangement: 'editor', sessionColumnWidthPx: 510, collectionRailWidthsV1: { machines: 310 } });
-        expect(localSettingsParse(parsed)).toMatchObject({ paneArrangement: 'editor', sessionColumnWidthPx: 510, collectionRailWidthsV1: { machines: 310 } });
+    it('keeps pane arrangement device-local and tolerates an unknown arrangement', () => {
+        expect(localSettingsParse({})).toMatchObject({ paneArrangement: 'session' });
+        expect(localSettingsParse({ paneArrangement: 'editor' })).toMatchObject({ paneArrangement: 'editor' });
         expect(localSettingsParse({ paneArrangement: 'future', sidebarCollapsed: true })).toMatchObject({ paneArrangement: 'session', sidebarCollapsed: true });
     });
 
-    it.each([
-        ['sidebarWidthPx', 'sidebarWidthBasisPx', [320], 1200],
-        ['rightPaneWidthPx', 'rightPaneWidthBasisPx', [360, 340], 1200],
-        ['detailsPaneWidthPx', 'detailsPaneWidthBasisPx', [520], 1200],
-        ['bottomPaneHeightPx', 'bottomPaneHeightBasisPx', [320], 900],
-        ['settingsNavSidebarWidthPx', 'settingsNavSidebarWidthBasisPx', [230, 280], 1200],
-    ] as const)('migrates scaled %s preferences once without rewriting chosen pixels', (pxKey, basisKey, oldDefaults, oldBasis) => {
-        for (const oldDefault of oldDefaults) {
-            const input = { [pxKey]: oldDefault, [basisKey]: oldBasis, sidebarCollapsed: true };
-            const parsed = localSettingsParse(input);
-            expect(parsed[pxKey]).toBe(localSettingsDefaults[pxKey]);
-            expect(parsed).not.toHaveProperty(basisKey);
-            expect(parsed.sidebarCollapsed).toBe(true);
-            expect(input).toHaveProperty(basisKey, oldBasis);
-            // A record without a basis was written as literal pixels, even when equal to an old default.
-            expect(localSettingsParse({ [pxKey]: oldDefault })[pxKey]).toBe(oldDefault);
-            expect(localSettingsParse({ [pxKey]: oldDefault, [basisKey]: oldBasis * 2 })[pxKey]).toBe(oldDefault);
-        }
-        const chosen = localSettingsParse({ [pxKey]: 777, [basisKey]: oldBasis * 2 });
-        expect(chosen[pxKey]).toBe(777);
-        expect(chosen).not.toHaveProperty(basisKey);
-        expect(localSettingsParse(chosen)[pxKey]).toBe(777);
-        expect(localSettingsParse({ [basisKey]: oldBasis })).not.toHaveProperty(basisKey);
-    });
-
-    it('preserves the 0.2 sidebar width the person saw at a larger basis', () => {
-        expect(localSettingsParse({ sidebarWidthPx: 320, sidebarWidthBasisPx: 1200 }).sidebarWidthPx).toBe(localSettingsDefaults.sidebarWidthPx);
-        expect(localSettingsParse({ sidebarWidthPx: 512, sidebarWidthBasisPx: 1920 }).sidebarWidthPx).toBe(512);
-    });
-    // Lab calm-shell draws the shell column at 320 (PRIMITIVES-DESIGN measured 272 live; UI refinements 12:50Z). Saving any
-    // local setting writes the whole record, so a stored 272 is the former default, not a width the person chose.
-    it('opens the shell column at the lab\'s 320 and keeps any width a person set', () => {
-        expect(localSettingsParse({}).sidebarWidthPx).toBe(320);
-        expect(localSettingsParse({ sidebarWidthPx: 272, sidebarCollapsed: true })).toMatchObject({ sidebarWidthPx: 320, sidebarCollapsed: true });
-        for (const chosen of [240, 300, 333, 480]) expect(localSettingsParse({ sidebarWidthPx: chosen }).sidebarWidthPx).toBe(chosen);
-    });
     it('defaults haptics on and keeps its opt-out device-local without coupling visual preferences', () => {
         expect(localSettingsParse({})).toMatchObject({ hapticsEnabled: true });
         const parsed = localSettingsParse({ hapticsEnabled: false, uiBackdropBlurEnabled: false, themePreference: 'dark' });
@@ -242,7 +205,6 @@ describe('localSettingsParse', () => {
         expect(parsed.uiContentWidthMode).toBe('compact');
         expect(parsed.uiItemDensity).toBe('cozy');
         expect(parsed.detailsPaneTabsBehavior).toBe('preview');
-        expect(parsed.settingsNavSidebarWidthPx).toBe(230);
         expect(parsed).not.toHaveProperty('sessionsListStorageFilter');
         expect(parsed.activityBadgesEnabled).toBe(true);
         expect(parsed.activityBadgeShowUnread).toBe(true);
@@ -321,9 +283,9 @@ describe('localSettingsParse', () => {
                 enabled: true,
             },
         });
-        expect(typeof (parsed as any).sidebarWidthPx).toBe('number');
+        expect(parsed).not.toHaveProperty('sidebarWidthPx');
         expect(parsed).not.toHaveProperty('sidebarWidthBasisPx');
-        expect((parsed as any).bottomPaneHeightPx).toBe(320);
+        expect(parsed).not.toHaveProperty('bottomPaneHeightPx');
         expect(parsed).not.toHaveProperty('bottomPaneHeightBasisPx');
         expect((parsed as any).terminalRendererPreference).toBe('auto');
         expect(parsed).not.toHaveProperty('mobileWorkspaceExperienceV1');
@@ -526,14 +488,6 @@ describe('localSettingsParse', () => {
                 activeProfileIds: { light: 'oversized-profile', dark: 'oversized-profile' },
             },
         });
-    });
-
-    it('migrates legacy settings sidebar width defaults to the new fixed default', () => {
-        const parsed = localSettingsParse({
-            settingsNavSidebarWidthPx: 280,
-            settingsNavSidebarWidthBasisPx: 1200,
-        });
-        expect(parsed.settingsNavSidebarWidthPx).toBe(230);
     });
 
     it('migrates legacy uiFontSize to uiFontScale when uiFontScale is missing', () => {

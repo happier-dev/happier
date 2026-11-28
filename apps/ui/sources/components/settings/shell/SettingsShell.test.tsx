@@ -1,3 +1,4 @@
+import { paneGeometryDefaults, writePaneGeometry } from '@/sync/domains/state/paneGeometryUiState';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -12,7 +13,6 @@ import { PageHeader } from '@/components/ui/layout/PageHeader';
 const windowDimsState = vi.hoisted(() => ({ width: 1600, height: 900 }));
 const localSettingsState = vi.hoisted(() => ({
     values: new Map<string, unknown>([
-        ['settingsNavSidebarWidthPx', 230],
         ['settingsNavSidebarEnabled', true],
     ]),
 }));
@@ -78,7 +78,7 @@ vi.mock('expo-clipboard', () => ({ setStringAsync: async () => {} }));
 
 describe('SettingsShell', () => {
     it('keeps a chosen nav width in pixels on wide windows', async () => {
-        localSettingsState.values.set('settingsNavSidebarWidthPx', 300);
+        writePaneGeometry('settingsNavSidebarWidthPx', 300);
         windowDimsState.width = 2560;
         const screen = await renderScreen(<SettingsShell>{React.createElement('Child', { testID: 'child' })}</SettingsShell>);
         expect(screen.findByType('ResizableDockedPane').props.widthPx).toBe(300);
@@ -86,7 +86,7 @@ describe('SettingsShell', () => {
     afterEach(() => {
         windowDimsState.width = 1600;
         windowDimsState.height = 900;
-        localSettingsState.values.set('settingsNavSidebarWidthPx', 230);
+        writePaneGeometry('settingsNavSidebarWidthPx', 230);
         localSettingsState.values.set('settingsNavSidebarEnabled', true);
     });
 
@@ -138,7 +138,7 @@ describe('SettingsShell', () => {
     });
 
     it('uses the default sidebar width when the local width setting is missing', async () => {
-        localSettingsState.values.delete('settingsNavSidebarWidthPx');
+        writePaneGeometry('settingsNavSidebarWidthPx', paneGeometryDefaults.settingsNavSidebarWidthPx);
         windowDimsState.width = 1600;
         const screen = await renderScreen(
             React.createElement(SettingsShell, null, React.createElement('Child', { testID: 'child' }))

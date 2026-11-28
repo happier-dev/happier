@@ -1,3 +1,4 @@
+import { writePaneGeometry } from '@/sync/domains/state/paneGeometryUiState';
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
@@ -11,7 +12,10 @@ vi.mock('react-native', async () => {
 installDisconnectedServerSocketBoundary();
 const { storage } = await import('@/sync/domains/state/storageStore');
 const initialStorage = storage.getState();
-beforeEach(() => storage.getState().applyLocalSettings({ paneArrangement: 'session', uiMultiPanePanelsEnabled: true, rightPaneWidthPx: 360 }, { source: 'ui' }));
+beforeEach(() => {
+    storage.getState().applyLocalSettings({ paneArrangement: 'session', uiMultiPanePanelsEnabled: true }, { source: 'ui' });
+    writePaneGeometry('rightPaneWidthPx', 360);
+});
 afterEach(async () => { await standardCleanup(); storage.setState(initialStorage, true); width = 1200; });
 const { AppPaneProvider, useAppPaneContext } = await import('./AppPaneProvider');
 const { AppPaneScopeHost } = await import('./AppPaneScopeHost');

@@ -1,3 +1,4 @@
+import { writePaneGeometry } from '@/sync/domains/state/paneGeometryUiState';
 import * as React from 'react';
 
 import { describe, expect, it, vi } from 'vitest';
@@ -10,15 +11,6 @@ import { DEFAULT_RIGHT_PREFERRED_PX } from '@/components/ui/panels/paneBreakpoin
 
 let lastProps: any = null;
 let mockedWindowWidthPx = 835;
-let mockedSettings: Record<string, any> = {
-    uiMultiPanePanelsEnabled: true,
-    rightPaneWidthPx: 520,
-    rightPaneWidthBasisPx: 835,
-    detailsPaneWidthPx: 520,
-    detailsPaneWidthBasisPx: 835,
-    bottomPaneHeightPx: 320,
-    bottomPaneHeightBasisPx: 900,
-};
 const rightPaneBuiltinAdapter = {
     destinationIds: ['right'],
     defaultDestinationId: 'right',
@@ -33,8 +25,7 @@ let mockedScopeOpen = { right: true, details: false };
 
 installAppPaneScopeHostCommonModuleMocks({
     getDimensions: () => ({ width: mockedWindowWidthPx, height: 800 }),
-    getLocalSetting: (key: string) =>
-        Object.prototype.hasOwnProperty.call(mockedSettings, key) ? mockedSettings[key] : null,
+    getLocalSetting: key => key === 'uiMultiPanePanelsEnabled' ? true : null,
 });
 
 vi.mock('@/components/ui/panels/MultiPaneHostWithBottom', () => ({
@@ -71,15 +62,9 @@ describe('AppPaneScopeHost (docked max widths)', () => {
         const { AppPaneScopeHost } = await import('./AppPaneScopeHost');
         lastProps = null;
         mockedWindowWidthPx = 835;
-        mockedSettings = {
-            uiMultiPanePanelsEnabled: true,
-            rightPaneWidthPx: 520,
-            rightPaneWidthBasisPx: 835,
-            detailsPaneWidthPx: 520,
-            detailsPaneWidthBasisPx: 835,
-            bottomPaneHeightPx: 320,
-            bottomPaneHeightBasisPx: 900,
-        };
+        writePaneGeometry('rightPaneWidthPx', 520);
+        writePaneGeometry('detailsPaneWidthPx', 520);
+        writePaneGeometry('bottomPaneHeightPx', 320);
 
         await renderScreen(<AppPaneScopeHost
                     scopeId="scope1"
@@ -103,15 +88,9 @@ describe('AppPaneScopeHost (docked max widths)', () => {
         const render = async (windowWidthPx: number) => {
             lastProps = null;
             mockedWindowWidthPx = windowWidthPx;
-            mockedSettings = {
-                uiMultiPanePanelsEnabled: true,
-                rightPaneWidthPx: 320,
-                rightPaneWidthBasisPx: windowWidthPx,
-                detailsPaneWidthPx: 520,
-                detailsPaneWidthBasisPx: windowWidthPx,
-                bottomPaneHeightPx: 320,
-                bottomPaneHeightBasisPx: 900,
-            };
+            writePaneGeometry('rightPaneWidthPx', 320);
+            writePaneGeometry('detailsPaneWidthPx', 520);
+            writePaneGeometry('bottomPaneHeightPx', 320);
             await renderScreen(<AppPaneScopeHost
                         scopeId="scope1"
                         main={<div />}
@@ -139,15 +118,9 @@ describe('AppPaneScopeHost (docked max widths)', () => {
         const { AppPaneScopeHost } = await import('./AppPaneScopeHost');
         lastProps = null;
         mockedWindowWidthPx = 1800;
-        mockedSettings = {
-            uiMultiPanePanelsEnabled: true,
-            rightPaneWidthPx: 520,
-            rightPaneWidthBasisPx: 1800,
-            detailsPaneWidthPx: 520,
-            detailsPaneWidthBasisPx: 1800,
-            bottomPaneHeightPx: 320,
-            bottomPaneHeightBasisPx: 900,
-        };
+        writePaneGeometry('rightPaneWidthPx', 520);
+        writePaneGeometry('detailsPaneWidthPx', 520);
+        writePaneGeometry('bottomPaneHeightPx', 320);
 
         await renderScreen(<AppPaneScopeHost
                     scopeId="scope1"
@@ -168,15 +141,9 @@ describe('AppPaneScopeHost (docked max widths)', () => {
         const render = async (windowWidthPx: number, rightPaneWidthPx: number) => {
             lastProps = null;
             mockedWindowWidthPx = windowWidthPx;
-            mockedSettings = {
-                uiMultiPanePanelsEnabled: true,
-                rightPaneWidthPx,
-                rightPaneWidthBasisPx: 1200,
-                detailsPaneWidthPx: 520,
-                detailsPaneWidthBasisPx: 1200,
-                bottomPaneHeightPx: 320,
-                bottomPaneHeightBasisPx: 900,
-            };
+            writePaneGeometry('rightPaneWidthPx', rightPaneWidthPx);
+            writePaneGeometry('detailsPaneWidthPx', 520);
+            writePaneGeometry('bottomPaneHeightPx', 320);
             await renderScreen(<AppPaneScopeHost scopeId="scope1" main={<div />} rightPaneBuiltinAdapter={rightPaneBuiltinAdapter} />);
             return lastProps.rightDockWidthPx as number;
         };

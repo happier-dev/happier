@@ -4,12 +4,60 @@ import { clearPersistenceStorage, getPersistenceStorage } from './persistenceSto
 import { loadLocalSettings, saveLocalSettings } from './settingsPersistence';
 import { collapsedGroupsState, removeCollapsedGroupKey, replaceCollapsedGroupKeys } from './disclosureUiState';
 import { UiStatePersistenceError } from './persistentUiState';
+import { paneGeometryDefaults, readPaneGeometry, writePaneGeometry } from './paneGeometryUiState';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 
 afterEach(() => { vi.restoreAllMocks(); clearPersistenceStorage(); });
 
 
 describe('retained workspace settings migration', () => {
+    it('imports a chosen pane width from predecessor Settings once and keeps the newer UI-state value', () => {
+        const device = getPersistenceStorage();
+        const destination = 'ui-state:pane-geometry-v1:sidebarWidthPx';
+        device.set('local-settings', JSON.stringify({ sidebarWidthPx: 410, sidebarWidthBasisPx: 1200, themePreference: 'dark' }));
+
+        expect(loadLocalSettings().themePreference).toBe('dark');
+        expect(device.getString(destination)).toBe('410');
+        expect(JSON.parse(device.getString('local-settings')!)).toEqual({ themePreference: 'dark' });
+
+        device.set(destination, '480');
+        device.set('local-settings', JSON.stringify({ sidebarWidthPx: 365 }));
+        loadLocalSettings();
+        expect(device.getString(destination)).toBe('480');
+        expect(JSON.parse(device.getString('local-settings')!)).toEqual({});
+    });
+
+    it.each([
+        ['sidebarWidthPx', 'sidebarWidthBasisPx', 320, 1200],
+        ['rightPaneWidthPx', 'rightPaneWidthBasisPx', 340, 1200],
+        ['detailsPaneWidthPx', 'detailsPaneWidthBasisPx', 520, 1200],
+        ['bottomPaneHeightPx', 'bottomPaneHeightBasisPx', 320, 900],
+        ['settingsNavSidebarWidthPx', 'settingsNavSidebarWidthBasisPx', 280, 1200],
+    ] as const)('imports literal %s widths and maps scaled defaults', (key, basisKey, defaultPixels, basis) => {
+        const device = getPersistenceStorage();
+        device.set('local-settings', JSON.stringify({ [key]: defaultPixels, [basisKey]: basis }));
+        loadLocalSettings();
+        expect(readPaneGeometry(key)).toBe(paneGeometryDefaults[key]);
+
+        device.set('local-settings', JSON.stringify({ [key]: defaultPixels, [basisKey]: basis * 2 }));
+        loadLocalSettings();
+        expect(readPaneGeometry(key)).toBe(defaultPixels);
+    });
+
+    it('does not touch the local Settings blob when committing a pane width', () => {
+        const device = getPersistenceStorage();
+        const settings = JSON.stringify({ themePreference: 'dark' });
+        device.set('local-settings', settings);
+        const write = vi.spyOn(device, 'set');
+        const read = vi.spyOn(device, 'getString');
+
+        writePaneGeometry('sidebarWidthPx', 425);
+        writePaneGeometry('sidebarWidthPx', 425);
+
+        expect(write.mock.calls).toEqual([['ui-state:pane-geometry-v1:sidebarWidthPx', '425']]);
+        expect(read.mock.calls.every(([key]) => key === 'ui-state:pane-geometry-v1:sidebarWidthPx')).toBe(true);
+    });
+
     it('imports the retained phone tab once without replacing a newer navigation choice', () => {
         const device = getPersistenceStorage();
         const destinationKey = 'ui-state:main-app-tab-v1:active';

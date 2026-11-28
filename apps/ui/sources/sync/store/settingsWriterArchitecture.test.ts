@@ -25,8 +25,6 @@ const ALLOWED_DIRECT_ACCOUNT_WRITE_FILES = new Set([
 ]);
 
 const ALLOWED_DIRECT_LOCAL_WRITE_FILES = new Set([
-    // Device geometry is local drag intent, deliberately outside the Settings Action catalog.
-    'components/ui/lists/collection/useCollectionRailWidth.ts',
     'hooks/server/useHomeViewSelectionSettings.ts',
     'sync/ops/actions/connectedServiceActionDeps.ts',
     'sync/ops/actions/defaultActionExecutor.ts',
@@ -38,7 +36,6 @@ const ALLOWED_DIRECT_LOCAL_WRITE_FILES = new Set([
     // declarations, so the Setting writer hooks do not apply.
     'auth/context/AuthContext.tsx',
     'components/appShell/panes/AppPaneProvider.tsx',
-    'components/appShell/panes/PaneColumnsHost.tsx',
     'components/appShell/workspace/useWorkspaceState.ts',
     'components/artifacts/ArtifactsBrowserScreen.tsx',
     'components/machines/vitals/MachineVitalsRangeBar.tsx',
@@ -51,9 +48,7 @@ const ALLOWED_DIRECT_LOCAL_WRITE_FILES = new Set([
     'components/sessions/shell/useSessionListViewState.tsx',
     'components/settings/connectedServices/ConnectedServicesSettingsView.tsx',
     'components/settings/session/SessionComposerSettingsView.tsx',
-    'components/settings/shell/SettingsShell.tsx',
     'components/terminal/embedded/EmbeddedTerminalPane.native.tsx',
-    'components/terminal/embedded/keys/terminalArrowPadState.ts',
     'components/terminal/qa/TerminalQaScreen.native.tsx',
     'sync/api/account/apiConnectedMetadataCatalog.ts',
     'sync/ops/actions/petChooseAction.ts',

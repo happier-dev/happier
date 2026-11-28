@@ -2,7 +2,6 @@ import { z } from 'zod/mini';
 
 import { SessionCompanionPreferencesV1Schema } from '@/components/sessions/companion/state/sessionCompanionPreference';
 import { StoredNavigationSurfacePlacementsV1Schema } from '../../navigationPlacement';
-import { DEFAULT_RIGHT_PREFERRED_PX, DEFAULT_SESSION_WIDTH_PX } from '@/components/ui/panels/paneBreakpoints';
 import { HAPPIER_NEEDS_YOU_HIGHLIGHTS } from '@happier-dev/plugin-ui/presentation';
 
 import { objectKeyCount } from './localSettingDefinitions.shared';
@@ -33,14 +32,6 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
     sessionListNeedsYouHighlight: {
         schema: z.catch(z.enum(HAPPIER_NEEDS_YOU_HIGHLIGHTS), 'dot'), default: 'dot',
         description: 'How sessions that need you stand out in the session list on this device', storageScope: 'local',
-    },
-    sessionColumnWidthPx: {
-        schema: z.number(), default: DEFAULT_SESSION_WIDTH_PX,
-        description: 'Preferred session column width in px', storageScope: 'local',
-    },
-    collectionRailWidthsV1: {
-        schema: z.catch(z.record(z.string(), z.number()), {}), default: {},
-        description: 'Preferred collection rail widths by navigator on this device', storageScope: 'local',
     },
     uiSurfaceFinish: {
         schema: z.catch(z.enum(['flat', 'soft']), 'soft'), default: 'soft',
@@ -74,25 +65,6 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
         description: 'Preferred max width for main content containers',
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
-    },
-    rightPaneWidthPx: {
-        schema: z.number(),
-        default: DEFAULT_RIGHT_PREFERRED_PX,
-        description: 'Preferred right pane dock width in px',
-        storageScope: 'local',
-    },
-    detailsPaneWidthPx: {
-        schema: z.number(),
-        // The editor column a person gets before they drag it (files lab FB1: a 600 px Details drawer at 1440).
-        default: 600,
-        description: 'Preferred details pane dock width in px',
-        storageScope: 'local',
-    },
-    bottomPaneHeightPx: {
-        schema: z.number(),
-        default: 320,
-        description: 'Preferred bottom pane dock height in px',
-        storageScope: 'local',
     },
     newSessionDockedWidthPx: {
         schema: z.nullable(z.number()),

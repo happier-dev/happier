@@ -2,7 +2,7 @@ import { replacePersistentUiStateForTest } from '@/dev/testkit/harness/persisten
 import 'fake-indexeddb/auto';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod/mini';
-import { getPersistenceStorage } from './persistenceStorage';
+import { getPersistenceStorage, getPersistenceStorageWebKey } from './persistenceStorage';
 import { createPersistentUiState, UiStatePersistenceError } from './persistentUiState';
 import { parseRecentWorkspaceFiles } from '@/sync/domains/workspaces/files/recentWorkspaceFiles';
 import { appendFileEditorAiSuggestionUsage, FileEditorAiSuggestionDailyUsageSchema } from '@/sync/domains/workspaces/languageIntelligence/fileEditorAiSuggestionUsage';
@@ -32,6 +32,39 @@ describe('device-local keyed UI state', () => {
             expect(observation.read()).toEqual({ 'scope:b': 'after' });
             expect(changed).toHaveBeenCalledTimes(1);
         } finally { stop(); scans.mockRestore(); }
+    });
+
+    it('refreshes keyed and aggregate readers when another webview changes one key', () => {
+        const device = getPersistenceStorage();
+        const browser = Object.assign(new EventTarget(), { localStorage: {} });
+        vi.stubGlobal('window', browser);
+        vi.stubGlobal('document', {});
+        const state = createPersistentUiState('web-widths', value => z.number().parse(value), { syncWebKeys: true });
+        const updated = vi.fn();
+        const unrelated = vi.fn();
+        const stopUpdated = state.subscribeKey('sidebar', updated);
+        const stopUnrelated = state.subscribeKey('other', unrelated);
+        try {
+            state.set('sidebar', 320);
+            expect(state.readAll()).toEqual({ sidebar: 320 });
+            updated.mockClear();
+
+            const key = 'ui-state:web-widths:sidebar';
+            device.set(key, '410');
+            browser.dispatchEvent(Object.assign(new Event('storage'), {
+                key: getPersistenceStorageWebKey(key), storageArea: browser.localStorage,
+            }));
+
+            expect(state.read('sidebar')).toBe(410);
+            expect(state.readAll()).toEqual({ sidebar: 410 });
+            expect(updated).toHaveBeenCalledTimes(1);
+            expect(unrelated).not.toHaveBeenCalled();
+        } finally {
+            stopUpdated();
+            stopUnrelated();
+            state.remove('sidebar');
+            vi.unstubAllGlobals();
+        }
     });
 
     it('persists an explicit repair even when it equals a tolerant fallback', () => {

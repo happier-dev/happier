@@ -1,3 +1,4 @@
+import { writePaneGeometry } from '@/sync/domains/state/paneGeometryUiState';
 import * as React from 'react';
 import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
@@ -814,7 +815,7 @@ describe('DesktopActivityOverlayRuntime', () => {
         expect(renders).toEqual([]); // Only unchanged bot-36 remains; membership removal mounts no leaf.
         expect(desktopHomes.requests.slice(requestsBefore)).toEqual([]);
         syncDesktopActivityOverlayMock.mockClear();
-        await act(async () => { storage.getState().applyLocalSettings({ sidebarWidthPx: 456 }); });
+        await act(async () => { writePaneGeometry('sidebarWidthPx', 456); });
         expect(syncDesktopActivityOverlayMock).not.toHaveBeenCalled();
         expect(renders).toEqual([]);
         await screen.unmount();
@@ -866,7 +867,7 @@ describe('DesktopActivityOverlayRuntime', () => {
         const buildModel = await import('../presentation/buildDesktopActivityOverlayModel');
         const buildSpy = vi.spyOn(buildModel, 'buildDesktopActivityOverlayModel');
         act(() => {
-            storage.getState().applyLocalSettings({ sidebarWidthPx: 400 }, { persist: false });
+            writePaneGeometry('sidebarWidthPx', 400);
         });
         expect(buildSpy).not.toHaveBeenCalled();
         expect(syncDesktopActivityOverlayMock).not.toHaveBeenCalled();

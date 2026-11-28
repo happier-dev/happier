@@ -87,6 +87,7 @@ hoistedState.mockPlatformOS = 'web';
 
 // Install the OS/transport boundaries before any real owner can import React Native.
 const { storage } = await import('@/sync/domains/state/storageStore');
+const { readPaneGeometry, writePaneGeometry } = await import('@/sync/domains/state/paneGeometryUiState');
 const { settingsParse } = await import('@/sync/domains/settings/settings');
 const { SIDEBAR_DOCK_MIN_WIDTH_PX } = await import('./sidebarSizing');
 const { APP_RAIL_WIDTH_PX } = await import('./appRail/appRailMetrics');
@@ -99,13 +100,13 @@ const mockLocalSettingsStore = (() => {
       return storage.getState().localSettings.sidebarCollapsed;
     },
     get sidebarWidthPx() {
-      return storage.getState().localSettings.sidebarWidthPx;
+      return readPaneGeometry('sidebarWidthPx');
     },
     setSidebarCollapsed(next: boolean) {
       storage.getState().applyLocalSettings({ sidebarCollapsed: next }, { source: 'ui' });
     },
     setSidebarWidthPx(next: number) {
-      storage.getState().applyLocalSettings({ sidebarWidthPx: next }, { source: 'ui' });
+      writePaneGeometry('sidebarWidthPx', next);
     },
     subscribe(listener: () => void) {
       return storage.subscribe(listener);

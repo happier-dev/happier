@@ -5,7 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { InlineCode } from '@/components/ui/text/InlineCode';
-import { useLocalSetting } from '@/sync/domains/state/storage';
+import { usePaneGeometry } from '@/sync/domains/state/paneGeometryUiState';
 import { resolveCliInvokerNameForCurrentApp } from '@/sync/runtime/resolvePublicReleaseRing';
 import { t } from '@/text';
 
@@ -45,7 +45,7 @@ export const SessionGettingStartedSummary = React.memo((props: SessionGettingSta
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const cliInvoker = resolveCliInvokerNameForCurrentApp();
-    const sidebarWidthPx = useLocalSetting('sidebarWidthPx');
+    const sidebarWidthPx = usePaneGeometry('sidebarWidthPx');
     const sidebarMaxWidthStyle = useLayoutMaxWidthStyle();
     const primaryPaneMaxWidth = typeof sidebarWidthPx === 'number' && sidebarWidthPx > 0 ? sidebarWidthPx : 320;
     const containerStyle = props.surface === 'sidebar'

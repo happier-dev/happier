@@ -19,6 +19,7 @@ const { TerminalArrowPad } = await import('./TerminalArrowPad');
 const area = { width: 390, height: 600 };
 const portraitKey = 'ui-state:terminal-arrow-pad-tucked-v1:portrait';
 const landscapeKey = 'ui-state:terminal-arrow-pad-tucked-v1:landscape';
+const portraitPlacementKey = 'ui-state:terminal-arrow-pad-placement-v1:portrait';
 
 beforeEach(async () => {
     viewport.width = 390;
@@ -87,9 +88,9 @@ describe('terminal arrow pad device state', () => {
         await act(async () => pad.props.onResponderRelease(event(pageX)));
         expect(screen.findByTestId('pad-arrow-pad-dot')).not.toBeNull();
         expect(writes.mock.calls.filter(([key]) => key === portraitKey)).toHaveLength(1);
-        expect(writes.mock.calls.filter(([key]) => !key.startsWith('ui-state:'))).toHaveLength(1);
+        expect(writes.mock.calls.filter(([key]) => key === 'local-settings')).toHaveLength(0);
+        expect(JSON.parse(device.getString(portraitPlacementKey)!)).toMatchObject({ side: 'right' });
         expect(device.getString(portraitKey)).toBe('true');
-        expect(getStorage().getState().localSettings.terminalArrowPadPlacement.portrait?.tucked).toBe(false);
         await screen.unmount();
     });
 });

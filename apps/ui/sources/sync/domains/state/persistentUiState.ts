@@ -1,5 +1,6 @@
 import { useCallback, useSyncExternalStore } from 'react';
-import { getPersistenceStorage, subscribePersistenceStorageCleared } from './persistenceStorage';
+import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
+import { getPersistenceStorage, getPersistenceStorageWebKey, subscribePersistenceStorageCleared } from './persistenceStorage';
 
 /** Device storage and retained-data admission refusals are recoverable. */
 export class UiStatePersistenceError extends Error {
@@ -10,7 +11,7 @@ export class UiStatePersistenceError extends Error {
 }
 
 /** Keyed projections over the existing device KV owner, never another settings blob. */
-export function createPersistentUiState<T>(namespace: string, parse: (value: unknown) => T) {
+export function createPersistentUiState<T>(namespace: string, parse: (value: unknown) => T, options?: Readonly<{ syncWebKeys: boolean }>) {
     const prefix = `ui-state:${namespace}:`;
     const values = new Map<string, T>();
     let snapshot: Readonly<Record<string, T>> | undefined;
@@ -59,6 +60,7 @@ export function createPersistentUiState<T>(namespace: string, parse: (value: unk
         return values.get(key);
     };
     const read = (key: string): T | undefined => {
+        ensureWebObservation();
         try { return readStrict(key); } catch (error) {
             if (!(error instanceof UiStatePersistenceError)) throw error;
             console.warn('[ui-state] Device state could not be read.');
@@ -66,6 +68,7 @@ export function createPersistentUiState<T>(namespace: string, parse: (value: unk
         }
     };
     const readAll = (): Readonly<Record<string, T>> => {
+        ensureWebObservation();
         if (!allLoaded) {
             let keys: string[];
             try { keys = getPersistenceStorage().getAllKeys(); }
@@ -86,7 +89,24 @@ export function createPersistentUiState<T>(namespace: string, parse: (value: unk
             if (key.startsWith(selectedPrefix)) for (const listener of subscriptions) listener(key);
         }
     };
+    let webObservationStarted = false;
+    function ensureWebObservation() {
+        if (webObservationStarted || !options?.syncWebKeys || isEmbedWindowContext()
+            || typeof window === 'undefined' || typeof document === 'undefined') return;
+        const web = window;
+        const browserPrefix = getPersistenceStorageWebKey(prefix);
+        web.addEventListener('storage', event => {
+            if (!event.key?.startsWith(browserPrefix) || event.storageArea !== web.localStorage) return;
+            const key = event.key.slice(browserPrefix.length);
+            const previous = values.get(key);
+            values.delete(key);
+            loadedKeys.delete(key);
+            if (!Object.is(previous, read(key))) publish(key);
+        });
+        webObservationStarted = true;
+    }
     const set = (key: string, value: T): void => {
+        ensureWebObservation();
         const serialized = JSON.stringify(value);
         if (serialized === undefined) throw new TypeError('UI state must be JSON serializable');
         const storage = getPersistenceStorage();
@@ -108,6 +128,7 @@ export function createPersistentUiState<T>(namespace: string, parse: (value: unk
         publish(key);
     };
     const subscribeKey = (key: string, listener: () => void) => {
+        ensureWebObservation();
         let subscriptions = keyedListeners.get(key);
         if (!subscriptions) keyedListeners.set(key, subscriptions = new Set());
         subscriptions.add(listener);

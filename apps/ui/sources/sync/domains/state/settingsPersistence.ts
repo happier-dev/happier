@@ -1,3 +1,4 @@
+import { migratePaneGeometryFromSettings, retainedPaneGeometryKeys } from './paneGeometryUiState';
 import { migrateThemeProfileLegacyScopeFromSettings } from '@/sync/domains/state/themeProfileMigrationUiState';
 import { applyLocalSettings, localSettingsDefaults, localSettingsParse, type LocalSettings } from '../settings/localSettings';
 import { areAccountSettingsJsonValuesEqual } from '../settings/accountSettingsStructuralEquality';
@@ -129,7 +130,7 @@ function migrateDeviceUiStateFromSettings(input: unknown): unknown {
     let retainedFailedSource = false;
     for (const migrate of [migrateMainAppTabFromSettings, migrateSessionMobileSurfacesFromSettings, migrateDisclosureUiStateFromSettings,
         migrateProgressHealthUiState, migrateSessionMruFromSettings, migrateComposerBannerUiStateFromSettings,
-        migratePetCompanionPositionFromSettings]) {
+        migratePetCompanionPositionFromSettings, migratePaneGeometryFromSettings]) {
         try { storedValue = migrate(storedValue); }
         catch {
             // Independent device domains must still import when one retained
@@ -240,7 +241,7 @@ function persistLocalSettings(settings: LocalSettings, storedValue: unknown, pre
     }
     for (const legacyKey of ['mainAppTab', 'sessionMruOrderV1', 'sessionComposerCollapsedBannerKinds',
         'sessionLastMobileSurfaceBySessionId', 'collapsedGroupKeysV1', 'brandHeroSeenAt', 'hasCompletedAuthOnce',
-        'acknowledgedCliVersions', 'petsDismissedCompanionTrayItemKeys', 'petsCompanionPosition']) {
+        'acknowledgedCliVersions', 'petsDismissedCompanionTrayItemKeys', 'petsCompanionPosition', ...retainedPaneGeometryKeys]) {
         if (storedValue && typeof storedValue === 'object' && Object.hasOwn(storedValue, legacyKey)) {
             retained = { ...(retained as LocalSettings), [legacyKey]: Reflect.get(storedValue, legacyKey) };
         }

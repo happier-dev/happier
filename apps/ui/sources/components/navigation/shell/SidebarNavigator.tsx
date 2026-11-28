@@ -1,3 +1,4 @@
+import { usePaneGeometry, writePaneGeometry } from '@/sync/domains/state/paneGeometryUiState';
 import * as React from 'react';
 import { Stack } from 'expo-router';
 import { View, useWindowDimensions, Platform } from 'react-native';
@@ -122,7 +123,7 @@ const FullSidebarNavigator = React.memo(() => {
     const foldMetrics = useWindowFoldMetrics();
     const horizontalSafeArea = useHorizontalSafeArea();
     const sidebarCollapsed = useLocalSetting('sidebarCollapsed');
-    const sidebarWidthPx = useLocalSetting('sidebarWidthPx');
+    const sidebarWidthPx = usePaneGeometry('sidebarWidthPx');
     const rightPanelPlacement = useLocalSetting('rightPanelPlacement');
     const [dragSidebarWidthPx, setDragSidebarWidthPx] = React.useState<number | null>(null);
     const [sidebarCollapseArmed, setSidebarCollapseArmed] = React.useState(false);
@@ -187,7 +188,7 @@ const FullSidebarNavigator = React.memo(() => {
         setDragSidebarWidthPx(null);
         // A resize already in progress can finish after native geometry fixes the pane to the crease.
         if (foldAlignedSidebarWidthPx !== null) return;
-        getStorage().getState().applyLocalSettings({ sidebarWidthPx: nextWidthPx }, { source: 'ui' });
+        writePaneGeometry('sidebarWidthPx', nextWidthPx);
     }, [foldAlignedSidebarWidthPx]);
     const handleSidebarWidthReset = React.useCallback(() => {
         handleSidebarWidthCommit(SIDEBAR_DEFAULT_WIDTH_PX);

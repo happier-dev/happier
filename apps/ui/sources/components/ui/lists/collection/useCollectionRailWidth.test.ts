@@ -4,6 +4,9 @@ import 'fake-indexeddb/auto';
 import { act, renderHook, standardCleanup } from '@/dev/testkit';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { loadLocalSettings } from '@/sync/domains/state/settingsPersistence';
+import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
+import { readCollectionRailWidths } from '@/sync/domains/state/paneGeometryUiState';
+import { resetPersistentUiStateForTest } from '@/dev/testkit/cleanup/persistentUiState';
 import { useCollectionRailWidth } from './useCollectionRailWidth';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -23,16 +26,22 @@ await loadSyncSingletonForTests();
 const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
 
 const previous = getStorage().getState();
-afterEach(() => {
+afterEach(async () => {
     standardCleanup();
+    await resetPersistentUiStateForTest();
     getStorage().setState(previous, true);
 });
+
+function migrateLegacyWidths(widths: Record<string, number>) {
+    getPersistenceStorage().set('local-settings', JSON.stringify({ collectionRailWidthsV1: widths }));
+    loadLocalSettings();
+}
 
 it('restores a keyed preference, preserves neighbouring commits and does not render for another rail', async () => {
     const account = await createSecretSettingsTestHarness({});
     try {
-    getStorage().getState().applyLocalSettings({ collectionRailWidthsV1: { machines: 350, teams: 290 } });
-    const beforeMount = getStorage().getState().localSettings.collectionRailWidthsV1;
+    migrateLegacyWidths({ machines: 350, teams: 290 });
+    const beforeMount = readCollectionRailWidths();
     let renders = 0;
     const machines = await renderHook(() => {
         renders += 1;
@@ -40,20 +49,24 @@ it('restores a keyed preference, preserves neighbouring commits and does not ren
     });
     const teams = await renderHook(() => useCollectionRailWidth('teams'));
     expect(machines.getCurrent().widthPx).toBe(350);
-    expect(getStorage().getState().localSettings.collectionRailWidthsV1).toBe(beforeMount);
+    expect(readCollectionRailWidths()).toBe(beforeMount);
     const beforeNeighbourChange = renders;
+    const writes = vi.spyOn(getPersistenceStorage(), 'set');
     await act(async () => teams.getCurrent().commit(310));
+    expect(writes.mock.calls.filter(([key]) => key === 'local-settings')).toHaveLength(0);
+    expect(writes.mock.calls).toContainEqual(['ui-state:collection-rail-width-v1:teams', '310']);
+    writes.mockRestore();
     expect(renders).toBe(beforeNeighbourChange);
     await act(async () => {
         await Promise.all([machines.getCurrent().commit(375), teams.getCurrent().commit(325)]);
     });
-    expect(loadLocalSettings().collectionRailWidthsV1).toEqual({ machines: 375, teams: 325 });
+    expect(readCollectionRailWidths()).toEqual({ machines: 375, teams: 325 });
     await machines.unmount();
     const restored = await renderHook(() => useCollectionRailWidth('machines'));
     expect(restored.getCurrent().widthPx).toBe(375);
     await act(async () => restored.getCurrent().reset());
     expect(restored.getCurrent().widthPx).toBeUndefined();
-    expect(loadLocalSettings().collectionRailWidthsV1).toEqual({ teams: 325 });
+    expect(readCollectionRailWidths()).toEqual({ teams: 325 });
     expect(account.settingsWrites).toEqual([]);
     expect(account.artifacts.list()).toEqual([]);
     } finally { standardCleanup(); await account.dispose(); }
@@ -62,7 +75,7 @@ it('restores a keyed preference, preserves neighbouring commits and does not ren
 it('exposes rail widths to agent Settings reads, keyed writes and reset without replacing neighbours', async () => {
     const account = await createSecretSettingsTestHarness({});
     try {
-        getStorage().getState().applyLocalSettings({ collectionRailWidthsV1: { teams: 325 } });
+        migrateLegacyWidths({ teams: 325 });
         const executor = createDefaultActionExecutor({ resolveServerIdForSessionId: () => null });
         const context = { surface: 'agent', serverId: account.scope.serverId, authority: 'account_automation', actionCaller: { kind: 'host' } } as const;
         const anchor = 'appearance.collectionRailWidths';
@@ -72,11 +85,11 @@ it('exposes rail widths to agent Settings reads, keyed writes and reset without 
             expect(await executor.execute('settings.get', { anchor }, context)).toMatchObject({ ok: true, result: { value: { teams: 325 } } });
             expect(await executor.execute('settings.set', { anchor, value: { resizeKey: 'triage', widthPx: 375 } }, context)).toMatchObject({ ok: true });
         });
-        expect(loadLocalSettings().collectionRailWidthsV1).toEqual({ teams: 325, triage: 375 });
+        expect(readCollectionRailWidths()).toEqual({ teams: 325, triage: 375 });
         await act(async () => {
             expect(await executor.execute('settings.set', { anchor, value: { resizeKey: 'triage', widthPx: null } }, context)).toMatchObject({ ok: true });
         });
-        expect(loadLocalSettings().collectionRailWidthsV1).toEqual({ teams: 325 });
+        expect(readCollectionRailWidths()).toEqual({ teams: 325 });
         expect(account.settingsWrites).toEqual([]);
         expect(account.artifacts.list()).toEqual([]);
     } finally { standardCleanup(); await account.dispose(); }
@@ -92,11 +105,11 @@ it('applies Settings Action restrictions to rail resize and reset gestures', asy
         actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } },
     }) });
     try {
-        getStorage().getState().applyLocalSettings({ collectionRailWidthsV1: { triage: 375 } });
+        migrateLegacyWidths({ triage: 375 });
         const rail = await renderHook(() => useCollectionRailWidth('triage'));
         await act(async () => { await rail.getCurrent().commit(420); });
-        expect(loadLocalSettings().collectionRailWidthsV1).toEqual({ triage: 375 });
+        expect(readCollectionRailWidths()).toEqual({ triage: 375 });
         await act(async () => { await rail.getCurrent().reset(); });
-        expect(loadLocalSettings().collectionRailWidthsV1).toEqual({ triage: 375 });
+        expect(readCollectionRailWidths()).toEqual({ triage: 375 });
     } finally { standardCleanup(); await account.dispose(); }
 });

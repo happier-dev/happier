@@ -25,11 +25,6 @@ import { emitLocalSettingChangedEvents } from './emitSettingChangedEvent';
 // deliberate setting: it is neither a device_user property nor a setting_changed event.
 const LOCAL_UI_STATE: Partial<LocalSettings> = {
   sidebarCollapsed: true,
-  sidebarWidthPx: 220,
-  settingsNavSidebarWidthPx: 400,
-  rightPaneWidthPx: 200,
-  detailsPaneWidthPx: 900,
-  bottomPaneHeightPx: 100,
   newSessionDockedWidthPx: 500,
 };
 

@@ -1,3 +1,4 @@
+import { paneGeometryDefaults, readPaneGeometry } from '@/sync/domains/state/paneGeometryUiState';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -59,22 +60,17 @@ it('remembers fixed dock dimensions when the Settings Action is off', async () =
         columns.props.onCommitDetailsDockWidthPx(470);
         columns.props.onCommitBottomDockHeightPx(260);
     });
-    expect(storage.getState().localSettings).toMatchObject({
-        rightPaneWidthPx: 330,
-        detailsPaneWidthPx: 470,
-        bottomPaneHeightPx: 260,
-    });
-    const { localSettingsDefaults } = await import('@/sync/domains/settings/localSettings');
+    expect(readPaneGeometry('rightPaneWidthPx')).toBe(330);
+    expect(readPaneGeometry('detailsPaneWidthPx')).toBe(470);
+    expect(readPaneGeometry('bottomPaneHeightPx')).toBe(260);
     await act(async () => {
         columns.props.onResetRightDockWidthPx(); columns.props.onResetDetailsDockWidthPx();
         columns.props.onResetMainDockWidthPx(); columns.props.onResetBottomDockHeightPx();
     });
-    expect(storage.getState().localSettings).toMatchObject({
-        rightPaneWidthPx: localSettingsDefaults.rightPaneWidthPx,
-        detailsPaneWidthPx: localSettingsDefaults.detailsPaneWidthPx,
-        sessionColumnWidthPx: localSettingsDefaults.sessionColumnWidthPx,
-        bottomPaneHeightPx: localSettingsDefaults.bottomPaneHeightPx,
-    });
+    expect(readPaneGeometry('rightPaneWidthPx')).toBe(paneGeometryDefaults.rightPaneWidthPx);
+    expect(readPaneGeometry('detailsPaneWidthPx')).toBe(paneGeometryDefaults.detailsPaneWidthPx);
+    expect(readPaneGeometry('sessionColumnWidthPx')).toBe(paneGeometryDefaults.sessionColumnWidthPx);
+    expect(readPaneGeometry('bottomPaneHeightPx')).toBe(paneGeometryDefaults.bottomPaneHeightPx);
 });
 
 it('opens only a folded session drawer and forgets transient opening on leaving editor-first', async () => {

@@ -9,8 +9,8 @@ import { MultiPaneHostWithBottom } from '@/components/ui/panels/MultiPaneHostWit
 import { resolveDestinationListYields, resolvePaneLayout, type ResolvePaneLayoutInput, type ResolvedPaneLayout, type PaneArrangement } from '@/components/ui/panels/paneBreakpoints';
 import { resolveBottomPaneLayout } from '@/components/ui/panels/resolveBottomPaneLayout';
 import type { FocusReturnMutableRef } from '@/keyboard/focusReturn';
-import { getStorage, useLocalSetting } from '@/sync/domains/state/storage';
-import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
+import { useLocalSetting } from '@/sync/domains/state/storage';
+import { paneGeometryDefaults, usePaneGeometry, writePaneGeometry } from '@/sync/domains/state/paneGeometryUiState';
 import { useDeviceType } from '@/utils/platform/responsive';
 
 import { AppPaneScopeLayoutProvider, type AppPaneScopeLayoutState } from './hooks/useAppPaneScopeLayout';
@@ -183,7 +183,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
     const beforeMainDrawerOpenRef = React.useRef(props.onBeforeMainDrawerOpen);
     beforeMainDrawerOpenRef.current = props.onBeforeMainDrawerOpen;
     const [sessionDragWidthPx, setSessionDragWidthPx] = React.useState<number | null>(null);
-    const sessionColumnWidthPx = useLocalSetting('sessionColumnWidthPx');
+    const sessionColumnWidthPx = usePaneGeometry('sessionColumnWidthPx');
     const mainPresentationRef = React.useRef<'docked' | 'overlay'>('docked');
     const drawerControls = React.useMemo(() => ({ open: () => {
         if (mainPresentationRef.current !== 'overlay' || mainDrawerOpenRef.current) return;
@@ -193,9 +193,9 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
     }, close: () => { mainDrawerOpenRef.current = false; setMainDrawerOpen(false); } }), []);
     React.useLayoutEffect(() => { if (!mirrored) drawerControls.close(); }, [drawerControls, mirrored]);
     React.useEffect(() => { props.onMainDrawerControlsChange?.(drawerControls); return () => props.onMainDrawerControlsChange?.(null); }, [drawerControls, props.onMainDrawerControlsChange]);
-    const rightPaneWidthPx = useLocalSetting('rightPaneWidthPx');
-    const detailsPaneWidthPx = useLocalSetting('detailsPaneWidthPx');
-    const bottomPaneHeightPx = useLocalSetting('bottomPaneHeightPx');
+    const rightPaneWidthPx = usePaneGeometry('rightPaneWidthPx');
+    const detailsPaneWidthPx = usePaneGeometry('detailsPaneWidthPx');
+    const bottomPaneHeightPx = usePaneGeometry('bottomPaneHeightPx');
 
     const rightPane = props.rightPane ?? null;
     const detailsPane = props.detailsPane ?? (mirrored ? props.emptyEditorPane ?? EMPTY_EDITOR : null);
@@ -228,13 +228,13 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
     const mainReadingWidthPx = useLayoutMaxWidth('conversation');
     const storedEffectiveDetailsDockWidthPx = Math.max(details.minPx, resolveDetailsDockPreferredPx({
         storedPx: detailsPaneWidthPx ?? details.minPx,
-        storedDefaultPx: localSettingsDefaults.detailsPaneWidthPx,
+        storedDefaultPx: paneGeometryDefaults.detailsPaneWidthPx,
         destinationPreferredPx: props.detailsPreferredWidthPx,
         budgetMaxPx: dockContainerWidthPx - mainMinPx,
     }));
     const storedEffectiveRightDockWidthPx = Math.max(right.minPx, resolveRightDockPreferredPx({
         storedPx: rightPaneWidthPx ?? right.defaultPx,
-        storedDefaultPx: localSettingsDefaults.rightPaneWidthPx,
+        storedDefaultPx: paneGeometryDefaults.rightPaneWidthPx,
         containerWidthPx: dockContainerWidthPx,
         mainReadingWidthPx,
         besidePx: detailsOpen ? storedEffectiveDetailsDockWidthPx : 0,
@@ -497,10 +497,10 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
     ]);
 
     const onCommitRightDockWidthPx = React.useCallback((nextWidthPx: number) => {
-        getStorage().getState().applyLocalSettings({ rightPaneWidthPx: nextWidthPx }, { source: 'ui' });
+        writePaneGeometry('rightPaneWidthPx', nextWidthPx);
     }, [containerWidthPx]);
     const onCommitDetailsDockWidthPx = React.useCallback((nextWidthPx: number) => {
-        getStorage().getState().applyLocalSettings({ detailsPaneWidthPx: nextWidthPx }, { source: 'ui' });
+        writePaneGeometry('detailsPaneWidthPx', nextWidthPx);
     }, [containerWidthPx]);
     // The docked budget is what main's minimum leaves (minus a docked neighbour). A pull past it
     // (`exceededMaxPx`) carries the attempted width, which is what flips the layout to an overlay for a
@@ -535,22 +535,22 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
         setDetailsDragWidthPx(width);
     }, [details.overlayWhenWiderThanBudget, onCommitDetailsDockWidthPx]);
     const onCommitBottomDockHeightPx = React.useCallback((nextHeightPx: number) => {
-        getStorage().getState().applyLocalSettings({ bottomPaneHeightPx: nextHeightPx }, { source: 'ui' });
+        writePaneGeometry('bottomPaneHeightPx', nextHeightPx);
     }, [containerHeightPx]);
     const onResetRightDockWidthPx = React.useCallback(() => {
-        getStorage().getState().applyLocalSettings({ rightPaneWidthPx: localSettingsDefaults.rightPaneWidthPx }, { source: 'ui' });
+        writePaneGeometry('rightPaneWidthPx', paneGeometryDefaults.rightPaneWidthPx);
     }, []);
     const onResetDetailsDockWidthPx = React.useCallback(() => {
-        getStorage().getState().applyLocalSettings({ detailsPaneWidthPx: localSettingsDefaults.detailsPaneWidthPx }, { source: 'ui' });
+        writePaneGeometry('detailsPaneWidthPx', paneGeometryDefaults.detailsPaneWidthPx);
     }, []);
     const onResetMainDockWidthPx = React.useCallback(() => {
-        getStorage().getState().applyLocalSettings({ sessionColumnWidthPx: localSettingsDefaults.sessionColumnWidthPx }, { source: 'ui' });
+        writePaneGeometry('sessionColumnWidthPx', paneGeometryDefaults.sessionColumnWidthPx);
     }, []);
     const onResetBottomDockHeightPx = React.useCallback(() => {
-        getStorage().getState().applyLocalSettings({ bottomPaneHeightPx: localSettingsDefaults.bottomPaneHeightPx }, { source: 'ui' });
+        writePaneGeometry('bottomPaneHeightPx', paneGeometryDefaults.bottomPaneHeightPx);
     }, []);
     const onCommitMainDockWidthPx = React.useCallback((widthPx: number) => {
-        getStorage().getState().applyLocalSettings({ sessionColumnWidthPx: widthPx }, { source: 'ui' });
+        writePaneGeometry('sessionColumnWidthPx', widthPx);
     }, []);
     const onCloseMain = React.useCallback(() => {
         drawerControls.close(); props.onSetMainHidden?.(true);

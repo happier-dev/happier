@@ -1,3 +1,4 @@
+import { writePaneGeometry } from '@/sync/domains/state/paneGeometryUiState';
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -9,7 +10,6 @@ import { SettingsShell } from './SettingsShell';
 const windowDimsState = vi.hoisted(() => ({ width: 1600, height: 900 }));
 const localSettingsState = vi.hoisted(() => ({
     values: new Map<string, unknown>([
-        ['settingsNavSidebarWidthPx', 230],
         ['settingsNavSidebarEnabled', true],
     ]),
 }));
@@ -66,7 +66,7 @@ describe('SettingsShell ResizableDockedPane missing export', () => {
     afterEach(() => {
         windowDimsState.width = 1600;
         windowDimsState.height = 900;
-        localSettingsState.values.set('settingsNavSidebarWidthPx', 230);
+        writePaneGeometry('settingsNavSidebarWidthPx', 230);
         localSettingsState.values.set('settingsNavSidebarEnabled', true);
     });
 

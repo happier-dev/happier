@@ -9,7 +9,8 @@ import { appShellColumnPlaneColor, appShellColumnSurface } from '@/components/na
 import { isRenderableElementType } from '@/components/ui/icons/isRenderableElementType';
 import { ResizableDockedPane } from '@/components/ui/panels/ResizableDockedPane';
 import { resolveViewportMinEdgePx, VIEWPORT_CLASS_MIN_EDGE_BREAKPOINTS_PX } from '@/utils/platform/viewportClass';
-import { getStorage, useLocalSetting } from '@/sync/domains/state/storage';
+import { usePaneGeometry, writePaneGeometry } from '@/sync/domains/state/paneGeometryUiState';
+import { useLocalSetting } from '@/sync/domains/state/storage';
 
 import { SettingsSidebar } from '@/components/settings/shell/SettingsSidebar';
 import { SettingsPageSearchProvider } from './SettingsPageSearchContext';
@@ -103,7 +104,7 @@ export const SettingsShell = React.memo(function SettingsShell(props: Readonly<{
     const isTabletViewport = resolveViewportMinEdgePx({ width: windowWidth, height: windowHeight }) >= VIEWPORT_CLASS_MIN_EDGE_BREAKPOINTS_PX.tabletMin;
     const enabled = props.showAccountNavigation !== false && isTabletViewport && settingsNavSidebarEnabled !== false;
     const [sidebarFallbackActive, setSidebarFallbackActive] = React.useState(false);
-    const sidebarWidthPx = useLocalSetting('settingsNavSidebarWidthPx') ?? SETTINGS_NAV_SIDEBAR_DEFAULT_WIDTH_PX;
+    const sidebarWidthPx = usePaneGeometry('settingsNavSidebarWidthPx');
     const preferredSidebarWidthPx = typeof sidebarWidthPx === 'number' ? sidebarWidthPx : SETTINGS_NAV_SIDEBAR_DEFAULT_WIDTH_PX;
     const effectiveSidebarWidthPx = Math.min(SETTINGS_NAV_SIDEBAR_MAX_WIDTH_PX, Math.max(SETTINGS_NAV_SIDEBAR_MIN_WIDTH_PX, preferredSidebarWidthPx));
 
@@ -141,12 +142,10 @@ export const SettingsShell = React.memo(function SettingsShell(props: Readonly<{
                         maxWidthPx={SETTINGS_NAV_SIDEBAR_MAX_WIDTH_PX}
                         resizeEdge="right"
                         onCommitWidthPx={(nextWidthPx) => {
-                            getStorage().getState().applyLocalSettings({
-                                settingsNavSidebarWidthPx: nextWidthPx,
-                            }, { source: 'ui' });
+                            writePaneGeometry('settingsNavSidebarWidthPx', nextWidthPx);
                         }}
                         onResetRequest={() => {
-                            getStorage().getState().applyLocalSettings({ settingsNavSidebarWidthPx: SETTINGS_NAV_SIDEBAR_DEFAULT_WIDTH_PX }, { source: 'ui' });
+                            writePaneGeometry('settingsNavSidebarWidthPx', SETTINGS_NAV_SIDEBAR_DEFAULT_WIDTH_PX);
                         }}
                     >
                         <AppShellMaterialPlane group="sidebar" color={appShellColumnPlaneColor(theme.colors)} translucentColor={theme.colors.surface.selected} style={[appShellColumnSurface.column, styles.sidebarColumn, { paddingLeft: insetSplit.sidebar.padding }]}>

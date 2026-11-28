@@ -1,55 +1,49 @@
 import { useEffect, useMemo } from 'react';
 import { z } from 'zod/mini';
 import { createPersistentUiState, UiStatePersistenceError, usePersistentUiStateValue } from '@/sync/domains/state/persistentUiState';
-import { useLocalSetting } from '@/sync/domains/state/storage';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import type { ArrowPadPlacement } from './terminalArrowPadGeometry';
 
 type Orientation = 'portrait' | 'landscape';
 
 const tuckedState = createPersistentUiState('terminal-arrow-pad-tucked-v1', value => z.boolean().parse(value));
+const layoutSchema = z.nullable(z.object({ side: z.enum(['left', 'right']), y: z.number() }));
+const placementState = createPersistentUiState('terminal-arrow-pad-placement-v1', value => layoutSchema.safeParse(value).data);
 
-function writeTucked(orientation: Orientation, tucked: boolean): void {
-    try { tuckedState.set(orientation, tucked); }
-    catch (error) {
-        if (!(error instanceof UiStatePersistenceError)) throw error;
-        console.warn('[terminal] Arrow pad tucked state could not be persisted.');
-    }
+function readLegacyPlacement(orientation: Orientation): ArrowPadPlacement | null {
+    return getStorage().getState().localSettings.terminalArrowPadPlacement?.[orientation] ?? null;
+}
+
+function layoutOf(placement: ArrowPadPlacement | null) {
+    return placement && { side: placement.side, y: placement.y };
 }
 
 export function useTerminalArrowPadPlacement(orientation: Orientation): ArrowPadPlacement | null {
-    const stored = useLocalSetting('terminalArrowPadPlacement');
+    const placement = usePersistentUiStateValue(placementState, orientation);
     const tucked = usePersistentUiStateValue(tuckedState, orientation);
-    // Read the retained Settings seed once when this orientation is first used, never at startup.
-    const initialTucked = useMemo(() => tuckedState.read(orientation)
-        ?? getStorage().getState().localSettings.terminalArrowPadPlacement?.[orientation]?.tucked
-        ?? false, [orientation]);
+    // Seed only the orientation currently in use. A keyed null records an explicit reset.
+    const legacy = useMemo(() => placementState.read(orientation) === undefined || tuckedState.read(orientation) === undefined
+        ? readLegacyPlacement(orientation) : null, [orientation]);
     useEffect(() => {
-        if (tuckedState.read(orientation) === undefined) writeTucked(orientation, initialTucked);
-    }, [initialTucked, orientation]);
-    const placement = stored?.[orientation];
-    return placement ? { side: placement.side, y: placement.y, tucked: tucked ?? initialTucked } : null;
+        try {
+            if (placementState.read(orientation) === undefined) placementState.set(orientation, layoutOf(legacy));
+            if (tuckedState.read(orientation) === undefined) tuckedState.set(orientation, legacy?.tucked ?? false);
+        } catch (error) {
+            if (!(error instanceof UiStatePersistenceError)) throw error;
+            console.warn('[terminal] Arrow pad placement could not be migrated.');
+        }
+    }, [legacy, orientation]);
+    const layout = placement === undefined ? layoutOf(legacy) : placement;
+    return layout ? { ...layout, tucked: tucked ?? legacy?.tucked ?? false } : null;
 }
 
-/** Both the live pad and the phone specimen commit through the same two state owners. */
+/** Both the live pad and the phone specimen commit through the same keyed state. */
 export function writeTerminalArrowPadPlacement(orientation: Orientation, placement: ArrowPadPlacement | null): void {
-    const state = getStorage().getState();
-    const stored = state.localSettings.terminalArrowPadPlacement;
-    const previous = stored?.[orientation] ?? null;
-    // Restore/hide alone never enters the full Settings read/parse/merge path.
-    const layoutChanged = placement === null ? previous !== null
-        : placement.side !== previous?.side || placement.y !== previous?.y;
-    if (layoutChanged) {
-        state.applyLocalSettings({ terminalArrowPadPlacement: {
-            portrait: stored?.portrait ?? null,
-            landscape: stored?.landscape ?? null,
-            [orientation]: placement ? {
-                side: placement.side,
-                y: placement.y,
-                // Retain the old reader's required field without updating its interaction memory.
-                tucked: previous?.tucked ?? false,
-            } : null,
-        } }, { source: 'ui' });
+    try {
+        placementState.set(orientation, layoutOf(placement));
+        tuckedState.set(orientation, placement?.tucked ?? false);
+    } catch (error) {
+        if (!(error instanceof UiStatePersistenceError)) throw error;
+        console.warn('[terminal] Arrow pad placement could not be persisted.');
     }
-    writeTucked(orientation, placement?.tucked ?? false);
 }

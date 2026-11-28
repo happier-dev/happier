@@ -1,3 +1,4 @@
+import { readPaneGeometry, writePaneGeometry } from '@/sync/domains/state/paneGeometryUiState';
 import * as React from 'react';
 import { View } from 'react-native';
 import { act } from 'react-test-renderer';
@@ -27,7 +28,8 @@ const bottomPaneBuiltinAdapter = {
 };
 
 async function renderBottomHost(heightPx: number) {
-    storage.getState().applyLocalSettings({ uiMultiPanePanelsEnabled: true, bottomPaneHeightPx: heightPx }, { source: 'ui' });
+    storage.getState().applyLocalSettings({ uiMultiPanePanelsEnabled: true }, { source: 'ui' });
+    writePaneGeometry('bottomPaneHeightPx', heightPx);
     const layouts: AppPaneScopeLayoutState[] = [];
     function Probe() {
         const layout = useOptionalAppPaneScopeLayout();
@@ -64,7 +66,7 @@ describe('AppPaneScopeHost bottom height', () => {
         await act(async () => columns().props.onDragBottomDockHeightPx(560));
         expect(geometry()).toMatchObject({ bottomPresentation: 'overlay', mainRegionHeightPx: 900 });
         expect(columns().props.bottomDockHeightPx).toBe(560);
-        expect(storage.getState().localSettings.bottomPaneHeightPx).toBe(320);
+        expect(readPaneGeometry('bottomPaneHeightPx')).toBe(320);
     });
 
     it('uses a newly measured height even while the reported width is zero', async () => {

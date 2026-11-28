@@ -5,7 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
-import { useLocalSetting } from '@/sync/domains/state/storage';
+import { usePaneGeometry } from '@/sync/domains/state/paneGeometryUiState';
 import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
 
@@ -29,7 +29,7 @@ export function ExternalSessionsEmptyState(props: ExternalSessionsEmptyStateProp
     const router = useRouter();
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const sidebarWidthPx = useLocalSetting('sidebarWidthPx');
+    const sidebarWidthPx = usePaneGeometry('sidebarWidthPx');
     const primaryPaneMaxWidth = typeof sidebarWidthPx === 'number' && sidebarWidthPx > 0 ? sidebarWidthPx : 320;
     const handleBrowse = React.useCallback(() => {
         router.push('/external/browse');
