@@ -5,7 +5,8 @@ import {
 } from '@happier-dev/protocol/actions/actionIds';
 import { ActionExecuteResultSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
-  InternalTaskMutationOutputSchema, InternalTaskReadOutputSchema, TaskResourceV1Schema, type TaskResourceAddressV1,
+  InternalTaskDeleteOutputSchema, InternalTaskMutationOutputSchema, InternalTaskReadOutputSchema, TaskResourceV1Schema,
+  type TaskResourceAddressV1,
 } from '@happier-dev/protocol/actions/internalTaskActions';
 import {
   buildAccountStoredContentCompatibilityHttpHeadersV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
@@ -303,4 +304,142 @@ it('keeps a Discussion-addressed Agent turn from invoking a public provider comm
   expect(ActionExecuteResultSchema.parse(result)).toMatchObject({
     ok: false, errorCode: 'discussion_internal_reply_required', effectAttempted: false,
   });
+}, 0);
+
+it('shares an external Internal Discussion with a Team via canonical grants while keeping outsiders out and M7 intact', async () => {
+  const [member, outsider] = await Promise.all([
+    fixture.createAccount('external-internal-team-member'),
+    fixture.createAccount('external-internal-outsider'),
+  ]);
+  const memberAccountId = await fetchAccountId(fixture.server.baseUrl, member.credentials.token);
+  const team = await createTeam('External Internal Team');
+  await addMember(team.id, member);
+
+  const source = { pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1 };
+  const localRef = { kindId: 'issue', collisionScope: 'github:9912', entryId: '42' };
+  const anchorTask = { source, ...localRef };
+  const ownerMessageBody = `External Internal owner context ${randomUUID()}`;
+  const memberReplyBody = `External Internal Team member reply ${randomUUID()}`;
+
+  const opened = DiscussionPostResultV1Schema.parse(await act(owner, 'discussion.post', {
+    anchorTask, content: textContent(ownerMessageBody), localId: randomUUID(),
+  }));
+  const discussionId = opened.message.discussionId;
+  expect(isExternalTaskDiscussionId(discussionId)).toBe(true);
+
+  const granted = await owner.executeAsPerson('discussion.access.grants.set', {
+    discussionId,
+    principal: { kind: 'team', teamId: team.id },
+    accessLevel: 'edit',
+  });
+  if (!granted.ok) throw createActionExecuteFailureError(granted);
+
+  const databaseUrl = fixture.server.databaseUrl;
+  if (!databaseUrl) throw new Error('Task comments fixture omitted its disposable PostgreSQL URL');
+  const database = await createServerLightDatabaseClient('postgres', databaseUrl);
+  try {
+    expect(await database.$queryRawUnsafe(
+      'SELECT "teamId", "accessLevel" FROM "DiscussionGrant" WHERE "discussionId" = $1 AND "teamId" = $2',
+      discussionId, team.id,
+    )).toEqual([{ teamId: team.id, accessLevel: 'edit' }]);
+    expect(await database.$queryRawUnsafe(
+      'SELECT "recipientAccountId" FROM "DiscussionKeyEnvelope" WHERE "discussionId" = $1 AND "recipientAccountId" = $2',
+      discussionId, memberAccountId,
+    )).toEqual([{ recipientAccountId: memberAccountId }]);
+  } finally {
+    await database.$disconnect();
+  }
+
+  const memberList = DiscussionListResultV1Schema.parse(await act(member, 'discussion.list', { anchorTask }));
+  expect(memberList.discussions.map(row => row.id)).toEqual([discussionId]);
+  const memberRead = DiscussionReadResultV1Schema.parse(await act(member, 'discussion.read', { discussionId }));
+  expect(memberRead.incomplete).toBe(false);
+  expect(memberRead.messages).toContainEqual(expect.objectContaining({ content: textContent(ownerMessageBody) }));
+
+  const memberPosted = DiscussionPostResultV1Schema.parse(await act(member, 'discussion.post', {
+    discussionId, content: textContent(memberReplyBody), localId: randomUUID(),
+  }));
+  expect(memberPosted.message.discussionId).toBe(discussionId);
+  const ownerRead = DiscussionReadResultV1Schema.parse(await act(owner, 'discussion.read', { discussionId }));
+  expect(ownerRead.messages).toContainEqual(expect.objectContaining({ content: textContent(memberReplyBody) }));
+
+  const outsiderList = DiscussionListResultV1Schema.parse(await act(outsider, 'discussion.list', { anchorTask }));
+  expect(outsiderList.discussions).toEqual([]);
+  const outsiderRead = await outsider.execute('discussion.read', { discussionId });
+  expect(outsiderRead).toMatchObject({ ok: false });
+  const outsiderPayload = JSON.stringify([outsiderList, outsiderRead]);
+  for (const sentinel of [ownerMessageBody, memberReplyBody]) expect(outsiderPayload).not.toContain(sentinel);
+
+  // Verify M7 public-leak guard still blocks an addressed Agent on the Team-shared external Internal Discussion.
+  const permission = await owner.executeAsPerson(SESSION_PERMISSION_MODE_SET_ACTION_ID_V1, {
+    sessionId: agent.sessionId, permissionMode: 'default', applyTiming: 'immediate',
+  });
+  expect(permission).toMatchObject({ ok: true, result: { ok: true } });
+  const action = { pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.commentCreate };
+  const target = 'happier-test-fixtures/internal-team-shared';
+  const token = encodeGithubTriageConfiguration({ v: 1, selection: { kind: 'selected', unitIds: [target] } });
+  if (!token) throw new Error('GitHub source fixture configuration could not encode');
+  const input = GithubCommentCreateInputV1Schema.parse({
+    v: 1, localRef, routingToken: target, body: 'Must stay inside Team-shared Internal Discussion',
+    instance: { v: 1, instance: { source, sourceInstanceId: randomUUID() }, localInstanceKey: GITHUB_TRIAGE_LOCAL_INSTANCE_KEY_V1,
+      binding: { purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE, source: 'native', service: GITHUB_CONNECTED_ACCOUNT_SERVICE },
+      configuration: { v: 1, token } },
+  });
+  const requestId = randomUUID();
+  await owner.withPersonActionClient(async execute => {
+    const participant = { kind: 'session', sessionId: agent.sessionId };
+    const invited = await execute('discussion.invite', { discussionId, participant, answerPolicy: 'when_addressed' });
+    if (!invited.ok) throw createActionExecuteFailureError(invited);
+    const marker = `SESSION_MCP_ACTION_JSON:${JSON.stringify({ requestId, actionId: ACTION_INVOKE_ACTION_ID_V1, input: { action, input } })}`;
+    const addressed = await execute('discussion.post', { discussionId, localId: randomUUID(), content: { v: 1,
+      parts: [{ t: 'mention', participant }, { t: 'text', text: ` ${marker}` }] } });
+    if (!addressed.ok) throw createActionExecuteFailureError(addressed);
+  });
+  let result: unknown;
+  await waitFor(async () => {
+    const event = (await readFakeClaudeLogEvents(agent.logPath)).find(entry =>
+      entry.type === 'session_mcp_action_result' && entry.requestId === requestId);
+    result = event?.result;
+    return event !== undefined;
+  }, { timeoutMs: FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS, context: 'committed Team-shared Internal Discussion mention reaches the Agent Action host' });
+  expect(ActionExecuteResultSchema.parse(result)).toMatchObject({
+    ok: false, errorCode: 'discussion_internal_reply_required', effectAttempted: false,
+  });
+}, 0);
+
+it('atomically deletes the anchored Discussion when its Happier Task is deleted', async () => {
+  const task = await createTask(`Atomic delete Task ${randomUUID()}`);
+  const posted = DiscussionPostResultV1Schema.parse(await act(owner, 'discussion.post', {
+    anchorTask: task.anchorTask, content: textContent('Comment deleted with its Task'), localId: randomUUID(),
+  }));
+  const discussionId = posted.message.discussionId;
+  const beforeList = DiscussionListResultV1Schema.parse(await act(owner, 'discussion.list', { anchorTask: task.anchorTask }));
+  expect(beforeList.discussions.map(row => row.id)).toEqual([discussionId]);
+
+  const deleted = InternalTaskDeleteOutputSchema.parse(await act(owner, 'tasks.internal.delete', {
+    taskId: task.address.taskId,
+  }));
+  expect(deleted).toMatchObject({ status: 'deleted', taskId: task.address.taskId });
+
+  const afterList = DiscussionListResultV1Schema.parse(await act(owner, 'discussion.list', { anchorTask: task.anchorTask }));
+  expect(afterList.discussions).toEqual([]);
+  const afterRead = await owner.execute('discussion.read', { discussionId });
+  expect(afterRead).toMatchObject({ ok: false });
+
+  const httpResponse = await fetch(new URL(`${DISCUSSION_HTTP_PATHS_V1.collection}/${encodeURIComponent(discussionId)}`, fixture.server.baseUrl), {
+    headers: {
+      Authorization: `Bearer ${owner.credentials.token}`,
+      ...buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION),
+    },
+  });
+  expect(httpResponse.status).toBe(404);
+
+  const databaseUrl = fixture.server.databaseUrl;
+  if (!databaseUrl) throw new Error('Task comments fixture omitted its disposable PostgreSQL URL');
+  const database = await createServerLightDatabaseClient('postgres', databaseUrl);
+  try {
+    expect(await database.$queryRawUnsafe('SELECT id FROM "Discussion" WHERE id = $1', discussionId)).toEqual([]);
+  } finally {
+    await database.$disconnect();
+  }
 }, 0);

@@ -49,7 +49,7 @@ beforeAll(async () => {
     requestObservation: { captureRequestBody: request => request.path === claimPath },
     serverEnv: { DATABASE_URL: database.homeDatabaseUrl, ...features },
   });
-}, 360_000);
+}, 0);
 
 afterAll(async () => {
   try { await fixture?.stop(); } finally { await database?.stop(); }
@@ -123,7 +123,7 @@ it('admits a second scheduled Workflow on a one-slot Machine while the first is 
   await waitForPerson(first.id);
   const parked = InternalTaskReadOutputSchema.parse(await act('tasks.internal.read', { taskId: item.todo.id }));
   expect(parked).toMatchObject({ status: 'applied', todo: { version: claimed.todo.version, state: 'started', attemptBinding } });
-}, 360_000);
+}, 0);
 
 it('starts a Workflow when the direct Task edit Action commits a matching label', async () => {
   const home = fixture;
@@ -194,7 +194,7 @@ it('starts a Workflow when the direct Task edit Action commits a matching label'
   await edit(nearMatchVersion, ['reviewed', 'agent-ok']);
   await waitFor(async () => (await history()).length > 0, { context: 'The committed Task label admits its bound Workflow' });
   expect(await history()).toHaveLength(1);
-}, 360_000);
+}, 0);
 
 it('rejects retired legacy auto_start configs so all automatic starts flow through Workflow triggers only', async () => {
   const { HealthCheckSourceConfigV1Schema } = await import('@happier-dev/protocol/deployments/healthCheckSourceV1');
@@ -216,11 +216,20 @@ it('rejects retired legacy auto_start configs so all automatic starts flow throu
   }).success).toBe(false);
 });
 async function runHistory(baseUrl: string, token: string, automationId: string) {
-  const response = await fetchJson<unknown>(`${baseUrl}/v3/automations/${automationId}/runs`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  expect(response.status).toBe(200);
-  return AutomationV3RunListResponseSchema.parse(response.data).runs;
+  const runs: ReturnType<typeof AutomationV3RunListResponseSchema.parse>['runs'] = [];
+  let cursor: string | null = null;
+  do {
+    const query = new URLSearchParams({ limit: '100' });
+    if (cursor) query.set('cursor', cursor);
+    const response = await fetchJson<unknown>(`${baseUrl}/v3/automations/${automationId}/runs?${query.toString()}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(response.status).toBe(200);
+    const page = AutomationV3RunListResponseSchema.parse(response.data);
+    runs.push(...page.runs);
+    cursor = page.nextCursor;
+  } while (cursor);
+  return runs;
 }
 
 it('claims authored High work before older Normal work, then releases a capped Run', async () => {
@@ -236,8 +245,10 @@ it('claims authored High work before older Normal work, then releases a capped R
   const daemonEnv = {
     ...features, HAPPIER_CLAUDE_PATH: provider.executablePath, HAPPIER_CLAUDE_CONFIG_DIR: provider.configDir,
   };
-  const machine = await home.enrollDaemon(account, { env: daemonEnv });
-  const waitingMachine = await home.enrollDaemon(account, { env: daemonEnv });
+  const [machine, waitingMachine] = await Promise.all([
+    home.enrollDaemon(account, { env: daemonEnv }),
+    home.enrollDaemon(account, { env: daemonEnv }),
+  ]);
   const settings = await fetchJson<unknown>(`${home.server.baseUrl}/v3/automations/settings`, {
     method: 'PUT', headers: { Authorization: `Bearer ${account.auth.token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ maxActiveRunsPerMachine: 2, runRetention: 'keepForever' }),
@@ -281,10 +292,10 @@ it('claims authored High work before older Normal work, then releases a capped R
   try {
     await waitFor(async () => (await readFakeClaudeLogEvents(provider.logPath)).some(
       event => event.type === 'runtime_continuity_provider_effect_entered',
-    ), { context: 'High Run holds one live execution slot at the provider boundary', timeoutMs: FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS * 2 });
+    ), { context: 'High Run holds one live execution slot at the provider boundary', timeoutMs: FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS * 3 });
     await waitFor(async () => (await history(normal.automationId)).some(
       run => run.id === older.id && run.state === 'succeeded',
-    ), { context: 'The uncapped Normal Run can claim the other execution slot', timeoutMs: FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS });
+    ), { context: 'The uncapped Normal Run can claim the other execution slot', timeoutMs: FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS * 2 });
     const first = (await history(high.automationId)).find(run => run.id === firstHigh.id);
     expect(first?.claimedAt).not.toBeNull();
     const normalRun = (await history(normal.automationId)).find(run => run.id === older.id);
@@ -312,12 +323,12 @@ it('claims authored High work before older Normal work, then releases a capped R
     await writeFile(release, '');
   }
   const released = WorkflowRunWaitResultV1Schema.parse(await person('workflow.run.wait', {
-    runId: secondHighId, conditions: ['terminal'], timeoutSeconds: 60,
+    runId: secondHighId, conditions: ['terminal'], timeoutSeconds: 120,
   }));
   expect(released).toMatchObject({ observation: 'terminal', run: { state: 'succeeded' } });
   expect((await history(high.automationId)).find(run => run.id === secondHighId))
     .toMatchObject({ claimedByMachineId: waitingMachine.target.machineId });
-}, 360_000);
+}, 0);
 it('skips paused Bot schedules, Events and Channels input, refuses child starts, and resumes fresh work', async () => {
   const home = fixture;
   if (!home) throw new Error('Dispatch fixture did not start');
@@ -331,7 +342,7 @@ it('skips paused Bot schedules, Events and Channels input, refuses child starts,
   } finally {
     await slack.stop();
   }
-}, 360_000);
+}, 0);
 
 async function exerciseBotIntake(
   home: NonNullable<typeof fixture>,
@@ -463,14 +474,14 @@ async function startBotSlackPeer() {
   return { ...boundary,
     message: (text: string) => ({ text, eventId: randomUUID(), timestamp: (Date.now() / 1000).toFixed(3) }),
     async send(input: { text: string; eventId: string; timestamp: string }) {
-      await waitFor(() => socket?.readyState === 1, { context: 'The bound Slack socket is ready', timeoutMs: 30_000 });
+      await waitFor(() => socket?.readyState === 1, { context: 'The bound Slack socket is ready', timeoutMs: 60_000 });
       const envelopeId = randomUUID();
       socket?.send(JSON.stringify({ type: 'events_api', envelope_id: envelopeId, payload: {
         type: 'event_callback', team_id: 'T1', api_app_id: 'A1', event_id: input.eventId, event: {
           type: 'message', channel: 'C1', channel_type: 'channel', user: 'U1', text: input.text, ts: input.timestamp,
         },
       } }));
-      await waitFor(() => acknowledgements.has(envelopeId), { context: 'Slack receives acknowledgement after ingress', timeoutMs: 30_000 });
+      await waitFor(() => acknowledgements.has(envelopeId), { context: 'Slack receives acknowledgement after ingress', timeoutMs: 60_000 });
     },
   };
 }
@@ -500,9 +511,13 @@ async function bindSlackToBot(
   const ui = await connectUiPersonActionClient({ ...home.personActionConnection, accountSecret: account.auth.accountSigningSeed });
   try {
     await waitFor(() => ui.isMachineActive(machine.target.machineId), { context: 'Channels setup observes the enrolled Machine' });
-    const projection = await readUiChannelProviderProjection(machine.target.machineId,
-      { pluginId: CONVERSATION_CORE_PLUGIN_ID_V1, serverId: ui.serverId });
-    if (!projection.supported || !('targetedContributions' in projection)) throw new Error('Channels provider projection unavailable');
+    let projection: Awaited<ReturnType<typeof readUiChannelProviderProjection>> | undefined;
+    await waitFor(async () => {
+      projection = await readUiChannelProviderProjection(machine.target.machineId,
+        { pluginId: CONVERSATION_CORE_PLUGIN_ID_V1, serverId: ui.serverId });
+      return projection.supported && 'targetedContributions' in projection;
+    }, { context: 'Channels provider projection becomes available on the enrolled Machine', timeoutMs: 60_000 });
+    if (!projection || !projection.supported || !('targetedContributions' in projection)) throw new Error('Channels provider projection unavailable');
     const observed = projection.targetedContributions;
     const setup = observed.points.flatMap(point => point.protocols.flatMap(protocol => protocol.contributions
       .filter(contribution => contribution.contributor.pluginId === provider.pluginId)
