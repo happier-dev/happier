@@ -40,6 +40,19 @@ const HOST_NEVER_RUN_DAEMON_OWNERS = [
   'src/daemon/service/cli.ts',
 ] as const;
 
+// Eager modules and source bytes measured on 2026-11-28 after the CLI deferrals.
+// Headroom is just under the smallest recorded start-graph win (BOOT-STRUCTURE: 46 daemon modules /
+// 0.30 MiB out of the host), so re-adding a waste of that size fails while smaller growth passes.
+// Growth with a real start-time consumer raises the measured value in the same change and names the
+// consumer; anything else belongs behind a dynamic import.
+const HEADROOM = { modules: 45, sourceBytes: 0.29 * 1024 * 1024 };
+const MEASURED_START: Record<Role, { modules: number; sourceBytes: number }> = {
+  host: { modules: 6_333, sourceBytes: 58_570_255 },
+  daemon: { modules: 8_613, sourceBytes: 83_953_821 },
+};
+// The host runs no daemon owner of its own; daemon modules reach it only through shared owners.
+const HOST_DAEMON_MODULE_BUDGET = 201;
+
 const normalize = (path: string) => path.replaceAll('\\', '/');
 let inputs: Metafile['inputs'];
 const eagerGraphs = new Map<StartRole, readonly string[]>();
@@ -79,5 +92,22 @@ describe('daemon, session host and finite Action start graphs', () => {
 
   it('keep never-run daemon owners out of the session host', () => {
     expect(roleGraph('host').filter((path) => endsWithAny(path, HOST_NEVER_RUN_DAEMON_OWNERS)).map(normalize)).toEqual([]);
+  });
+
+  it('stay within each role start budget', () => {
+    const measured = Object.fromEntries((Object.keys(ROLE_ROOTS) as Role[]).map((role) => [role, {
+      modules: roleGraph(role).length,
+      sourceBytes: roleGraph(role).reduce((sum, path) => sum + (inputs[path]?.bytes ?? 0), 0),
+    }]));
+    const over = Object.fromEntries((Object.keys(ROLE_ROOTS) as Role[]).map((role) => [role, {
+      modules: Math.max(0, measured[role]!.modules - MEASURED_START[role].modules - HEADROOM.modules),
+      sourceBytes: Math.max(0, measured[role]!.sourceBytes - MEASURED_START[role].sourceBytes - HEADROOM.sourceBytes),
+    }]));
+    expect(over, `measured ${JSON.stringify(measured)}`).toEqual({
+      host: { modules: 0, sourceBytes: 0 },
+      daemon: { modules: 0, sourceBytes: 0 },
+    });
+    const hostDaemonModules = roleGraph('host').filter((path) => normalize(path).startsWith('src/daemon/')).length;
+    expect(Math.max(0, hostDaemonModules - HOST_DAEMON_MODULE_BUDGET), `host src/daemon modules ${hostDaemonModules}`).toBe(0);
   });
 });
