@@ -4181,6 +4181,11 @@ and external attach. A live ceiling change requires provider restart; ACP
 keeps the typed `role_policy_unenforceable` refusal. This is 0.3 development
 source behavior; an already-running daemon needs its owner to reload it.
 
+Pi uses its launch-time read-only tool selection for a workspace-write denial
+on Sessions and Session-derived Execution Runs. This takes precedence over
+permission intent. A configuration update that would change the native tool
+selection requires a restart.
+
 Session Role Actions read Account overrides and retained role sources through
 the Session runtime's existing private owner-Account context. The shared prompt
 library loader and Protocol parser serve that context and ordinary CLI Account

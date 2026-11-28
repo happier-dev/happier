@@ -73,6 +73,10 @@ is not a workspace-confinement guarantee. Older spellings such as `safe-yolo`
 and `workspace_write` remain accepted for compatibility. Unknown permission
 values fail closed to the read-tool allowlist.
 
+In 0.3 development builds, a [Hands-off role](/agents/roles) applies Pi's
+read-tool allowlist even when the session uses Auto, Default, or YOLO. This
+also applies to Pi judges running in the background.
+
 For the cross-Agent vocabulary and aliases, see [Permissions](/sessions/permissions).
 
 ## Local authentication in Happier

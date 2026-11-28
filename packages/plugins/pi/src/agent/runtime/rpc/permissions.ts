@@ -17,6 +17,10 @@ export function readPiNoToolsRefusal(configuration?: AgentSessionOpenRequest['co
     : null;
 }
 
+export function resolvePiConfiguredPermissionMode(configuration?: AgentSessionOpenRequest['configuration']): PiPermissionMode | undefined {
+  return configuration?.workspaceWrites === 'deny' ? 'read-only' : configuration?.permissionIntent.value ?? undefined;
+}
+
 type PiPermissionIntent = 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'plan';
 
 export type PiPermissionModeResolutionV1 = Readonly<{

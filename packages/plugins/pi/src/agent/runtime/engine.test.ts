@@ -411,7 +411,8 @@ Fatal startup marker: ${launchKey}
     const configuration = {
       mode: { value: null, updatedAtMs: 0 },
       model: { value: 'anthropic/claude-sonnet-4-6', updatedAtMs: 1 },
-      permissionIntent: { value: 'read-only' as const, updatedAtMs: 1 },
+      permissionIntent: { value: 'yolo' as const, updatedAtMs: 1 },
+      workspaceWrites: 'deny',
       options: {},
     } as const;
     const request = {
@@ -455,8 +456,12 @@ Fatal startup marker: ${launchKey}
       nativeTools: ['read', 'grep', 'find', 'ls'],
     });
     releaseModel();
-    await opening;
+    const session = await opening;
     expect(opened).toBe(true);
+    await expect(session.updateConfiguration!({ ...configuration, workspaceWrites: 'allow' }))
+      .resolves.toMatchObject({
+        status: 'unsupported', diagnostic: { code: 'pi_permission_change_requires_restart' },
+      });
     await boundary.emit({
       type: 'happier-pi-model-catalog',
       models: [{ provider: 'anthropic', id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', reasoning: true }],
@@ -464,6 +469,30 @@ Fatal startup marker: ${launchKey}
     expect(boundModels.source?.read()).toMatchObject({
       models: [{ id: 'anthropic/claude-sonnet-4-6' }],
     });
+  });
+
+  it.each(['deny', 'allow'] as const)('launches a Pi judge run with workspace writes set to %s', async (workspaceWrites) => {
+    const boundary = hostBoundaries();
+    const runId = 'pi-judge-policy';
+    const run = await createPiAgentRuntime().sessions.executionRunContextV1!.open({
+      kind: 'create', runId, cwd: '/workspace',
+      profile: { pluginId: 'happier.agent.pi', localId: 'default' },
+      input: { text: 'Judge whether the work is complete.' },
+      configuration: {
+        mode: { value: null, updatedAtMs: 0 }, model: { value: null, updatedAtMs: 0 },
+        permissionIntent: { value: 'yolo', updatedAtMs: 1 }, options: {}, workspaceWrites,
+      },
+    }, { ...boundary.context, executionRun: { id: runId, services: {} } } as unknown as AgentExecutionRunRuntimeContextV1);
+    try {
+      await vi.waitFor(() => expect(boundary.write).toHaveBeenCalledWith(expect.objectContaining({ type: 'prompt' })));
+      const args = boundary.spawn.mock.calls[0]![0].launch.args;
+      const configPath = args[args.indexOf('--happier-tools-config') + 1]!;
+      expect(JSON.parse(readFileSync(configPath, 'utf8'))).toMatchObject({
+        nativeTools: workspaceWrites === 'deny' ? ['read', 'grep', 'find', 'ls'] : null,
+      });
+    } finally {
+      await run.dispose();
+    }
   });
 
   it('refuses an exclusive empty tool allowlist before starting a Pi run', async () => {

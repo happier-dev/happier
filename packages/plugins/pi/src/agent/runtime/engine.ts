@@ -25,16 +25,12 @@ import {
   preparePiHappierToolsExtension,
   type PreparedPiHappierToolsExtension,
 } from '../tools/assets.js';
-import { readPiNoToolsRefusal } from './rpc/permissions.js';
+import { readPiNoToolsRefusal, resolvePiConfiguredPermissionMode } from './rpc/permissions.js';
 import { readStrictCanonicalPiAgentRuntimeDescriptorV1 } from '../../protocol/runtimeDescriptorV1.js';
 
 export {
   piExternalSessionsContribution,
 } from '../externalSessions/contribution.js';
-
-function readPermissionMode(request: AgentSessionOpenRequest): string | undefined {
-  return request.configuration?.permissionIntent.value ?? undefined;
-}
 
 function readEnvironment(request: AgentSessionOpenRequest): Readonly<{
   values: Readonly<Record<string, string>>;
@@ -91,6 +87,7 @@ async function openPiSession(
     throw new Error('Pi does not support native session fork');
   }
   assertPiToolPolicySupported(request.configuration);
+  const permissionMode = resolvePiConfiguredPermissionMode(request.configuration);
   if (request.startupInstructions && !context.session.services.happierTools) {
     throw new PluginError({
       code: 'agent_session_startup_instructions_unsupported',
@@ -129,7 +126,7 @@ async function openPiSession(
           nativeBridgeResolution, 'Happier tools bridge resolution',
         ) : undefined;
         const toolPreparation = preparePiHappierToolsExtension({
-          permissionMode: readPermissionMode(request),
+          permissionMode,
           ...(config ? { config } : { directory: request.cwd }),
           mcpServersStrictMode: request.mcpServersStrictMode,
           mcpServers: request.mcpServers, mcpToolPolicy: request.mcpToolPolicy });
@@ -152,7 +149,7 @@ async function openPiSession(
           env: prepared.launchEnvironment.values,
           providerModelId: request.providerBinding?.model.id,
           unsetEnvKeys: prepared.launchEnvironment.unset,
-          permissionMode: readPermissionMode(request),
+          permissionMode,
           resumeSessionSelector: resolvePiResumeSessionSelector(request),
           resumeProviderSessionId: request.kind === 'resume' ? request.providerSessionId : null,
           sessionId: request.sessionId,
@@ -248,6 +245,7 @@ async function openPiExecutionRun(
     throw new Error('Pi does not support native execution-run fork');
   }
   assertPiToolPolicySupported(request.configuration);
+  const permissionMode = resolvePiConfiguredPermissionMode(request.configuration);
   return await createExecutionRunHostBackendFromConversationRuntime({
     request,
     async openConversation() {
@@ -277,7 +275,7 @@ async function openPiExecutionRun(
         }
         if (Object.keys(request.mcpServers ?? {}).length > 0) {
           preparedTools = await lifecycle.waitFor(preparePiHappierToolsExtension({
-            permissionMode: request.configuration?.permissionIntent.value ?? undefined,
+            permissionMode,
             directory: request.cwd,
             mcpServersStrictMode: request.mcpServersStrictMode,
             mcpServers: request.mcpServers, mcpToolPolicy: request.mcpToolPolicy,
@@ -292,7 +290,7 @@ async function openPiExecutionRun(
             env: prepared.launchEnvironment.values,
             providerModelId: request.providerBinding?.model.id,
             unsetEnvKeys: prepared.launchEnvironment.unset,
-            permissionMode: request.configuration?.permissionIntent.value ?? undefined,
+            permissionMode,
             resumeSessionSelector: request.kind === 'resume' ? request.checkpointId : null,
             resumeProviderSessionId: request.kind === 'resume' ? request.checkpointId : null,
             ...(context.executionRun.services.nativeLaunch ? { nativeLaunch: context.executionRun.services.nativeLaunch } : {}),

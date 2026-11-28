@@ -141,6 +141,7 @@ export const PI_PLUGIN = definePlugin({
             startupInstructions: { versions: [1], revisionChanges: 'resume' },
             cancel: true,
             configuration: true,
+            workspaceWrites: 'deny',
             executionRunContext: { versions: [1] },
           },
         }),

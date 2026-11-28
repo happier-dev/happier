@@ -70,7 +70,7 @@ import {
   resolvePiRequestAuthCompatibility,
 } from './requestAuthCompatibility.js';
 import type { PiPermissionMode, PiRpcStateData } from './types.js';
-import { readPiNoToolsRefusal, resolvePiEffectiveLaunchPermissionPolicy } from './permissions.js';
+import { readPiNoToolsRefusal, resolvePiConfiguredPermissionMode, resolvePiEffectiveLaunchPermissionPolicy } from './permissions.js';
 import { createPiSessionModelsSource } from '../modelsSource.js';
 import { createPiSessionStatsUsageProjector, projectPiAssistantUsage } from './usage.js';
 import { AGENT_DEFINITION } from '../../definition.js';
@@ -1443,7 +1443,7 @@ function createPiConversationRuntime(params: Readonly<{
       }
       // Native tool restrictions are launch-only. Refuse the whole snapshot
       // before model/thinking effects so the host cannot retain unapplied intent.
-      if (resolvePiEffectiveLaunchPermissionPolicy(update.permissionIntent.value ?? undefined) !== launchPermissionPolicy) {
+      if (resolvePiEffectiveLaunchPermissionPolicy(resolvePiConfiguredPermissionMode(update)) !== launchPermissionPolicy) {
         return {
           status: 'unsupported',
           diagnostic: diagnostic('pi_permission_change_requires_restart', 'Pi permission changes require restarting the native runtime'),
