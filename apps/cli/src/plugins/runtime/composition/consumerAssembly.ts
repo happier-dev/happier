@@ -14,6 +14,7 @@ type PluginRuntimeConsumerAssembly = Readonly<{
     allRetirementSignal: AbortSignal;
     isOccurrenceCurrent(): boolean;
     isPluginRetired(pluginId: string): boolean;
+    readServingTargetActivationFacts(): ActivatedPluginRuntimeRegistry['targetActivationFacts'];
     resolveLifecycle(pluginId: string): PluginRuntimeConsumerLifecycle;
     isPluginCurrent(pluginId: string): boolean;
     readPluginOccurrenceId(pluginId: string): PluginRuntimeOccurrenceId | null;
@@ -97,6 +98,13 @@ export function assemblePluginRuntimeConsumers(input: Readonly<{
         allRetirementSignal: allRetirement.signal,
         isOccurrenceCurrent: (): boolean => !allRetired,
         isPluginRetired: (pluginId: string): boolean => retiredPluginIds.has(pluginId),
+        readServingTargetActivationFacts() {
+            const facts = input.activatedRegistry.targetActivationFacts;
+            if (!allRetired && retiredPluginIds.size === 0) return facts;
+            // A held component still owns its activation evidence after this
+            // composition has fenced its serving consumers.
+            return Object.freeze(facts.filter(fact => fact.status !== 'active' || isPluginCurrent(fact.pluginId)));
+        },
         resolveLifecycle,
         isPluginCurrent,
         readPluginOccurrenceId: (pluginId: string) => (

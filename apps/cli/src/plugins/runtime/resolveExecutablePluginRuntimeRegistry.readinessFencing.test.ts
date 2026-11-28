@@ -26,24 +26,28 @@ const PLUGIN_ID = 'acme.readiness-fencing';
 
 async function seedFixture(options?: Readonly<{
     finiteHookUrl?: string;
+    pluginId?: string;
+    happyHomeDir?: string;
+    onDemand?: boolean;
     /** Adds one finite background service and an independent Action. */
     settlingBackgroundService?: boolean;
     /** Makes activation cleanup observable outside the loaded module graph. */
     activationCleanup?: boolean;
 }>): Promise<Readonly<{ happyHomeDir: string; pluginRoot: string; cleanupMarkerPath: string }>> {
-    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-readiness-fencing-home-'));
+    const pluginId = options?.pluginId ?? PLUGIN_ID;
+    const happyHomeDir = options?.happyHomeDir ?? await mkdtemp(join(tmpdir(), 'happier-readiness-fencing-home-'));
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-readiness-fencing-plugin-'));
     const cleanupMarkerPath = join(pluginRoot, 'activation-cleaned');
     await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
     await writeFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), JSON.stringify({
         schemaVersion: 2,
-        id: PLUGIN_ID,
+        id: pluginId,
         version: '1.0.0',
         displayName: 'Readiness fencing fixture',
         engines: { happier: '^0.3.0' },
         runtime: { apiVersion: 1 },
         entrypoints: { daemon: './daemon.mjs' },
-        activation: { events: [{ kind: 'startup' }] },
+        ...(options?.onDemand ? {} : { activation: { events: [{ kind: 'startup' }] } }),
         hostAccess: { required: [], optional: [] },
         contributes: {
             hooks: [{
@@ -53,9 +57,9 @@ async function seedFixture(options?: Readonly<{
                 executionKind: 'decide',
                 scope: 'agent',
             }],
-            ...(options?.settlingBackgroundService
+            ...(options?.settlingBackgroundService ? { backgroundServices: [{ id: 'watcher' }] } : {}),
+            ...(options?.settlingBackgroundService || options?.onDemand
                 ? {
-                    backgroundServices: [{ id: 'watcher' }],
                     actions: [{
                         id: 'status', title: 'Status', scopes: ['global'], surfaces: ['cli'],
                         execution: { target: 'daemon' }, dangerLevel: 'safe',
@@ -73,7 +77,10 @@ async function seedFixture(options?: Readonly<{
             : 'async () => ({ decision: "abstain" })')
         + ');'
         + (options?.settlingBackgroundService
-            ? ' api.backgroundServices.register("watcher", async () => { completed = true; }); api.actions.register("status", async () => ({ completed }));'
+            ? ' api.backgroundServices.register("watcher", async () => { completed = true; });'
+            : '')
+        + (options?.settlingBackgroundService || options?.onDemand
+            ? ' api.actions.register("status", async () => ({ completed }));'
             : '')
         + (options?.activationCleanup
             ? ` return async () => { const { appendFile } = await import("node:fs/promises"); await appendFile(${JSON.stringify(cleanupMarkerPath)}, "cleaned\\n", "utf8"); };`
@@ -84,7 +91,7 @@ async function seedFixture(options?: Readonly<{
     await seedCurrentLocalPathPluginFixture({
         happyHomeDir,
         pluginRoot,
-        pluginId: PLUGIN_ID,
+        pluginId,
         manifestVersion: '1.0.0',
     });
     return Object.freeze({ happyHomeDir, pluginRoot, cleanupMarkerPath });
@@ -280,6 +287,51 @@ describe('executable plugin readiness fencing', () => {
             await rm(fixture.pluginRoot, { recursive: true, force: true });
         }
     }, 60_000);
+    it('publishes an unrelated cold Action while a fenced occurrence is still retained', async () => {
+        const fixture = await seedFixture({ settlingBackgroundService: true });
+        const peerPluginId = 'acme.readiness-fencing-peer';
+        const peer = await seedFixture({
+            happyHomeDir: fixture.happyHomeDir,
+            pluginId: peerPluginId,
+            onDemand: true,
+        });
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
+        try {
+            const inputs = await resolveFixtureRuntimeInputs(fixture.happyHomeDir);
+            const active = runtime = await resolveExecutablePluginRuntimeRegistry({
+                happyHomeDir: fixture.happyHomeDir,
+                contributes: inputs.contributes,
+                generationAuthority: inputs.generationAuthority,
+            });
+            const invokeStatus = (pluginId: string) => executeContributedAction({
+                runtimeRegistry: active,
+                actionId: `${pluginId}/status`,
+                input: {},
+                context: { surface: 'cli' },
+            });
+            await expect(invokeStatus(PLUGIN_ID)).resolves.toMatchObject({
+                matched: true, result: { ok: true, result: { completed: false } },
+            });
+            expect(active.activatedPluginIds.has(peerPluginId)).toBe(false);
+
+            active.fencePluginConsumers?.([PLUGIN_ID]);
+            await expect(invokeStatus(PLUGIN_ID)).resolves.toMatchObject({
+                matched: true, result: { ok: false, errorCode: 'plugin_action_generation_retired' },
+            });
+            await expect(active.activateContributionsOnDemand([
+                { pluginId: peerPluginId, family: 'actions', localId: 'status' },
+            ])).resolves.toEqual([{ pluginId: peerPluginId, diagnostics: [] }]);
+            await expect(invokeStatus(peerPluginId)).resolves.toMatchObject({
+                matched: true, result: { ok: true, result: { completed: false } },
+            });
+        } finally {
+            await runtime?.dispose();
+            await rm(peer.pluginRoot, { recursive: true, force: true });
+            await rm(fixture.pluginRoot, { recursive: true, force: true });
+            await rm(fixture.happyHomeDir, { recursive: true, force: true });
+        }
+    }, 60_000);
+
     it('keeps independent Actions available after a background service normally completes', async () => {
         const fixture = await seedFixture({ settlingBackgroundService: true });
         let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;

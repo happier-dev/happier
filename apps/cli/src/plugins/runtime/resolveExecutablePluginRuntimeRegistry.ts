@@ -4813,7 +4813,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         readCurrentPluginOccurrenceId,
         readCurrentPluginSourceCustody,
         targetRegistrations: activatedRegistry.targetRegistrations,
-        readTargetActivationFacts: () => activatedRegistry.targetActivationFacts,
+        readTargetActivationFacts: consumerAssembly.readServingTargetActivationFacts,
         resolveAuthorizationFacts: resolveTargetActionAuthorizationFacts,
         resolvePresentUserGatePolicy: resolveActionPresentUserGatePolicy,
         resolveHostBinding: invocationServiceOwners.resolveHostBinding,
@@ -6900,11 +6900,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 return projectAdmittedBackgroundServicePlugin({ target, occurrenceId, sourceCustody, source });
             }));
         },
-        // Component retirement changes activation facts at the lifecycle owner.
-        // Do not freeze the startup snapshot into the resolved registry.
-        // Ordinary finite background-runner settlement remains diagnostic-only.
+        // Read current serving facts while preserving typed activation failures.
         get targetActivationFacts() {
-            return activatedRegistry.targetActivationFacts;
+            return consumerAssembly.readServingTargetActivationFacts();
         },
         targetActionInvocations: committedTargetActionInvocations,
         ...(params?.executeClientAction ? { executeClientAction: params.executeClientAction } : {}),
