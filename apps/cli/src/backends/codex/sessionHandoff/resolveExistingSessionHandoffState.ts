@@ -1,20 +1,27 @@
 import { buildCodexAgentRuntimeDescriptor, readSessionMetadataRuntimeDescriptor, resolvePersistedCodexRuntimeIdentity } from '@happier-dev/agents';
 import { DirectSessionsSourceSchema } from '@happier-dev/protocol';
 
+import { resolve } from 'node:path';
+
+import { withCodexAppServerClient } from '../appServer/client/withCodexAppServerClient';
 import type { ExistingSessionHandoffStateResolver } from '@/backends/types';
 import { resolveExistingCodexIndexedRolloutPath } from '@/backends/codex/connectedServices/reconcileCodexResumeRolloutPath';
-import { resolveConfiguredCodexSqliteHome } from '@/backends/codex/connectedServices/codexStateFileNames';
+import { resolveCodexSqliteLaunch } from '@/backends/codex/connectedServices/codexStateFileNames';
 import { resolveConfiguredCodexHome } from '@/backends/codex/utils/resolveConfiguredCodexHome';
 import { normalizeCodexVendorResumeId } from '@/backends/codex/utils/codexSessionFiles';
 import { ExistingSessionStateUnavailableError } from '@/session/handoff/sessionHandoffErrors';
 
 export const resolveExistingCodexSessionHandoffState: ExistingSessionHandoffStateResolver = async (params) => {
   const vendorResumeId = normalizeCodexVendorResumeId(params.vendorResumeId);
-  if (!vendorResumeId || !await resolveExistingCodexIndexedRolloutPath({ env: params.env, vendorResumeId, cwd: params.targetPath })) {
+  const codexHome = resolve(params.targetPath, resolveConfiguredCodexHome(params.env));
+  const { sqliteHome: configuredSqliteHome } = await resolveCodexSqliteLaunch({ env: params.env, cwd: params.targetPath });
+  const sqliteHome = configuredSqliteHome ?? (vendorResumeId ? await withCodexAppServerClient({
+    processEnv: params.env, cwd: params.targetPath,
+    run: async client => await client.readRuntimeSqliteHome?.() ?? null,
+  }).catch(() => null) : null);
+  if (!vendorResumeId || !sqliteHome || !await resolveExistingCodexIndexedRolloutPath({ sqliteHome, vendorResumeId, codexHome })) {
     throw new ExistingSessionStateUnavailableError('Codex existing native session is unreachable through its index');
   }
-  const codexHome = resolveConfiguredCodexHome(params.env);
-  const sqliteHome = resolveConfiguredCodexSqliteHome(params.env, params.targetPath);
   const descriptor = readSessionMetadataRuntimeDescriptor(params.metadata, 'codex');
   const directSession = params.metadata.directSessionV1;
   const parsedSource = directSession && typeof directSession === 'object' && 'source' in directSession
@@ -38,7 +45,7 @@ export const resolveExistingCodexSessionHandoffState: ExistingSessionHandoffStat
       directory: params.targetPath,
       agent: 'codex',
       resume: vendorResumeId,
-      environmentVariables: { CODEX_HOME: codexHome, CODEX_SQLITE_HOME: sqliteHome },
+      environmentVariables: { CODEX_HOME: codexHome, ...(params.env.CODEX_SQLITE_HOME ? { CODEX_SQLITE_HOME: params.env.CODEX_SQLITE_HOME } : {}) },
       transcriptStorage: params.sessionStorageMode,
       approvedNewDirectoryCreation: true,
       codexBackendMode: backendMode,

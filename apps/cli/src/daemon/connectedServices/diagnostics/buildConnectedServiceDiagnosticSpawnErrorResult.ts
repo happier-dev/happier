@@ -53,10 +53,19 @@ function readCredentialMissingSpawnError(error: unknown): ConnectedServiceCreden
   const record = readRecord(error);
   if (!record) return null;
   if (readString(record.name) !== 'ConnectedServiceCredentialResolutionError') return null;
-  if (readString(record.kind) !== 'missing_credential') return null;
+  if (readString(record.kind) !== 'present_but_unusable') return null;
   const serviceId = readString(record.serviceId);
   const profileId = readString(record.profileId);
   if (!serviceId || !profileId) return null;
+  return record;
+}
+
+function readProfileMissingSpawnError(error: unknown): ConnectedServiceCredentialMissingSpawnError | null {
+  const record = readRecord(error);
+  if (!record) return null;
+  if (readString(record.name) !== 'ConnectedServiceCredentialResolutionError') return null;
+  if (readString(record.kind) !== 'confirmed_missing') return null;
+  if (!readString(record.serviceId) || !readString(record.profileId)) return null;
   return record;
 }
 
@@ -79,6 +88,34 @@ export function buildConnectedServiceCredentialSpawnErrorResult(input: Readonly<
   agentId: CatalogAgentId;
   error: unknown;
 }>): Extract<SpawnSessionResult, { type: 'error' }> | null {
+  const missingProfile = readProfileMissingSpawnError(input.error);
+  if (missingProfile) {
+    const code = CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceProfileMissing;
+    return buildConnectedServiceDiagnosticSpawnValidationErrorResult({
+      errorMessage: code,
+      uxDiagnostic: buildConnectedServiceUxDiagnostic({
+        code,
+        failurePhase: 'materialization',
+        source: 'spawn_resume',
+        agentId: input.agentId,
+        serviceId: readString(missingProfile.serviceId),
+        profileId: readString(missingProfile.profileId),
+        retryable: false,
+        diagnostics: { reason: 'profile_missing' },
+      }),
+    });
+  }
+
+  const resolutionError = readRecord(input.error);
+  if (readStringField(resolutionError, 'name') === 'ConnectedServiceCredentialResolutionError'
+    && readStringField(resolutionError, 'kind') === 'unknown') {
+    return {
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+      errorMessage: 'Happier could not verify the selected login. Try again or choose a login in Connected Accounts.',
+    };
+  }
+
   const missingCredential = readCredentialMissingSpawnError(input.error);
   if (missingCredential) {
     const code = CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired;

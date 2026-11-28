@@ -202,7 +202,7 @@ describe('materializeConnectedServicesForSpawn', () => {
     const sourceCodexHome = await mkdtemp(join(tmpdir(), 'happier-source-codex-home-test-'));
     await writeFile(join(sourceCodexHome, 'config.toml'), 'model = "gpt-5.2-codex"\n');
     await writeFile(join(sourceCodexHome, 'AGENTS.md'), '# User Codex instructions\n');
-    await writeFile(join(sourceCodexHome, 'auth.json'), '{"access_token":"source-access"}\n');
+    await writeFile(join(sourceCodexHome, 'auth.json'), '{"auth_mode":"apikey","OPENAI_API_KEY":"fixture-source-key"}\n');
     await mkdir(join(sourceCodexHome, 'prompts'), { recursive: true });
     await writeFile(join(sourceCodexHome, 'prompts', 'review.md'), 'Review prompt\n');
     await mkdir(join(sourceCodexHome, 'skills', 'reviewer'), { recursive: true });

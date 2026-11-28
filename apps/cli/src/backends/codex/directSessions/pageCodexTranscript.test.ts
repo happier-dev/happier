@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, readFile, stat, writeFile, utimes } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { zstdCompressSync } from 'node:zlib';
@@ -374,6 +374,36 @@ describe('pageCodexTranscript', () => {
     expect(JSON.stringify(second.items[0] ?? null)).toContain('visible older item');
     expect(second.hasMore).toBe(false);
   });
+
+  it('reports a source discontinuity when an unread root rollout disappears between pages', async () => withTempDir('happier-codex-missing-root-', async root => {
+    const codexHome = join(root, 'codex-home');
+    const sessions = join(codexHome, 'sessions');
+    await mkdir(sessions, { recursive: true });
+    const remoteSessionId = '11111111-1111-1111-1111-111111111111';
+    const older = join(sessions, `rollout-2026-01-02T00-00-00-${remoteSessionId}.jsonl`);
+    const newer = join(sessions, `rollout-2026-01-03T00-00-00-${remoteSessionId}.jsonl`);
+    for (const [path, day, text] of [[older, '02', 'unread older item'], [newer, '03', 'newer item']]) {
+      const timestamp = `2026-01-${day}T00:00:00.000Z`;
+      await writeFile(path, sessionMetaLine({ id: remoteSessionId, timestamp, cwd: root }) + responseItemLine({
+        timestamp, payload: { type: 'message', role: 'assistant', content: [{ type: 'text', text }] },
+      }));
+    }
+    const params = {
+      source: { kind: 'codexHome', home: 'user' } as const,
+      env: { CODEX_HOME: codexHome }, activeServerDir: join(root, 'server'),
+      remoteSessionId, direction: 'older' as const, maxBytes: 1024 * 1024, maxItems: 1,
+    };
+    const first = await pageCodexTranscript(params);
+    expect(JSON.stringify(first.items)).toContain('newer item');
+    expect(first.nextCursor).toBeTruthy();
+    const continuation = { ...params, cursor: first.nextCursor! };
+    expect(JSON.stringify((await pageCodexTranscript(continuation)).items)).toContain('unread older item');
+
+    await rm(older);
+    expect(await pageCodexTranscript(continuation)).toMatchObject({
+      items: [], nextCursor: null, hasMore: false, truncated: true, truncationReason: 'source_discontinuity',
+    });
+  }));
 
   it('classifies an invalid backward cursor as a source discontinuity', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-direct-page-invalid-cursor-'));

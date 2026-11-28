@@ -19,6 +19,7 @@ export type SpawnConnectedServicesDefaultsForAccount = Readonly<{
  * runtime. Callers retain authority over stronger inputs such as an explicit selection or a
  * session's already-recorded runtime binding.
  */
+
 export async function resolveSpawnConnectedServicesDefaultsForAccount(params: Readonly<{
   credentials: Credentials;
   backendTarget: BackendTargetRefV1;

@@ -5499,6 +5499,7 @@ afterEach(() => {
       refreshWindowMs: 60_000,
       refreshLeaseMs: 30_000,
       now: () => now,
+      resolveProjectedCredentialHealth: () => ({ kind: 'present_but_unusable', status: 'needs_reauth' }),
     });
 
     coordinator.registerSpawnTarget({
@@ -5512,8 +5513,8 @@ afterEach(() => {
     });
 
     await expect(coordinator.tickOnce()).resolves.toBeUndefined();
+    expect(api.listConnectedServiceProfiles).not.toHaveBeenCalled();
 
-    expect(api.listConnectedServiceProfiles).toHaveBeenCalledWith({ serviceId: 'openai-codex' });
     expect(api.acquireConnectedServiceRefreshLease).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(api.updateConnectedServiceCredentialHealth).toHaveBeenCalledWith({
@@ -5530,7 +5531,7 @@ afterEach(() => {
     });
   });
 
-  it('backs off scheduled reconnect-required reprobes after a failed probe', async () => {
+  it.each(['pushed', 'unknown', 'stale usable'] as const)('backs off reconnect-required reprobes with %s health after a transient failure', async (projection) => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-refresh-needs-reauth-backoff-'));
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-server-refresh-needs-reauth-backoff-'));
 
@@ -5541,12 +5542,14 @@ afterEach(() => {
     if (credentials.encryption.type !== 'legacy') throw new Error('fixture');
 
     let now = 1_000_000;
+    const expiresAt = now + 30_000;
+    let credentialRevision = 'csr_abcdefghijklmnopqrstuv';
     const record = buildConnectedServiceCredentialRecord({
       now,
       serviceId: 'openai-codex',
       profileId: 'work',
       kind: 'oauth',
-      expiresAt: now + 30_000,
+      expiresAt,
       oauth: {
         accessToken: 'old-access',
         refreshToken: 'invalid-refresh',
@@ -5567,8 +5570,9 @@ afterEach(() => {
 
     const api = {
       getConnectedServiceCredentialSealed: vi.fn(async () => ({
+        credentialRevision,
         sealed: { format: 'account_scoped_v1', ciphertext: sealedCiphertext },
-        metadata: { kind: 'oauth', providerEmail: null, providerAccountId: 'acct', expiresAt: now + 30_000 },
+        metadata: { kind: 'oauth', providerEmail: null, providerAccountId: 'acct', expiresAt },
       })),
       listConnectedServiceProfiles: vi.fn(async () => ({
         serviceId: 'openai-codex',
@@ -5578,7 +5582,7 @@ afterEach(() => {
           kind: 'oauth' as const,
           providerEmail: null,
           providerAccountId: 'acct',
-          expiresAt: now + 30_000,
+          expiresAt,
         }],
       })),
       acquireConnectedServiceRefreshLease: vi.fn(async () => ({ acquired: true, leaseUntil: now + 60_000 })),
@@ -5605,6 +5609,11 @@ afterEach(() => {
       refreshWindowMs: 60_000,
       refreshLeaseMs: 30_000,
       now: () => now,
+      resolveProjectedCredentialHealth: () => {
+        if (projection === 'pushed') return { kind: 'present_but_unusable', status: 'needs_reauth' };
+        if (projection === 'stale usable') return { kind: 'usable', status: 'connected' };
+        return { kind: 'unknown' };
+      },
       logRefreshDiagnostic,
     });
 
@@ -5617,6 +5626,33 @@ afterEach(() => {
       },
       materializationKey: 'session-1',
     });
+
+    if (projection === 'unknown') {
+      now -= 60_000;
+      await expect(coordinator.tickOnce()).resolves.toBeUndefined();
+      expect(api.listConnectedServiceProfiles).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+      now += 60_000;
+    }
+
+    if (projection === 'stale usable') {
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        statusText: 'bad request',
+        text: async () => JSON.stringify({ error: 'invalid_grant' }),
+      });
+      await expect(coordinator.tickOnce()).rejects.toThrow('Connected services refresh tick failed');
+      expect(api.updateConnectedServiceCredentialHealth).toHaveBeenCalledWith(expect.objectContaining({
+        health: expect.objectContaining({ status: 'needs_reauth', reconnectRequired: true }),
+      }));
+      fetchMock.mockClear();
+      vi.mocked(api.updateConnectedServiceCredentialHealth).mockClear();
+      now += 30_000;
+      await expect(coordinator.tickOnce()).resolves.toBeUndefined();
+      expect(fetchMock).not.toHaveBeenCalled();
+      now += 30_000;
+    }
 
     await expect(coordinator.tickOnce()).resolves.toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -5634,9 +5670,22 @@ afterEach(() => {
       reason: 'scheduled',
     }));
 
-    now += 30_000;
+    now += projection === 'stale usable' ? 270_000 : 30_000;
     await expect(coordinator.tickOnce()).resolves.toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(api.updateConnectedServiceCredentialHealth).not.toHaveBeenCalled();
+    if (projection !== 'unknown') expect(api.listConnectedServiceProfiles).not.toHaveBeenCalled();
+
+    if (projection === 'stale usable') {
+      // A replacement from the credential authority retires the old revision's backoff.
+      credentialRevision = 'csr_0000000000000000000001';
+      await expect(coordinator.tickOnce()).rejects.toThrow('Connected services refresh tick failed');
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(api.updateConnectedServiceCredentialHealth).toHaveBeenCalledWith(expect.objectContaining({
+        expectedCredentialRevision: credentialRevision,
+        health: expect.objectContaining({ status: 'refresh_failed_retryable', reconnectRequired: false }),
+      }));
+    }
   });
 
   it('returns an honest blocked-health spawn preflight result before the expiry-window shortcut', async () => {
@@ -5725,7 +5774,7 @@ afterEach(() => {
       expiresAt: now + 10 * 60_000,
     }));
     expect(result.diagnostic.category).toBeUndefined();
-    expect(api.listConnectedServiceProfiles).toHaveBeenCalledWith({ serviceId: 'openai-codex' });
+    expect(api.listConnectedServiceProfiles).toHaveBeenCalledWith({ serviceId: 'openai-codex', forceRefresh: true });
     expect(api.acquireConnectedServiceRefreshLease).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(api.updateConnectedServiceCredentialHealth).not.toHaveBeenCalled();
@@ -5996,7 +6045,7 @@ afterEach(() => {
       reauthRequired: false,
     }));
 
-    expect(api.listConnectedServiceProfiles).toHaveBeenCalledWith({ serviceId: 'openai-codex' });
+    expect(api.listConnectedServiceProfiles).toHaveBeenCalledWith({ serviceId: 'openai-codex', forceRefresh: true });
     expect(api.acquireConnectedServiceRefreshLease).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(api.updateConnectedServiceCredentialHealth).toHaveBeenCalledWith({

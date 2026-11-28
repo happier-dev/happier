@@ -10,11 +10,10 @@ import { createCodexRolloutSemanticTracker } from '../rollout/createCodexRollout
 import type { CodexRolloutFile } from './collectCodexSessionRolloutFiles';
 import { collectCodexDirectTranscriptRolloutStreams } from './collectCodexDirectTranscriptRolloutStreams';
 import {
-  decodeCodexDirectBackwardCursor,
+  type CodexDirectBackwardCursor,
   encodeCodexDirectBackwardCursor,
 } from './codexDirectTranscriptBackwardCursor';
 import {
-  decodeCodexDirectForwardCursor,
   encodeCodexDirectForwardCursor,
   type CodexDurableStreamForwardProgress,
   type CodexDirectForwardCursor,
@@ -297,7 +296,7 @@ async function collectReadAfterRecords(params: Readonly<{
 export async function readAfterCodexRolloutStreams(params: Readonly<{
   collectFiles: (threadId: string) => Promise<CodexRolloutFile[]>;
   remoteSessionId: string;
-  cursor: string;
+  cursor: CodexDirectForwardCursor | 'tail' | null;
   maxBytes: number;
   maxItems: number;
   initialRolloutFiles?: readonly CodexRolloutFile[];
@@ -316,8 +315,7 @@ export async function readAfterCodexRolloutStreams(params: Readonly<{
     };
   }
 
-  const decoded = decodeCodexDirectForwardCursor(params.cursor);
-  const cursorProgressByStreamId = decodeDurableStreamVectorCursor(decoded);
+  const cursorProgressByStreamId = decodeDurableStreamVectorCursor(params.cursor);
   if (!cursorProgressByStreamId) {
     return {
       items: [],
@@ -417,7 +415,7 @@ export async function pageCodexRolloutStreams(params: Readonly<{
   collectFiles: (threadId: string) => Promise<CodexRolloutFile[]>;
   remoteSessionId: string;
   direction: 'older' | 'newer';
-  cursor?: string;
+  cursor?: CodexDirectBackwardCursor | 'unrecognized';
   maxBytes: number;
   maxItems: number;
   initialRolloutFiles?: readonly CodexRolloutFile[];
@@ -440,8 +438,15 @@ export async function pageCodexRolloutStreams(params: Readonly<{
     return { items: [], nextCursor: null, tailCursor, hasMore: false };
   }
 
-  const decoded = decodeCodexDirectBackwardCursor(params.cursor);
+  const decoded = params.cursor === 'unrecognized' ? null : params.cursor;
   const knownStreamIds = new Set(streams.map((stream) => stream.fileRelPath));
+  // Missing root history cannot be restored by sidechain discovery.
+  if (decoded?.streams.some((entry) => entry.endOffsetBytes > 0
+      && (!('threadId' in entry) || entry.threadId === params.remoteSessionId)
+      && !knownStreamIds.has(entry.fileRelPath))) {
+    return { items: [], nextCursor: null, tailCursor: null, hasMore: false,
+      truncated: true, truncationReason: 'source_discontinuity' };
+  }
   const discoveredThreadIds = new Set(streams.map((stream) => stream.threadId));
   const discoveryByStreamId = new Map<string, CodexStreamDiscovery>();
   const discoveredChildThreadIdsByProvenance = new Map<string, readonly string[]>();
@@ -619,7 +624,7 @@ export async function pageCodexRolloutStreams(params: Readonly<{
     nextCursor,
     tailCursor,
     hasMore,
-    ...(decoded === null && typeof params.cursor === 'string' && params.cursor.trim().length > 0
+    ...(params.cursor === 'unrecognized'
       ? { truncated: true, truncationReason: 'source_discontinuity' as const }
       : {}),
   };

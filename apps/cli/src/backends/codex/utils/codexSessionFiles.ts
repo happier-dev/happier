@@ -126,6 +126,7 @@ export async function findCodexRolloutFileById(params: Readonly<{
   sessionsRoot: string;
   vendorResumeId: string;
   includeCompressed?: boolean;
+  recordedFileName?: string;
 }>): Promise<string | null> {
   async function walk(currentDir: string, depth: number): Promise<string | null> {
     if (depth > CODEX_NATIVE_SEARCH_MAX_DEPTH) return null;
@@ -143,7 +144,8 @@ export async function findCodexRolloutFileById(params: Readonly<{
         }
         if (!entry.isFile()) continue;
         if (params.includeCompressed === false && entryName !== resolveCodexLogicalRolloutPath(entryName)) continue;
-        if (isMatchingCodexRolloutFileName(entryName, params.vendorResumeId)) {
+        if (isMatchingCodexRolloutFileName(entryName, params.vendorResumeId)
+          && (!params.recordedFileName || resolveCodexLogicalRolloutPath(entryName) === params.recordedFileName)) {
           const plainName = resolveCodexLogicalRolloutPath(entryName);
           return join(currentDir, fileNames.has(plainName) ? plainName : entryName);
         }
