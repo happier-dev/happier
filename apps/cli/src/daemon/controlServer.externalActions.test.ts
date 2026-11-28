@@ -11,6 +11,9 @@ import { createDaemonControlApp } from './controlServer';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createDaemonExternalActionTargetResolver } from './externalActions/daemonExternalActionTargetResolver';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { actionSpecToActionDefinitionV1 } from '@happier-dev/protocol/actions/actionCatalog';
+import type { ActionDefinitionV1 } from '@happier-dev/protocol/actions/actionDefinitionV1';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 
@@ -208,6 +211,49 @@ describe('createDaemonControlApp external Action ingress', () => {
       expect(response.statusCode).toBe(200);
       expect(response.json()).toMatchObject({ matched: true, result: { ok: true, result: { actionRequestId } } });
     } finally { await app.close(); }
+  });
+
+  it('preserves contributed catalogue entries with omitted optional metadata in local discovery', async () => {
+    const id = 'example.catalog/actions/read';
+    const definition: ActionDefinitionV1 = {
+      ...actionSpecToActionDefinitionV1(getActionSpec('action.spec.get')),
+      id,
+      inputHints: { fields: [{ path: 'id', title: 'Action ID', widget: 'text', unsetLabel: undefined }] },
+    };
+    const app = createApp({
+      currentServerId: 'server-local',
+      verifyPat: vi.fn(),
+      executor: createActionExecutor({ listContributedActionDefinitions: () => [definition] }),
+      resolveTarget: vi.fn(),
+    }, { enablePluginActionRoute: true });
+
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/plugins/actions/execute',
+        headers: { 'x-happier-daemon-token': 'private-control-token' },
+        payload: {
+          actionId: 'action.spec.search',
+          input: { query: id },
+          surface: 'cli',
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        matched: true,
+        result: {
+          ok: true,
+          result: {
+            actionSpecs: expect.arrayContaining([
+              expect.objectContaining({ id, inputHints: { fields: [{ path: 'id', title: 'Action ID', widget: 'text' }] } }),
+            ]),
+          },
+        },
+      });
+    } finally {
+      await app.close();
+    }
   });
 
   it('fails closed when a daemon-owned meta Action produces a non-JSON result', async () => {

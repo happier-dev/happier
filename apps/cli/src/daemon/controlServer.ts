@@ -139,7 +139,7 @@ import { SessionRunnerRuntimeStatusV2Schema } from '@happier-dev/protocol/sessio
 import { SessionCreationTerminalSpawnErrorDetailSchema, SpawnSessionErrorCodeSchema } from '@happier-dev/protocol/spawnSession';
 import { SessionUsageLimitRecoveryResumePromptModeV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
 import { SshTunnelEnsureRequestSchema, SshTunnelProbeRequestSchema, SshTunnelReleaseRequestSchema, SshTunnelStopRequestSchema } from '@happier-dev/protocol/ssh/tunnels';
-import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { createUnavailableRuntimeActionExecutor } from '@happier-dev/protocol/actions/executor/dispatch';
 import type { RuntimeActionExecute, ConnectedServiceId, ConnectedServiceQuotaRecoveryCreditConsumeRequestV1, ConnectedServiceUsageSourceV1, ProviderAccountUsageSnapshotV1, RestartAllSessionRunnersRequestV1, RestartAllSessionRunnersResultV1, RestartSessionRunnerRequestV1, RestartSessionRunnerRequestV2, RestartSessionRunnerResultV1, SessionRunnerStatusGetRequestV1, SessionRunnerRuntimeStateV1, SessionRunnerRuntimeStatusV2, SessionCreationTerminalSpawnErrorDetail, SpawnSessionErrorCode, SpawnSessionErrorDetail, SessionMetadataPublisherPreconditionV1, SessionUsageLimitRecoveryResumePromptModeV1 } from '@happier-dev/protocol';
 import { ConnectedServiceQuotaRecoveryCreditConsumeRequestV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
@@ -1600,17 +1600,21 @@ export function createDaemonControlApp({
               result: projectActionExecuteFailure(execution),
             };
           }
-          const result = StrictJsonValueSchema.safeParse(execution.result);
-          return {
-            matched: true,
-            result: result.success
-              ? { ok: true, result: result.data }
-              : {
-                  ok: false,
-                  errorCode: 'invalid_action_output',
-                  error: 'The Action returned a non-JSON result',
-                },
-          };
+          try {
+            return {
+              matched: true,
+              result: { ok: true, result: projectNativeJsonValueForTransport(execution.result) },
+            };
+          } catch {
+            return {
+              matched: true,
+              result: {
+                ok: false,
+                errorCode: 'invalid_action_output',
+                error: 'The Action returned a non-JSON result',
+              },
+            };
+          }
         }
         return await executeAppliedDaemonPluginActionWithController(
           request, pluginReloadController, pluginActionCurrentIntent, signal, runtimeAccountId,
