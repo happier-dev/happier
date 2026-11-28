@@ -282,17 +282,24 @@ async function reconcileProtectedPendingInput(params: Readonly<{
     crypto: SessionStoredContentCryptoContext;
     executionRun?: boolean;
     signal?: AbortSignal;
+    expectedDiscussionAddressing?: DiscussionAddressV1;
     readCurrentAutonomousCheckIn?: (origin?: DiscussionAddressV1) => Promise<Readonly<{ afterTurns: number | null }> | null>;
 }>): Promise<ReconciledPendingInput> {
     const localId = params.message.localId;
-    if (!localId || !params.message.content) return { status: 'outcomeUnknown' };
+    const expectedAddress = params.expectedDiscussionAddressing;
+    if (!localId || !params.message.content) return { status: expectedAddress ? 'rejected' : 'outcomeUnknown' };
     const payload = readPendingStoredPayload(params.message, params.crypto);
-    if (!payload) return { status: 'undecryptable' };
+    if (!payload) return { status: expectedAddress ? 'rejected' : 'undecryptable' };
     const meta = payload.meta && typeof payload.meta === 'object' && !Array.isArray(payload.meta)
         ? payload.meta as Record<string, unknown>
         : {};
     const admission = readProtectedPendingInputAdmission(meta, params.message.inputAdmissionReceipt);
     const request = admission?.request;
+    const originalAddress = request?.discussionAddressing;
+    if (expectedAddress && (!originalAddress || originalAddress.discussionId !== expectedAddress.discussionId
+        || originalAddress.messageId !== expectedAddress.messageId || originalAddress.throughSeq !== expectedAddress.throughSeq
+        || originalAddress.participantSessionId !== expectedAddress.participantSessionId
+        || expectedAddress.participantSessionId !== params.sessionId)) return { status: 'rejected' };
     const settledAuthority = admission?.settledAuthority;
     const requestEqualityEvidenceV1 = params.executionRun && params.crypto.mode === 'e2ee'
         ? {
@@ -1460,17 +1467,10 @@ export function createSessionClientInteractionApi(
                 inputAdmissionReceipt: original.message.inputAdmissionReceipt ?? null,
                 providerAction: null, requestedAction: { v: 1, kind: 'enqueue' } };
             const crypto = deps.getStoredContentCryptoContext();
-            const payload = readPendingStoredPayload(message, crypto);
-            const request = readProtectedPendingInputAdmission(payload?.meta, message.inputAdmissionReceipt)?.request;
-            const originalAddress = request?.discussionAddressing;
-            const address = input.discussionAddressing;
-            if (address && (!originalAddress || originalAddress.discussionId !== address.discussionId
-                || originalAddress.messageId !== address.messageId || originalAddress.throughSeq !== address.throughSeq
-                || originalAddress.participantSessionId !== address.participantSessionId
-                || address.participantSessionId !== deps.sessionId)) return 'rejected';
             const result = await runWithServerHttpBaseUrl(serverUrl, () => reconcileProtectedPendingInput({
                 socket, serverId: deps.serverId, sessionId: deps.sessionId, token: deps.token, message, metadata: deps.getMetadata(), crypto,
-                signal: input.signal, ...(deps.readCurrentAutonomousCheckIn
+                signal: input.signal, expectedDiscussionAddressing: input.discussionAddressing,
+                ...(deps.readCurrentAutonomousCheckIn
                     ? { readCurrentAutonomousCheckIn: deps.readCurrentAutonomousCheckIn } : {}),
             }));
             if (deps.getClosed() || input.signal.aborted || deps.getSocket() !== socket

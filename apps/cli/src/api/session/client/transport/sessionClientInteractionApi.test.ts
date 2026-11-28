@@ -17,6 +17,7 @@ import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { registerPermissionModeMessageQueueBinding } from '@/agent/runtime/permissions/bindModeQueue';
 import type { UserMessage } from '@/api/types';
 import { assertSessionInputAdmissionReceiptForAuthorityV1, readSessionInputRequest, settleSessionInputRequestV1, withSessionInputAuthority } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import * as sessionEncryption from '@/session/transport/encryption/sessionEncryptionContext';
 import { encryptSessionPayload } from '@/session/transport/encryption/sessionEncryptionContext';
 import { SessionPendingAdmissionSettlementRequestV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingAdmissionSettlementV1';
 import { resolveAutonomousExchangeAfterTurnsV1 } from '@happier-dev/protocol/sessions/messages/autonomousExchangeV1';
@@ -1390,6 +1391,37 @@ describe('createSessionClientInteractionApi diagnostics', () => {
     expect(outcome).toMatchObject({ type: 'no_pending' });
     expect(socketAckMock).toHaveBeenNthCalledWith(2, 'session-pending-admission-settlement-v1',
       expect.objectContaining({ decision: expect.objectContaining({ kind: 'reject', code: 'session_input_muted' }) }));
+  });
+
+  it('opens a protected encrypted row once during final readmission', async () => {
+    const socket = createSocketStub();
+    const localId = 'owned-action-input';
+    const ctx = { encryptionKey: new Uint8Array(32).fill(9), encryptionVariant: 'dataKey' as const };
+    const inputAdmissionReceipt = { v: 1 as const, issuer: 'authenticatedMachine' as const };
+    const request = { v: 1 as const, producer: 'sessionAction' as const, caller: { kind: 'host' as const },
+      replyIntent: { mode: 'wait' as const }, permission: {} };
+    const authority = settleSessionInputRequestV1({ request, inputAdmissionReceipt, currentSessionPermissionCeiling: 'default' });
+    const content = { t: 'encrypted' as const, c: encryptSessionPayload({ ctx, payload: {
+      role: 'user', content: { type: 'text', text: 'Send through the owned Action' },
+      meta: withSessionInputAuthority({}, authority),
+    } }) };
+    axiosGetMock.mockResolvedValueOnce({ status: 200, data: { message: {
+      id: 'owned-action-message', seq: 9, localId, messageRole: 'user', createdAt: 1000, updatedAt: 1000,
+      inputAdmissionReceipt, content,
+    } } });
+    socketAckMock.mockResolvedValueOnce({ v: 1, result: { status: 'alreadyAccepted', localId } });
+    const api = createApi({ getSocket: () => socket as never, getStoredContentCryptoContext: () => ({ mode: 'e2ee', ctx }) });
+    const open = vi.spyOn(sessionEncryption, 'openSessionMessageContent');
+    try {
+      await expect(api.reconcileSessionInputForProviderDispatch({ localId, signal: new AbortController().signal }))
+        .resolves.toBe('admitted');
+      expect(open).toHaveBeenCalledTimes(1);
+      expect(socketAckMock).toHaveBeenCalledWith('session-pending-admission-settlement-v1', expect.objectContaining({
+        localId, decision: expect.objectContaining({ kind: 'admit', finalContent: content }),
+      }));
+    } finally {
+      open.mockRestore();
+    }
   });
 
   it('preserves local cancellation during the retained input lookup', async () => {
