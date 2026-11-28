@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdtemp, open, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { link, mkdtemp, open, readFile, readdir, rm, stat, unlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir, uptime } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readProcessStartTimeMsSync } from '@happier-dev/cli-common/processInstance';
 
-import { withJsonOwnerFileLock } from './jsonOwnerFileLock.js';
+import { reclaimJsonOwnerFileLockSnapshot, withJsonOwnerFileLock } from './jsonOwnerFileLock.js';
 
 /**
  * A lock may only be reclaimed from a holder **proven** gone.
@@ -210,6 +211,30 @@ describe('withJsonOwnerFileLock — crash recovery without per-lock fsync', () =
     const root = await mkdtemp(join(tmpdir(), `happier-json-owner-lock-${name}-`));
     try { return await run(join(root, 'store.lock')); } finally { await rm(root, { recursive: true, force: true }); }
   }
+
+  it('retires its published reclaim guard after a hard-link metadata change', async () => {
+    await inRoot('guard-link-metadata', async (lockPath) => {
+      const guardPath = `${lockPath}.reclaim`;
+      const guardAlias = `${guardPath}.alias`;
+      const retiredOwner = 'retired lock owner';
+      await writeFile(lockPath, retiredOwner, 'utf8');
+
+      await expect(reclaimJsonOwnerFileLockSnapshot(lockPath, retiredOwner, async (quarantinePath) => {
+        const before = await stat(guardPath);
+        await delay(20);
+        await link(guardPath, guardAlias);
+        await unlink(guardAlias);
+        const after = await stat(guardPath);
+        expect(after.ctimeMs).not.toBe(before.ctimeMs);
+        return await readFile(quarantinePath, 'utf8');
+      })).resolves.toBe('reclaimed');
+
+      await expect(readdir(dirname(lockPath))).resolves.toEqual([]);
+      await expect(withJsonOwnerFileLock({
+        lockPath, timeoutMs: 1_000, errorCode: 'json_owner_lock_timeout',
+      }, async () => 'acquired')).resolves.toBe('acquired');
+    });
+  });
 
   it('publishes and releases ownership without flushing the owner or guard bytes to disk', async () => {
     await inRoot('nosync', async (lockPath) => {

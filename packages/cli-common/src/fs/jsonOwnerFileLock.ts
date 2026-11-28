@@ -290,14 +290,15 @@ async function readSnapshot(path: string): Promise<FileSnapshot | null> {
   }
 }
 
-async function snapshotStillMatches(path: string, expected: FileSnapshot): Promise<boolean> {
+async function snapshotStillMatches(
+  path: string,
+  expected: FileSnapshot,
+  match: 'exact' | 'content' = 'exact',
+): Promise<boolean> {
   const current = await readSnapshot(path);
   return current !== null
-    && current.raw === expected.raw
-    && sameIdentity(current.identity, expected.identity)
-    && current.size === expected.size
-    && current.mtimeMs === expected.mtimeMs
-    && current.ctimeMs === expected.ctimeMs;
+    && sameContentVersion(current, expected)
+    && (match === 'content' || current.ctimeMs === expected.ctimeMs);
 }
 
 async function unlinkExactFile(path: string, expected: FileSnapshot): Promise<boolean> {
@@ -333,10 +334,13 @@ async function restoreQuarantinedFile(quarantinePath: string, destinationPath: s
 async function quarantineExactFile(
   path: string,
   expected: FileSnapshot,
-  quarantineLabel: string,
+  quarantineLabel: 'reclaim' | 'publication' | 'cleanup' | 'stale',
   readQuarantinedRaw: (path: string) => Promise<string>,
 ): Promise<ReclaimResult> {
-  if (!(await snapshotStillMatches(path, expected))) return 'successor_preserved';
+  // The guard we published is immutable. NTFS can advance its ctime when a
+  // hard link is removed, while the inode, owner bytes and mtime stay intact.
+  const match = quarantineLabel === 'cleanup' ? 'content' : 'exact';
+  if (!(await snapshotStillMatches(path, expected, match))) return 'successor_preserved';
   const quarantinePath = `${path}.${quarantineLabel}-${process.pid}-${Date.now()}-${randomUUID()}`;
   try {
     await rename(path, quarantinePath);
