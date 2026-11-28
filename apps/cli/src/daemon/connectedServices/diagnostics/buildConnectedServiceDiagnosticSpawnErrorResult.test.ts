@@ -4,6 +4,7 @@ import {
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
   SPAWN_SESSION_ERROR_CODES,
   isConnectedServiceUxDiagnosticSpawnErrorDetail,
+  isSpawnSessionErrorDetail,
   type ConnectedServiceUxDiagnosticCodeV1,
 } from '@happier-dev/protocol';
 
@@ -17,6 +18,24 @@ import {
 } from './buildConnectedServiceDiagnosticSpawnErrorResult';
 
 describe('buildConnectedServiceDiagnosticSpawnValidationErrorResult', () => {
+  it('presents unknown credential health in the released spawn error envelope', () => {
+    const result = buildConnectedServiceCredentialSpawnErrorResult({
+      agentId: 'claude',
+      error: {
+        name: 'ConnectedServiceCredentialResolutionError',
+        kind: 'unknown',
+        serviceId: 'claude-subscription',
+        profileId: 'work',
+      },
+    });
+
+    expect(result).toMatchObject({
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+      errorMessage: expect.stringContaining('Connected Accounts'),
+    });
+    expect(result?.errorDetail === undefined || isSpawnSessionErrorDetail(result.errorDetail)).toBe(true);
+  });
+
   it('attaches a protocol-owned ux diagnostic to connected-service spawn validation errors', () => {
     const result = buildConnectedServiceDiagnosticSpawnValidationErrorResult({
       errorMessage: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceMaterializationIdentityMissing,
@@ -186,7 +205,7 @@ describe('buildConnectedServiceDiagnosticSpawnValidationErrorResult', () => {
       agentId: 'claude',
       error: Object.assign(new Error('Missing connected service credential (claude-subscription/batiplus)'), {
         name: 'ConnectedServiceCredentialResolutionError',
-        kind: 'missing_credential',
+        kind: 'present_but_unusable',
         serviceId: 'claude-subscription',
         profileId: 'batiplus',
       }),
@@ -218,6 +237,32 @@ describe('buildConnectedServiceDiagnosticSpawnValidationErrorResult', () => {
         reason: 'missing_credential',
       },
     });
+  });
+});
+
+describe('a spawn refused because the bound profile no longer exists', () => {
+  it('is a distinct diagnostic that sends the owner to choose another account, not to reconnect', () => {
+    const result = buildConnectedServiceCredentialSpawnErrorResult({
+      agentId: 'claude',
+      error: {
+        name: 'ConnectedServiceCredentialResolutionError',
+        kind: 'confirmed_missing',
+        serviceId: 'claude-subscription',
+        profileId: 'Claude-2',
+      },
+    });
+    if (!result) throw new Error('expected a spawn error result');
+
+    expect(result.errorMessage).toBe('connected_service_profile_missing');
+    if (!isConnectedServiceUxDiagnosticSpawnErrorDetail(result.errorDetail)) throw new Error('expected diagnostic detail');
+    expect(result.errorDetail.uxDiagnostic).toMatchObject({
+      code: 'connected_service_profile_missing',
+      serviceId: 'claude-subscription',
+      profileId: 'Claude-2',
+      retryable: false,
+    });
+    expect(result.errorDetail.uxDiagnostic.suggestedActions).toEqual(['open_connected_accounts']);
+    expect(result.errorDetail.uxDiagnostic.suggestedActions).not.toContain('reconnect_profile');
   });
 });
 

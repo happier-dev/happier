@@ -19,7 +19,11 @@ import {
   type ConnectedServiceBindingSelection,
   type ConnectedServicesBindingsV1,
 } from './parseConnectedServicesBindings';
-import { resolveConnectedServiceCredentialsWithRevisions } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
+import {
+  ConnectedServiceCredentialResolutionError,
+  readConnectedServiceProfileHealths,
+  resolveConnectedServiceCredentialsWithRevisions,
+} from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 import {
   materializeConnectedServicesForSpawn,
   type ConnectedServiceResolvedSelection,
@@ -67,15 +71,7 @@ type ConnectedServiceAuthGroupApi = Readonly<{
   }>) => Promise<ConnectedServiceAuthGroupResponse | null>;
 }>;
 
-type ConnectedServiceProfilesHealthApi = Readonly<{
-  listConnectedServiceProfiles?: (params: Readonly<{ serviceId: ConnectedServiceId }>) => Promise<Readonly<{
-    serviceId: ConnectedServiceId;
-    profiles: ReadonlyArray<Readonly<{
-      profileId: string;
-      status: ConnectedServiceCredentialHealthStatusV1;
-    }>>;
-  }>>;
-}>;
+
 
 type ConnectedServiceAuthGroupPreTurnSwitchCoordinator = Readonly<{
   switchBeforeTurn(params: Readonly<{
@@ -390,9 +386,6 @@ async function assertCredentialHealthAllowsSpawn(params: Readonly<{
   api: ApiClient;
   credentialBindings: ReadonlyArray<{ serviceId: ConnectedServiceId; profileId: string }>;
 }>): Promise<void> {
-  const profilesApi = params.api as ConnectedServiceProfilesHealthApi;
-  if (typeof profilesApi.listConnectedServiceProfiles !== 'function') return;
-
   const bindingsByServiceId = new Map<ConnectedServiceId, Set<string>>();
   for (const binding of params.credentialBindings) {
     const profileId = String(binding.profileId ?? '').trim();
@@ -406,16 +399,22 @@ async function assertCredentialHealthAllowsSpawn(params: Readonly<{
   }
 
   for (const [serviceId, profileIds] of bindingsByServiceId.entries()) {
-    const result = await profilesApi.listConnectedServiceProfiles({ serviceId });
-    const profiles = Array.isArray(result?.profiles) ? result.profiles : [];
-    for (const profile of profiles) {
-      if (!profileIds.has(profile.profileId)) continue;
-      if (profile.status !== 'needs_reauth') continue;
+    const healthByProfileId = await readConnectedServiceProfileHealths({
+      api: params.api, serviceId, profileIds: [...profileIds],
+    });
+    for (const [profileId, health] of healthByProfileId) {
+      if (health.kind === 'confirmed_missing') {
+        throw new ConnectedServiceCredentialResolutionError({ serviceId, profileId }, health.kind);
+      }
+      if (health.kind !== 'present_but_unusable') continue;
+      if (health.status !== 'needs_reauth') {
+        throw new ConnectedServiceCredentialResolutionError({ serviceId, profileId }, health.kind);
+      }
       throw new ConnectedServiceSpawnCredentialRefreshError({
         kind: 'reconnect_required',
         diagnostic: {
           serviceId,
-          profileId: profile.profileId,
+          profileId,
           reason: 'spawn_preflight',
           status: 'refresh_failed',
           category: 'invalid_grant',
@@ -1230,10 +1229,10 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
   params.signal?.throwIfAborted();
 
   const resolvedCredentials = await resolveConnectedServiceCredentialsWithRevisions({
-      credentials: params.credentials,
-      api: params.api,
-      bindings: resolvedBindings.credentialBindings,
-    });
+    credentials: params.credentials,
+    api: params.api,
+    bindings: resolvedBindings.credentialBindings,
+  });
   params.signal?.throwIfAborted();
   const recordsByServiceId = new Map(Array.from(
     resolvedCredentials,

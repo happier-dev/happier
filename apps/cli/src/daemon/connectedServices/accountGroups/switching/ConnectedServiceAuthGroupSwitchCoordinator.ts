@@ -974,6 +974,9 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
       await this.deps.recordObservedFailureState({ ...input, ...input.failure, loaded: initial });
       initial = await this.deps.loadState(input);
     }
+    if (initial.activeProfileId && !initial.members.some(member => member.profileId === initial.activeProfileId)) {
+      return null;
+    }
     const probe = await this.probeQuotaSnapshotsBeforeSelection({
       trigger: 'classified_failure', request: { ...input, reason: input.failure?.reason ?? 'usage_limit' },
       loaded: { ...initial, members: initial.members.filter((member) => member.profileId === initial.activeProfileId) },
