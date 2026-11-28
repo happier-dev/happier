@@ -10,6 +10,7 @@ on:
         options:
           - preview
           - production
+          - next
       force_deploy:
         description: "Deploy — Vestigial; Cloudflare is republished on every promotion, so there is nothing to force"
         required: true
@@ -21,7 +22,7 @@ on:
         default: true
         type: boolean
       source_ref:
-        description: "Promotion — Source ref to promote (branch, tag, or SHA). Use 'auto' to default preview→preview, production→main."
+        description: "Promotion — Source ref to promote (branch, tag, or SHA). Use 'auto' to default preview→preview, production→main, next→v0.3."
         required: true
         default: auto
         type: string
@@ -57,7 +58,7 @@ on:
         default: true
         type: boolean
       source_ref:
-        description: "Promotion — Source ref to promote (branch, tag, or SHA). Use 'auto' to default preview→preview, production→main."
+        description: "Promotion — Source ref to promote (branch, tag, or SHA). Use 'auto' to default preview→preview, production→main, next→v0.3."
         required: false
         default: auto
         type: string
@@ -171,12 +172,21 @@ jobs:
           BUMP: ${{ inputs.bump }}
         run: |
           set -euo pipefail
+          case "$DEPLOY_ENVIRONMENT" in
+            preview) default_source=preview ;;
+            production) default_source=main ;;
+            next) default_source=v0.3 ;;
+            *) echo "Invalid website deployment environment." >&2; exit 1 ;;
+          esac
           src="$SOURCE_REF"
           if [ "$src" = auto ]; then
-            if [ "$DEPLOY_ENVIRONMENT" = preview ]; then src=preview; else src=main; fi
+            src="$default_source"
           fi
-          if [ "$DEPLOY_ENVIRONMENT" = production ] && [ "$src" != main ] && [ "$ALLOW_CROSS_PROMOTE" != true ]; then
+          if { [ "$DEPLOY_ENVIRONMENT" = production ] || [ "$DEPLOY_ENVIRONMENT" = next ]; } && [ "$src" != "$default_source" ] && [ "$ALLOW_CROSS_PROMOTE" != true ]; then
             echo "Refusing cross-promotion without explicit approval." >&2; exit 1
+          fi
+          if [ "$DEPLOY_ENVIRONMENT" = next ] && [ "$BUMP" != none ]; then
+            echo "The next website deploys without a version bump; use bump=none." >&2; exit 1
           fi
           if [ "$BUMP" != none ] && [ "$src" != main ] && [ "$src" != preview ] && [ "$src" != dev ]; then
             echo "Version bumps require a source branch." >&2; exit 1
@@ -347,6 +357,7 @@ jobs:
         with:
           node-version-file: .node-version
       - name: Create GitHub App token
+        if: inputs.environment != 'next'
         id: app_token
         uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
         with:
@@ -357,6 +368,7 @@ jobs:
           permission-contents: write
           permission-workflows: write
       - name: Resolve deploy branch SHA before promotion
+        if: inputs.environment != 'next'
         id: before
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
@@ -365,6 +377,7 @@ jobs:
         run: |
           ref="deploy/$DEPLOY_ENVIRONMENT/website"; sha="$(gh api "repos/$GH_REPO/git/ref/heads/$ref" --jq .object.sha 2>/dev/null || true)"; echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - name: Promote exact release SHA
+        if: inputs.environment != 'next'
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
@@ -372,6 +385,7 @@ jobs:
           RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
         run: node scripts/pipeline/github/promote-deploy-branch.mjs --deploy-environment "$DEPLOY_ENVIRONMENT" --component website --sha "$RELEASE_SHA" --summary-file "$GITHUB_STEP_SUMMARY"
       - name: Resolve deploy branch SHA after promotion
+        if: inputs.environment != 'next'
         id: after
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
@@ -384,6 +398,10 @@ jobs:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           DEPLOY_SHA: ${{ steps.after.outputs.sha }}
         run: |
+          if [ "$DEPLOY_ENVIRONMENT" = next ]; then
+            echo "next deploys the validated candidate directly; no deploy branch is promoted and bump=none is required." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           echo "deploy/$DEPLOY_ENVIRONMENT/website records what is live; Cloudflare is published by the deploy_cloudflare job." >> "$GITHUB_STEP_SUMMARY"
           echo "- deploy_branch_sha: $DEPLOY_SHA" >> "$GITHUB_STEP_SUMMARY"
 
@@ -440,6 +458,8 @@ jobs:
           set -euo pipefail
           if [ "$DEPLOY_ENVIRONMENT" = production ]; then
             npx --yes wrangler@4 deploy --message "promote $RELEASE_SHA"
+          elif [ "$DEPLOY_ENVIRONMENT" = next ]; then
+            npx --yes wrangler@4 deploy --env next --message "promote $RELEASE_SHA"
           else
             npx --yes wrangler@4 versions upload --preview-alias preview --message "promote $RELEASE_SHA"
           fi
@@ -449,8 +469,14 @@ jobs:
           RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
         run: |
           echo "Published apps/website/dist to Cloudflare ($DEPLOY_ENVIRONMENT) from $RELEASE_SHA." >> "$GITHUB_STEP_SUMMARY"
-      - name: Verify the production curated catalog
-        if: inputs.environment == 'production'
+      - name: Verify the next website
+        if: inputs.environment == 'next'
+        run: |
+          set -euo pipefail
+          status="$(curl --fail --silent --show-error --max-redirs 0 --output /dev/null --write-out '%{http_code}' https://next.happier.dev/)"
+          test "$status" = 200
+      - name: Verify the deployed curated catalog
+        if: inputs.environment == 'production' || inputs.environment == 'next'
         working-directory: apps/website
         run: |
           set -euo pipefail

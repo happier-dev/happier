@@ -138,9 +138,13 @@ The first curated listing requires an approved review and a public, exact npm
 release whose integrity and plugin metadata can be verified. Curation records
 recommendation and provenance; it never makes a plugin trusted automatically.
 Community npm discovery and user-added catalogs remain available independently
-of curated content. A production website promotion will require the catalog
-hostname to resolve and will compare the served bytes with the release
-candidate before the deployment succeeds.
+of curated content. The pre-release `next` website promotion will serve the
+catalog alongside `next.happier.dev`, leaving the stable website unchanged.
+Both `next` and production promotions require the catalog hostname to resolve
+and compare the served bytes with the release candidate before succeeding.
+At 0.3 launch, the catalog route must be removed from the next Worker before
+it is assigned to the production Worker. The catalog hostname requires a
+proxied DNS record; the next website's custom domain creates its own record.
 
 ## Requirements
 

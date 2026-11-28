@@ -36,13 +36,6 @@ preview_urls = true
 pattern = "happier.dev"
 custom_domain = true
 
-# The curated catalog has its own source identity. Route only its exact public
-# path through this Worker: the marketplace hostname must not expose a second
-# copy of the marketing site. DNS activation remains a release prerequisite.
-[[routes]]
-pattern = "marketplace.happier.dev/catalog.json"
-zone_name = "happier.dev"
-
 [assets]
 directory = "./dist/"
 binding = "ASSETS"
@@ -58,3 +51,21 @@ html_handling = "auto-trailing-slash"
 # Everything except this prefix is served straight from assets without a
 # billable invocation.
 run_worker_first = ["/ingest/*"]
+
+# Before 0.3 launches, keep happier.dev on the main/0.2 deployment.
+# Environment routes replace the top-level routes; next never claims happier.dev.
+[env.next]
+name = "happier-website-next"
+workers_dev = false
+
+[[env.next.routes]]
+pattern = "next.happier.dev"
+custom_domain = true
+
+# Only next owns the catalog until launch. At 0.3 launch remove this route
+# from next (deploy next first), then add it to the top-level production routes
+# and deploy production. Never let two Workers claim it simultaneously.
+# The plain route requires a proxied marketplace.happier.dev DNS record.
+[[env.next.routes]]
+pattern = "marketplace.happier.dev/catalog.json"
+zone_name = "happier.dev"
