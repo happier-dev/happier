@@ -49,7 +49,9 @@ describe("Redis-backed RPC registration lifecycle", () => {
 
     afterAll(async () => {
         try {
-            await Promise.all([redis?.quit(), getRedisClient("fail-on-disconnect").quit()]);
+            if (redis) {
+                await Promise.all([redis.quit(), getRedisClient("fail-on-disconnect").quit()]);
+            }
         } finally {
             vi.unstubAllEnvs();
             await redisMemory?.stop();
