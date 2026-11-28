@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 
 import { buildDbContainerPlan, buildDatabaseUrlForContainer, parseDockerPortLine,
   sanitizeDockerEnv } from '../../../scripts/extended-db-docker.plan.mjs';
+import { EXTENDED_DB_OWNER_LABEL, extendedDbOwnerToken } from '../../../scripts/extended-db-docker.ownership.mjs';
 import { waitFor } from '../timing';
 import { reserveAvailablePort } from '../network/reserveAvailablePort';
 import type { EphemeralTlsServerFixture } from '../tls/ephemeralTlsServerFixture.mjs';
@@ -87,6 +88,7 @@ export async function startDatabaseWorkbenchPostgres(options: Readonly<{
   const plan = buildDbContainerPlan({ db: 'postgres', name: `dbw-qa-${randomUUID()}` });
   const env = { ...sanitizeDockerEnv(process.env), NODE_ENV: process.env.NODE_ENV };
   const { stdout } = await execute('docker', ['run', '--detach', '--rm',
+    '--label', `${EXTENDED_DB_OWNER_LABEL}=${extendedDbOwnerToken()}`,
     '--name', plan.name, '--publish', plan.ports.publishSpec,
     ...Object.entries(plan.env).flatMap(([key, value]) => ['--env', `${key}=${value}`]),
     plan.image, ...(options.preloadStatistics === false ? [] : ['-c', 'shared_preload_libraries=pg_stat_statements'])], { env });

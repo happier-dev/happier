@@ -179,11 +179,11 @@ export async function main(argv = process.argv) {
   runOrThrow('docker', ['info'], { stdio: 'ignore', env: dockerEnv(), timeoutMs: dockerCommandTimeoutMs });
   // A harness killed outright (SIGKILL, lost SSH session) leaves its container running.
   // Remove the containers whose owning harness process is gone before starting another.
-  const ownedRows = runCapture('docker', ['ps', '-a', '--filter', `label=${EXTENDED_DB_OWNER_LABEL}`,
+  const ownedRows = runCapture('docker', ['ps', '-a', '--no-trunc', '--filter', `label=${EXTENDED_DB_OWNER_LABEL}`,
     '--format', `{{.ID}} {{.Label "${EXTENDED_DB_OWNER_LABEL}"}}`], { env: dockerEnv(), timeoutMs: dockerCommandTimeoutMs });
   const orphaned = selectOrphanedExtendedDbContainers(ownedRows);
   if (orphaned.length) {
-    console.log(`[extended-db] Removing ${orphaned.length} container(s) left by exited harness runs`);
+    console.log(`[extended-db] Containers left by exited harness runs: ${orphaned.join(', ')}`);
     runOrThrow('docker', ['rm', '-f', '-v', ...orphaned], { stdio: 'ignore', env: dockerEnv(), timeoutMs: dockerCommandTimeoutMs });
   }
 
