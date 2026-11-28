@@ -42,7 +42,7 @@ export interface PiBackendOptions extends AgentFactoryOptions {
   launchMode?: 'rpc' | 'interactive';
   /** Transport to the interactive Pi (shared local control); omitted for the RPC child. */
   channelHost?: PiRpcChannelHost;
-  takeContinueRecentSession?: PiRpcSpawnOptions['takeContinueRecentSession'];
+  continueRecentSession?: PiRpcSpawnOptions['continueRecentSession'];
   onSessionOpened?: PiRpcSpawnOptions['onSessionOpened'];
 }
 
@@ -177,7 +177,7 @@ export function createPiBackend(options: PiBackendOptions): AgentBackend {
     // args above must never carry the literal prompt content.
     appendSystemPromptText: options.appendSystemPromptText ?? null,
     permissionHandler: options.permissionHandler,
-    takeContinueRecentSession: options.takeContinueRecentSession,
+    continueRecentSession: options.continueRecentSession,
     onSessionOpened: options.onSessionOpened,
     ...(options.channelHost ? { channelHost: options.channelHost } : {}),
     env: {

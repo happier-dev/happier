@@ -7,7 +7,8 @@ import { join } from 'node:path';
 
 import type { AgentBackend } from '@/agent/core';
 
-import { PiRpcBackend } from './PiRpcBackend';
+import { PiRpcBackend, type PiRpcSpawnOptions } from './PiRpcBackend';
+import { spawnedPiRpcChannelHost } from './piRpcChannel';
 
 function makeTempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -318,7 +319,7 @@ describe('PiRpcBackend loadSession', () => {
         FAKE_PI_CONTINUE_SESSION_ID: 'my_feature',
         FAKE_PI_CONTINUE_SESSION_FILE: sessionPath,
       },
-      takeContinueRecentSession: () => true,
+      continueRecentSession: { pending: true },
       onSessionOpened: (identity) => opened.push(identity),
     });
 
@@ -328,6 +329,62 @@ describe('PiRpcBackend loadSession', () => {
     expect(boots).toHaveLength(1);
     expect(boots[0]?.argv).toContain('--continue');
     expect(boots[0]?.argv).not.toContain('--session');
+  });
+
+  it.each([
+    { attempt: 'continuation', expectedSessionId: 'continued', expectNativeContinue: true },
+    { attempt: 'explicit load', expectedSessionId: 'unexpected-fresh', expectNativeContinue: false },
+  ])('retries startup after a failed $attempt open with the correct selection', async ({
+    attempt,
+    expectedSessionId,
+    expectNativeContinue,
+  }) => {
+    workDir = makeTempDir('happier-pi-continue-retry-');
+    const bootLogPath = join(workDir, 'boot.log');
+    const sessionPath = join(workDir, 'renamed.jsonl');
+    writeFileSync(sessionPath, `${JSON.stringify({ type: 'session', id: 'continued', cwd: workDir })}\n`);
+    let rejectFirstOpen = true;
+
+    const backendOptions: PiRpcSpawnOptions = {
+      cwd: workDir,
+      command: process.execPath,
+      args: [makeFakePiRpcLoadSessionScript(workDir)],
+      env: {
+        BOOT_LOG_PATH: bootLogPath,
+        FAKE_PI_RPC_SESSION_ID: 'unexpected-fresh',
+        FAKE_PI_CONTINUE_SESSION_ID: 'continued',
+        FAKE_PI_CONTINUE_SESSION_FILE: sessionPath,
+      },
+      continueRecentSession: { pending: true },
+      channelHost: {
+        kind: 'spawned',
+        open: async (spec, options) => {
+          if (rejectFirstOpen) {
+            rejectFirstOpen = false;
+            throw new Error('Pi process did not open');
+          }
+          return await spawnedPiRpcChannelHost.open(spec, options);
+        },
+      },
+    };
+    backend = new PiRpcBackend(backendOptions);
+
+    const cancelled = new AbortController();
+    cancelled.abort();
+    await expect(backend.startSession(undefined, { signal: cancelled.signal })).rejects.toMatchObject({
+      piBrokerReadinessFailure: { reason: 'broker_readiness_cancelled' },
+    });
+    const firstOpen = attempt === 'continuation' ? backend.startSession() : backend.loadSession!('explicit-id');
+    await expect(firstOpen).rejects.toThrow('Pi process did not open');
+    await expect(backend.startSession()).resolves.toEqual({ sessionId: expectedSessionId });
+    const boots = parseBootLog(await readFile(bootLogPath, 'utf8'));
+    expect(boots).toHaveLength(1);
+    expect(boots[0]?.argv.includes('--continue')).toBe(expectNativeContinue);
+
+    // A runner reset can create another backend with the same initial launch intent.
+    await backend.dispose();
+    backend = new PiRpcBackend(backendOptions);
+    await expect(backend.startSession()).resolves.toEqual({ sessionId: 'unexpected-fresh' });
   });
 
   it('does not match session files by sibling id prefix', async () => {
@@ -478,7 +535,7 @@ describe('PiRpcBackend loadSession', () => {
         FAKE_PI_CONTINUE_SESSION_ID: 'pi-session-1',
         FAKE_PI_EXIT_AFTER_FIRST_PROMPT: '1',
       },
-      takeContinueRecentSession: () => true,
+      continueRecentSession: { pending: true },
     });
 
     const { sessionId } = await backend.startSession();

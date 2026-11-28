@@ -53,7 +53,6 @@ export function createPiAcpRuntime(params: {
   const sharedTerminal = params.sharedTerminal ?? null;
   const lastPublishedPiSessionId: { value: string | null; sessionFile?: string | null } = { value: null };
   let lastPiIdentityGeneration: number | null = null;
-  let continueRecentSession = params.continueRecentSession === true;
   let openedSession: PiOpenedSessionIdentity | null = null;
 
   return createCatalogProviderAcpRuntime<PiBackendOptions>({
@@ -108,11 +107,7 @@ export function createPiAcpRuntime(params: {
     // The terminal user owns in-flight input; web prompts are delivered only while Pi is idle.
     inFlightSteer: { enabled: sharedTerminal === null },
     backendOptions: {
-      takeContinueRecentSession: () => {
-        const requested = continueRecentSession;
-        continueRecentSession = false;
-        return requested;
-      },
+      ...(params.continueRecentSession ? { continueRecentSession: { pending: true } } : {}),
       onSessionOpened: (identity) => { openedSession = identity; },
     },
     resolveBackendOptionsBeforeSpawn: async ({ session }) => {

@@ -666,8 +666,8 @@ export type PiRpcSpawnOptions = {
    * control) launch attaches to an interactive Pi through the bridge extension instead.
    */
   channelHost?: PiRpcChannelHost;
-  /** Consumes the runner's optional native recent-session intent on the first session open. */
-  takeContinueRecentSession?: () => boolean;
+  /** One launch intent shared across backends created by the same runner. */
+  continueRecentSession?: { pending: boolean };
   onSessionOpened?: (identity: PiOpenedSessionIdentity) => void;
 };
 
@@ -684,7 +684,7 @@ export class PiRpcBackend implements AgentBackend {
 
   private channel: PiRpcChannel | null = null;
   private readonly channelHost: PiRpcChannelHost;
-  private readonly takeContinueRecentSession: PiRpcSpawnOptions['takeContinueRecentSession'];
+  private readonly continueRecentSession: PiRpcSpawnOptions['continueRecentSession'];
   private readonly onSessionOpened: PiRpcSpawnOptions['onSessionOpened'];
   private appendSystemPromptArtifact: ProtectedTempTextArtifact | null = null;
   private toolsBridgeConfigArtifact: ProtectedTempTextArtifact | null = null;
@@ -755,7 +755,7 @@ export class PiRpcBackend implements AgentBackend {
   constructor(options: PiRpcSpawnOptions) {
     this.permissionHandler = options.permissionHandler ?? null;
     this.channelHost = options.channelHost ?? spawnedPiRpcChannelHost;
-    this.takeContinueRecentSession = options.takeContinueRecentSession;
+    this.continueRecentSession = options.continueRecentSession;
     this.onSessionOpened = options.onSessionOpened;
     this.options = {
       cwd: options.cwd,
@@ -806,7 +806,7 @@ export class PiRpcBackend implements AgentBackend {
   ): Promise<StartSessionResult> {
     const lifecycle = this.createSessionOpenLifecycle(options?.signal);
     try {
-      const continuingRecent = this.takeContinueRecentSession?.() === true && !this.sessionId;
+      const continuingRecent = this.continueRecentSession?.pending === true && !this.sessionId;
       await this.ensureProcess(lifecycle, continuingRecent);
       await this.ensureConnectedBrokerReady(lifecycle);
       this.emitMessage({ type: 'status', status: 'starting' });
@@ -824,19 +824,15 @@ export class PiRpcBackend implements AgentBackend {
             lifecycle,
             'continued session identity',
           );
-        this.sessionId = existingSessionId;
-        this.sessionFile = existingSessionFile;
-        await this.captureAuthJsonSnapshot();
-        this.publishRuntimeState(stateBefore);
-        this.onSessionOpened?.({
+        const opened = await this.confirmStartedSession({
           sessionId: existingSessionId,
           sessionFile: existingSessionFile,
           operation: continuedExistingSession ? 'resume' : 'create',
-        });
+        }, stateBefore, lifecycle);
         if (continuingRecent && !continuedExistingSession) {
           logger.infoFile('[pi] No previous Pi session was opened by --continue; starting a new session');
         }
-        return { sessionId: existingSessionId };
+        return opened;
       }
       if (this.channelHost.kind === 'attached') {
         // The user's terminal owns session creation and replacement; the runner only adopts.
@@ -862,18 +858,33 @@ export class PiRpcBackend implements AgentBackend {
         throw new Error('Pi did not return a session id');
       }
 
-      this.sessionId = nextSessionId;
-      this.sessionFile = nextSessionFile;
-      await this.captureAuthJsonSnapshot();
-      this.publishRuntimeState(stateAfter);
-      this.onSessionOpened?.({ sessionId: nextSessionId, sessionFile: nextSessionFile, operation: 'create' });
-      return { sessionId: nextSessionId };
+      return await this.confirmStartedSession({
+        sessionId: nextSessionId,
+        sessionFile: nextSessionFile,
+        operation: 'create',
+      }, stateAfter, lifecycle);
     } catch (error) {
       if (Date.now() >= lifecycle.deadlineMs) {
         await this.stopRpcProcessForRestart();
       }
       throw error;
     }
+  }
+
+  private async confirmStartedSession(
+    identity: PiOpenedSessionIdentity,
+    state: PiRpcStateData,
+    lifecycle: PiRpcSessionOpenLifecycle,
+  ): Promise<StartSessionResult> {
+    await this.captureAuthJsonSnapshot();
+    this.assertSessionOpenLifecycleActive(lifecycle, 'session identity');
+    if (this.disposed) throw new Error('Pi backend is disposed');
+    this.sessionId = identity.sessionId;
+    this.sessionFile = identity.sessionFile;
+    this.publishRuntimeState(state);
+    if (this.continueRecentSession) this.continueRecentSession.pending = false;
+    this.onSessionOpened?.(identity);
+    return { sessionId: identity.sessionId };
   }
 
   private async resolveSessionFileForSessionId(
@@ -956,8 +967,6 @@ export class PiRpcBackend implements AgentBackend {
     sessionId: SessionId,
     options?: AgentSessionOpenOptions,
   ): Promise<StartSessionResult> {
-    // An explicit load consumes the initial open without asking Pi for its latest session.
-    this.takeContinueRecentSession?.();
     if (this.disposed) {
       throw new Error('Pi backend is disposed');
     }
@@ -971,6 +980,8 @@ export class PiRpcBackend implements AgentBackend {
       throw new Error('Pi loadSession requires a bare Pi session id or absolute session file path');
     }
 
+    // An explicit load supersedes recent-session selection, including when the load fails.
+    if (this.continueRecentSession) this.continueRecentSession.pending = false;
     const lifecycle = this.createSessionOpenLifecycle(options?.signal);
     const expectedSessionId = await this.waitForSessionOpenPhase(
       resolveExpectedPiSessionIdForResume(requestedResumeReference),
