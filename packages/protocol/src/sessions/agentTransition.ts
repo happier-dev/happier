@@ -8,6 +8,7 @@ import { SessionUserMessageSendRequestSchema } from './userMessageRpc.js';
 import { AgentIdV1Schema } from '../agents/agentIdV1.js';
 import { SessionSpawnLaunchErrorV1Schema } from './creation/sessionSpawnLaunchErrorV1.js';
 import { SessionModelRefSchema } from '../providers/selection/v2.js';
+import { ConnectedServiceBindingsV2Schema } from '../connect/connectedServiceBindings.js';
 
 /**
  * Same-Session cross-Agent continuation — the current shared contract.
@@ -74,6 +75,7 @@ export const SessionAgentTransitionSelectionV1Schema = lazyZodSchema(() => z.str
     providerConnectionId: z.optional(z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(128)))),
     acpSessionModeId: z.optional(z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(128)))),
     sessionConfigOptionOverrides: z.optional(AcpConfigOptionOverridesV1Schema),
+    connectedServices: z.optional(ConnectedServiceBindingsV2Schema),
   }).check(z.superRefine((selection, ctx) => {
     if (selection.providerConnectionId == null) return;
     if (typeof selection.modelId === 'string' && selection.modelId.length > 0) return;
@@ -250,6 +252,7 @@ const SessionAgentTransitionRejectedResultV1Schema = lazyZodSchema(() => z.stric
      * `partially_applied` or `outcome_unknown` instead.
      */
     sourceEffect: z.literal('none'),
+    errorDetail: z.optional(SessionSpawnLaunchErrorV1Schema),
   }));
 
 /**

@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
-import { runFirstTransitionLaunch } from './failedFirstLaunch';
+import { runFirstTransitionLaunch, type TransitionConnectedServiceAdmission } from './failedFirstLaunch';
+import type { admitConnectedServiceAuthForSpawn } from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
 import { buildTrustedHostSessionInputAdmissionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { assertNonEscalatingPermissionMode } from '@happier-dev/protocol/actions/permissionPrivilege';
@@ -26,8 +27,10 @@ import {
 } from '@happier-dev/agents/session/state/metadataWriters';
 import { sessionModelSelectionV2TeamBindingIntent, type SessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams';
+import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/protocol';
 
-import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
+import { readAgentCatalogSnapshot, readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { buildProviderInputGenerationEpochId } from '@/agent/runtime/session/input/providerInputGenerationAdmission';
 import { findTranscriptEncryptedMessageByLocalIdV2 } from '@/api/session/transcriptMessageLookup';
@@ -176,6 +179,10 @@ export type SessionAgentTransitionParams = Readonly<{
   /** Retain the admitted requester's Account custody through target defaulting. */
   operationContext?: SavedSecretOperationContextV1;
   request: SessionAgentTransitionRequestV1;
+  /** Daemon launch ports bound to the authenticated requester. */
+  connectedServiceAdmission?: Omit<Parameters<typeof admitConnectedServiceAuthForSpawn>[0],
+    'agentId' | 'modelId' | 'connectedServicesBindingsRaw' | 'materializationKey' |
+    'credentials' | 'sessionId' | 'resolveQualifiedPurposeBindingSnapshot' | 'signal'>;
   /** Existing Action invocation identity, used for settings-only cutover. */
   actionRequestId?: string;
   signal?: AbortSignal;
@@ -273,9 +280,9 @@ function buildTargetCurrentViewProjection(params: Readonly<{
    * pure and a cutover retry re-derives byte-identical bytes.
    */
   connectedServices: Readonly<{
-    connectedServices: unknown;
+    connectedServices: ConnectedServiceBindingsV2;
     connectedServicesUpdatedAt: number;
-    materializationIdentity: unknown;
+    materializationIdentity: ConnectedServiceMaterializationIdentityV1;
   }> | null;
   updatedAtMs: number;
 }>): (metadata: Record<string, unknown>) => Record<string, unknown> {
@@ -376,6 +383,7 @@ async function resolveTargetConnectedServiceBinding(params: Readonly<{
   credentials: StoredCredentials;
   operationContext?: SavedSecretOperationContextV1;
   targetAgentId: AgentId;
+  explicitBindings?: SessionAgentTransitionRequestV1['selection']['connectedServices'];
   signal?: AbortSignal;
   deps: Pick<
     SessionAgentTransitionDeps,
@@ -401,6 +409,7 @@ async function resolveTargetConnectedServiceBinding(params: Readonly<{
     resolved = await params.deps.resolveSpawnConnectedServicesDefaults({
       agentId: params.targetAgentId,
       credentials: params.credentials,
+      explicitBindings: params.explicitBindings,
       ...(params.operationContext ? { operationContext: params.operationContext } : {}),
       ...(params.signal ? { signal: params.signal } : {}),
       ...(resolveTeamCredentialResourceCatalog ? { resolveTeamCredentialResourceCatalog } : {}),
@@ -595,6 +604,8 @@ async function completeCommittedTransition(params: Readonly<{
   admissionFence: Readonly<{ serviceId: string; groupId: string; epochId: string }> | null;
   inputAdmissionTimeoutMs: number;
   firstLaunch?: Readonly<{
+    recoveryEligible: boolean;
+    accountAdmission?: TransitionConnectedServiceAdmission;
     agentId: string;
     seed: ReplaySeedV1 | null;
     resolveCurrentAgentId: (metadata: Record<string, unknown>) => string | null;
@@ -680,7 +691,7 @@ async function completeCommittedTransition(params: Readonly<{
           agentId: firstLaunch.agentId,
           metadataVersion: targetSession.rawSession.metadataVersion,
           pendingVersion: targetSession.rawSession.pendingVersion,
-        }, launch)
+        }, launch, firstLaunch)
       : await launch();
     if (!resumed?.ok) {
       const failure = resumed?.errorDetail ? projectSessionSpawnFailure({
@@ -965,6 +976,7 @@ export async function runSessionAgentTransition(
     credentials,
     ...(params.operationContext ? { operationContext: params.operationContext } : {}),
     targetAgentId: target.agentId,
+    explicitBindings: request.selection.connectedServices,
     ...(params.signal ? { signal: params.signal } : {}),
     deps,
   });
@@ -975,13 +987,54 @@ export async function runSessionAgentTransition(
       admitted: targetConnectedServices.teamCredentialBindings ?? null })
     : targetConnectedServices.teamCredentialBindings;
 
+  const targetBinding = targetConnectedServices.connectedServices;
+  let admittedAuth: Awaited<ReturnType<typeof admitConnectedServiceAuthForSpawn>> = null;
+  if (targetBinding && request.selection.connectedServices) {
+    const { admitConnectedServiceAuthForSpawn } = await import('@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn');
+    const { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } =
+      await import('@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn');
+    try {
+      const ports = params.connectedServiceAdmission
+        ?? { api: await (await import('@/api/api')).ApiClient.create(credentials) };
+      admittedAuth = await admitConnectedServiceAuthForSpawn({
+        ...ports,
+        agentId: target.agentId,
+        credentials,
+        sessionId,
+        signal: params.signal,
+        modelId: modelSelectionRef?.modelId,
+        materializationKey: targetBinding.materializationIdentity.id,
+        connectedServicesBindingsRaw: targetBinding.connectedServices,
+        resolveQualifiedPurposeBindingSnapshot: bindings => resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
+          agentId: target.agentId, bindings, teamCredentialBindings: targetTeamCredentialBindings,
+          contributions: readCurrentContributionRegistry(), catalogEntry: catalog.get(target.agentId),
+        }),
+      });
+    } catch (error) {
+      params.signal?.throwIfAborted();
+      const { buildConnectedServiceCredentialSpawnErrorResult } =
+        await import('@/daemon/connectedServices/diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult');
+      const launchFailure = buildConnectedServiceCredentialSpawnErrorResult({ agentId: target.agentId, error });
+      return effects.rejected('target_unavailable', launchFailure?.errorDetail);
+    }
+  }
+  const nativeBindings = admittedAuth && targetBinding ? {
+    v: 2 as const,
+    bindingsByServiceId: Object.fromEntries(Object.entries(targetBinding.connectedServices.bindingsByServiceId)
+      .map(([serviceId, binding]) => {
+        const credential = admittedAuth?.credentialBindings.find(value => value.serviceId === serviceId);
+        return [serviceId, binding.source === 'connected' && binding.selection === 'group' && credential
+          ? { ...binding, appliedProfileId: credential.profileId } : binding];
+      })),
+  } : targetBinding?.connectedServices;
+
   // A scoped caller must be able to acquire the replay lineage before any
   // source effect. Use the replay reader itself, including its native-return
   // boundary, rather than borrowing the child's grant for a fork ancestor.
   if (params.callerInputAuthorization && 'grant' in params.callerInputAuthorization.binding) {
     const nativeReturn = target.configuredBackend ? null : await resolveAgentNativeReturnIdentity({
       store: deps.localAgentNativeResumeRecordStore, sessionId, targetAgentId: target.agentId,
-      sourceMetadata, targetBindings: targetConnectedServices.connectedServices?.connectedServices,
+      sourceMetadata, targetBindings: nativeBindings,
       accountSettings: deps.readAccountSettings(),
     });
     const lineage = await fetchForkTranscriptSegments({ credentials, startingSessionId: sessionId,
@@ -1168,11 +1221,16 @@ export async function runSessionAgentTransition(
     sessionId,
     targetAgentId: target.agentId,
     sourceMetadata: stoppedMetadata,
-    targetBindings: targetConnectedServices.connectedServices?.connectedServices,
+    targetBindings: nativeBindings,
     accountSettings: deps.readAccountSettings(),
   });
 
   const nativeReturn = returnPlan?.record;
+  const materializationIdentity = nativeReturn?.auth?.materializationIdentity ?? targetBinding?.materializationIdentity;
+  const accountAdmission: TransitionConnectedServiceAdmission | undefined = admittedAuth && targetBinding && materializationIdentity
+    ? { agentId: target.agentId, bindings: targetBinding.connectedServices, materializationId: materializationIdentity.id,
+        auth: admittedAuth, retainAdmittedAccount: Boolean(nativeReturn) }
+    : undefined;
 
   // Capture U once from the post-stop row. A no-dialog result means no prompt
   // text crossed the boundary; it does not erase the canonical transcript head
@@ -1220,9 +1278,8 @@ export async function runSessionAgentTransition(
     modelSelectionRef,
     nativeResumeIdentity: nativeReturn?.identity ?? null,
     activationSeed: brief.seed,
-    connectedServices: targetConnectedServices.connectedServices && nativeReturn?.auth?.materializationIdentity
-      ? { ...targetConnectedServices.connectedServices, materializationIdentity: nativeReturn.auth.materializationIdentity }
-      : targetConnectedServices.connectedServices,
+    connectedServices: targetBinding && materializationIdentity
+      ? { ...targetBinding, materializationIdentity } : null,
     updatedAtMs,
   });
 
@@ -1330,8 +1387,9 @@ export async function runSessionAgentTransition(
     admissionFence: sourceFence,
     inputAdmissionTimeoutMs,
     committed: stopped.cutoverCommitted(),
-    ...(returnPlan?.noNativeReturnRecord
-      ? { firstLaunch: { agentId: target.agentId, seed: brief.seed, resolveCurrentAgentId } }
+    ...(returnPlan?.noNativeReturnRecord || accountAdmission
+      ? { firstLaunch: { agentId: target.agentId, seed: brief.seed, resolveCurrentAgentId,
+          recoveryEligible: returnPlan?.noNativeReturnRecord ?? false, accountAdmission } }
       : {}),
   });
 }

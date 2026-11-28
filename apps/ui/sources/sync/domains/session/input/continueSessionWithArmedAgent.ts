@@ -412,7 +412,10 @@ export function reconcileArmedAgentContinuationDisposition(params: Readonly<{
         case 'rejected':
             return buildDisposition({
                 depth: 'no_effect',
-                message: resolveSessionAgentTransitionRejectedMessage(result.code, labels),
+                message: result.errorDetail ? resolveSessionSpawnNewResultFailureMessage({
+                    type: 'error', code: 'spawn_failed', retryable: false, launchError: result.errorDetail,
+                }) || resolveSessionAgentTransitionRejectedMessage(result.code, labels)
+                    : resolveSessionAgentTransitionRejectedMessage(result.code, labels),
                 // A Session that already runs the armed Agent makes the armed row
                 // a promise about a switch that cannot happen.
                 armSpent: result.code === 'same_target',

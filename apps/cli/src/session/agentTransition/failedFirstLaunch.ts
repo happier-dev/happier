@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedServiceSpawnAdmission } from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
 
 import { readPendingQueueV2ActivationEligibilityFromServer } from '@/api/session/pendingQueueV2Transport';
 
@@ -10,11 +12,21 @@ type Launch = Readonly<{
   pendingVersion: number;
 }>;
 
+export type TransitionConnectedServiceAdmission = Readonly<{
+  agentId: string;
+  bindings: ConnectedServiceBindingsV2;
+  materializationId: string;
+  retainAdmittedAccount: boolean;
+  auth: ConnectedServiceSpawnAdmission;
+}>;
+
 // The transition coordinator supplies this evidence only on the original
 // cutover. A reconciled cutover cannot reconstruct the original launch facts.
 type LaunchAttempt = {
   launch: Launch;
   nonce: string;
+  recoveryEligible: boolean;
+  accountAdmission?: TransitionConnectedServiceAdmission;
   state: 'expected' | 'preparing' | 'credential_refused';
 };
 const attempts = new Map<string, LaunchAttempt>();
@@ -22,8 +34,10 @@ const attempts = new Map<string, LaunchAttempt>();
 export async function runFirstTransitionLaunch<T>(
   launch: Launch,
   start: (spawnNonce: string) => Promise<T>,
+  options?: Readonly<{ recoveryEligible: boolean; accountAdmission?: TransitionConnectedServiceAdmission }>,
 ): Promise<T> {
-  const attempt: LaunchAttempt = { launch, nonce: randomUUID(), state: 'expected' };
+  const attempt: LaunchAttempt = { launch, nonce: randomUUID(), state: 'expected',
+    recoveryEligible: options?.recoveryEligible ?? true, accountAdmission: options?.accountAdmission };
   attempts.set(launch.sessionId, attempt);
   try {
     return await start(attempt.nonce);
@@ -37,7 +51,7 @@ export function observeTransitionTargetSpawn(
   sessionId: string,
   spawnNonce: string | undefined,
   pendingRequestId?: string,
-): Readonly<{ credentialRefused: () => void; finish: () => void }> | undefined {
+): Readonly<{ credentialRefused: () => void; finish: () => void; accountAdmission?: TransitionConnectedServiceAdmission }> | undefined {
   const previous = attempts.get(sessionId);
   if (!previous) return;
   const originalLaunch = previous.state === 'expected' && previous.nonce === spawnNonce;
@@ -50,11 +64,14 @@ export function observeTransitionTargetSpawn(
     return;
   }
   const attempt: LaunchAttempt = originalLaunch ? previous : { ...previous };
+  const accountAdmission = originalLaunch ? attempt.accountAdmission : undefined;
+  attempt.accountAdmission = undefined;
   attempt.state = 'preparing';
   attempts.set(sessionId, attempt);
   return {
+    accountAdmission,
     credentialRefused: () => {
-      if (attempts.get(sessionId) === attempt) attempt.state = 'credential_refused';
+      if (attempt.recoveryEligible && attempts.get(sessionId) === attempt) attempt.state = 'credential_refused';
     },
     finish: () => {
       if (attempts.get(sessionId) === attempt && attempt.state !== 'credential_refused') attempts.delete(sessionId);

@@ -13,7 +13,7 @@ import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAc
 import { useNewSessionEntryRouter as useRouter } from '@/components/sessions/new/navigation/newSessionEntry';
 
 import type {
-    ConnectedAccountServiceKey} from '@happier-dev/protocol/connect/connected-service-bindings';
+    ConnectedAccountServiceKey, ConnectedServiceBindingsV2} from '@happier-dev/protocol/connect/connected-service-bindings';
 import {
     CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS,
     type ConnectedServiceUxDiagnosticV1} from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
@@ -463,6 +463,8 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         agentIdentity: PluginContributionIdentityV1;
         connectedAccounts: readonly PluginProjectedAgentConnectedAccountPurposeV2[];
     }> | null;
+    armedBindings?: ConnectedServiceBindingsV2;
+    setArmedBinding?: (serviceId: string, binding: ConnectedServicesServiceBinding) => void;
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
     teamCredentialDisplayNames?: Readonly<Record<string, string | null>>;
     teamCredentialResourceStatusByKey?: TeamCredentialResourceStatusByKey;
@@ -1085,7 +1087,10 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                     consumer: target.agentIdentity,
                     declarations: target.connectedAccounts,
                 }) : [];
-            const bindings = projectAgentConnectedAccountPurposeDefaultsToSessionBindings(defaults);
+            const bindingsByServiceId = {
+                ...projectAgentConnectedAccountPurposeDefaultsToSessionBindings(defaults)?.bindingsByServiceId,
+                ...params.armedBindings?.bindingsByServiceId,
+            };
             const teamResourceChoicesByServiceId = Object.fromEntries(defaults.flatMap((selected) => {
                 if (!selected.teamResource) return [];
                 const serviceId = buildQualifiedPluginContributionKey(selected.service);
@@ -1106,23 +1111,25 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                 }).find((candidate) => candidate.current);
                 return choice ? [[serviceId, choice]] : [];
             }));
-            const label = resolveConnectedServicesAuthLabel({
-                supportedServiceIds: serviceIds,
-                bindingsByServiceId: bindings?.bindingsByServiceId ?? {},
-                profileOptionsByServiceId: applyProjectedCredentialKindRestrictions({
-                    optionsByServiceId: buildQualifiedConnectedAccountProfileOptionsByServiceId({
-                        accounts: accountProfile?.connectedAccountsV4 ?? [],
-                        supportedServiceIds: serviceIds,
-                        labelsByKey,
-                        presentIdentity: present,
-                    }),
-                    connectedAccounts: target.connectedAccounts,
-                }),
-                accountGroupOptionsByServiceId: buildQualifiedConnectedAccountGroupOptionsByServiceId({
-                    groups: accountProfile?.connectedAccountGroupsV4 ?? [],
+            const targetProfileOptions = applyProjectedCredentialKindRestrictions({
+                optionsByServiceId: buildQualifiedConnectedAccountProfileOptionsByServiceId({
+                    accounts: accountProfile?.connectedAccountsV4 ?? [],
                     supportedServiceIds: serviceIds,
                     labelsByKey,
+                    presentIdentity: present,
                 }),
+                connectedAccounts: target.connectedAccounts,
+            });
+            const targetGroupOptions = buildQualifiedConnectedAccountGroupOptionsByServiceId({
+                groups: accountProfile?.connectedAccountGroupsV4 ?? [],
+                supportedServiceIds: serviceIds,
+                labelsByKey,
+            });
+            const label = resolveConnectedServicesAuthLabel({
+                supportedServiceIds: serviceIds,
+                bindingsByServiceId,
+                profileOptionsByServiceId: targetProfileOptions,
+                accountGroupOptionsByServiceId: targetGroupOptions,
                 accountGroupsEnabled: accountGroupsFeatureEnabled,
                 defaultProfileIdByServiceId: params.settings.connectedServicesDefaultProfileByServiceId,
                 bindingPresentation: 'requested',
@@ -1134,7 +1141,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             const warningKey = resolveConnectedServicesAuthWarningTranslationKey(label.warningCodes[0]);
             const qualifiedLabel = label.connectedCount === 0 ? t('connectedServices.authChip.nativeLabel')
                 : serviceIds.map((serviceId) => {
-                    const binding = bindings?.bindingsByServiceId[serviceId];
+                    const binding = bindingsByServiceId[serviceId];
                     const serviceTitle = resolveServiceTitle(serviceId);
                     if (binding?.source === 'connected') {
                         const service = parseQualifiedPluginContributionKey(serviceId);
@@ -1164,7 +1171,25 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                 connectedCount: label.connectedCount,
                 authSource: !defaultsReady ? 'unknown'
                     : label.connectedCount === 0 ? 'native' : label.connectedCount === serviceIds.length ? 'connected' : 'mixed',
-                popoverContent: () => <ActionListSection actions={[{
+                popoverContent: params.setArmedBinding && defaultsReady
+                    ? ({ requestClose, maxHeight }) => <NewSessionConnectedServicesSelectionContent
+                        supportedServiceIds={serviceIds}
+                        profileOptionsByServiceId={targetProfileOptions}
+                        groupOptionsByServiceId={accountGroupsFeatureEnabled ? targetGroupOptions : {}}
+                        bindingsByServiceId={bindingsByServiceId}
+                        includeNativeAuthOption
+                        allowDefaultProfileFallback={false}
+                        setBindingForService={(serviceId, binding) => {
+                            params.setArmedBinding?.(serviceId, binding);
+                            requestClose();
+                        }}
+                        onOpenSettings={(serviceId) => {
+                            requestClose();
+                            fireAndForget(openConnectSheet(serviceId), { tag: 'SessionContinuation.connectAccount' });
+                        }}
+                        maxHeight={maxHeight}
+                    />
+                    : () => <ActionListSection actions={[{
                     id: 'armed-agent-auth-default', label: displayLabel,
                     subtitle: !defaultsReady ? unavailableLabel : warningKey ? t(warningKey) : undefined,
                     disabled: true,
@@ -1215,6 +1240,9 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
     }, [
         armedTarget,
         params.armedAuthoringTarget,
+        params.armedBindings,
+        params.setArmedBinding,
+        openConnectSheet,
         armedPurposeCatalog.value,
         armedPurposeCatalog.status,
         armedPurposeCatalog.stale,

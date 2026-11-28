@@ -293,6 +293,7 @@ describe('connected-account spawn admission', () => {
     try {
       for (const recovered of sourceKind === 'freshAccount' ? [false] : sourceKind === 'ordinarySession' ? [true] : [false, true]) {
         member.resetObservations(); member.mutations.length = 0; member.launches.length = 0;
+        member.permissionQueries.length = 0;
         const prepared = await prepareDaemonConnectedServices({ options: { directory: admitted.directory,
             ...(sourceKind === 'freshAccount' ? {} : { requesterWorkAttributionV1: birth }) },
           normalizedExistingSessionId: recovered ? 'owner-private-session' : '', requestedSessionId: 'owner-private-session',
@@ -369,7 +370,9 @@ describe('connected-account spawn admission', () => {
     }).connectedServices);
   });
 
-  async function prepare(connectedServices: unknown, existingSessionId = '') {
+  async function prepare(connectedServices: unknown, existingSessionId = '',
+    transitionAccountAdmission?: Parameters<typeof prepareDaemonConnectedServices>[0]['transitionAccountAdmission'],
+  ) {
     const credentials = { token: 'synthetic-admission-test', encryption: null };
     const apiAccess = vi.fn(() => {
       throw new Error('Credential and network API must not be reached');
@@ -382,7 +385,7 @@ describe('connected-account spawn admission', () => {
         directory: '/synthetic/workspace', connectedServices,
         get connectedServiceMaterializationIdentityV1() {
           if (connectedServices === malformedBindings) throw new Error('Identity must not be read before admission');
-          return undefined;
+          return transitionAccountAdmission ? { v: 1, id: transitionAccountAdmission.materializationId, createdAt: 1, source: 'first_spawn' } : undefined;
         },
       },
       normalizedExistingSessionId: existingSessionId,
@@ -397,6 +400,7 @@ describe('connected-account spawn admission', () => {
       connectedServicesMaterializationBaseDir: '/synthetic/materialization',
       pluginRuntimeRegistry: { contributes: { agentDefinitionsById: new Map() } },
       repairMissingMaterializationIdentity: repair,
+      transitionAccountAdmission,
     });
     expect(apiAccess).not.toHaveBeenCalled();
     expect(repair).not.toHaveBeenCalled();
@@ -410,8 +414,30 @@ describe('connected-account spawn admission', () => {
         type: 'error',
         errorCode: 'SPAWN_VALIDATION_FAILED',
         errorMessage: 'connected_service_bindings_invalid',
+        errorDetail: { kind: 'launch_error', code: 'connected_service_bindings_invalid', message: 'connected_service_bindings_invalid' },
       },
     });
+  });
+
+  it('refuses a returning launch whose binding does not match the admitted account', async () => {
+    const service = 'happier.agent.codex/openai-codex';
+    const attempted = { v: 2, bindingsByServiceId: { [service]: {
+      source: 'connected', selection: 'profile', profileId: 'different',
+    } } };
+    expect(await prepare(attempted, '', {
+      agentId: 'codex',
+      materializationId: 'csm_recorded_return',
+      retainAdmittedAccount: true,
+      bindings: { v: 2, bindingsByServiceId: { [service]: {
+        source: 'connected', selection: 'profile', profileId: 'admitted',
+      } } },
+      auth: {
+        selections: [], groupSelections: new Map(), credentialRevisionsByServiceId: new Map(),
+        qualifiedPurposeBindingSnapshot: null, credentialBindings: [],
+      },
+    })).toMatchObject({ ok: false, result: {
+      type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED', errorMessage: 'connected_service_bindings_invalid',
+    } });
   });
 
   it('refuses an unsupported Connected Account at qualified-purpose admission before credential access', async () => {

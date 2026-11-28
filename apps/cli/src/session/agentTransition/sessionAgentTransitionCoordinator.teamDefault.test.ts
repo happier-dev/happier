@@ -2,6 +2,7 @@ import axios from 'axios';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConnectedAccountCatalogRowReadResponseV1Schema, CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol';
+import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import * as persistence from '@/persistence';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
@@ -131,6 +132,7 @@ beforeEach(() => {
       data: { content: { t: 'plain', v: {} }, version: 9 } };
     if (path === '/v1/account/encryption/currentness') return { status: 200,
       data: createAccountEncryptionCurrentnessFixture({ settingsVersion: 9 }) };
+    if (path === '/v4/connect/qualified/accounts') return { status: 200, data: { service: CODEX_SERVICE, accounts: [] } };
     if (path === `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/purposes`) return { status: 200,
       data: ConnectedAccountCatalogRowReadResponseV1Schema.parse({ status: 'present', revision: 3,
         content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: hasTeamDefault ? [{
@@ -171,6 +173,45 @@ describe('runSessionAgentTransition — the target binding comes from the one sp
       expect(captured.currentView).toBeNull();
       expect(harness.deps.requestSessionStop).not.toHaveBeenCalled();
     }
+  });
+
+  it('keeps an explicit native selection even when the destination Team default is unavailable', async () => {
+    const { harness, captured, readTeamCatalog } = createHarness({ readTeamCatalog: async () => null });
+    const request = buildTransitionRequest();
+    const result = await runSessionAgentTransition({
+      credentials: TEST_CREDENTIALS,
+      request: {
+        ...request,
+        selection: { ...request.selection, connectedServices: { v: 2, bindingsByServiceId: {
+          'happier.agent.codex/openai-codex': { source: 'native' },
+        } } },
+      },
+      deps: harness.deps,
+    });
+
+    expect(result).toEqual({ type: 'accepted', localId: TEST_LOCAL_ID });
+    expect(readSealedMetadata(captured.currentView).connectedServices).toBeUndefined();
+    expect(readTeamCatalog).not.toHaveBeenCalled();
+  });
+
+  it('keeps the source untouched when the explicit destination login is missing', async () => {
+    const { harness, captured } = createHarness({ readTeamCatalog: async () => null });
+    const request = buildTransitionRequest();
+    const result = await runSessionAgentTransition({
+      credentials: TEST_CREDENTIALS,
+      request: {
+        ...request,
+        selection: { ...request.selection, connectedServices: { v: 2, bindingsByServiceId: {
+          'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'gone' },
+        } } },
+      },
+      deps: harness.deps,
+    });
+
+    expect(result).toMatchObject({ type: 'rejected', sourceEffect: 'none',
+      errorDetail: { kind: 'launch_error', code: 'connected_service_profile_missing' } });
+    expect(harness.deps.requestSessionStop).not.toHaveBeenCalled();
+    expect(captured.currentView).toBeNull();
   });
 
   it('refuses typed, with the source untouched, when the target Team default no longer resolves', async () => {
@@ -219,10 +260,10 @@ describe('runSessionAgentTransition — the target binding comes from the one sp
 
     expect(result).toEqual({ type: 'accepted', localId: TEST_LOCAL_ID });
     const sealed = readSealedMetadata(captured.currentView);
-    expect(sealed.connectedServices).toEqual({
-      v: 2,
-      bindingsByServiceId: { 'happier.agent.codex/openai-codex': TEAM_SELECTION },
-    });
+    const bindings = ConnectedServiceBindingsV2Schema.parse(sealed.connectedServices);
+    expect(Object.fromEntries(Object.entries(bindings.bindingsByServiceId)
+      .filter(([, binding]) => binding.source !== 'native')))
+      .toEqual({ 'happier.agent.codex/openai-codex': TEAM_SELECTION });
     // The materialized credential home is per-binding; reusing the source's id
     // would point the target at the departed Agent's home.
     expect(sealed.connectedServiceMaterializationIdentityV1).not.toMatchObject({ id: 'csm_source' });

@@ -124,7 +124,7 @@ export type DaemonExternalActionExecutorFactory = (credentials: Parameters<typeo
 
 export function createDaemonExternalActionExecution({
   readGuestHomeHostIdentity,
-  params, requiresPortableSessionSpawnServerIdentity, requesterAccountOperationContext, acquireDaemonPluginRuntimeRegistryLease, shutdownCancellationDomains, isSessionCallerCurrent, externalActionApprovalExecutionOriginCurrentness, externalActionIngressOwner, externalActionContributedApprovalReplay, observeContributedPluginExecution, relayDiscussionAgentPublication, externalActionInstallationIdentity, ownerRemainder, isRuntimePublicationQuiescing, pluginRuntimeController, connectedAccountRequestAuthRegistry, requireConnectedAccountRequestAuthHttpPort, localServicesActionFeatureGate, localServicesRuntimeActionRoutes, localServicesRuntime, externalActionContributedInvoker, externalActionContributedDefinitionLister, externalActionTranscriptFollowLeaseRegistry,
+  params, requiresPortableSessionSpawnServerIdentity, requesterAccountOperationContext, acquireDaemonPluginRuntimeRegistryLease, shutdownCancellationDomains, isSessionCallerCurrent, externalActionApprovalExecutionOriginCurrentness, externalActionIngressOwner, externalActionContributedApprovalReplay, observeContributedPluginExecution, relayDiscussionAgentPublication, externalActionInstallationIdentity, ownerRemainder, isRuntimePublicationQuiescing, pluginRuntimeController, connectedAccountRequestAuthRegistry, requireConnectedAccountRequestAuthHttpPort, localServicesActionFeatureGate, localServicesRuntimeActionRoutes, localServicesRuntime, externalActionContributedInvoker, externalActionContributedDefinitionLister, externalActionTranscriptFollowLeaseRegistry, resolveTransitionConnectedServiceAdmission,
 }: Readonly<{
   readGuestHomeHostIdentity?: Parameters<typeof createDaemonManagedMachineActionAdapter>[0]['readGuestHomeHostIdentity'];
   params: Readonly<{
@@ -195,6 +195,10 @@ resolveServerFeaturesSnapshot?: () =>
   externalActionContributedInvoker: ReturnType<typeof createDaemonExternalActionContributedInvoker> | null;
   externalActionContributedDefinitionLister: ReturnType<typeof createDaemonExternalActionContributedDefinitionLister> | null;
   externalActionTranscriptFollowLeaseRegistry: ReturnType<typeof createSessionTranscriptFollowLeaseRegistry> | null;
+  resolveTransitionConnectedServiceAdmission?: (
+    credentials: NonNullable<Parameters<typeof executeSpawnSessionRequest>[0]['credentials']>, requester: RequesterSessionRuntimeContext | null,
+    request: Readonly<{ sessionId: string; signal?: AbortSignal }>,
+  ) => Promise<import('@/session/agentTransition/sessionAgentTransitionCoordinator').SessionAgentTransitionParams['connectedServiceAdmission']>;
 }>): DaemonExternalActionExecutorFactory {
   const createExternalActionExecutor: DaemonExternalActionExecutorFactory = (
     credentials: typeof params.credentials,
@@ -1118,6 +1122,8 @@ resolveServerFeaturesSnapshot?: () =>
             : { kind: 'unavailable', reason: 'requester_authority_unavailable' };
         },
         executeTeamCredentialBrokerAction: params.executeTeamCredentialBrokerAction,
+        resolveTransitionConnectedServiceAdmission: request => resolveTransitionConnectedServiceAdmission?.(
+          credentials, requesterRuntime ?? null, request) ?? Promise.resolve(undefined),
         registerWorkflowTriggerList: list => { workflowTriggerList = list; },
         ...(requesterAccountContext ? { workflowRequesterCustody: createWorkflowRequesterCustody({
           credentials: requesterAccountContext.credentials, happyHomeDir: configuration.happyHomeDir,

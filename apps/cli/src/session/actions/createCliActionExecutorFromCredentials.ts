@@ -897,6 +897,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   executeTeamCredentialBrokerAction?: Parameters<typeof createCliActionExecutor>[0]['executeTeamCredentialBrokerAction'];
   requesterSessionBootstrap?: Parameters<typeof createCliActionDeps>[0]['requesterSessionBootstrap'];
   savedSecretOperationContext?: Parameters<typeof createCliActionDeps>[0]['savedSecretOperationContext'];
+  resolveTransitionConnectedServiceAdmission?: Parameters<typeof createCliActionDeps>[0]['resolveTransitionConnectedServiceAdmission'];
   providerPreparedSavedSecret?: Parameters<typeof createCliActionDeps>[0]['providerPreparedSavedSecret'];
   projectModelsForAccount?: Parameters<typeof createCliActionDeps>[0]['projectModelsForAccount'];
   executeProviderForAccount?: Parameters<typeof createCliActionDeps>[0]['executeProviderForAccount'];
@@ -1335,6 +1336,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       ...(prepareApprovalExecutionOriginContext ? { prepareApprovalExecutionOriginContext } : {}),
       ...(params.requesterSessionBootstrap ? { requesterSessionBootstrap: params.requesterSessionBootstrap } : {}),
       ...(savedSecretOperationContext ? { savedSecretOperationContext } : {}),
+      resolveTransitionConnectedServiceAdmission: params.resolveTransitionConnectedServiceAdmission,
       ...(params.providerPreparedSavedSecret ? { providerPreparedSavedSecret: params.providerPreparedSavedSecret } : {}),
       ...(params.projectModelsForAccount ? { projectModelsForAccount: params.projectModelsForAccount } : {}),
       ...(params.executeProviderForAccount ? { executeProviderForAccount: params.executeProviderForAccount } : {}),

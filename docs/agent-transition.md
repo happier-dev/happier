@@ -645,6 +645,12 @@ the pair. It is proven for the SDK launch mode only and has no live evidence.
 
 ### Connected-account continuity
 
+Once you arm another Agent, the composer account picker chooses the destination
+login. The engine picker uses that choice for model and configuration discovery.
+The daemon admits an explicit connected login through the usual credential owner
+before stopping the source. A definite refusal leaves the composer and chosen
+login editable.
+
 A departure records the effective connected profile and local materialization
 identity alongside the conversation. On return, the native-return owner uses the
 same conversation and home only when the resolved destination bindings name

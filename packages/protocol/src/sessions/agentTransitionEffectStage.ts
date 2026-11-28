@@ -70,7 +70,7 @@ export type SessionAgentTransitionSourceUntouched = Readonly<{
    * The source is provably untouched and still running. Safe actions for the
    * client: Keep editing, or retry after revalidation.
    */
-  rejected: (code: SessionAgentTransitionRejectedCodeV1) => SessionAgentTransitionResultV1;
+  rejected: (code: SessionAgentTransitionRejectedCodeV1, errorDetail?: SessionSpawnLaunchErrorV1) => SessionAgentTransitionResultV1;
   /** Nothing can be established. Claims no depth, so it is always truthful. */
   outcomeUnknown: () => SessionAgentTransitionResultV1;
   /**
@@ -194,7 +194,7 @@ export function beginSessionAgentTransitionEffects(
 ): SessionAgentTransitionSourceUntouched {
   const { localId } = params;
   return Object.freeze({
-    rejected: (code) => ({ type: 'rejected', code, sourceEffect: 'none' }),
+    rejected: (code, errorDetail) => ({ type: 'rejected', code, sourceEffect: 'none', ...(errorDetail ? { errorDetail } : {}) }),
     outcomeUnknown: () => ({ type: 'outcome_unknown', localId }),
     withInputFence: (reopen) => buildSourceFenced(localId, reopen),
     stopConfirmed: () => buildSourceStopped(localId),

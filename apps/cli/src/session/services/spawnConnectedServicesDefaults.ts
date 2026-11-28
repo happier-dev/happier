@@ -234,6 +234,7 @@ export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params
   agentId: string;
   contributions?: AgentSpawnPurposeContributions;
   catalogEntry?: AgentCatalogEntry | null;
+  explicitBindings?: ConnectedServiceBindingsV2;
   credentials: StoredCredentials;
   signal?: AbortSignal;
   operationContext?: SavedSecretOperationContextV1;
@@ -250,14 +251,24 @@ export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params
   teamCredentialBindings?: SessionTeamCredentialBindingIntentListV1;
 }> | null> {
   const agentId = params.agentId.trim();
-  if (!agentSupportsSpawnConnectedServicesDefaults(agentId, params.catalogEntry, params.contributions)) return null;
+  const explicitBindings = Object.entries(params.explicitBindings?.bindingsByServiceId ?? {});
+  if (!explicitBindings.length && !agentSupportsSpawnConnectedServicesDefaults(agentId, params.catalogEntry, params.contributions)) return null;
 
   return await withSessionSpawnConnectedServicesDefaultContext(params, async ({ purposeCatalog, operationContext }) => {
+    const purposeDefaults = readAgentPurposeDefaults({ agentId, purposeCatalog,
+      contributions: params.contributions, catalogEntry: params.catalogEntry });
+    const declaredServices = new Set(purposeDefaults.map(entry => buildQualifiedPluginContributionKey(entry.service)));
+    for (const [serviceId, binding] of explicitBindings) {
+      if (binding.source === 'team_resource' || !declaredServices.has(serviceId)) {
+        throw new ConnectedServicesDefaultUnavailableError('connected_services_default_settings_invalid');
+      }
+    }
     const payload = await materializeSessionSpawnConnectedServicesDefaults({
       agentId,
       catalogEntry: params.catalogEntry,
-      purposeDefaults: readAgentPurposeDefaults({ agentId, purposeCatalog,
-        contributions: params.contributions, catalogEntry: params.catalogEntry }),
+      purposeDefaults: purposeDefaults.filter(entry =>
+        !Object.hasOwn(params.explicitBindings?.bindingsByServiceId ?? {}, buildQualifiedPluginContributionKey(entry.service))),
+      explicitBindings: params.explicitBindings,
       ...(params.resolveTeamCredentialResourceCatalog ? { resolveTeamCredentialResourceCatalog: params.resolveTeamCredentialResourceCatalog } : {}),
       ...(params.signal ? { signal: params.signal } : {}),
     });
@@ -301,6 +312,7 @@ export async function materializeSessionSpawnConnectedServicesDefaults(params: R
   agentId: string;
   catalogEntry?: AgentCatalogEntry | null;
   purposeDefaults: readonly AgentConnectedAccountPurposeDefault[];
+  explicitBindings?: ConnectedServiceBindingsV2;
   resolveTeamCredentialResourceCatalog?: ResolveSpawnConnectedServicesTeamResourceCatalog;
   signal?: AbortSignal;
 }>): Promise<Readonly<{
@@ -323,6 +335,7 @@ export async function materializeSessionSpawnConnectedServicesDefaults(params: R
   const disposition = resolveSpawnConnectedServicesDefaultDisposition({
     agentId: params.agentId, accountSettings: {}, purposeDefaults: params.purposeDefaults,
     catalogEntry: params.catalogEntry,
+    explicitBindings: params.explicitBindings,
     ...(teamCredentialResourceCatalog ? { teamCredentialResourceCatalog } : {}),
   });
   if (disposition.kind === 'unavailable') {
@@ -465,6 +478,7 @@ export function resolveSpawnConnectedServicesDefaultDisposition(params: Readonly
   purposeCatalog?: ConnectedAccountCatalogSnapshotV1;
   teamCredentialResourceCatalog?: SpawnConnectedServicesTeamResourceCatalog;
   purposeDefaults?: readonly AgentConnectedAccountPurposeDefault[];
+  explicitBindings?: ConnectedServiceBindingsV2;
 }>): SpawnConnectedServicesDefaultDisposition {
   const declaredServiceIds = [...new Set([
     ...readSpawnConnectedAccountServiceIds(params.agentId, params.catalogEntry, params.contributions),
@@ -481,9 +495,11 @@ export function resolveSpawnConnectedServicesDefaultDisposition(params: Readonly
   }
 
   const defaults = params.purposeDefaults ?? readAgentPurposeDefaults(params);
-  const selectedBindings = projectAgentConnectedAccountPurposeDefaultsToSessionBindings(defaults)
-    ?? { v: 2 as const, bindingsByServiceId: {} };
-  const configuredBindings = selectedBindings.bindingsByServiceId;
+  const configuredBindings = {
+    ...projectAgentConnectedAccountPurposeDefaultsToSessionBindings(defaults)?.bindingsByServiceId,
+    ...params.explicitBindings?.bindingsByServiceId,
+  };
+  const selectedBindings = { v: 2 as const, bindingsByServiceId: configuredBindings };
   // Optional process tools participate only when explicitly selected; required
   // Agent purposes retain their native entries through the declaration owner.
   const supportedServiceIds = [...new Set([

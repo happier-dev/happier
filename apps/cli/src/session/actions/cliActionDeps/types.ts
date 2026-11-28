@@ -226,6 +226,10 @@ export type CliActionDepsParams = Readonly<{
   consumeArtifactSignedInLinkSecret?: (lookupId: string) => Promise<string | null>;
   onArtifactSignedInLinkOpened?: (opened: import('@happier-dev/protocol/actions/executor/artifactPublicLinkActions').ArtifactSignedInLinkOpenedV1) => void | Promise<void>;
   credentials?: StoredCredentials;
+  resolveTransitionConnectedServiceAdmission?: (params: Readonly<{
+    sessionId: string;
+    signal?: AbortSignal;
+  }>) => Promise<import('@/session/agentTransition/sessionAgentTransitionCoordinator').SessionAgentTransitionParams['connectedServiceAdmission']>;
   /** Immutable Account mode from finite requester admission, including unavailable. */
   admittedAccountEncryptionMode?: ConnectedServiceAccountEncryptionMode;
   connectedAccountAuthenticationHost?: CredentialedConnectedAccountAuthenticationHost;

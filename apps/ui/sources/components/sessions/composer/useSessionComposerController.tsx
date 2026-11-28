@@ -5366,6 +5366,8 @@ export function useSessionComposerController({
             connectedAccounts: currentSessionAgentCatalogEntry?.connectedAccounts ?? [],
             connectedToNativeSwitchUnsupported: currentLifecycleAgentCapabilities?.capabilities.connectedToNativeSwitchUnsupported,
             armedAuthoringTarget: armedContinuationTarget ? armedContinuationTarget.authoringTarget : undefined,
+            armedBindings: inSessionAgentPicker.armedContinuation?.selection.connectedServices,
+            setArmedBinding: inSessionAgentPicker.armedContinuationSubmission ? undefined : inSessionAgentPicker.setArmedBinding,
             agentIdentity: currentSessionAgentCatalogEntry
                 ? parseQualifiedPluginContributionKey(currentSessionAgentCatalogEntry.qualifiedId)
                 : null,

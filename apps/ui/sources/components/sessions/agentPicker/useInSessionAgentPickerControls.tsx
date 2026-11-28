@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { ConnectedServiceBindingSelectionV2Schema, type ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedServicesServiceBinding } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import { formatLegacyConfiguredAcpAgentId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
 import { resolveAgentRoutingId } from '@happier-dev/agents';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
@@ -190,14 +192,14 @@ export type SessionAgentPickerTargetDetailContext = Readonly<{
 
 function InSessionAgentPickerDetailContent(props: Omit<
     Parameters<typeof buildSessionAgentPickerDetailContent>[0],
-    'settings' | 'connectedServices'
+    'settings'
 > & Readonly<{ accountScope: ServerAccountScope | null }>) {
     const settings = useAgentUiSettings({ agentIds: [props.runtimeCarrierAgentId ?? props.agentCatalogEntry.agentId],
         machineId: props.selectedMachineId, accountScope: props.accountScope, domain: 'runtime' });
-    const { accountScope, ...detail } = props;
+    const { accountScope, connectedServices: explicitBindings, ...detail } = props;
     const current = getConnectedAccountCatalogValue(accountScope, 'purposes');
     const identity = detail.agentCatalogEntry.identity;
-    const connectedServices = identity && current.value
+    const defaults = identity && current.value
         ? projectAgentConnectedAccountPurposeDefaultsToSessionBindings(
             resolveAgentConnectedAccountPurposeDefaults({
                 purposeBindings: current.value,
@@ -206,6 +208,10 @@ function InSessionAgentPickerDetailContent(props: Omit<
             }),
         )
         : null;
+    const connectedServices = explicitBindings ? {
+        v: 2 as const,
+        bindingsByServiceId: { ...defaults?.bindingsByServiceId, ...explicitBindings.bindingsByServiceId },
+    } : defaults;
     return buildSessionAgentPickerDetailContent({ ...detail, accountScope, settings, connectedServices });
 }
 
@@ -327,6 +333,7 @@ function buildArmedContinuation(
     entry: ResolvedBackendCatalogEntry,
     sourceAgentId: string,
     selection: SessionAgentPickerSelection,
+    connectedServices?: ConnectedServiceBindingsV2,
 ): ArmedAgentContinuation {
     return {
         backendTargetKey: entry.backendTargetKey,
@@ -343,7 +350,10 @@ function buildArmedContinuation(
             // Inspection uses a stable timestamp-free projection. The persisted
             // selection is a real new choice, so its existing canonical builder
             // owns the timestamp on the wire envelope.
-            selection: buildTargetSelection(entry, selection, Date.now()),
+            selection: {
+                ...buildTargetSelection(entry, selection, Date.now()),
+                ...(connectedServices ? { connectedServices } : {}),
+            },
         },
     };
 }
@@ -376,6 +386,7 @@ export type InSessionAgentPickerControls = Readonly<{
     /** The armed target, or null so the composer keeps selecting the current Agent. */
     agentPickerSelectedOptionId: string | null;
     armedContinuation: ArmedAgentContinuation['intent'] | null;
+    setArmedBinding: (serviceId: string, binding: ConnectedServicesServiceBinding) => void;
     /**
      * The stable localId the submit path must carry for {@link armedContinuation}.
      * Non-null exactly when `armedContinuation` is.
@@ -864,12 +875,33 @@ export function useInSessionAgentPickerControls(
     ]);
 
     const armedTargetKey = featureEnabled ? armed?.backendTargetKey ?? null : null;
+    const armedBindings = armed?.intent.selection.connectedServices;
+
+    const setArmedBinding = React.useCallback((serviceId: string, binding: ConnectedServicesServiceBinding) => {
+        if (!featureEnabled || !armed || armed.submission || !accountScopeIsCurrent()) return;
+        const admitted = ConnectedServiceBindingSelectionV2Schema.safeParse(binding);
+        if (!admitted.success || admitted.data.source === 'team_resource') return;
+        persistArmedContinuation({
+            ...armed,
+            intent: {
+                ...armed.intent,
+                selection: {
+                    ...armed.intent.selection,
+                    connectedServices: {
+                        v: 2,
+                        bindingsByServiceId: { ...armedBindings?.bindingsByServiceId, [serviceId]: admitted.data },
+                    },
+                },
+            },
+        });
+    }, [accountScopeIsCurrent, armed, armedBindings, featureEnabled, persistArmedContinuation]);
 
     const armExactSelection = React.useCallback((
         entry: ResolvedBackendCatalogEntry,
         sourceAgentId: string,
         selection: SessionAgentPickerSelection,
         inspection: SessionAgentContinuationInspectionState,
+        connectedServices?: ConnectedServiceBindingsV2,
     ) => {
         if (!featureEnabled || retainedSubmissionArm !== null || !accountScopeIsCurrent() || currentAgentId !== sourceAgentId) return false;
         if (!purposeDefaultsReady(entry)) {
@@ -882,7 +914,7 @@ export function useInSessionAgentPickerControls(
             inspection,
         });
         if (eligibility.status === 'eligible') {
-            persistArmedContinuation(buildArmedContinuation(entry, sourceAgentId, selection));
+            persistArmedContinuation(buildArmedContinuation(entry, sourceAgentId, selection, connectedServices));
             return true;
         }
         persistArmedContinuation(null);
@@ -908,9 +940,10 @@ export function useInSessionAgentPickerControls(
         const inspection = await inspections.request(buildTargetSelection(entry, selection));
         if (pendingArmRef.current !== pending || armScopeRef.current.key !== admittedScopeKey) return false;
         pendingArmRef.current = null;
-        const applied = armOwnerRef.current(entry, currentAgentId, selection, inspection);
+        const applied = armOwnerRef.current(entry, currentAgentId, selection, inspection,
+            armedTargetKey === entry.backendTargetKey ? armedBindings : undefined);
         return applied;
-    }, [accountScope, accountScopeIsCurrent, currentAgentId, inspectableTargetSelections, inspections.request, persistArmedContinuation, purposeDefaultsReady, sourceMachineId]);
+    }, [accountScope, accountScopeIsCurrent, armedBindings, armedTargetKey, currentAgentId, inspectableTargetSelections, inspections.request, persistArmedContinuation, purposeDefaultsReady, sourceMachineId]);
 
     const applyDraftAgentIntent = React.useCallback(async (intent: NewSessionDraftAgentIntent) => {
         if (intent.kind === 'picker') {
@@ -1060,6 +1093,7 @@ export function useInSessionAgentPickerControls(
                             ? t('session.agentContinuation.detailDescription')
                             : t('session.agentContinuation.detailDescriptionEmpty')}
                         selection={readTargetSelection(entry.backendTargetKey)}
+                        connectedServices={armedTargetKey === entry.backendTargetKey ? armedBindings : undefined}
                         onSelectionChange={(next) => {
                             // Re-arm rather than announce: the model row's own selected
                             // state is the feedback here, exactly as in every sibling
@@ -1089,6 +1123,7 @@ export function useInSessionAgentPickerControls(
         });
     }, [
         armedTargetKey,
+        armedBindings,
         accountScope,
         currentAgentId,
         featureEnabled,
@@ -1172,6 +1207,7 @@ export function useInSessionAgentPickerControls(
         composeAgentPickerOptions,
         agentPickerSelectedOptionId,
         armedContinuation: featureEnabled ? armed?.intent ?? null : null,
+        setArmedBinding,
         armedContinuationLocalId: featureEnabled ? armedContinuationLocalId : null,
         armedContinuationModelLabel: featureEnabled ? armed?.modelLabel ?? null : null,
         armedContinuationSubmission: submissionArm?.submission ?? null,

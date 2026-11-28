@@ -767,6 +767,34 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         } finally { await connection.dispose(); }
     });
 
+    it('uses the account picker to choose the armed target login without switching the source', async () => {
+        const consumer = { pluginId: 'happier.agent.claude', localId: 'claude' };
+        const service = { pluginId: consumer.pluginId, localId: 'anthropic' };
+        const serviceId = `${service.pluginId}/${service.localId}`;
+        const setArmedBinding = vi.fn();
+        const hook = await renderHook(() => useSessionConnectedServicesAuthSwitch({
+            applyBinding: setSessionConnectedServiceAuthBindingMock,
+            sessionId: 'session-1', agentId: 'happier.agent.codex/codex', machineId: 'machine-1',
+            connectedAccounts: CODEX_CONNECTED_ACCOUNTS, sessionMetadata: {},
+            armedAuthoringTarget: { agentId: 'happier.agent.claude/claude', agentIdentity: consumer, connectedAccounts: [{ purpose: 'primary', service }] },
+            setArmedBinding,
+            settings: { connectedServicesDefaultProfileByServiceId: {} },
+            switchingDisabledReason: null,
+        }));
+        await act(async () => { applyConnectedAccountCatalogSnapshot({ serverId: 'server-1', accountId: 'account-a' }, 'purposes', {
+            status: 'ready', revision: 1, record: { key: 'purposes', value: { v: 1, bindings: [] } },
+        }, true); });
+        const picker = renderChipPopover(hook);
+        expect(picker.supportedServiceIds).toEqual([serviceId]);
+        await act(async () => {
+            picker.setBindingForService(serviceId, { source: 'connected', selection: 'profile', profileId: 'work' });
+        });
+        expect(setArmedBinding).toHaveBeenCalledWith(serviceId, {
+            source: 'connected', selection: 'profile', profileId: 'work',
+        });
+        expect(setSessionConnectedServiceAuthBindingMock).not.toHaveBeenCalled();
+    });
+
     it.each(['work', 'missing-profile', null])('previews the armed qualified Agent purpose default without offering source auth changes (%s)', async (profileId) => {
         const consumer = { pluginId: 'happier.agent.claude', localId: 'claude' };
         const service = { pluginId: 'happier.agent.claude', localId: 'anthropic' };

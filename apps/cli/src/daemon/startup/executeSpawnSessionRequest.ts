@@ -1180,6 +1180,7 @@ export async function executeSpawnSessionRequest(
                 } : {}),
                 options: launchOptions,
                 onCredentialPreflightRefused: transitionLaunch?.credentialRefused,
+                transitionAccountAdmission: transitionLaunch?.accountAdmission,
                 managedPurpose: daemonProviderLaunch.managedPurpose,
                 normalizedExistingSessionId: launchExistingSessionId,
                 requestedSessionId,

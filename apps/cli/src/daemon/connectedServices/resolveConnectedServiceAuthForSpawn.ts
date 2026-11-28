@@ -1247,7 +1247,7 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
   return materialized;
 }
 
-export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
+type SpawnAuthInput = Readonly<{
   agentLaunchTarget?: Parameters<typeof materializeConnectedServicesForSpawn>[0]['agentLaunchTarget'];
   signal?: AbortSignal;
   retainCleanup?: (cleanup: () => Promise<void>) => Promise<() => void>;
@@ -1303,27 +1303,18 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
     subjectId: string;
     dispose(): void | Promise<void>;
   }> | Promise<Readonly<{ subjectId: string; dispose(): void | Promise<void> }>>;
-}>): Promise<Readonly<{
-  env: Record<string, string>;
-  /** Secret values this launch's Connected Account materializations injected or wrote. */
-  secretValues?: ConnectedServicesMaterialization['secretValues'];
-  agentLaunchMaterials?: ConnectedServicesMaterialization['agentLaunchMaterials'];
-  unsetEnvKeys?: readonly string[];
-  sessionConnectedAccounts?: ConnectedServicesMaterialization['sessionConnectedAccounts'];
-  cleanupOnFailure: (() => void | Promise<void>) | null;
-  cleanupOnExit: (() => void | Promise<void>) | null;
-  connectedServicesBindings: ConnectedServicesBindingsV2;
-  targetMaterializedRoot?: string | null;
-  requestAuthMaterializedRoot?: string | null;
-  materializedStateObservationBinding?: ConnectedServiceMaterializedStateObservationBinding;
-  diagnostics?: readonly ConnectedServicesMaterializationDiagnostic[];
-  requestAuthPurposeBindings?: readonly QualifiedConnectedAccountPurposeBindingV1[];
-  qualifiedPurposeBindingSnapshot: AgentSpawnQualifiedPurposeBindingSnapshot | null;
-  materializationPurposeLease?: Readonly<{
-    subjectId: string;
-    dispose(): void | Promise<void>;
-  }>;
-}> | null> {
+}>;
+
+type SpawnAuthAdmissionInput = Pick<SpawnAuthInput,
+  'signal' | 'agentId' | 'modelId' | 'connectedServicesBindingsRaw' | 'materializationKey' |
+  'credentials' | 'api' | 'accountUsageStore' | 'qualifiedConnectedAccountApi' | 'nowMs' |
+  'sessionId' | 'authGroupSwitchCoordinator' | 'predictiveSwitchGuard' | 'credentialRefreshService' |
+  'resolveQualifiedPurposeBindingSnapshot'
+>;
+
+export type ConnectedServiceSpawnAdmission = NonNullable<Awaited<ReturnType<typeof admitConnectedServiceAuthForSpawn>>>;
+
+export async function admitConnectedServiceAuthForSpawn(params: SpawnAuthAdmissionInput) {
   params.signal?.throwIfAborted();
   const admittedBindings = ConnectedServicesBindingsIngressSchema.parse(params.connectedServicesBindingsRaw);
   const selections = parseConnectedServiceBindingSelections(admittedBindings);
@@ -1362,7 +1353,6 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
       ? [[binding.serviceId, binding.credentialRevision] as const]
       : []
   )));
-  const recordsByServiceId = new Map<ConnectedServiceId, ConnectedServiceCredentialRecordV1>();
   const groupSelections = new Map(resolvedBindings.groupSelections);
   const maxPreflightAttempts = resolveSpawnMaterializationAttemptLimit(groupSelections);
   for (let attempt = 0; attempt < maxPreflightAttempts; attempt += 1) {
@@ -1426,6 +1416,50 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
       if (!recovered) throw error;
     }
   }
+  return {
+    selections,
+    groupSelections,
+    credentialRevisionsByServiceId,
+    qualifiedPurposeBindingSnapshot,
+    credentialBindings: buildCurrentSpawnCredentialBindings({ selections, groupSelections, credentialRevisionsByServiceId }),
+  };
+}
+
+export async function resolveConnectedServiceAuthForSpawn(params: SpawnAuthInput & Readonly<{
+  admittedAuth?: ConnectedServiceSpawnAdmission;
+  retainAdmittedAccount?: boolean;
+}>): Promise<Readonly<{
+  env: Record<string, string>;
+  /** Secret values this launch's Connected Account materializations injected or wrote. */
+  secretValues?: ConnectedServicesMaterialization['secretValues'];
+  agentLaunchMaterials?: ConnectedServicesMaterialization['agentLaunchMaterials'];
+  unsetEnvKeys?: readonly string[];
+  sessionConnectedAccounts?: ConnectedServicesMaterialization['sessionConnectedAccounts'];
+  cleanupOnFailure: (() => void | Promise<void>) | null;
+  cleanupOnExit: (() => void | Promise<void>) | null;
+  connectedServicesBindings: ConnectedServicesBindingsV2;
+  targetMaterializedRoot?: string | null;
+  requestAuthMaterializedRoot?: string | null;
+  materializedStateObservationBinding?: ConnectedServiceMaterializedStateObservationBinding;
+  diagnostics?: readonly ConnectedServicesMaterializationDiagnostic[];
+  requestAuthPurposeBindings?: readonly QualifiedConnectedAccountPurposeBindingV1[];
+  qualifiedPurposeBindingSnapshot: AgentSpawnQualifiedPurposeBindingSnapshot | null;
+  materializationPurposeLease?: Readonly<{
+    subjectId: string;
+    dispose(): void | Promise<void>;
+  }>;
+}> | null> {
+  params.signal?.throwIfAborted();
+  const admitted = params.admittedAuth ?? await admitConnectedServiceAuthForSpawn(params);
+  if (!admitted) return null;
+  const { selections, qualifiedPurposeBindingSnapshot } = admitted;
+  const groupSelections = new Map(admitted.groupSelections);
+  const credentialRevisionsByServiceId = new Map(admitted.credentialRevisionsByServiceId);
+  const qualifiedAccountApi = createSpawnBindingAccountApi({
+    token: params.credentials.token,
+    api: params.qualifiedConnectedAccountApi,
+  });
+  const recordsByServiceId = new Map<ConnectedServiceId, ConnectedServiceCredentialRecordV1>();
   const maxMaterializationAttempts = resolveSpawnMaterializationAttemptLimit(groupSelections);
   for (let attempt = 0; attempt < maxMaterializationAttempts; attempt += 1) {
     const selectionsByServiceId = buildSelectionsByServiceIdForSpawn({
@@ -1507,7 +1541,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
       };
     } catch (error) {
       if (!(error instanceof ConnectedServiceMaterializationBlockedError)) throw error;
-      if (attempt >= maxMaterializationAttempts - 1) throw error;
+      if (params.retainAdmittedAccount || attempt >= maxMaterializationAttempts - 1) throw error;
       const recovered = await maybeRecoverGroupAfterSpawnMaterializationFailure({
         onCredentialHealthChanged: event => params.credentialRefreshService?.publishCredentialHealthTransition?.(event),
         error,
@@ -1515,10 +1549,10 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
         credentialRevisionsByServiceId,
         credentials: params.credentials,
         api: params.api,
-        qualifiedAccountApi: resolvedBindings.qualifiedAccountApi,
+        qualifiedAccountApi,
         ...(params.sessionId ? { sessionId: params.sessionId } : {}),
         authGroupSwitchCoordinator: params.authGroupSwitchCoordinator ?? null,
-        nowMs,
+        nowMs: (params.nowMs ?? Date.now)(),
       });
       if (!recovered) throw error;
     } finally {

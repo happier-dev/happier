@@ -19,10 +19,10 @@ export type ConnectedServiceLaunchAuthGroupCoordinatorFactory = (input: Readonly
 // Selection cannot apply native credentials to an existing or parent Session.
 export const acknowledgeConnectedServiceLaunchGeneration: CoordinatorOptions['applyGeneration'] = async () => ({ ok: true });
 
-export async function resolveConnectedServiceAuthForLaunch(
-    input: SpawnInput,
+export function createConnectedServiceLaunchAuthGroupSwitch(
     createCoordinator: ConnectedServiceLaunchAuthGroupCoordinatorFactory,
-) {
+    signal?: AbortSignal,
+): NonNullable<SpawnInput['authGroupSwitchCoordinator']> {
     const prepareCoordinator = async (serviceId: ConnectedAccountServiceKey, groupId: string, reason: string,
         prepareCandidateForSwitch?: CoordinatorOptions['prepareCandidateForSwitch']) => {
         const service = resolveQualifiedConnectedAccountServiceForIngressServiceId(serviceId);
@@ -32,18 +32,25 @@ export async function resolveConnectedServiceAuthForLaunch(
         if (!coordinator) throw new ConnectedServiceSpawnAuthGroupAuthorityError({ kind: 'resolution_unavailable', serviceId, groupId });
         return { service, coordinator };
     };
+    return {
+        async switchBeforeTurn(request) {
+            const { prepareCandidateForSwitch, ...selection } = request;
+            const target = await prepareCoordinator(request.serviceId, request.groupId, 'spawn_pre_turn', prepareCandidateForSwitch);
+            return await target.coordinator.switchBeforeTurn({ ...selection, signal, serviceId: target.service });
+        },
+        async switchAfterClassifiedFailure(request) {
+            const target = await prepareCoordinator(request.serviceId, request.groupId, 'spawn_refresh_failed');
+            return await target.coordinator.switchAfterClassifiedFailure({ ...request, serviceId: target.service });
+        },
+    };
+}
+
+export async function resolveConnectedServiceAuthForLaunch(
+    input: SpawnInput,
+    createCoordinator: ConnectedServiceLaunchAuthGroupCoordinatorFactory,
+) {
     return await resolveConnectedServiceAuthForSpawn({
         ...input,
-        authGroupSwitchCoordinator: {
-            async switchBeforeTurn(request) {
-                const { prepareCandidateForSwitch, ...selection } = request;
-                const target = await prepareCoordinator(request.serviceId, request.groupId, 'spawn_pre_turn', prepareCandidateForSwitch);
-                return await target.coordinator.switchBeforeTurn({ ...selection, signal: input.signal, serviceId: target.service });
-            },
-            async switchAfterClassifiedFailure(request) {
-                const target = await prepareCoordinator(request.serviceId, request.groupId, 'spawn_refresh_failed');
-                return await target.coordinator.switchAfterClassifiedFailure({ ...request, serviceId: target.service });
-            },
-        },
+        authGroupSwitchCoordinator: createConnectedServiceLaunchAuthGroupSwitch(createCoordinator, input.signal),
     });
 }

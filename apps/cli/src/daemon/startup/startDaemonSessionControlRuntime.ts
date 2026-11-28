@@ -11953,6 +11953,26 @@ export async function startDaemonSessionControlRuntime(
         }
       : undefined;
   const externalActionExecutionInput: Parameters<typeof createDaemonExternalActionExecution>[0] = {
+    resolveTransitionConnectedServiceAdmission: async (credentials, requester, request) => {
+      const requesterId = readPreviewAccountIdFromToken(credentials.token);
+      const installedAccount = credentials.token === params.credentials.token || (
+        requesterId !== null && requesterId === params.externalActionAccountId
+      );
+      if (requester ? requester.bootstrap.attribution.accountId !== requesterId : !installedAccount) return undefined;
+      const { createConnectedServiceLaunchAuthGroupSwitch } = await import('../connectedServices/resolveConnectedServiceAuthForLaunch');
+      return {
+        api: requester ? requester.api : params.api,
+        qualifiedConnectedAccountApi: requester ? requester.qualifiedConnectedAccountApi : qualifiedConnectedAccountApi,
+        accountUsageStore: requester ? requester.providerAccountUsageStore : providerAccountUsageStore,
+        predictiveSwitchGuard: requester ? requester.predictiveSwitchGuard : connectedServicePredictiveSwitchGuard,
+        credentialRefreshService: requester
+          ? requester.connectedServiceRefreshCoordinator : params.getConnectedServiceRefreshCoordinator(),
+        authGroupSwitchCoordinator: createConnectedServiceLaunchAuthGroupSwitch(selection =>
+          createSessionQualifiedAuthGroupSwitchCoordinator({
+            ...selection, sessionId: request.sessionId, accountContext: requester,
+          }), request.signal),
+      };
+    },
     readGuestHomeHostIdentity,
     params, requiresPortableSessionSpawnServerIdentity, requesterAccountOperationContext, acquireDaemonPluginRuntimeRegistryLease, shutdownCancellationDomains, isSessionCallerCurrent, externalActionApprovalExecutionOriginCurrentness, externalActionIngressOwner, externalActionContributedApprovalReplay, observeContributedPluginExecution, relayDiscussionAgentPublication, externalActionInstallationIdentity, ownerRemainder, isRuntimePublicationQuiescing, pluginRuntimeController, connectedAccountRequestAuthRegistry, requireConnectedAccountRequestAuthHttpPort, localServicesActionFeatureGate, localServicesRuntimeActionRoutes, localServicesRuntime, externalActionContributedInvoker, externalActionContributedDefinitionLister, externalActionTranscriptFollowLeaseRegistry,
   };

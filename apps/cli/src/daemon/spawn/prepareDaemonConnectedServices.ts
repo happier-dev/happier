@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+import { areSameAgentRoutingIdentity } from '@happier-dev/agents';
+import type { TransitionConnectedServiceAdmission } from '@/session/agentTransition/failedFirstLaunch';
 import { createRequesterPluginSettingsSource } from '@/daemon/sessionEncryption/requesterPluginSettings';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { prepareDaemonAgentIsolationIdentity, type PreparedDaemonAgentIsolationIdentity, type PrepareAgentIsolationMember } from './prepareDaemonAgentIsolationIdentity';
@@ -130,6 +133,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
     signal?: AbortSignal;
     options: SpawnSessionOptions;
     onCredentialPreflightRefused?: () => void;
+    transitionAccountAdmission?: TransitionConnectedServiceAdmission;
     managedPurpose?: Pick<PreparedManagedPurposeLaunch, 'agentConnectedServices'>;
     normalizedExistingSessionId: string;
     requestedSessionId: string;
@@ -230,6 +234,13 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
     const options: SpawnSessionOptions = materializationIdentity
         ? { ...admittedOptions, connectedServiceMaterializationIdentityV1: materializationIdentity }
         : admittedOptions;
+    const accountAdmission = input.transitionAccountAdmission;
+    if (accountAdmission && (!shouldResolveAuth || !input.catalogAgentId
+        || !areSameAgentRoutingIdentity(accountAdmission.agentId, input.catalogAgentId)
+        || accountAdmission.materializationId !== materializationIdentity?.id
+        || !isDeepStrictEqual(accountAdmission.bindings, options.connectedServices))) {
+        return { ok: false, result: projectSpawnValidationFailure('connected_service_bindings_invalid') };
+    }
     const materializationKey =
         materializationIdentity?.id
         || input.normalizedExistingSessionId
@@ -268,6 +279,8 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
                 agentId: input.catalogAgentId,
                 modelId: options.modelSelection?.ref.modelId,
                 connectedServicesBindingsRaw: options.connectedServices,
+                ...(accountAdmission ? { admittedAuth: accountAdmission.auth,
+                    retainAdmittedAccount: accountAdmission.retainAdmittedAccount } : {}),
                 materializationKey,
                 requesterWorkAttributionV1: options.requesterSessionBootstrap?.attribution
                     ?? options.requesterWorkAttributionV1,
