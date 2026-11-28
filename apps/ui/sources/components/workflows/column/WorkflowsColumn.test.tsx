@@ -1249,7 +1249,7 @@ describe('WorkflowsColumn', () => {
     });
 
     // HUNT3-1125 pattern B: an inline Workflow's Run reads that Workflow's name by exact id, never the inline page.
-    it.each(['scope', 'unshown edit', 'shown edit', 'wide open', 'wide reconnect', 'reopen settled', 'latest answer', 'demand ended', 'retained hide', 'unmounted'] as const)(
+    it.each(['scope', 'unshown edit', 'shown edit', 'wide open', 'wide reconnect', 'reopen settled', 'latest answer', 'demand ended', 'retained hide', 'unmounted', 'last tab close'] as const)(
         'reads 15 inline Workflow names by exact ID and handles %s', async scenario => {
         const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
@@ -1263,7 +1263,10 @@ describe('WorkflowsColumn', () => {
             blocks: [{ kind: 'step', id: 'first', document: { text: 'Summarize the day', references: [], attachments: [] },
                 input: [], result: { kind: 'text' } }],
         });
-        const named = Array.from({ length: 15 }, (_, index) => [`inline-${index}`, `Digest ${index}`] as const);
+        const closingLastTab = scenario === 'last tab close';
+        const named = Array.from({ length: 15 }, (_, index) => [
+            closingLastTab && index === 0 ? '25c13d4d-121c-48c1-a755-1ae78b6f509a' : `inline-${index}`, `Digest ${index}`,
+        ] as const);
         const editedId = named[0]![0];
         const details = named.map(([id, name]) => AutomationDefinitionDetailSchema.parse({ id, name, description: null, enabled: true,
             workflowDefinitionId: null, scopeSessionId: null, targetType: null, existingSessionId: null,
@@ -1318,7 +1321,34 @@ describe('WorkflowsColumn', () => {
                 {scenario === 'retained hide' ? <Freeze freeze={!presented}>{runs}</Freeze> : runs}
             </PluginSurfaceFocusEligibilityProvider>;
         };
-        const screen = await renderScreen(renderRuns(true), { wrapper: TestAuth });
+        const workspace = closingLastTab ? await (async () => {
+            const { resolveCompactAppDestinations } = await import('@/components/appShell/destinations/compactAppDestinationCatalog');
+            const { createWorkspaceNavigationAdapter } = await import('@/components/appShell/workspace/workspaceNavigationAdapter');
+            const { createWorkspaceState, reduceWorkspaceState } = await import('@/components/appShell/workspace/workspaceState');
+            const { resolveAppShellLocation } = await import('@/components/navigation/shell/appRail/appRailModel');
+            const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+                workflows: true, externalSessions: false, inbox: false, friends: false,
+            } });
+            let state = createWorkspaceState({ id: 'runs', target: { kind: 'workflows', params: { subPath: '/runs' } }, pinned: false, preview: false });
+            const navigation = createWorkspaceNavigationAdapter({
+                getState: () => state, getCatalog: () => catalog,
+                dispatch: action => { state = reduceWorkspaceState(state, action); },
+                createId: () => 'home', onChange: () => {},
+                transport: { commit: href => { routeState.pathname = href; } },
+            });
+            navigation.initialize('/workflows/runs');
+            return {
+                close: () => navigation.closeTab(state.focusedGroupId, 'runs'),
+                render: () => {
+                    const { column } = resolveAppShellLocation(catalog, navigation.sectionPathname ?? routeState.pathname);
+                    return <AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
+                        {state.tabs.runs && <WorkflowsRunsRoute />}
+                        {column.kind === 'builtin' && column.id === 'workflows' && <WorkflowsColumn initialView="runs" />}
+                    </AppShellColumnContext.Provider>;
+                },
+            };
+        })() : null;
+        const screen = await renderScreen(workspace ? workspace.render() : renderRuns(true), { wrapper: TestAuth });
         const shownReads = named.map(([id]) => `GET /v3/automations/${id}`).sort();
         const publish = async (id: string) => {
             await act(async () => {
@@ -1442,6 +1472,15 @@ describe('WorkflowsColumn', () => {
                 if (scenario === 'unmounted') {
                     await screen.unmount();
                     mounted = false;
+                } else if (workspace) {
+                    expect(edits[0]!.signal?.aborted).toBe(false);
+                    const onAbort = vi.fn();
+                    edits[0]!.signal?.addEventListener('abort', onAbort);
+                    workspace.close();
+                    await screen.update(workspace.render());
+                    expect(routeState.pathname).toBe('/');
+                    expect(automationRequests.slice(15)).toEqual([shownReads[0]]);
+                    expect(onAbort).toHaveBeenCalledTimes(1);
                 } else {
                     await screen.update(renderRuns(false));
                 }

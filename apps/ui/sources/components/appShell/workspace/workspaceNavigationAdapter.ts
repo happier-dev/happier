@@ -199,11 +199,11 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
         const tab = state.tabs[group.activeTabId];
         return { tabId: tab.id, groupId: group.id, target: tab.target, sectionPathname };
     };
-    const visit = (replace = false, projectUrl = true, forceProjection = false, selectSection = false, retainedFromTabId?: string) => {
+    const visit = (replace = false, projectUrl = true, forceProjection = false, section?: 'select' | 'clear', retainedFromTabId?: string) => {
         const target = focusedEntry().target;
         const catalog = input.getCatalog();
         const pathname = hrefForDestinationRef(catalog, target)?.split(/[?#]/, 1)[0] ?? null;
-        const nextSection = selectSection || sectionPathname === null ? pathname : sectionPathname;
+        const nextSection = section === 'clear' ? null : section === 'select' || sectionPathname === null ? pathname : sectionPathname;
         const sectionChanged = nextSection !== sectionPathname;
         sectionPathname = nextSection;
         const focused = focusedEntry();
@@ -415,7 +415,7 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
                 }
             }
             finishOpen?.(focusedEntry());
-            visit(options.replace, projectUrl, true, options.section,
+            visit(options.replace, projectUrl, true, options.section ? 'select' : undefined,
                 history.entries[history.index]?.tabId === options.retainedFromTabId ? options.retainedFromTabId : undefined);
             options.onOpened?.();
             return true;
@@ -426,8 +426,13 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
         },
         dispatch(action: WorkspaceAction) {
             if (action.type === 'reopenTab') { this.reopenTab(action.tabId); return; }
+            const closing = action.type === 'closeTab' || action.type === 'closeTabs';
+            const beforeClose = closing ? input.getState() : null;
             input.dispatch(action);
-            visit();
+            if (closing && input.getState() === beforeClose) return;
+            // Only the freshly inserted Home fallback leaves the selected section.
+            const closedToHome = closing && !beforeClose?.tabs[action.newTab.id] && focusedEntry().tabId === action.newTab.id;
+            visit(false, true, false, closedToHome ? 'clear' : undefined);
         },
         reopenTab(tabId?: string): boolean {
             const state = input.getState();
@@ -441,13 +446,10 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
             return true;
         },
         closeTab(groupId: string, tabId: string) {
-            input.dispatch({ type: 'closeTab', groupId, tabId, newTab: createWorkspaceEmptyTab(input.createId()) });
-            visit();
+            this.dispatch({ type: 'closeTab', groupId, tabId, newTab: createWorkspaceEmptyTab(input.createId()) });
         },
         closeTabs(groupId: string, tabIds: readonly string[]) {
-            const state = input.getState();
-            input.dispatch({ type: 'closeTabs', groupId, tabIds, newTab: createWorkspaceEmptyTab(input.createId()) });
-            if (input.getState() !== state) visit();
+            this.dispatch({ type: 'closeTabs', groupId, tabIds, newTab: createWorkspaceEmptyTab(input.createId()) });
         },
         setParams(tabId: string, values: Readonly<Record<string, unknown>>) {
             const state = input.getState();
@@ -464,7 +466,7 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
             input.dispatch({ type: 'setTarget', tabId, target });
             if (focusedEntry().tabId === tabId) {
                 const current = history.entries[history.index];
-                visit(true, true, false, false, current?.tabId === tabId ? current.retainedFromTabId : undefined);
+                visit(true, true, false, undefined, current?.tabId === tabId ? current.retainedFromTabId : undefined);
             }
         },
         acceptUrl(href: string, entry?: WorkspaceNavigationEntry, position?: number) {
