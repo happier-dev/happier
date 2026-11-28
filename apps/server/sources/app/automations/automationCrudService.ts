@@ -2998,30 +2998,24 @@ function assertAutomationRunStoredContentForAccountMode(params: Readonly<{
         if (
             !isWorkflowRun
             || params.row.originKind !== "direct"
-            || params.content.executionInputEnvelope === null
             || params.content.workflowAcceptedSnapshotEnvelope === null
         ) {
             throw new AutomationValidationError("Workflow Run has invalid origin correspondence");
         }
-        const baseBinding = { v: 1 as const, accountId: params.row.accountId, runId: params.row.id };
-        assertWorkflowStoredEnvelopeOuterForMode({
-            raw: params.content.executionInputEnvelope,
-            mode: params.mode,
-            binding: { ...baseBinding, purpose: "accepted_snapshot" },
-        });
-        assertWorkflowStoredEnvelopeOuterForMode({
-            raw: params.content.workflowAcceptedSnapshotEnvelope,
-            mode: params.mode,
-            binding: { ...baseBinding, purpose: "accepted_snapshot" },
-        });
         if (
-            params.content.executionInputEnvelope
-            !== params.content.workflowAcceptedSnapshotEnvelope
+            params.content.executionInputEnvelope !== null
+            && params.content.executionInputEnvelope !== params.content.workflowAcceptedSnapshotEnvelope
         ) {
             throw new AutomationValidationError(
                 "Direct Workflow Run must retain one accepted-snapshot envelope",
             );
         }
+        const baseBinding = { v: 1 as const, accountId: params.row.accountId, runId: params.row.id };
+        assertWorkflowStoredEnvelopeOuterForMode({
+            raw: params.content.workflowAcceptedSnapshotEnvelope,
+            mode: params.mode,
+            binding: { ...baseBinding, purpose: "accepted_snapshot" },
+        });
         if (params.content.workflowCheckpointEnvelope !== null) {
             assertWorkflowStoredEnvelopeOuterForMode({
                 raw: params.content.workflowCheckpointEnvelope,

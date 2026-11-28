@@ -265,15 +265,21 @@ describe("active Account migration of current Workflow content (real SQLite)", (
         }
     });
 
-    it("transitions current run content and recipient keys atomically and advances the invocation token", async () => {
+    it.each([false, true])("transitions current run content with legacy duplicate %s and advances the invocation token", async legacyDuplicate => {
         const f = await fixture();
+        if (!legacyDuplicate) {
+            await db.automationRun.update({ where: { id: f.runId }, data: { executionInputEnvelope: null } });
+        }
+        const directive = { ...f.directive, runs: f.directive.runs.map(item => ({
+            ...item, executionInputEnvelope: legacyDuplicate ? item.executionInputEnvelope : null,
+        })) };
         const result = await inTx(tx => migrateAutomationAccountEncryptionInTx({
-            tx, accountId: f.account.id, toMode: "e2ee", directive: f.directive,
+            tx, accountId: f.account.id, toMode: "e2ee", directive,
             ownerContentPublicKeyFingerprint: f.verifiedBinding.contentPublicKeyFingerprint,
         }));
         expect(result).toEqual({ status: "applied" });
         const run = await db.automationRun.findUniqueOrThrow({ where: { id: f.runId } });
-        expect(run).toMatchObject({ revision: 1, executionInputEnvelope: f.targetAccepted,
+        expect(run).toMatchObject({ revision: 1, executionInputEnvelope: legacyDuplicate ? f.targetAccepted : null,
             workflowAcceptedSnapshotEnvelope: f.targetAccepted });
         const invocation = await db.workflowRunInvocation.findUniqueOrThrow({ where: { id: f.recordId } });
         expect(invocation).toMatchObject({ contentRevision: 1n, contentEnvelope: f.targetProgress });
@@ -285,7 +291,7 @@ describe("active Account migration of current Workflow content (real SQLite)", (
         // The Account route commits the target mode after applying its participants.
         await db.account.update({ where: { id: f.account.id }, data: { encryptionMode: "e2ee" } });
         const replay = () => inTx(tx => matchAutomationAccountEncryptionMigrationPostStateInTx({
-            tx, accountId: f.account.id, toMode: "e2ee", directive: f.directive,
+            tx, accountId: f.account.id, toMode: "e2ee", directive,
         }));
         expect(await replay()).toEqual({ status: "matched" });
         const alteredKey = new Uint8Array(ownerEnvelope.encryptedDataKey);

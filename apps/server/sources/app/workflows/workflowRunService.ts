@@ -481,12 +481,6 @@ export async function admitWorkflowRunTx(tx: Tx, params: AdmitWorkflowRunInput):
                     dueAt: now,
                     workflowAcceptedSnapshotEnvelope: params.acceptedEnvelope,
                     workflowDisplaySummaryEnvelope: params.displayEnvelope ?? null,
-                    // The Automation claim corridor reads the frozen program
-                    // from executionInputEnvelope for both origins. Direct
-                    // admission therefore materializes the same immutable bytes
-                    // at that incumbent claim boundary; it is not a second
-                    // mutable definition pointer.
-                    executionInputEnvelope: params.acceptedEnvelope,
                     workflowCheckpointEnvelope: null,
                     workflowCustodyState: "pending",
                     originDeliveryAckRevision: params.resultDelivery?.kind === 'originating_session' ? 0 : null,

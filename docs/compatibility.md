@@ -9482,6 +9482,15 @@ An already accepted Workflow reclaim omits this optional field and uses the
 depth in its immutable accepted snapshot. It does not require the causal Session
 or turn to survive; current accepted-authorization checks still run at the worker.
 
+New direct Runs store the immutable program in `workflowAcceptedSnapshotEnvelope`.
+Claims and claim replays read this field for direct Runs. Encryption transitions
+accept historical direct rows with a byte-identical `executionInputEnvelope`
+and preserve each row's existing field presence. Automation-origin Runs still
+use `executionInputEnvelope` for their frozen definition. No schema migration
+or backfill is required. Upgrade 0.3 development Server instances together
+before creating new direct Runs because earlier encryption-transition code
+required both fields. Released 0.2 Servers have no direct Workflow Runs.
+
 Saved-definition admissions freeze `source.savedBy` for direct and Automation-origin
 Runs. The field is required for a saved source; an explicit null records a header
 without authorship. It is private display metadata, not execution or authorization

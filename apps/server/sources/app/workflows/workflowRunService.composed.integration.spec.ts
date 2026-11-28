@@ -2431,10 +2431,18 @@ describe("workflowRunService (integration)", () => {
                 metadata: 'encrypted-machine-metadata', dataEncryptionKey: null,
             } });
         }
+        const directSnapshot = mode === "plain"
+            ? await acceptedEnvelope({ ...seeded, runId })
+            : await encryptedAcceptedEnvelope({ ...seeded, runId });
         await admitWorkflowRun({ ...seeded, runId, origin: { kind: "direct" },
-            acceptedEnvelope: mode === "plain" ? await acceptedEnvelope({ ...seeded, runId }) : await encryptedAcceptedEnvelope({ ...seeded, runId }),
+            acceptedEnvelope: directSnapshot,
             ...(mode === "e2ee" ? { recipientKeyEnvelopes: [await encryptedRunOwnerEnvelope(seeded.accountId)] } : {}),
         });
+        const stored = await db.automationRun.findUniqueOrThrow({ where: { id: runId },
+            select: { workflowAcceptedSnapshotEnvelope: true, executionInputEnvelope: true } });
+        expect(stored.workflowAcceptedSnapshotEnvelope).toBe(directSnapshot);
+        const duplicateSnapshotBytes = Buffer.byteLength(stored.executionInputEnvelope ?? "");
+        expect(duplicateSnapshotBytes, `direct admission (one row, ${Buffer.byteLength(directSnapshot)} accepted snapshot bytes)`).toBe(0);
         if (origin === "automation") {
             const automation = await db.automation.create({ data: { accountId: seeded.accountId,
                 name: "Resumed workflow", targetType: null, templateCiphertext: workflowDefinitionEnvelope() } });
@@ -3039,8 +3047,9 @@ describe("workflowRunService (integration)", () => {
         const initialCurrentness = await accountCurrentness(seeded.accountId);
         const admitted = await admitWorkflowRunOwner({ accountId: seeded.accountId, runId, origin: { kind: "direct", originSessionId: seeded.sessionId }, machineId: seeded.machineId, accountCurrentness: initialCurrentness, acceptedEnvelope: accepted, resultDelivery: { kind: "originating_session" } });
         expect(admitted.run).toMatchObject({ state: "queued", revision: 0, workflowCustodyState: "pending", originDeliveryAckRevision: 0 });
-        await expect(db.automationRun.findUniqueOrThrow({ where: { id: runId }, select: { executionInputEnvelope: true } }))
-            .resolves.toEqual({ executionInputEnvelope: accepted });
+        await expect(db.automationRun.findUniqueOrThrow({ where: { id: runId },
+            select: { workflowAcceptedSnapshotEnvelope: true, executionInputEnvelope: true } }))
+            .resolves.toEqual({ workflowAcceptedSnapshotEnvelope: accepted, executionInputEnvelope: null });
         await expect(admitWorkflowRun({ accountId: seeded.accountId, runId, origin: { kind: "direct", originSessionId: seeded.sessionId }, machineId: seeded.machineId, acceptedEnvelope: accepted, resultDelivery: { kind: "originating_session" } })).resolves.toMatchObject({ kind: "existing", run: { id: runId } });
         await expect(admitWorkflowRun({ accountId: seeded.accountId, runId, origin: { kind: "direct", originSessionId: seeded.sessionId }, machineId: seeded.machineId, acceptedEnvelope: await acceptedEnvelope({ ...seeded, runId, originSessionId: seeded.sessionId, deliver: true, permission: "read-only" }), resultDelivery: { kind: "originating_session" } })).rejects.toMatchObject({ code: "currentness_conflict" });
         await claimRun(runId, seeded.machineId);
