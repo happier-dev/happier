@@ -7,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { promisify } from 'node:util';
 import { expect, it } from 'vitest';
 import {
-  DATABASE_ACCESS_SET_ACTION_ID_V1, DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1, DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
+  DATABASE_ACCESS_SET_ACTION_ID_V1, DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1, DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
   DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1,
   DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1, DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1,
   DATABASE_CAPTURE_STATUS_ACTION_ID_V1, DATABASE_CAPTURE_RESOURCE_REF_V1,
@@ -26,6 +26,7 @@ import { LocalServiceActionResultV1Schema } from '@happier-dev/protocol/local/se
 import { installDatabaseCapturePluginFixture, startDatabaseWorkbenchAgent, startDatabaseWorkbenchInsightsFixture } from '../../src/testkit/databaseWorkbench';
 import { repoRootDir } from '../../src/testkit/paths';
 import { createRunDirs } from '../../src/testkit/runDir';
+import { settleReviewedSessionMcpAction } from '../../src/testkit/sessionMcpAgent';
 import { waitFor } from '../../src/testkit/timing';
 
 const run = createRunDirs({ runLabel: 'core' });
@@ -38,6 +39,7 @@ it('P5-F7-known-good-capture records a Happier-started service query and turns r
   const image = process.platform === 'linux' ? `happier-f7-app:${randomUUID()}` : undefined;
   const dockerOptions = { env: sanitizeDockerEnv(process.env) };
   let imageBuilt = false;
+  let agent: Awaited<ReturnType<typeof startDatabaseWorkbenchAgent>> | undefined;
   try {
     const serviceName = 'capture';
     const target = fixture.targets.selected;
@@ -226,8 +228,8 @@ it('P5-F7-known-good-capture records a Happier-started service query and turns r
       expect(waterfall.repeatedQueries[0]?.observationIds).toEqual(expect.arrayContaining(queries.items.map(row => row.id)));
       expect(waterfall.repeatedQueries[0]?.observationIds).toHaveLength(3);
       const queryId = queries.items[0]!.id;
-      const agent = await startDatabaseWorkbenchAgent(fixture, testDir);
-      try {
+      agent = await startDatabaseWorkbenchAgent(fixture, testDir);
+      {
         const page = { limit: 20 };
         const selected = { source, databaseTarget };
         const reads = [
@@ -246,9 +248,21 @@ it('P5-F7-known-good-capture records a Happier-started service query and turns r
         for (const { action, input } of reads) {
           expect(await agent.execute(action, input), action).toMatchObject({ ok: false, errorCode: 'database_agent_access_none' });
         }
+        expect(await agent.execute(DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1, { source, page }))
+          .toMatchObject({ ok: true, result: { ok: true, source, items: expect.arrayContaining([
+            expect.objectContaining({ traceId, endpointRoute: '/orders', serviceName }),
+          ]) } });
+        expect(await agent.execute(DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1, { source, page }))
+          .toMatchObject({ ok: true, result: { ok: true, source, items: expect.arrayContaining([
+            expect.objectContaining({ serviceName, method: 'GET', route: '/orders', requestCount: 1, errorCount: 0 }),
+          ]) } });
+        expect(await agent.execute(DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1, { source, serviceName, page }))
+          .toMatchObject({ ok: true, result: { ok: true, source, items: expect.arrayContaining([
+            expect.objectContaining({ traceId, source: 'otlp', bodyPrefix: 'Orders query completed', serviceName }),
+          ]) } });
         expect(await fixture.executeDatabase(DATABASE_ACCESS_SET_ACTION_ID_V1, { target: databaseTarget, agentAccess: 'read' }))
           .toMatchObject({ ok: true, result: { ok: true, agentAccess: 'read' } });
-      } finally { await agent.stop(); }
+      }
       const endpoints = DatabaseCaptureEndpointsListResultV1Schema.parse(await capture(DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1,
         { source, page: { limit: 20 } }));
       expect(endpoints).toMatchObject({ ok: true, items: expect.arrayContaining([
@@ -308,10 +322,17 @@ it('P5-F7-known-good-capture records a Happier-started service query and turns r
     expect(await recovered.text()).toBe(observedBody);
     await waitFor(async () => (await wireRows()).length > beforeRecovery.length,
       { context: 'F7 selected Capture records again before the Off control' });
-    expect(DatabaseCaptureConfigureResultV1Schema.parse(await capture(DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1,
-      { project, enabled: false }))).toMatchObject({ ok: true, enabled: false });
-    expect(DatabaseCaptureStatusResultV1Schema.parse(await capture(DATABASE_CAPTURE_STATUS_ACTION_ID_V1, { source })))
-      .toMatchObject({ ok: true, enabled: false });
+    const session = agent ??= await startDatabaseWorkbenchAgent(fixture, testDir);
+    const executeSession = async (actionId: Parameters<typeof session.execute>[0], input: unknown) => {
+      const result = await session.execute(actionId, input);
+      return settleReviewedSessionMcpAction(result, { serverId: fixture.serverId, token: fixture.owner.credentials.token,
+        serverHttpBaseUrl: fixture.actionServerApiUrl, execute: fixture.owner.execute,
+        decide: artifactId => fixture.owner.executeAsPerson('approval.request.decide', { artifactId, decision: 'approve' }) });
+    };
+    expect(await executeSession(DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1, { project, enabled: false }))
+      .toMatchObject({ ok: true, result: { ok: true, enabled: false } });
+    expect(await session.execute(DATABASE_CAPTURE_STATUS_ACTION_ID_V1, { source }))
+      .toMatchObject({ ok: true, result: { ok: true, source, enabled: false } });
     const running = await fixture.owner.execute('localServices.launcher.snapshot', { machineId: project.machineId, workspaceRoot: root });
     if (!running.ok) throw new Error(`F7 running app read refused (${running.errorCode})`);
     const runningEndpoint = LocalServiceLauncherSnapshotV1Schema.parse(running.result).targets
@@ -350,20 +371,33 @@ it('P5-F7-known-good-capture records a Happier-started service query and turns r
       simple: { observing, relaying },
       extended: { observing: extendedObserving, relaying: extendedRelaying },
     });
+    expect(await executeSession(DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1,
+      { project: { ...project, machineId: randomUUID() }, enabled: true }))
+      .toMatchObject({ ok: false, errorCode: 'capture_source_unavailable' });
+    const beforeClear = await wireRows();
+    expect(beforeClear.length).toBeGreaterThan(0);
+    expect(await executeSession(DATABASE_CAPTURE_CLEAR_ACTION_ID_V1,
+      { source: { ...source, machineId: randomUUID() } }))
+      .toMatchObject({ ok: false, errorCode: 'capture_source_unavailable' });
+    expect(await wireRows()).toEqual(beforeClear);
+    expect(await executeSession(DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, { source }))
+      .toMatchObject({ ok: true, result: { ok: true } });
+    expect(await wireRows()).toHaveLength(0);
     const stopped = await fixture.owner.executeReviewed('localServices.actions.stopManaged', {
       requestId: 'f7-stop-app', action: 'stop_managed', target: launch.currentTarget, force: false,
     }, { presentUserConfirmation: { actionId: 'localServices.actions.stopManaged' } });
     if (!stopped.ok) throw new Error(`F7 Stop refused (${stopped.errorCode})`);
     expect(LocalServiceActionResultV1Schema.parse(stopped.result).status).toBe('succeeded');
-    expect(DatabaseCaptureConfigureResultV1Schema.parse(await capture(DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1,
-      { project, enabled: true, retry: true }))).toMatchObject({ ok: true, enabled: true });
+    expect(await executeSession(DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1, { project, enabled: true, retry: true }))
+      .toMatchObject({ ok: true, result: { ok: true, enabled: true } });
+    console.info('F7 selected Session Configure and Clear passed with unrelated-scope refusals');
     const restarted = await fixture.owner.executeReviewed('localServices.launcher.start', { machineId: project.machineId,
       targetId: service.id, workspace: service.workspace, declaration: service.declaration },
       { presentUserConfirmation: { actionId: 'localServices.launcher.start' } });
     if (!restarted.ok) throw new Error(`F7 Restart refused (${restarted.errorCode})`);
     expect(DaemonLocalServiceLauncherStartResponseV1Schema.parse(restarted.result).status).toBe('succeeded');
   } finally {
-    try { await fixture.stop(); }
+    try { try { await agent?.stop(); } finally { await fixture.stop(); } }
     finally { if (image && imageBuilt) await execute('docker', ['image', 'rm', image], dockerOptions); }
   }
 }, 0);
