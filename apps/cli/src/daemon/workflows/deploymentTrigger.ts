@@ -9,13 +9,13 @@ import { ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diff
 import { ScmLogListResponseSchema } from '@happier-dev/protocol/scm';
 import type { ScmRevisionRangeV1 } from '@happier-dev/protocol/scm/comparison';
 import { ScmPullRequestGetResponseSchema } from '@happier-dev/protocol/scm/pullRequests';
-import { readScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
+import { gitlabRepositoryEventSourceInstanceId, readScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity, type ScmHostingRepositoryIdentityV1 } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import type { RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
 import { isWorkflowJsonObject } from './input';
 import { shouldDeployPushRange, summarizeDeploymentPushCommitMessages } from './deploymentPushFilter';
 
 export type DeploymentTriggerOccurrence = Readonly<{
-  kind: 'push' | 'merge'; sha: string; requestKey: string; repository: string;
+  kind: 'push' | 'merge'; sha: string; requestKey: string; repository: ScmHostingRepositoryIdentityV1;
   trigger: AutomationDeploymentTriggerV1; range?: ScmRevisionRangeV1; pullRequestNumber?: number;
 }>;
 export type DeploymentTriggerOccurrenceResolution =
@@ -52,13 +52,20 @@ export function resolveDeploymentTriggerOccurrence(input: Readonly<{
   } });
   if (event.eventRef.pluginId !== cause.evidence.eventRef.pluginId || event.eventRef.localId !== cause.evidence.eventRef.localId
     || event.sourceSelectorId !== cause.evidence.sourceSelectorId || event.occurredAt !== cause.occurredAt
-    || occurrenceKey !== cause.occurrenceKey || event.eventRef.pluginId !== 'happier.scm.forge.github') {
+    || occurrenceKey !== cause.occurrenceKey) {
     return { kind: 'refused', code: 'invalid_input' };
   }
   if (!isWorkflowJsonObject(event.payload) || !isWorkflowJsonObject(event.payload.repository)) return { kind: 'refused', code: 'invalid_input' };
   const repository = event.payload.repository;
-  if (typeof repository.repositoryId !== 'string' || typeof repository.nameWithOwner !== 'string'
-    || event.sourceInstanceId !== `github:repository:${repository.repositoryId}`) return { kind: 'refused', code: 'invalid_input' };
+  if (typeof repository.repositoryId !== 'string' || typeof repository.nameWithOwner !== 'string') return { kind: 'refused', code: 'invalid_input' };
+  const hostingRepository = event.eventRef.pluginId === 'happier.scm.forge.github'
+    ? readScmHostingRepositoryIdentity({ kind: 'github', baseUrl: 'https://github.com', nameWithOwner: repository.nameWithOwner })
+    : event.eventRef.pluginId === 'happier.scm.forge.gitlab'
+      ? readScmHostingRepositoryIdentity({ kind: 'gitlab', baseUrl: repository.baseUrl, nameWithOwner: repository.nameWithOwner })
+      : null;
+  if (!hostingRepository || event.sourceInstanceId !== (hostingRepository.kind === 'gitlab'
+    ? gitlabRepositoryEventSourceInstanceId(hostingRepository.deployment, repository.repositoryId)
+    : `github:repository:${repository.repositoryId}`)) return { kind: 'refused', code: 'invalid_input' };
   const payload = event.payload;
   const isPush = event.eventRef.localId === 'automation/repository-pushed-v1';
   const pr = isWorkflowJsonObject(payload.pullRequest) ? payload.pullRequest : null;
@@ -72,14 +79,14 @@ export function resolveDeploymentTriggerOccurrence(input: Readonly<{
     if (branch !== undefined && payload.ref !== (branch.startsWith('refs/') ? branch : `refs/heads/${branch}`)) return { kind: 'skipped' };
     const before = payload.before;
     return { kind: 'available', occurrence: { kind: 'push', sha, requestKey: cause.occurrenceKey,
-      repository: repository.nameWithOwner, trigger,
+      repository: hostingRepository, trigger,
       ...(typeof before === 'string' && /^[a-f0-9]{40}$/iu.test(before) && !/^0+$/u.test(before)
         ? { range: { kind: 'revisionRange', baseOid: before, headOid: sha } } : {}),
     } };
   }
   if (!pr || typeof pr.number !== 'number' || !Number.isSafeInteger(pr.number) || pr.number < 1) return { kind: 'refused', code: 'invalid_input' };
   return { kind: 'available', occurrence: { kind: 'merge', sha, requestKey: cause.occurrenceKey,
-    repository: repository.nameWithOwner, trigger, pullRequestNumber: pr.number } };
+    repository: hostingRepository, trigger, pullRequestNumber: pr.number } };
 }
 
 /** Reads current authorities and exact SCM witnesses through their existing Action front doors. */
@@ -107,8 +114,7 @@ export async function admitDeploymentTriggerOccurrence(input: Readonly<{
   if (!source.ok) return { kind: 'refused', code: source.error };
   const selected = source.source.repository;
   const expectedRepository = selected && readScmHostingRepositoryIdentity({ ...selected.provider, nameWithOwner: selected.repository.nameWithOwner });
-  const eventRepository = readScmHostingRepositoryIdentity({ kind: 'github', baseUrl: 'https://github.com', nameWithOwner: occurrence.repository });
-  if (source.source.id !== detail.environment.projectSourceId || !sameScmHostingRepositoryIdentity(expectedRepository, eventRepository)) return { kind: 'refused', code: 'source_mismatch' };
+  if (source.source.id !== detail.environment.projectSourceId || !sameScmHostingRepositoryIdentity(expectedRepository, occurrence.repository)) return { kind: 'refused', code: 'source_mismatch' };
   const deploy = { kind: 'deploy' as const, basis: { environment: detail.environment, targetLink, source: source.source } };
   const cwd = snapshot.workspaceTarget.project.directory;
   if (occurrence.kind === 'merge' && occurrence.trigger.branch !== undefined) {
