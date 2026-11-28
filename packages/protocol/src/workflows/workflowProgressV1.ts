@@ -310,6 +310,10 @@ export type WorkflowRunInvocationIndexV1 = z.infer<typeof WorkflowRunInvocationI
 /** Fact acknowledgement observes the row and parent revision in the same transaction. */
 export const WorkflowInvocationFactResultV1Schema = lazyZodSchema(() => (<T extends zMini.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as zMini.ZodMiniObject<T['shape'], zMini.core.$strict>)(z.extend(WorkflowRunInvocationIndexV1Schema, {
   parentRevision: z.number().check(z.int(), z.nonnegative(), z.int()),
+  frontierCommitted: z.optional(z.strictObject({
+    originSessionId: z.nullable(z.string()),
+    attentionRequired: z.boolean(),
+  })),
 })));
 
 export const WorkflowInvocationPathV1Schema = lazyZodSchema(() => z.strictObject({

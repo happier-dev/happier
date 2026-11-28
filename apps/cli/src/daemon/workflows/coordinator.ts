@@ -153,6 +153,8 @@ export type WorkflowCoordinatorStore = Readonly<{
   commitFact: (params: Readonly<{
     key: string;
     lifecycle: WorkflowInvocationLifecycleV1;
+    /** The top-level sequence can finish with this exact successful fact. */
+    advanceFrontierTo?: number;
     review?: WorkflowProgressEnvelopeV1['review'];
     resultProvenance?: WorkflowProgressEnvelopeV1['resultProvenance'];
     result?: WorkflowJsonValue;
@@ -2307,7 +2309,11 @@ async function executeActionBlock(
     if (row.lifecycle !== 'completed') throw new WorkflowRuntimeInterruption();
   } else {
     if (!validated.ok) return await fail('schema_mismatch');
-    row = await context.deps.store.commitFact({ key: row.key, lifecycle: 'completed', result: validated.value, ...capturedExecution });
+    // The last cleanup block still inspects preceding failures, and a
+    // Discussion result still needs its publication before the frontier moves.
+    const advances = !parentKey && scope.length === 0 && leaf.runWhen !== 'always' && !context.deps.onInvocationSettled;
+    row = await context.deps.store.commitFact({ key: row.key, lifecycle: 'completed', result: validated.value, ...capturedExecution,
+      ...(advances ? { advanceFrontierTo: Number(memberOrdinal) + 1 } : {}) });
   }
   const result = row.result ?? (validated.ok ? validated.value : null);
   return result;

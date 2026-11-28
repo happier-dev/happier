@@ -426,8 +426,20 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
           contentRevision: (BigInt(row.index.contentRevision) + 1n).toString(),
         });
         rows.set(index.id, { index, contentEnvelope });
+        const frontier = operation.frontier as { expectedParentRevision: number; checkpointEnvelope: string } | undefined;
+        const parent = index.parentRecordId && rows.get(index.parentRecordId);
+        const frontierCommitted = frontier !== undefined && frontier.expectedParentRevision === revision
+          && state === 'running' && parent && parent.index.parentRecordId === null
+          && parent.index.lifecycle !== 'cancel_requested' && parent.index.lifecycle !== 'cancelled'
+          && parent.index.lifecycle !== 'outcome_uncertain';
+        if (frontierCommitted) {
+          checkpointEnvelope = frontier.checkpointEnvelope;
+          revision += 1;
+        }
         if (attentionBefore !== requiresAttention()) revision += 1;
-        return { ...index, parentRevision: revision };
+        return { ...index, parentRevision: revision, ...(frontierCommitted ? { frontierCommitted: {
+          originSessionId: params.origin.originSessionId ?? null, attentionRequired: requiresAttention(),
+        } } : {}) };
       }
       case 'invocations.complete_review': {
         const row = rows.get(String(operation.invocationId));

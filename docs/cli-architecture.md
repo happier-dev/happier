@@ -6488,6 +6488,13 @@ result map. Completed container selectors expand only when a declared dependency
 or final output selects them; nested Workflow exports select the frozen child's
 final producer through the same lexical binding owner.
 
+An eligible top-level Action publishes its terminal fact and next checkpoint
+in one Home transaction while the current claim and Run revision still admit
+work. Home can keep the terminal fact alone when the checkpoint loses
+currentness. The coordinator then uses the regular Pause, Stop or recovery
+path, with the terminal row available to rejoin completed work. The signed
+storage acknowledgement carries the committed revision for Follow delivery.
+
 Parallel cursors record started members, not a completion watermark. Opaque
 current-member indices retain unfinished earlier pipelines, including held
 ones, ahead of never-started work. Branches and items share authored capacity

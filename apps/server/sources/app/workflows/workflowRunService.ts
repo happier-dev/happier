@@ -14,7 +14,7 @@ import { WorkflowRunListRequestV1Schema, WorkflowRunAutomationSummariesRequestV1
     type WorkflowRunSourceSummariesResultV1, type WorkflowRunAutomationSummariesResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import type { Prisma } from "@prisma/client";
 import { WorkflowDirectRunAdmissionIdV1Schema, WorkflowInvocationRecordIdSchema } from '@happier-dev/protocol/workflows/workflowIdsV1';
-import { isWorkflowDraftPublicationLifecycleV1, WORKFLOW_RUN_STOPPED_BY_MACHINE_OWNER_V1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { isWorkflowDraftPublicationLifecycleV1, type WorkflowInvocationFactResultV1Schema, WORKFLOW_RUN_STOPPED_BY_MACHINE_OWNER_V1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { type WorkflowRunRecipientKeyEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
 import { type WorkflowRunWaitConditionV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { resolveWorkflowRunAdmissionVisibilityInTx, storeWorkflowRunInitialKeyEnvelopesInTx, resolveWorkflowRunRecipientAccountIdsInTx, assertWorkflowDiscussionAdmissionInTx, workflowInvocationObservationRunWhere, workflowRunConsentSourceSelect, readWorkflowRunConsentFor } from "./workflowRunAccess";
@@ -266,6 +266,14 @@ async function loadCurrentWorkflowAccountModeTx(
     discussionId?: string,
 ): Promise<"plain" | "e2ee"> {
     await acquireWorkflowPublicationLocksInTx(tx, { accountId, runIds: [runId], ...(discussionId ? { discussionId } : {}) });
+    return await assertCurrentWorkflowAccountModeTx(tx, accountId, supplied);
+}
+
+async function assertCurrentWorkflowAccountModeTx(
+    tx: Tx,
+    accountId: string,
+    supplied: AutomationAccountCurrentnessWitnessV1,
+): Promise<"plain" | "e2ee"> {
     const fence = await acquireAccountEncryptionTransitionFenceInTx(tx, accountId, "content");
     if (fence.status !== "ready") throw new WorkflowRunServiceError("content_unavailable");
     const current = projectAutomationAccountCurrentnessWitnessV1({
@@ -2305,6 +2313,7 @@ type WorkflowInvocationFactParams = Readonly<{
     invocationAttempt: bigint; expectedContentRevision: bigint; expectedLifecycle: WorkflowInvocationLifecycleV1;
     lifecycle: WorkflowInvocationLifecycleV1; contentEnvelope: string;
     discussionRound?: WorkflowDiscussionRoundProgressV1;
+    frontier?: Readonly<{ expectedParentRevision: number; checkpointEnvelope: string }>;
     accountCurrentness: AutomationAccountCurrentnessWitnessV1;
 } & (
     | { parentAttempt: number; expectedRevision?: never; resolution?: "observed_terminal_execution" }
@@ -2312,7 +2321,7 @@ type WorkflowInvocationFactParams = Readonly<{
 )>;
 
 /** Commit a claimed fact, terminal observation, or exact root projection on the assigned interrupted Run. */
-export async function commitWorkflowInvocationFact(params: WorkflowInvocationFactParams) {
+export async function commitWorkflowInvocationFact(params: WorkflowInvocationFactParams): Promise<ReturnType<typeof WorkflowInvocationFactResultV1Schema.parse>> {
     return await inTx(async (tx) => {
         const observation = params.expectedRevision !== undefined;
         const rootProjection = params.resolution === "root_list_progress";
@@ -2332,9 +2341,12 @@ export async function commitWorkflowInvocationFact(params: WorkflowInvocationFac
                 : params.resolution !== "observed_terminal_execution" || !observedSettlement)))) {
             throw new WorkflowRunServiceError("invalid_input");
         }
-        const mode = await loadCurrentWorkflowAccountModeTx(tx, params.accountId, params.accountCurrentness, params.runId, params.discussionRound?.discussionId);
-        // Publication admission already holds the parent lock shared with Pause/Cancel.
-        // The final input predicate remains part of this read, including exact revalidation.
+        const frontier = params.frontier;
+        if (frontier && (params.parentAttempt === undefined || params.lifecycle !== "completed"
+            || params.expectedLifecycle === "completed" || params.resolution !== undefined || params.discussionRound !== undefined
+            || !Number.isSafeInteger(frontier.expectedParentRevision) || frontier.expectedParentRevision < 0)) {
+            throw new WorkflowRunServiceError("invalid_input");
+        }
         const parentWhere = observation ? workflowInvocationObservationRunWhere({ accountId: params.accountId,
             runId: params.runId, machineId: params.machineId, expectedRevision: parentCurrentness })
             : params.lifecycle === "admitting" ? workflowInputAdmissionWhere({
@@ -2345,7 +2357,22 @@ export async function commitWorkflowInvocationFact(params: WorkflowInvocationFac
             assignments: { some: { machineId: params.machineId } }, workflowCustodyState: "pending",
             claimedByMachineId: params.machineId, attempt: params.parentAttempt,
         } satisfies Prisma.AutomationRunWhereInput;
-        const run = await tx.automationRun.findFirst({ where: parentWhere, select: { id: true, state: true, workflowCustodyState: true } });
+        const invocationWhere = { id: params.invocationId, runId: params.runId, attempt: params.invocationAttempt };
+        const ownerOnly = !observation && params.resolution === undefined && !params.discussionRound
+            && params.expectedLifecycle === params.lifecycle && params.lifecycle !== "admitting"
+            && (await tx.workflowRunInvocation.findFirst({
+                where: { ...invocationWhere, lifecycle: params.lifecycle, contentRevision: params.expectedContentRevision,
+                    run: { ...parentWhere, visibleTeamId: null, originSessionId: null } },
+                select: { contentEnvelope: true },
+            }))?.contentEnvelope === params.contentEnvelope;
+        // The probe only selects a possible exact replay. Its locked path
+        // revalidates the claim, content identity and current slot, and can
+        // only acknowledge. Any write still takes the full audience locks.
+        if (ownerOnly) await acquireWorkflowRunOwnerPublicationLocksInTx(tx, params);
+        const mode = await (ownerOnly ? assertCurrentWorkflowAccountModeTx(tx, params.accountId, params.accountCurrentness)
+            : loadCurrentWorkflowAccountModeTx(tx, params.accountId, params.accountCurrentness, params.runId, params.discussionRound?.discussionId));
+        const run = await tx.automationRun.findFirst({ where: parentWhere,
+            select: { state: true, workflowCustodyState: true, revision: true } });
         if (!run) throw new WorkflowRunServiceError("currentness_conflict");
         // Active interrupted Runs retain an explicit recovery choice. A terminal
         // parent instead only needs the exact stopped child fact to retire custody.
@@ -2354,7 +2381,7 @@ export async function commitWorkflowInvocationFact(params: WorkflowInvocationFac
                 || (params.expectedLifecycle === "outcome_uncertain" && params.lifecycle === "outcome_uncertain")
                 || ((params.lifecycle === "failed" || params.lifecycle === "cancelled")
                     && AUTOMATION_RUN_TERMINAL_STATES.some(state => state === run.state)));
-        const current = await tx.workflowRunInvocation.findFirst({ where: { id: params.invocationId, runId: params.runId, attempt: params.invocationAttempt }, select: invocationSelect }) as InvocationRow | null;
+        const current = await tx.workflowRunInvocation.findFirst({ where: invocationWhere, select: invocationSelect }) as InvocationRow | null;
         const acknowledge = async (row: InvocationRow) => {
             const parent = await tx.automationRun.findUniqueOrThrow({ where: { id: params.runId }, select: { revision: true } });
             if (params.discussionRound) await updateDiscussionRoundOutcomeInTx(tx, { ...params.discussionRound, runId: params.runId,
@@ -2367,6 +2394,8 @@ export async function commitWorkflowInvocationFact(params: WorkflowInvocationFac
             || current.memberOrdinal !== 0n || current.attempt !== 0n)) throw new WorkflowRunServiceError("invalid_input");
         await assertCurrentWorkflowInvocationTx(tx, current);
         assertWorkflowStoredEnvelopeOuterForMode({ raw: params.contentEnvelope, mode, binding: { v: 1, purpose: "invocation_progress", accountId: params.accountId, runId: params.runId, recordId: current.id, sequence: current.sequence.toString(), parentRecordId: current.parentRecordId, memberOrdinal: current.memberOrdinal.toString(), attempt: current.attempt.toString() } });
+        if (frontier) assertWorkflowStoredEnvelopeOuterForMode({ raw: frontier.checkpointEnvelope, mode,
+            binding: { v: 1, purpose: "checkpoint", accountId: params.accountId, runId: params.runId } });
         if (current.lifecycle !== params.expectedLifecycle) {
             if ((observation || params.expectedLifecycle === "outcome_uncertain")
                 && resolvesObservedTerminal
@@ -2376,7 +2405,10 @@ export async function commitWorkflowInvocationFact(params: WorkflowInvocationFac
             }
             throw new WorkflowRunServiceError("currentness_conflict");
         }
-        if (current.lifecycle === params.lifecycle && current.contentEnvelope === params.contentEnvelope) return await acknowledge(current);
+        if (current.lifecycle === params.lifecycle && current.contentEnvelope === params.contentEnvelope) {
+            return ownerOnly ? { ...projectInvocation(current), parentRevision: run.revision } : await acknowledge(current);
+        }
+        if (ownerOnly) throw new WorkflowRunServiceError("currentness_conflict");
         if (isTerminalWorkflowInvocationLifecycleV1(current.lifecycle)
             && !(current.lifecycle === "outcome_uncertain" && resolvesObservedTerminal)) {
             throw new WorkflowRunServiceError("currentness_conflict");
@@ -2387,6 +2419,22 @@ export async function commitWorkflowInvocationFact(params: WorkflowInvocationFac
             data: { lifecycle: params.lifecycle, contentEnvelope: params.contentEnvelope, contentRevision: { increment: 1 } },
         });
         if (changed.count !== 1) throw new WorkflowRunServiceError("currentness_conflict");
+        let frontierCommitted = false;
+        if (frontier && params.parentAttempt !== undefined && current.parentRecordId
+            && run.revision === frontier.expectedParentRevision && run.state === "running") {
+            const checkpoint = encodeStoredText(frontier.checkpointEnvelope);
+            // The row is already settled under the same parent lock. A newer
+            // checkpoint, Pause or Cancel leaves only that terminal fact durable.
+            const advanced = await tx.automationRun.updateMany({
+                where: { ...workflowInputAdmissionWhere({ ...params, parentAttempt: params.parentAttempt }),
+                    revision: frontier.expectedParentRevision,
+                    AND: [{ workflowInvocations: { some: { id: current.parentRecordId, parentRecordId: null } } }],
+                },
+                data: { workflowCheckpointEnvelope: checkpoint.value, workflowCheckpointEnvelopeBytes: checkpoint.bytes,
+                    revision: { increment: 1 } },
+            });
+            frontierCommitted = advanced.count === 1;
+        }
         const updated = await tx.workflowRunInvocation.findUniqueOrThrow({ where: { id: current.id }, select: invocationSelect }) as InvocationRow;
         const inputDeliverable = current.lifecycle !== "admitting" && params.lifecycle === "admitting";
         if (current.parentRecordId !== null
@@ -2398,7 +2446,10 @@ export async function commitWorkflowInvocationFact(params: WorkflowInvocationFac
         } else {
             await markWorkflowRunChangedTx(tx, params.accountId, params.runId, deliveryBefore, inputDeliverable);
         }
-        return await acknowledge(updated);
+        const signal = frontierCommitted ? await readOriginDeliverySignalTx(tx, params.accountId, params.runId) : null;
+        return { ...await acknowledge(updated), ...(signal ? { frontierCommitted: {
+            originSessionId: signal.originSessionId, attentionRequired: signal.attention,
+        } } : {}) };
     }, {
         // Ordered publication locks fence the audience before the mode/parent
         // locks and row CAS. ReadCommitted observes cursor writes that finish

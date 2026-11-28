@@ -87,6 +87,12 @@ export class WorkflowStepProgress {
       stage.skippedLeaves += Number(observation.lifecycle === 'skipped') - Number(!previous || previous.lifecycle === 'skipped');
       this.updateStage(stage);
     }
+    // A destination carries slot identity and lifecycle. Preparation facts on a
+    // new pending row and newer detail on the same lifecycle stay on that row.
+    // Keep the source revision above even when there is no destination change.
+    if ((!previous && observation.lifecycle === 'pending')
+      || (previous?.recordId === observation.recordId && previous.lifecycle === observation.lifecycle
+        && previous.blockKind === observation.blockKind)) return;
     const indices = this.destinationIndices.get(key);
     if (indices && this.destinations) {
       const destinations = [...this.destinations];

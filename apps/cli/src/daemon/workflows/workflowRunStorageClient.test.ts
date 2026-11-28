@@ -61,6 +61,30 @@ describe('workflow Run storage client', () => {
     } finally { hint.mockRestore(); }
   });
 
+  it('notifies Follow for an acknowledged terminal frontier using its exact Run revision', async () => {
+    const transport = await import('../controlHttp');
+    const hint = vi.spyOn(transport, 'daemonPost').mockResolvedValue({ ok: true });
+    const client = createWorkflowRunStorageClient({ token: 'token', machineId: 'machine-1',
+      serverHttpBaseUrl: 'https://home.test', createPublisherHeader: async () => 'signed-publisher' });
+    const operation = { operation: 'invocations.fact', runId: 'workflow-follow',
+      frontier: { expectedParentRevision: 4, checkpointEnvelope: 'checkpoint' } } as const;
+    const date = '2026-11-28T00:00:00.000Z';
+    const fact = { id: 'leaf', runId: operation.runId, sequence: '1', parentRecordId: 'root', memberOrdinal: '0',
+      attempt: '0', contentRevision: '2', lifecycle: 'completed', createdAt: date, updatedAt: date, parentRevision: 5 };
+    const originSessionId = 'c111111111111111111111111';
+    try {
+      post.mockResolvedValueOnce({ data: fact });
+      await client.execute(operation);
+      expect(hint).not.toHaveBeenCalled();
+      post.mockResolvedValueOnce({ data: { ...fact, frontierCommitted: { originSessionId, attentionRequired: false } } });
+      await client.execute(operation);
+      expect(hint.mock.calls.map(([path, body]) => [path, body])).toEqual([['/session-activity-changed', { sessionId: originSessionId,
+        followOccurrence: { original: { source: { kind: 'workflow_run', runId: operation.runId }, revision: 5 },
+          event: { kind: 'update_posted' } },
+      }]]);
+    } finally { hint.mockRestore(); }
+  });
+
   it('reads batched workflow summaries with Account credentials and no worker publication', async () => {
     const result = { summaries: [], remainingSourceArtifactIds: [] };
     post.mockResolvedValue({ data: result });

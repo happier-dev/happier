@@ -78,12 +78,17 @@ const InvocationFactOperationSchema = z.strictObject({
     expectedLifecycle: WorkflowInvocationLifecycleV1Schema, lifecycle: WorkflowInvocationLifecycleV1Schema,
     contentEnvelope: z.string().check(z.minLength(1)), resolution: z.optional(z.enum(["observed_terminal_execution", "root_list_progress"])),
     discussionRound: z.optional(WorkflowDiscussionRoundProgressV1Schema),
+    frontier: z.optional(z.strictObject({ expectedParentRevision: z.number().check(z.int(), z.nonnegative()),
+        checkpointEnvelope: z.string().check(z.minLength(1)) })),
 }).check(z.superRefine((value, context) => {
     const observation = value.expectedRevision !== undefined;
     if (observation
         ? value.parentAttempt !== undefined || value.resolution === undefined
         : value.parentAttempt === undefined || value.resolution === "root_list_progress") {
         context.addIssue({ code: "custom", message: "Invocation facts require one exact worker attempt or terminal observation revision" });
+    }
+    if (value.frontier && observation) {
+        context.addIssue({ code: "custom", message: "Only the current worker may commit a checkpoint with an invocation fact" });
     }
 }));
 const OperationSchema = lazyZodSchema(() => z.discriminatedUnion("operation", [
@@ -242,7 +247,9 @@ export function registerWorkflowRunStorageRoutes(
                         return await commitWorkflowInvocationFact({ ...fact, expectedRevision: body.expectedRevision, resolution: body.resolution });
                     }
                     if (body.parentAttempt === undefined || body.resolution === "root_list_progress") throw new WorkflowRunServiceError("invalid_input");
-                    return await commitWorkflowInvocationFact({ ...fact, parentAttempt: body.parentAttempt, ...(body.resolution ? { resolution: body.resolution } : {}) });
+                    return await commitWorkflowInvocationFact({ ...fact, parentAttempt: body.parentAttempt,
+                        ...(body.resolution ? { resolution: body.resolution } : {}),
+                        ...(body.frontier ? { frontier: body.frontier } : {}) });
                 }
                 case "invocations.publish_draft": return await publishWorkflowInvocationDraft({ ...body, accountId: request.userId, invocationAttempt: BigInt(body.invocationAttempt), expectedContentRevision: BigInt(body.expectedContentRevision) });
                 case "invocations.complete_review": return await completeWorkflowInvocationReview({ ...body, accountId: request.userId, invocationAttempt: BigInt(body.invocationAttempt), expectedContentRevision: BigInt(body.expectedContentRevision) });

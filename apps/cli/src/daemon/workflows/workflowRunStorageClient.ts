@@ -3,7 +3,7 @@ import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/p
 import { isWorkflowRunExecutorStorageOperationV1, WORKFLOW_RUN_STORAGE_HTTP_PATH } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
 import type { WorkflowRunStorageOperation } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
 export type { WorkflowRunStorageOperation } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
-import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { WorkflowInvocationFactResultV1Schema, WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { resolveWorkflowRunFollowEventV1 } from '@happier-dev/protocol/workflows/composeWorkflowRunWorkerUpdateV1';
 import { projectActionFailureCauseV1, readActionErrorCodeV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readAxiosResponseErrorCode } from '@/api/client/readAxiosResponseErrorCode';
@@ -94,16 +94,29 @@ export function createWorkflowRunStorageClient(params: Readonly<{
           // verbatim; never resolve a mutable source again here.
           return await request();
         });
-        if (operation.operation === 'transition') {
-          const run = WorkflowRunSummaryV1Schema.safeParse(response.data);
-          const event = run.success ? resolveWorkflowRunFollowEventV1(run.data) : null;
-          if (run.success && run.data.revision > 0 && run.data.workflowCustodyState !== null && event) {
-            const [{ notifyDaemonSessionActivityChanged }, { logger }] = await Promise.all([import("@/daemon/controlClient"), import("@/ui/logger")]);
-            void notifyDaemonSessionActivityChanged(run.data.origin.originSessionId ?? null, {
-              original: { source: { kind: 'workflow_run', runId: run.data.id }, revision: run.data.revision },
-              event,
-            }).catch(error => logger.debug('[workflowRunStorage] Follow occurrence remains in Run custody', error));
+        const follow = (() => {
+          if (operation.operation === 'transition') {
+            const run = WorkflowRunSummaryV1Schema.safeParse(response.data);
+            if (run.success && run.data.revision > 0 && run.data.workflowCustodyState !== null) {
+              return { runId: run.data.id, revision: run.data.revision,
+                originSessionId: run.data.origin.originSessionId ?? null, event: resolveWorkflowRunFollowEventV1(run.data) };
+            }
           }
+          if (operation.operation === 'invocations.fact' && operation.frontier !== undefined) {
+            const fact = WorkflowInvocationFactResultV1Schema.safeParse(response.data);
+            if (fact.success && fact.data.frontierCommitted && fact.data.parentRevision > 0) {
+              const { originSessionId, attentionRequired } = fact.data.frontierCommitted;
+              return { runId: fact.data.runId, revision: fact.data.parentRevision, originSessionId,
+                event: resolveWorkflowRunFollowEventV1({ state: 'running', attentionRequired }) };
+            }
+          }
+        })();
+        if (follow?.event) {
+          const [{ notifyDaemonSessionActivityChanged }, { logger }] = await Promise.all([import("@/daemon/controlClient"), import("@/ui/logger")]);
+          void notifyDaemonSessionActivityChanged(follow.originSessionId, {
+            original: { source: { kind: 'workflow_run', runId: follow.runId }, revision: follow.revision },
+            event: follow.event,
+          }).catch(error => logger.debug('[workflowRunStorage] Follow occurrence remains in Run custody', error));
         }
         return response.data;
       } catch (error) {

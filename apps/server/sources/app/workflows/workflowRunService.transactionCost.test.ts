@@ -81,6 +81,7 @@ it('commits an idempotent invocation fact with constant query cost across assign
     }
     console.info('INVOCATION_FACT_COMMIT_QUERIES', counts);
     expect(counts[1]).toBe(counts[0]);
+    expect(counts[0]).toBeLessThanOrEqual(10);
 });
 
 function retainedInvocationFixture() {

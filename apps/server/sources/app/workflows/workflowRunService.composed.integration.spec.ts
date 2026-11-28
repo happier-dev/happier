@@ -180,11 +180,11 @@ function encryptedProgressEnvelope(params: { accountId: string; runId: string; i
         },
     }));
 }
-function checkpointEnvelope(accountId: string, runId: string, rootRecordId: string, nextSequence: bigint) {
+function checkpointEnvelope(accountId: string, runId: string, rootRecordId: string, nextSequence: bigint, nextBlockOrdinal = Number(nextSequence)) {
     return serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({
         mode: "plain",
         binding: { v: 1, purpose: "checkpoint", accountId, runId },
-        checkpoint: { kind: "happier.workflow-checkpoint.v1", rootRecordId, nextSequence: nextSequence.toString(), frontier: { nextBlockOrdinal: Number(nextSequence), paused: false } },
+        checkpoint: { kind: "happier.workflow-checkpoint.v1", rootRecordId, nextSequence: nextSequence.toString(), frontier: { nextBlockOrdinal, paused: false } },
     }));
 }
 function progressEnvelope(params: { accountId: string; runId: string; id: string; sequence: bigint; parentRecordId: string | null; memberOrdinal: bigint; attempt?: bigint; previousAttemptRecordId?: string; logicalInvocationRecordId?: string; reason?: string; result?: string; review?: WorkflowReviewV1; blockKind?: "root" | "step" | "parallel"; blockId?: string; container?: { kind: "parallel"; nextBranchOrdinal: string }; stepProgress?: { completed: number; total: number } }) {
@@ -1450,7 +1450,7 @@ describe("workflowRunService (integration)", () => {
             resultDelivery: deliver ? undefined : { kind: "originating_session" } })).rejects.toMatchObject({ code: "currentness_conflict" });
     });
 
-    async function seedPendingAdmission(withOrigin = false) {
+    async function seedPendingAdmission(withOrigin = false, nextBlockOrdinal?: number) {
         const seeded = await seed();
         const runId = randomUUID();
         const rootId = randomUUID();
@@ -1464,7 +1464,7 @@ describe("workflowRunService (integration)", () => {
             rootInvocation: { id: rootId, contentEnvelope: progressEnvelope({ ...seeded, runId, id: rootId, sequence: 0n, parentRecordId: null, memberOrdinal: 0n }) } });
         const contentEnvelope = progressEnvelope({ ...seeded, runId, id: invocationId, sequence: 1n, parentRecordId: rootId, memberOrdinal: 0n });
         await admitWorkflowInvocationsWithClaim({ accountId: seeded.accountId, runId, expectedRevision: 1,
-            checkpointEnvelope: checkpointEnvelope(seeded.accountId, runId, rootId, 2n),
+            checkpointEnvelope: checkpointEnvelope(seeded.accountId, runId, rootId, 2n, nextBlockOrdinal),
             invocations: [{ id: invocationId, sequence: 1n, parentRecordId: rootId, memberOrdinal: 0n, contentEnvelope }] });
         await db.automationRun.update({ where: { id: runId }, data: { state: "running" } });
         const fact = { accountId: seeded.accountId, runId, machineId: seeded.machineId, parentAttempt: 1,
@@ -2597,6 +2597,54 @@ describe("workflowRunService (integration)", () => {
         await expect(resumeWorkflowRunBoundary({ accountId: seeded.accountId, runId: seeded.runId, expectedRevision: 5 }))
             .resolves.toMatchObject({ run: { state: "queued", revision: 6 } });
         await expect(heartbeatAutomationRun(heartbeat)).resolves.toMatchObject({ ok: false });
+    });
+
+    it.each(["running", "pause_requested", "cancel_requested"] as const)("writes the exact terminal leaf and its frontier together only while admission is open (%s)", async (control) => {
+        const seeded = await seedPendingAdmission(control === "running", 0);
+        await commitWorkflowInvocationFact(seeded.fact);
+        const before = await getWorkflowRun({ accountId: seeded.accountId, runId: seeded.runId });
+        const nextCheckpoint = checkpointEnvelope(seeded.accountId, seeded.runId, seeded.rootId, 2n, 1);
+        const contentEnvelope = progressEnvelope({ ...seeded, id: seeded.invocationId, parentRecordId: seeded.rootId,
+            sequence: 1n, memberOrdinal: 0n, result: "completed on the current worker" });
+        if (control === "pause_requested") await pauseWorkflowRun({ ...seeded, expectedRevision: before.run.revision });
+        const terminalFact = { ...seeded.fact, expectedLifecycle: "admitting", lifecycle: "completed",
+            contentEnvelope,
+            frontier: { expectedParentRevision: before.run.revision, checkpointEnvelope: nextCheckpoint } } as const;
+        if (control === "running") {
+            const keyPair = tweetnacl.sign.keyPair();
+            const installationId = await readMachineInstallationId(seeded.machineId);
+            await db.machine.update({ where: { id: seeded.machineId }, data: { installationPublicKey: new Uint8Array(keyPair.publicKey) } });
+            const { app, headers } = await createReviewStorageApp(seeded.accountId);
+            const path = "/v3/automations/runs/workflow-storage";
+            const body = { operation: "invocations.fact", publisherMachineId: seeded.machineId, runId: seeded.runId,
+                parentAttempt: terminalFact.parentAttempt, accountCurrentness: await accountCurrentness(seeded.accountId),
+                invocationId: seeded.invocationId, invocationAttempt: "0", expectedContentRevision: "1",
+                expectedLifecycle: terminalFact.expectedLifecycle, lifecycle: terminalFact.lifecycle, contentEnvelope, frontier: terminalFact.frontier };
+            try {
+                const committed = await app.inject({ method: "POST", url: path, headers: { ...headers,
+                    [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
+                        keyPair, machineId: seeded.machineId, installationId, path, body }),
+                }, payload: body });
+                expect(committed.statusCode, committed.body).toBe(200);
+                expect(committed.json()).toMatchObject({ lifecycle: "completed", parentRevision: before.run.revision + 1,
+                    frontierCommitted: { originSessionId: seeded.sessionId, attentionRequired: false } });
+            } finally { await app.close(); }
+        } else if (control === "cancel_requested") {
+            await expect(cancelWorkflowRun({ ...seeded, expectedRevision: before.run.revision }))
+                .resolves.toMatchObject({ intent: "cancel_requested" });
+            await expect(commitWorkflowInvocationFact(terminalFact)).rejects.toMatchObject({ code: "currentness_conflict" });
+        } else {
+            const committed = await commitWorkflowInvocationFact(terminalFact);
+            expect(committed.lifecycle).toBe("completed");
+            expect(committed.frontierCommitted).toBeUndefined();
+        }
+        await expect(getWorkflowRun({ accountId: seeded.accountId, runId: seeded.runId })).resolves.toMatchObject({
+            run: { state: control === "cancel_requested" ? "running" : control },
+            checkpointEnvelope: control === "running" ? nextCheckpoint : before.checkpointEnvelope,
+        });
+        if (control !== "cancel_requested") await expect(getWorkflowRunInvocation({ ...seeded })).resolves.toMatchObject({
+            invocation: { index: { lifecycle: "completed" }, contentEnvelope },
+        });
     });
 
     it("withdraws the original origin input after the paused lease is reclaimed", async () => {
