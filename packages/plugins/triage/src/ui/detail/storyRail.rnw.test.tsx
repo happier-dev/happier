@@ -5,10 +5,12 @@ import { createPluginUiActionControlTestHost, createPluginUiTestkit, createSurfa
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { RenderContext, SessionPermissionResponseV1, SessionStateV1 } from '@happier-dev/plugin-sdk/ui';
 import type { ReviewCommentV1 } from '@happier-dev/plugin-sdk/reviews';
-import { defineUiSurface, useSessionState } from '@happier-dev/plugin-ui';
+import { Button, defineUiSurface, useSessionState } from '@happier-dev/plugin-ui';
+import { TriageActivityAgentProvider } from '@happier-dev/triage-sources/ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { GithubHappierReviewSummary } from '../../../../scm-github/src/ui/detail/happierReviewSummary.js';
 import { TriageAgentStep, TriagePermissionCard } from './storyRail.js';
 
 /**
@@ -80,6 +82,56 @@ it('reads the Overview findings once for its admitted Review instead of once per
   expect(reads).toHaveLength(1);
   expect(reads[0]).toEqual(expect.objectContaining({ reviewId: 'review-overview' }));
   expect(reads[0]).not.toHaveProperty('sessionId');
+});
+
+it('reads a selected PR Review once when the Overview has no linked Sessions, and once on Refresh', async () => {
+  const reviewId = '1cc48915-fe5f-45b8-b630-d62bf77754ea';
+  const scopedReads: unknown[] = [];
+  const render = defineUiSurface(function Overview() {
+    const [refreshGeneration, setRefreshGeneration] = React.useState(0);
+    return (
+      <TriageActivityAgentProvider value={{ events: [], tail: null, refreshGeneration }}>
+        <Button title="Refresh" onPress={() => setRefreshGeneration(previous => previous + 1)} />
+        <GithubHappierReviewSummary reviewId={reviewId} />
+        <TriageAgentStep sessions={[]} hasMore={false} live={{ status: 'ready', state: null }}
+          reviewId={reviewId} reviewEntry={{ kind: 'pullRequest', url: 'https://example.test/pull/5' }} />
+      </TriageActivityAgentProvider>
+    );
+  });
+  const digest = `sha256:${'1'.repeat(64)}`;
+  let fixture!: PluginUiTestkit;
+  await act(async () => {
+    fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'selected-overview', mountNonce: 'selected-overview' },
+      authorPlugin: { id: 'happier.triage', version: '0.0.0' }, surface: render,
+      surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: {
+        executeAction: async ({ action, input }) => {
+          if (action === 'reviews.comments.list') scopedReads.push(input);
+          return { items: [], cursor: null };
+        },
+        readResource: async ({ resource }) => {
+          if (typeof resource === 'string' || !('hostRead' in resource)) throw new Error('Expected an admitted Review Resource');
+          if (resource.hostRead === 'reviews.comments.list') scopedReads.push(resource.input);
+          const value = resource.hostRead === 'review.get' ? {
+            review: { reviewId, state: 'completed', counts: { total: 0, needsDecision: 0 } },
+            human: { needsYou: { needsYou: false, requestedVerdict: false, pendingDecisions: false } },
+          } : { status: 'loaded', cursor: null, pending: {}, comments: [], unavailableFindings: [], rows: [] };
+          return { contentType: 'application/json', digest, bytes: new TextEncoder().encode(JSON.stringify(value)) };
+        },
+        watchResource: async () => ({ digest }),
+      },
+    });
+  });
+  mounted.push(fixture);
+  await fixture.findByRole('button', { name: 'Open review' });
+  expect(scopedReads).toEqual([{ reviewId }]);
+
+  await act(async () => { await fixture.updateSurface(createSurfaceContextFixture()); });
+  expect(scopedReads).toEqual([{ reviewId }]);
+
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Refresh' })); });
+  expect(scopedReads).toEqual([{ reviewId }, { reviewId }]);
 });
 
 const renderRail = defineUiSurface(function Rail(_context: RenderContext): React.ReactElement {

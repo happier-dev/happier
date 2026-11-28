@@ -100,7 +100,12 @@ export function TriageAgentStep(props: Readonly<{
   const pluralCount = useTriagePluralCount();
   const linkedSessionIds = React.useMemo(() => props.sessions.map((session) => session.sessionId), [props.sessions]);
   const marker = props.number === undefined ? {} : { marker: { kind: 'number' as const, value: props.number } };
-  const findings = useReviewCommentProposalsForEntry({ reviewId: props.reviewId, linkedSessionIds, entry: props.reviewEntry });
+  const findings = useReviewCommentProposalsForEntry({
+    // Only a linked Session's work can display proposals in this step.
+    reviewId: linkedSessionIds.length === 0 ? undefined : props.reviewId,
+    linkedSessionIds,
+    entry: props.reviewEntry,
+  });
   const opener = useLinkedSessionOpen();
   if (props.sessions.length === 0) {
     if (props.entry === undefined || props.entry === null || props.variant === 'card') return null;
