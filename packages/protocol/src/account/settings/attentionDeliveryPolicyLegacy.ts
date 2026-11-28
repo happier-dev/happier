@@ -2,6 +2,7 @@ import type { NotificationChannelsV1 } from './notificationChannels.js';
 import {
   AttentionDeliveryEventIdSchema,
   AttentionDeliveryPolicyV1Schema,
+  DEFAULT_ATTENTION_DELIVERY_POLICY_V1,
   normalizeAttentionDeliveryEventId,
   type AttentionDeliveryEventId,
   type AttentionDeliveryPolicyV1,
@@ -54,10 +55,11 @@ export function deriveAttentionDeliveryPolicyFromLegacySettings(params: {
   notificationChannels?: Readonly<NotificationChannelsV1>;
 }): AttentionDeliveryPolicyV1 {
   const notificationsSettings = params.notificationsSettings;
-  const policy = AttentionDeliveryPolicyV1Schema.parse({
+  const policy = {
+    ...DEFAULT_ATTENTION_DELIVERY_POLICY_V1,
     foregroundBehavior: notificationsSettings.foregroundBehavior ?? 'full',
     ...(notificationsSettings.mutePhoneWhenComputerFocused === true ? { mutePhoneWhenComputerFocused: true } : {}),
-  });
+  };
 
   const events = { ...policy.events };
   for (const id of AttentionDeliveryEventIdSchema.options) {
@@ -135,7 +137,7 @@ export function deriveAttentionDeliveryPolicyFromLegacySettings(params: {
   for (const channel of expoPushChannels) {
     if (channel.kind !== 'expo_push') continue;
     const channelId = 'expo_push';
-    const current = channels[channelId] ?? AttentionDeliveryPolicyV1Schema.parse({}).channels[channelId];
+    const current = channels[channelId];
     const nextEvents = { ...current.events };
     for (const [topic, enabled] of Object.entries(channel.topics ?? {})) {
       const eventId = eventIdFromChannelTopic(topic);

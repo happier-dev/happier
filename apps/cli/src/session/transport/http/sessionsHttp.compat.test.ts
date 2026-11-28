@@ -9,9 +9,11 @@ import {
   projectLegacySessionAccessCapabilitiesV1,
   SessionStoredMessageContentSchema,
 } from '@happier-dev/protocol';
+import { V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { sealSessionStoredContent } from '@/session/transport/encryption/sessionEncryptionContext';
 import {
   createSessionListResponseFixture,
+  createSessionNotificationContextFixture,
   createSessionRecordFixture,
 } from '@/testkit/backends/sessionFixtures';
 
@@ -63,6 +65,17 @@ describe('sessionControl.sessionsHttp.fetchSessionByIdCompat', () => {
       code: 'session_detail_invalid_response',
       issues: expect.arrayContaining([{ path: ['session', 'id'], code: 'invalid_type' }]),
     });
+  });
+
+  it('accepts a qualified current detail without revalidating it as a released bare response', async () => {
+    const session = createSessionNotificationContextFixture('s1');
+    const parseReleasedResponse = vi.spyOn(V2SessionByIdResponseSchema, 'safeParse');
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({ status: 200, data: { session } });
+
+    await expect(fetchSessionByIdCompat({
+      reason: 'session-query', token: 't', sessionId: 's1', accessProjectionVersion: 1,
+    })).resolves.toMatchObject(session);
+    expect(parseReleasedResponse).not.toHaveBeenCalled();
   });
 
   it('rejects a qualified current detail response that omits responsibility', async () => {

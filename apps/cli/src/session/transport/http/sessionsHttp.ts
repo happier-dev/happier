@@ -242,6 +242,10 @@ class SessionListQueryHttpError extends HttpStatusError {
 
 type SessionByIdHttpResponse = AxiosResponse<unknown>;
 
+const CurrentSessionByIdResponseSchema = lazyZodSchema(() => z.safeExtend(V2SessionByIdResponseSchema, {
+  session: SessionCurrentProjectionRecordV1Schema,
+}));
+
 function parseSessionDetailSchema<T>(schema: z.ZodMiniType<T>, payload: unknown, schemaName: SessionDetailInvalidResponseError['schema']): T {
   const parsed = schema.safeParse(payload);
   if (!parsed.success) {
@@ -263,21 +267,20 @@ function parseSessionByIdResponse(
   expectedSessionId: string,
   accessProjectionVersion: 1 | undefined,
 ): RawSessionRecord {
-  const session = parseSessionDetailSchema(
-    V2SessionByIdResponseSchema,
-    payload,
-    'v2_session_detail',
-  ).session;
+  const current = accessProjectionVersion === 1 ? CurrentSessionByIdResponseSchema.safeParse(payload) : undefined;
+  const session = current?.success
+    ? current.data.session
+    : parseSessionDetailSchema(V2SessionByIdResponseSchema, payload, 'v2_session_detail').session;
   if (session.id !== expectedSessionId) {
     throw new SessionDetailInvalidResponseError('v2_session_detail', [{
       code: 'custom', path: ['session', 'id'], message: 'Session identity does not match request',
     }]);
   }
-  if (accessProjectionVersion === 1) {
-    return parseSessionDetailSchema(
-      SessionCurrentProjectionRecordV1Schema,
-      session,
+  if (current?.success === false) {
+    // The released envelope passed, so only projection-specific issues remain.
+    throw new SessionDetailInvalidResponseError(
       'current_access_projection_v1',
+      current.error.issues.map(issue => ({ ...issue, path: issue.path.slice(1) })),
     );
   }
   return session;

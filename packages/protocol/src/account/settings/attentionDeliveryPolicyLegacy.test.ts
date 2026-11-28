@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   accountSettingsParse,
@@ -19,6 +19,21 @@ function retainedSourcePolicy(raw: Readonly<Record<string, unknown>>) {
 }
 
 describe('attentionDeliveryPolicyV1 legacy backfill', () => {
+  it.each([{ notificationChannels: undefined }, { notificationChannels: [] }] as const)('parses the assembled policy once for %j', ({ notificationChannels }) => {
+    const parse = vi.spyOn(AttentionDeliveryPolicyV1Schema, 'parse');
+    try {
+      const result = deriveAttentionDeliveryPolicyFromLegacySettings({
+        notificationsSettings: { ready: false, foregroundBehavior: 'silent', mutePhoneWhenComputerFocused: true },
+        ...(notificationChannels ? { notificationChannels } : {}),
+      });
+      expect(result).toMatchObject({ foregroundBehavior: 'silent', mutePhoneWhenComputerFocused: true,
+        events: { ready: { enabled: false } } });
+      expect(parse).toHaveBeenCalledTimes(1);
+    } finally {
+      parse.mockRestore();
+    }
+  });
+
   it('derives finite attention intent without endpoint membership', () => {
     const parsed = accountSettingsParse({
       notificationsSettingsV1: {
