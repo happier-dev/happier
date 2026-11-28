@@ -70,7 +70,8 @@ export async function purgeRetiredAccountDeploymentGraphInTx(tx: Tx, input: Read
     const authored = await tx.deploymentEnvironment.findMany({ where: { createdByAccountId: accountId },
         select: { projectSourceId: true } });
     const ownedSources = await tx.projectSource.findMany({ where: { createdByAccountId: accountId } });
-    const sourceIds = new Set([...ownedSources.map(row => row.id), ...authored.map(row => row.projectSourceId),
+    const authoredSourceIds = new Set(authored.map(row => row.projectSourceId));
+    const sourceIds = new Set([...ownedSources.map(row => row.id), ...authoredSourceIds,
         ...references.map(row => row.projectSourceId)]);
     for (const row of await tx.deploymentTargetLink.findMany({ where: { createdByAccountId: accountId },
         select: { environment: { select: { projectSourceId: true } } } })) sourceIds.add(row.environment.projectSourceId);
@@ -115,47 +116,78 @@ export async function purgeRetiredAccountDeploymentGraphInTx(tx: Tx, input: Read
     for (const source of sources) {
         if (!source.deploymentDefaults && source.deploymentEnvironments.length === 0) continue;
         const parsed = sourceFromRow(source);
-        const scope = source.createdByAccountId === accountId ? { projectSourceId: source.id } : {};
+        const createdByEraser = source.createdByAccountId === accountId;
+        const scope = createdByEraser ? { projectSourceId: source.id } : {};
         if (!parsed.success) return refused('graph_dependencies', scope);
         const owner = sourceOwner(parsed.data);
-        if (source.createdByAccountId !== accountId) return refused('source_sharing', scope);
-        if (owner.kind === 'account' && owner.accountId === accountId) continue;
+        if (owner.kind === 'account' && owner.accountId === accountId && createdByEraser) continue;
         if (owner.kind === 'team' && source.deletedAt !== null
+            && (createdByEraser || authoredSourceIds.has(source.id))
             && source.deploymentEnvironments.every(environment => environment.deletedAt !== null)) {
-            retiredTeamSources.push(parsed.data);
+            retiredTeamSources.push({ source: parsed.data, teamId: owner.teamId, scope, createdByEraser });
             continue;
         }
         return refused('source_sharing', scope);
     }
     // Retired Environments can still have readable history through their Source.
-    const audiences = await resolveProjectSourceAudiencesInTx(tx, retiredTeamSources);
-    const shared = retiredTeamSources.find((_, index) => audiences[index].some(id => id !== accountId));
-    if (shared) return refused('source_sharing', { projectSourceId: shared.id });
+    const audiences = await resolveProjectSourceAudiencesInTx(tx, retiredTeamSources.map(entry => entry.source));
+    const archivedTeamIds = new Set<string>();
+    for (const ids of portableQueryChunks({ values: [...new Set(retiredTeamSources.map(entry => entry.teamId))],
+        bindingsPerValue: 1 })) {
+        const teams = await tx.team.findMany({ where: { id: { in: [...ids] }, archivedAt: { not: null } }, select: { id: true } });
+        for (const team of teams) archivedTeamIds.add(team.id);
+    }
+    const retiredSharedGraphIds = new Set<string>();
+    for (const [index, entry] of retiredTeamSources.entries()) {
+        if (audiences[index].some(id => id !== accountId)) return refused('source_sharing', entry.scope);
+        if (archivedTeamIds.has(entry.teamId)) retiredSharedGraphIds.add(entry.source.id);
+        else if (!entry.createdByEraser) return refused('source_sharing', entry.scope);
+    }
+
+    // Physical cleanup can include other authors' retired rows. The erasing
+    // Account only gets links to its own rows in a refusal.
+    const refuseGraph = (reason: AccountErasureDeploymentBlockerV1['reason'],
+        scope: Omit<AccountErasureDeploymentBlockerV1, 'reason'> = {}) => {
+        const { projectSourceId, environmentId, targetLinkId, targetKind, deploymentId } = scope;
+        const ownsEnvironment = (id: string) => environments.some(row => row.id === id && row.createdByAccountId === accountId);
+        const ownsTarget = targetLinkId && links.some(link => link.id === targetLinkId && link.createdByAccountId === accountId);
+        return refused(reason, {
+            ...(projectSourceId && ownedSources.some(source => source.id === projectSourceId) ? { projectSourceId } : {}),
+            ...(environmentId && ownsEnvironment(environmentId) ? { environmentId } : {}),
+            ...(ownsTarget ? { targetLinkId, ...(targetKind ? { targetKind } : {}) } : {}),
+            ...(deploymentId && receipts.some(row => row.id === deploymentId && ownsEnvironment(row.environmentId)) ? { deploymentId } : {}),
+        });
+    };
     for (const row of environments) {
-        if (row.createdByAccountId !== accountId) return refused('graph_dependencies', { projectSourceId: row.projectSourceId });
+        const retiredSharedGraph = retiredSharedGraphIds.has(row.projectSourceId);
+        const blocksByAuthorship = (authorAccountId: string) => !retiredSharedGraph && authorAccountId !== accountId;
+        if (blocksByAuthorship(row.createdByAccountId)) {
+            return refuseGraph('graph_dependencies', { projectSourceId: row.projectSourceId });
+        }
         const scope = { environmentId: row.id };
         const pending = readDeploymentPendingContent(row);
         const running = row.deployments.find(receipt => busy.includes(receipt.state));
-        if (running || pending.ok && pending.pendingDeploy) return refused('running_work', {
+        if (running || pending.ok && pending.pendingDeploy) return refuseGraph('running_work', {
             ...scope, ...(running ? { deploymentId: running.id } : {}),
         });
         const domainTargets = new Set(row.targetLinks.map(link => link.id));
         if (!pending.ok || row.runtimeTargetLinkId && !domainTargets.has(row.runtimeTargetLinkId)) {
-            return refused('graph_dependencies', scope);
+            return refuseGraph('graph_dependencies', scope);
         }
-        if (row.domains.some(domain => domain.createdByAccountId !== accountId || !domainTargets.has(domain.targetLinkId))) {
-            return refused('graph_dependencies', scope);
+        if (row.domains.some(domain =>
+            !domainTargets.has(domain.targetLinkId) || blocksByAuthorship(domain.createdByAccountId))) {
+            return refuseGraph('graph_dependencies', scope);
         }
         const activeDomainTargets = new Set(row.domains.filter(domain => !domain.deletedAt).map(domain => domain.targetLinkId));
         for (const link of row.targetLinks) {
-            if (link.createdByAccountId !== accountId) return refused('graph_dependencies', scope);
+            if (blocksByAuthorship(link.createdByAccountId)) return refuseGraph('graph_dependencies', scope);
             const target = { ...scope, targetLinkId: link.id, targetKind: link.targetKind };
-            if (link.activeDeploymentId && !receiptSet.has(link.activeDeploymentId)) return refused('graph_dependencies', target);
+            if (link.activeDeploymentId && !receiptSet.has(link.activeDeploymentId)) return refuseGraph('graph_dependencies', target);
             const blocker = await readDeploymentTargetCleanupBlockerInTx(tx, link, row.runtimeTargetLinkId, activeDomainTargets.has(link.id));
-            if (blocker) return refused(blocker, target);
+            if (blocker) return refuseGraph(blocker, target);
         }
         if (row.automations.some(automation => automation.accountId !== accountId && !automation.deletedAt)) {
-            return refused('foreign_automation', scope);
+            return refuseGraph('foreign_automation', scope);
         }
     }
     // Outgoing references leave the referenced rows intact. Incoming foreign
@@ -166,25 +198,25 @@ export async function purgeRetiredAccountDeploymentGraphInTx(tx: Tx, input: Read
                 select: { id: true, previewTemplateEnvironmentId: true, previewCompanionOfEnvironmentId: true } }))
                 .find(row => !environmentSet.has(row.id));
             const environmentId = reference?.[field];
-            if (environmentId) return refused('graph_dependencies', { environmentId });
+            if (environmentId) return refuseGraph('graph_dependencies', { environmentId });
         }
     }
     for (const ids of portableQueryChunks({ values: linkIds, bindingsPerValue: 1 })) {
         const successor = (await tx.deploymentTargetLink.findMany({ where: { predecessorTargetLinkId: { in: [...ids] } },
             select: { id: true, predecessorTargetLinkId: true } })).find(row => !linkSet.has(row.id));
-        if (successor?.predecessorTargetLinkId) return refused('graph_dependencies', { targetLinkId: successor.predecessorTargetLinkId });
+        if (successor?.predecessorTargetLinkId) return refuseGraph('graph_dependencies', { targetLinkId: successor.predecessorTargetLinkId });
         for (const field of ['runtimeTargetLinkId', 'previewTargetLinkId'] as const) {
             const reference = (await tx.deploymentEnvironment.findMany({ where: { [field]: { in: [...ids] } },
                 select: { id: true, runtimeTargetLinkId: true, previewTargetLinkId: true } })).find(row => !environmentSet.has(row.id));
             const targetLinkId = reference?.[field];
-            if (targetLinkId) return refused('graph_dependencies', { targetLinkId });
+            if (targetLinkId) return refuseGraph('graph_dependencies', { targetLinkId });
         }
         const receipt = (await tx.deployment.findMany({ where: { targetLinkId: { in: [...ids] } },
             select: { id: true, targetLinkId: true } })).find(row => !receiptSet.has(row.id));
-        if (receipt) return refused('graph_dependencies', { targetLinkId: receipt.targetLinkId });
+        if (receipt) return refuseGraph('graph_dependencies', { targetLinkId: receipt.targetLinkId });
         const domain = (await tx.deploymentDomain.findMany({ where: { targetLinkId: { in: [...ids] } },
             select: { environmentId: true, targetLinkId: true } })).find(row => !environmentSet.has(row.environmentId));
-        if (domain) return refused('graph_dependencies', { targetLinkId: domain.targetLinkId });
+        if (domain) return refuseGraph('graph_dependencies', { targetLinkId: domain.targetLinkId });
     }
     for (const ids of portableQueryChunks({ values: receiptIds, bindingsPerValue: 1 })) {
         for (const field of ['predecessorDeploymentId', 'rollbackOfDeploymentId', 'promotedFromDeploymentId'] as const) {
@@ -192,19 +224,19 @@ export async function purgeRetiredAccountDeploymentGraphInTx(tx: Tx, input: Read
                 select: { id: true, predecessorDeploymentId: true, rollbackOfDeploymentId: true, promotedFromDeploymentId: true } }))
                 .find(row => !receiptSet.has(row.id));
             const deploymentId = reference?.[field];
-            if (deploymentId) return refused('graph_dependencies', { deploymentId });
+            if (deploymentId) return refuseGraph('graph_dependencies', { deploymentId });
         }
         const link = (await tx.deploymentTargetLink.findMany({ where: { activeDeploymentId: { in: [...ids] } },
             select: { id: true, activeDeploymentId: true } })).find(row => !linkSet.has(row.id));
-        if (link?.activeDeploymentId) return refused('graph_dependencies', { deploymentId: link.activeDeploymentId });
+        if (link?.activeDeploymentId) return refuseGraph('graph_dependencies', { deploymentId: link.activeDeploymentId });
     }
     for (const ids of portableQueryChunks({ values: [...sourceIds], bindingsPerValue: 1 })) {
         const preview = (await tx.deploymentEnvironment.findMany({ where: { previewRepositoryId: { in: [...ids] } },
             select: { id: true, previewRepositoryId: true } })).find(row => !environmentSet.has(row.id));
-        if (preview?.previewRepositoryId) return refused('graph_dependencies', { projectSourceId: preview.previewRepositoryId });
+        if (preview?.previewRepositoryId) return refuseGraph('graph_dependencies', { projectSourceId: preview.previewRepositoryId });
     }
     for (const row of receipts) {
-        if (!linkSet.has(row.targetLinkId)) return refused('graph_dependencies', { deploymentId: row.id });
+        if (!linkSet.has(row.targetLinkId)) return refuseGraph('graph_dependencies', { deploymentId: row.id });
     }
     if (input.preflight) return { status: 'ok' as const };
     // All references are admitted as one graph. Break cycles, then remove

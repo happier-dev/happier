@@ -24,12 +24,14 @@ function teardownProof(machine: { id: string; installationId: string | null }, r
 }
 
 /** Real retained graph: the public disposition leaves these Restrict references behind. */
-async function fixture(retired: boolean, encryptionMode: 'plain' | 'e2ee' = 'plain') {
+async function fixture(retired: boolean, encryptionMode: 'plain' | 'e2ee' = 'plain', sharedSourceId?: string) {
     const account = await db.account.create({ data: {
         encryptionMode, ...(encryptionMode === 'e2ee' ? createSignedAccountContentBinding() : {}),
     } });
     const machine = await db.machine.create({ data: { id: randomUUID(), accountId: account.id, metadata: '{}', installationId: randomUUID() } });
-    const source = await db.projectSource.create({ data: { createdByAccountId: account.id, name: 'Purge', audience: [], attachments: [] } });
+    const source = sharedSourceId
+        ? await db.projectSource.findUniqueOrThrow({ where: { id: sharedSourceId } })
+        : await db.projectSource.create({ data: { createdByAccountId: account.id, name: 'Purge', audience: [], attachments: [] } });
     const artifact = await db.artifact.create({ data: { id: randomUUID(), accountId: account.id,
         header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array() } });
     const content = { contentArtifactId: artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
@@ -46,7 +48,7 @@ async function fixture(retired: boolean, encryptionMode: 'plain' | 'e2ee' = 'pla
         ...deploymentAcceptedExecutionColumns(createDeploymentAcceptedExecution({ controller: {
             machineId: machine.id, installationId: machine.installationId! } })),
         ...(retired ? { teardownProof: teardownProof(machine, false) } : {}) } });
-    await db.projectDeploymentDefaults.create({ data: { projectSourceId: source.id, ...content } });
+    if (!sharedSourceId) await db.projectDeploymentDefaults.create({ data: { projectSourceId: source.id, ...content } });
     await db.deploymentEnvironmentDeployer.create({ data: { environmentId: environment.id, purpose: 'deploy',
         principalKind: 'account', principalId: account.id, createdByAccountId: account.id } });
     if (retired) await db.deploymentDomain.create({ data: { environmentId: environment.id, targetLinkId: link.id,
@@ -54,7 +56,104 @@ async function fixture(retired: boolean, encryptionMode: 'plain' | 'e2ee' = 'pla
     return { account, machine, source, artifact, environment, link, receipt };
 }
 
+async function sharedTeamFixture() {
+    const owner = await fixture(true);
+    const admin = await fixture(true, 'plain', owner.source.id);
+    const team = await db.team.create({ data: { name: 'Retired Team', archivedAt: new Date(), memberships: { create: [
+        { accountId: owner.account.id, role: 'owner' },
+        { accountId: admin.account.id, role: 'admin' },
+    ] } } });
+    await db.projectSource.update({ where: { id: owner.source.id }, data: {
+        owner: { kind: 'team', teamId: team.id }, deletedAt: new Date(),
+    } });
+    return { owner, admin, team };
+}
+
 export function deploymentAccountPurgeCases() {
+    it.each(['owner', 'admin'] as const)('erases both authors of a retired Team graph with the %s first', async first => {
+        const graph = await sharedTeamFixture();
+        const eraser = graph[first];
+        const other = first === 'owner' ? graph.admin : graph.owner;
+
+        expect(await deleteAccountForErasure({ accountId: eraser.account.id })).toEqual({ status: 'deleted' });
+        expect(await db.account.findUnique({ where: { id: eraser.account.id } })).toBeNull();
+        expect(await db.account.findUnique({ where: { id: other.account.id }, select: { status: true } })).toEqual({ status: 'active' });
+        expect(await db.artifact.findUnique({ where: { id: other.artifact.id } })).toEqual(other.artifact);
+        expect(await db.machine.findUnique({ where: { id: other.machine.id } })).toEqual(other.machine);
+        expect(await db.deploymentEnvironment.count({ where: { projectSourceId: graph.owner.source.id } })).toBe(0);
+        expect(await db.deployment.count({ where: { id: { in: [eraser.receipt.id, other.receipt.id] } } })).toBe(0);
+        expect(await db.projectSource.findUnique({ where: { id: graph.owner.source.id }, select: { deletedAt: true } }))
+            .toEqual(first === 'owner' ? null : { deletedAt: expect.any(Date) });
+
+        expect(await deleteAccountForErasure({ accountId: other.account.id })).toEqual({ status: 'deleted' });
+        expect(await db.account.findUnique({ where: { id: other.account.id } })).toBeNull();
+        expect(await db.projectSource.findUnique({ where: { id: graph.owner.source.id } })).toBeNull();
+        expect(await db.team.findUnique({ where: { id: graph.team.id } })).toEqual(graph.team);
+    });
+
+    it.each(['live Source', 'live Environment', 'active direct reader', 'active Team'] as const)('preserves a Team graph with a %s', async blocker => {
+        const { owner, admin, team } = await sharedTeamFixture();
+        if (blocker === 'live Source') {
+            await db.projectSource.update({ where: { id: owner.source.id }, data: { deletedAt: null } });
+        } else if (blocker === 'live Environment') {
+            await db.deploymentEnvironment.update({ where: { id: admin.environment.id }, data: { deletedAt: null } });
+        } else if (blocker === 'active direct reader') {
+            await db.projectSource.update({ where: { id: owner.source.id }, data: { audience: [
+                { principal: { kind: 'account', accountId: owner.account.id }, level: 'view' },
+            ] } });
+        } else {
+            // The Source creator has left. The former admin is the active Team's only reader and owner.
+            await db.teamMembership.updateMany({ where: { teamId: team.id, accountId: admin.account.id }, data: { role: 'owner' } });
+            await db.teamMembership.deleteMany({ where: { teamId: team.id, accountId: owner.account.id } });
+            await db.team.update({ where: { id: team.id }, data: { archivedAt: null } });
+        }
+
+        const eraser = blocker === 'live Environment' ? owner : admin;
+        expect(await deleteAccountForErasure({ accountId: eraser.account.id })).toEqual({
+            status: 'failed', code: 'account_erasure_deployment_cleanup_required',
+            blocker: { reason: 'source_sharing', ...(eraser === owner ? { projectSourceId: owner.source.id } : {}) },
+        });
+        expect(await db.account.findUnique({ where: { id: eraser.account.id }, select: { status: true } })).toEqual({ status: 'active' });
+        expect(await db.deploymentEnvironment.count({ where: { projectSourceId: owner.source.id } })).toBe(2);
+    });
+
+    it('preserves a live foreign-authored Environment on an Account Source', async () => {
+        const owner = await fixture(true);
+        const foreign = await fixture(true, 'plain', owner.source.id);
+        const environment = await db.deploymentEnvironment.update({ where: { id: foreign.environment.id }, data: { deletedAt: null } });
+
+        expect(await deleteAccountForErasure({ accountId: owner.account.id })).toEqual({
+            status: 'failed', code: 'account_erasure_deployment_cleanup_required',
+            blocker: { reason: 'graph_dependencies', projectSourceId: owner.source.id },
+        });
+        expect(await db.account.findUnique({ where: { id: owner.account.id }, select: { status: true } })).toEqual({ status: 'active' });
+        expect(await db.deploymentEnvironment.findUnique({ where: { id: environment.id } })).toEqual(environment);
+    });
+
+    it('preserves the retired graph when an unrelated Account erases a referenced Machine', async () => {
+        const { admin } = await sharedTeamFixture();
+        const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: outsider.id, metadata: '{}' } });
+        await db.deploymentEnvironment.update({ where: { id: admin.environment.id }, data: { controllerMachineId: machine.id } });
+
+        expect(await deleteAccountForErasure({ accountId: outsider.id })).toEqual({
+            status: 'failed', code: 'account_erasure_deployment_cleanup_required', blocker: { reason: 'source_sharing' },
+        });
+        expect(await db.machine.findUnique({ where: { id: machine.id } })).toEqual(machine);
+        expect(await db.deploymentEnvironment.count({ where: { projectSourceId: admin.source.id } })).toBe(2);
+    });
+
+    it('preserves a retained provider resource without disclosing a foreign Environment or target', async () => {
+        const { owner, admin } = await sharedTeamFixture();
+        await db.deploymentTargetLink.update({ where: { id: owner.link.id }, data: { state: 'provisioned' } });
+
+        expect(await deleteAccountForErasure({ accountId: admin.account.id })).toEqual({
+            status: 'failed', code: 'account_erasure_deployment_cleanup_required', blocker: { reason: 'provider_resource' },
+        });
+        expect(await db.account.findUnique({ where: { id: admin.account.id }, select: { status: true } })).toEqual({ status: 'active' });
+        expect(await db.deploymentTargetLink.findUnique({ where: { id: owner.link.id }, select: { state: true } })).toEqual({ state: 'provisioned' });
+    });
+
     it('erases a retired solely Account-owned graph including an unknown Deploy before its Artifacts and Machines', async () => {
         const f = await fixture(true);
         const unknown = await db.deployment.create({ data: { environmentId: f.environment.id, targetLinkId: f.link.id,
