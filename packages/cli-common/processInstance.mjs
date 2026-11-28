@@ -18,9 +18,13 @@ function parseLinuxProcFields(statText) {
   return raw.slice(commandEnd + 2).trim().split(/\s+/);
 }
 
-export function parseLinuxProcStartTime(statText) {
-  const startTime = String(parseLinuxProcFields(statText)?.[19] ?? '').trim();
+function readLinuxProcStartTicks(fields) {
+  const startTime = fields?.[19] ?? '';
   return /^\d+$/.test(startTime) ? startTime : null;
+}
+
+export function parseLinuxProcStartTime(statText) {
+  return readLinuxProcStartTicks(parseLinuxProcFields(statText));
 }
 
 export function observeProcessLivenessSync(pid, {
@@ -51,13 +55,26 @@ export function observeProcessLivenessSync(pid, {
   return { status: 'alive', reason };
 }
 
-export function parseLinuxProcStartTimeMs(statText) {
-  const ticks = parseLinuxProcStartTime(statText);
+function linuxProcStartTimeMs(ticks) {
   if (ticks === null) return null;
   // Preserve the daemon's numeric tenfold tick scale in one owner. Equality,
   // rather than elapsed wall time, is the contract for this boot-relative witness.
   const scaledTicks = Number(ticks) * 10;
   return Number.isSafeInteger(scaledTicks) ? scaledTicks : null;
+}
+
+export function parseLinuxProcStartTimeMs(statText) {
+  return linuxProcStartTimeMs(parseLinuxProcStartTime(statText));
+}
+
+/** Decode counters and both birth witnesses from the same stat record. */
+export function parseLinuxProcStat(statText) {
+  const fields = parseLinuxProcFields(statText);
+  if (!fields) return null;
+  const startTicks = readLinuxProcStartTicks(fields);
+  if (startTicks === null) return null;
+  const startTimeMs = linuxProcStartTimeMs(startTicks);
+  return startTimeMs === null ? null : { fields, startTicks, startTimeMs };
 }
 
 export function hashProcessCommand(command) {

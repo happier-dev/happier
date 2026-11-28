@@ -71,6 +71,31 @@ describe('process census', () => {
         expect(changed.rows.find(row => row.pid === 43)?.cpuTimeUs).toBe(210000);
     });
 
+    it('decodes each Linux stat record once while preserving both birth witnesses', async () => {
+        const { files, boundary } = fixture();
+        const statText = String(files.get('/proc/43/stat'));
+        const counters = statText.slice(statText.lastIndexOf(') ') + 2);
+        const split = RegExp.prototype[Symbol.split];
+        let statDecodes = 0;
+        const instrument = vi.spyOn(RegExp.prototype, Symbol.split).mockImplementation(function (this: RegExp, text, limit) {
+            if (text === counters) statDecodes++;
+            return split.call(this, text, limit);
+        });
+        try {
+            const reader = createProcessCensusReader({ platform: 'linux', selfPid: 42, linuxBoundary: boundary });
+            const snapshot = await reader({ freshness: 'fresh', pids: [43], fields: [] });
+            if (snapshot.status !== 'ok') throw new Error('Identity census unavailable');
+            expect(snapshot.rows.find(row => row.pid === 43)).toMatchObject({
+                name: 'name ) with space',
+                start: { native: 'linux-proc:430', startTimeMs: 4300 },
+                state: 'zombie',
+            });
+            expect(statDecodes).toBe(1);
+        } finally {
+            instrument.mockRestore();
+        }
+    });
+
     it('walks children of every Linux thread without enumerating peers and fails closed on unreadable discovery', async () => {
         const { files, boundary } = fixture();
         files.set('/proc/43/stat', stat(43, 430).replace(' S 1 ', ' S 44 '));

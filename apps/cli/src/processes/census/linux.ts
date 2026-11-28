@@ -1,5 +1,5 @@
 import { endianness } from 'node:os';
-import { parseLinuxProcStartTime, parseLinuxProcStartTimeMs } from '@happier-dev/cli-common/processInstance';
+import { parseLinuxProcStat } from '@happier-dev/cli-common/processInstance';
 import type { ProcessCensusField, ProcessCensusRow, ProcessCensusSnapshot } from './processCensus';
 import { ancestorsOf, indexCensus } from '../tree/processTree';
 
@@ -92,13 +92,12 @@ export function createLinuxCensusReader(boundary: LinuxCensusBoundary) {
                 return null;
             }
             const end = stat.lastIndexOf(')');
-            const startTimeMs = parseLinuxProcStartTimeMs(stat);
-            const ticks = parseLinuxProcStartTime(stat);
-            const fields = stat.slice(end + 1).trim().split(/\s+/u);
-            if (end < 0 || startTimeMs === null || ticks === null || fields.length < 22) {
+            const parsed = parseLinuxProcStat(stat);
+            if (end < 0 || parsed === null || parsed.fields.length < 22) {
                 partial.push({ pid, missing: ['start'] });
                 return null;
             }
+            const { fields, startTicks, startTimeMs } = parsed;
             let status: string | undefined = selfStatus;
             if (pid !== selfPid) {
                 try { status = await text(`${base}/status`); }
@@ -130,7 +129,7 @@ export function createLinuxCensusReader(boundary: LinuxCensusBoundary) {
             const group = Number.isSafeInteger(pgid) && pgid > 0 ? pgid : undefined;
             const session = Number.isSafeInteger(sessionId) && sessionId > 0 ? sessionId : undefined;
             const foregroundGroup = Number.isSafeInteger(tpgid) && tpgid > 0 ? tpgid : undefined;
-            const native = `linux-proc:${ticks}`;
+            const native = `linux-proc:${startTicks}`;
             const name = stat.slice(stat.indexOf('(') + 1, end);
             const row: ProcessCensusRow = {
                 pid, ppid: parent, ...(group !== undefined ? { pgid: group } : {}),

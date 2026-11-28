@@ -29,6 +29,11 @@ export function observeProcessLivenessSync(
 
 export function parseLinuxProcStartTime(statText: unknown): string | null;
 export function parseLinuxProcStartTimeMs(statText: unknown): number | null;
+export function parseLinuxProcStat(statText: unknown): Readonly<{
+  fields: readonly string[];
+  startTicks: string;
+  startTimeMs: number;
+}> | null;
 export function hashProcessCommand(command: string): string;
 export function processGenerationMatches(expected: number | undefined, observed: number | undefined): boolean;
 export function processGenerationProvesReuse(expected: number | undefined, observed: number | undefined): boolean;
