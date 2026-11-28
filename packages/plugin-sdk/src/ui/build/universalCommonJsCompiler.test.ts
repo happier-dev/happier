@@ -694,6 +694,29 @@ describe('compileUniversalPluginUiCommonJs', () => {
         })).rejects.toMatchObject({ code: 'requested_export_missing' });
     });
 
+    it('emits ASCII for Unicode text and property names without changing their values', async () => {
+        const text = await fixture("/*! © Acme */ const o: Record<string, number> = { ['naïve']: 2 }; export const renderSurface = () => ({ label: 'Loading…', sep: ' · ', ['naïve']: `— ${o.naïve}` });");
+        const compiled = await compileFixture(text.root, text.entry, 'unicode-text');
+        expect(compiled.bytes.every((byte) => byte <= 0x7f)).toBe(true);
+        const evaluated = new Function('module', 'exports', 'require', new TextDecoder().decode(compiled.bytes));
+        const module = { exports: {} as Record<string, () => unknown> };
+        evaluated(module, module.exports, () => ({}));
+        expect(module.exports.renderSurface!()).toEqual({ label: 'Loading…', sep: ' · ', naïve: '— 2' });
+    });
+
+    it('preserves Unicode regular expression matching and source text', async () => {
+        const expression = await fixture('export const renderSurface = () => /[…·]/u;');
+        const compiled = await compileFixture(expression.root, expression.entry, 'unicode-regex');
+        const evaluate = new Function('module', 'exports', 'require', new TextDecoder().decode(compiled.bytes));
+        const module = { exports: {} as Record<string, () => RegExp> };
+        evaluate(module, module.exports, () => ({}));
+        const regex = module.exports.renderSurface!();
+        expect(regex.source).toBe('[…·]');
+        expect(regex.flags).toBe('u');
+        expect(regex.test('…')).toBe(true);
+        expect(regex.test('.')).toBe(false);
+    });
+
     it('does not write source maps or sibling chunks', async () => {
         const { root, entry } = await fixture('export const renderSurface = () => null;');
         const result = await compileUniversalPluginUiCommonJs({

@@ -4,13 +4,14 @@ import { readFile, readdir } from 'node:fs/promises';
 import { builtinModules } from 'node:module';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
-import { transformAsync } from '@babel/core';
+import { transformAsync, types as babelTypes, type PluginObj } from '@babel/core';
 import transformBlockScoping from '@babel/plugin-transform-block-scoping';
 import transformClasses from '@babel/plugin-transform-classes';
 import { build, version as esbuildVersion, type Metafile, type Plugin } from 'esbuild';
 
 import { PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS } from '@happier-dev/protocol/plugins/ui/hostRuntimeExternals';
 import { isPluginUiHostRuntimeExternalSpecifierV1 } from '@happier-dev/protocol/plugins/ui/hostModuleAdmission';
+import { describeNonAsciiCode } from '@happier-dev/cli-common/sourceRuntimeEntries';
 
 export class PluginUiUniversalCompilerError extends Error {
     readonly code: string;
@@ -179,11 +180,34 @@ function compilerPolicyPlugin(artifactId: string, resolveSourceImport?: (specifi
  * here, once, for the one universal artifact. Class syntax also needs lowering: this evaluator rejects
  * small class bodies at parse time and can miscompile construction in large ones as undefined.prototype.
  */
+// esbuild escapes non-ASCII names as `\u` sequences; Babel reprints them raw.
+// Property positions can carry the name as an escaped string instead.
+// Kept license comments are inert text, so their non-ASCII is written as escapes.
+function keepAsciiOutput(): PluginObj {
+    return { pre(file) {
+        for (const comment of file.ast.comments ?? []) {
+            comment.value = comment.value.replace(/[^\x00-\x7f]/gu, (char) => `\\u{${char.codePointAt(0)!.toString(16)}}`);
+        }
+    }, visitor: { Identifier(path) {
+        if (/^[\x00-\x7f]*$/u.test(path.node.name)) return;
+        const { parent } = path;
+        if ((babelTypes.isObjectProperty(parent) || babelTypes.isObjectMethod(parent))
+            && parent.key === path.node && !parent.computed) {
+            path.replaceWith(babelTypes.stringLiteral(path.node.name));
+        } else if (babelTypes.isMemberExpression(parent) && parent.property === path.node && !parent.computed) {
+            parent.computed = true;
+            path.replaceWith(babelTypes.stringLiteral(path.node.name));
+        }
+    } } };
+}
+
 async function lowerHermesSyntax(artifactId: string, source: string): Promise<Uint8Array> {
     const lowered = await transformAsync(source, {
         configFile: false, babelrc: false, sourceType: 'script', minified: true,
+        // Keep esbuild's ASCII escapes when strings are reprinted.
+        generatorOpts: { jsescOption: { minimal: false } },
         shouldPrintComment: comment => /@license|@preserve|^!/u.test(comment),
-        plugins: [transformClasses, transformBlockScoping],
+        plugins: [transformClasses, transformBlockScoping, keepAsciiOutput],
     }).catch((cause: unknown) => {
         throw new PluginUiUniversalCompilerError('compile_failed', artifactId,
             `Executable Plugin UI artifact "${artifactId}" failed to compile: ${cause instanceof Error ? cause.message : String(cause)}`);
@@ -191,7 +215,13 @@ async function lowerHermesSyntax(artifactId: string, source: string): Promise<Ui
     if (typeof lowered?.code !== 'string') {
         throw new PluginUiUniversalCompilerError('compile_failed', artifactId, `Executable Plugin UI artifact "${artifactId}" produced no output`);
     }
-    return new TextEncoder().encode(lowered.code);
+    const bytes = new TextEncoder().encode(lowered.code);
+    // Escaping a regular expression can change its observable `.source`.
+    // Keep parser-owned spellings intact when ASCII output would change them.
+    if (describeNonAsciiCode(bytes)) {
+        console.warn('[non_ascii_output] Plugin UI artifact retained non-ASCII syntax', { artifactId });
+    }
+    return bytes;
 }
 
 async function reportBundledHostModules(projectRoot: string, artifactId: string, metafile: Metafile): Promise<void> {
@@ -281,7 +311,9 @@ export async function compileUniversalPluginUiCommonJs(input: Readonly<{
             jsx: 'automatic',
             sourcemap: false,
             legalComments: 'eof',
-            charset: 'utf8',
+            // Hosts evaluate this text with `new Function`; one non-ASCII
+            // character would make the engine keep the whole source two-byte.
+            charset: 'ascii',
             target: 'es2020',
             // Hermes's dynamic evaluator leaves async arrows undefined in large
             // artifacts. esbuild lowers them to supported generator functions.
