@@ -35,11 +35,11 @@ export type TriageDetailTabFromV1 = 'entry' | 'fixPullRequest' | 'none';
  */
 export type TriageDetailTabV1 =
   | Readonly<{ kind: 'shared'; id: TriageDetailSharedTabIdV1; frameId: TriageDetailSharedTabIdV1; from: TriageDetailTabFromV1; summary?: TriageRowFactValueV1; scrollOwner?: TriageSourceDetailTabV1['scrollOwner'] }>
-  | Readonly<{ kind: 'source'; id: string; frameId: `source:${string}`; title: string; titleKey?: string; from: 'entry'; summary?: TriageRowFactValueV1; scrollOwner?: TriageSourceDetailTabV1['scrollOwner'] }>;
+  | Readonly<{ kind: 'source'; id: string; frameId: `source:${string}`; title: string; titleKey?: string; from: 'entry'; reserveCount?: boolean; summary?: TriageRowFactValueV1; scrollOwner?: TriageSourceDetailTabV1['scrollOwner'] }>;
 
 export type TriageDetailCompositionV1 =
   | Readonly<{ kind: 'whole' }>
-  | Readonly<{ kind: 'tabs'; tabs: readonly TriageDetailTabV1[] }>;
+  | Readonly<{ kind: 'tabs'; tabs: readonly TriageDetailTabV1[]; sessionTab?: true }>;
 
 /**
  * The linked fix PR as the plan needs it: the tabs its own source declares
@@ -93,6 +93,11 @@ export function planTriageDetailTabsV1(input: Readonly<{
   const changesFromFixPullRequest = input.workflowSubject === 'issue'
     || input.workflowSubject === 'errorIssue';
 
+  // Error groups with source evidence counts (Sentry and PostHog) keep the Session
+  // destination and those count slots from the first frame.
+  const sessionTab = input.workflowSubject === 'errorIssue'
+    && input.entryTabs.some(tab => tab.kind === 'source' && tab.summaryFact !== undefined);
+
   const tabs: TriageDetailTabV1[] = [];
   for (const id of TRIAGE_DETAIL_SHARED_TABS_V1) {
     if (changesFromFixPullRequest && FROM_FIX_PULL_REQUEST.has(id)) {
@@ -126,10 +131,13 @@ export function planTriageDetailTabsV1(input: Readonly<{
         ...(tab.titleKey ? { titleKey: tab.titleKey } : {}),
         from: 'entry',
         ...presentationOf(tab, input.entryFacts),
+        ...(sessionTab && tab.summaryFact !== undefined ? { reserveCount: true } : {}),
       }));
     }
   }
-  return Object.freeze({ kind: 'tabs', tabs: Object.freeze(tabs) });
+  return Object.freeze({ kind: 'tabs', tabs: Object.freeze(tabs),
+    ...(sessionTab ? { sessionTab: true as const } : {}),
+  });
 }
 
 /**

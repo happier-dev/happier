@@ -60,6 +60,7 @@ export type HappierTabDescriptor = Readonly<{
   title: string;
   icon?: ReactNode;
   badge?: string;
+  reserveBadge?: boolean;
   /** The badge's tone; quiet (`secondary`) unless the count is itself a state ("2 failing"). */
   badgeTone?: HappierTone;
   /** A quiet dot whose localized meaning is included in the accessible tab name. */
@@ -584,7 +585,7 @@ export function HappierTabs(props: Readonly<{
               <HappierPressable
                 key={tab.value}
                 accessibilityRole="tab"
-                accessibilityLabel={[tab.title, tab.marker].filter(Boolean).join(' ')}
+                accessibilityLabel={[tab.title, tab.reserveBadge ? tab.badge : undefined, tab.marker].filter(Boolean).join(' ')}
                 selected={isSelected}
                 disabled={tab.disabled}
                 tabIndex={stripIndex === tabStopIndex ? 0 : -1}
@@ -640,7 +641,13 @@ export function HappierTabs(props: Readonly<{
                   {glyphOnly ? null : (
                     <HappierText style={{ ...labelStyle, color: isSelected ? pageStrip ? props.theme.colors.text : props.theme.colors.accent : props.theme.colors.secondaryText }} tabularNumbers={readHappierTypeRoleTabular('label', typography)}>{tab.title}</HappierText>
                   )}
-                  {tab.badge ? <HappierText style={{ ...badgeStyle, color: resolveHappierToneTextColor(props.theme, tab.badgeTone ?? 'secondary') }} tabularNumbers>{tab.badge}</HappierText> : null}
+                  {tab.reserveBadge ? <View>
+                    {/* A glyph-width sample uses the same font scaling as the count and stays out of the accessible name. */}
+                    <HappierText aria-hidden style={{ ...badgeStyle, opacity: 0 }} tabularNumbers>000000</HappierText>
+                    {tab.badge ? <HappierText numberOfLines={1} tabularNumbers
+                      style={{ ...badgeStyle, position: 'absolute', left: 0, right: 0,
+                        color: resolveHappierToneTextColor(props.theme, tab.badgeTone ?? 'secondary') }}>{tab.badge}</HappierText> : null}
+                  </View> : tab.badge ? <HappierText style={{ ...badgeStyle, color: resolveHappierToneTextColor(props.theme, tab.badgeTone ?? 'secondary') }} tabularNumbers>{tab.badge}</HappierText> : null}
                   {tab.marker ? <HappierTabMarker color={props.theme.colors.mutedText}
                     testID={`${props.testID ?? 'tabs'}:${tab.value}:marker`} /> : null}
                 </View>

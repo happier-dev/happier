@@ -1723,7 +1723,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           const descriptor = readSourceDescriptor(operation.entryRef.source);
           const kind = descriptor?.kinds.find((candidate) => candidate.id === operation.entryRef.kindId);
           const composition = planTriageDetailTabsV1({ workflowSubject: kind?.workflowSubject ?? null, entryTabs: kind?.detailTabs, fixPullRequest: null });
-          if (composition.kind !== 'tabs' || !composition.tabs.some((tab) => tab.frameId === operation.tab)) return { status: 'unavailable' };
+          if (composition.kind !== 'tabs' || !(composition.tabs.some((tab) => tab.frameId === operation.tab)
+            || operation.tab === 'session' && composition.sessionTab)) return { status: 'unavailable' };
         }
         if (await settleLensEditBeforeDurable(action) === null) return { status: 'rejected' };
         // A settled selection is an issued effect. Complete its tab intent even
@@ -2549,6 +2550,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       <TriageDetailRouteReading
         workflowSubject={routedIdentity.kind.workflowSubject ?? null}
         entryTabs={routedIdentity.kind.detailTabs}
+        tabSelection={{ value: detailTab?.key === selectedKey ? detailTab.tab : 'overview', onChange: chooseDetailTab, onAvailableTabsChange: reportDetailTabs }}
         reading={readTriageDetailReadingLineV1(text, routedIdentity.kind.displayName, routedIdentity.sourceLabel)}
         pushed={pushed}
       />

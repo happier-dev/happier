@@ -63,6 +63,27 @@ describe('the detail tab plan (r0.42)', () => {
     });
   });
 
+  it.each([
+    ['Sentry', 'events'],
+    ['PostHog', 'posthog/occurrences'],
+  ])('reserves Session and the count slot for %s before facts arrive', (_provider, factId) => {
+    const input = {
+      workflowSubject: 'errorIssue',
+      entryTabs: [shared('overview'), { kind: 'source', id: 'occurrences', title: 'Occurrences', summaryFact: factId }],
+      fixPullRequest: null,
+    } as const;
+    const reading = planTriageDetailTabsV1(input);
+    const settled = planTriageDetailTabsV1({ ...input, entryFacts: [
+      { id: factId, importance: 'primary', value: { kind: 'number', format: 'compact', value: 1800 } },
+    ] });
+    expect(reading).toMatchObject({ sessionTab: true, tabs: [
+      { frameId: 'overview' }, { frameId: 'source:occurrences', reserveCount: true },
+    ] });
+    expect(settled).toMatchObject({ sessionTab: true, tabs: [
+      { frameId: 'overview' }, { frameId: 'source:occurrences', reserveCount: true, summary: { value: 1800 } },
+    ] });
+  });
+
   it('always opens on Overview, which hosts the agent step even when the source has no overview panel', () => {
     const plan = planTriageDetailTabsV1({
       workflowSubject: 'pullRequest',

@@ -800,6 +800,7 @@ export function TriageDetailRouteReading(props: Readonly<{
   entryTabs: Parameters<typeof planTriageDetailTabsV1>[0]['entryTabs'];
   reading: string;
   pushed: boolean;
+  tabSelection: TriageDetailTabSelectionV1;
 }>): React.ReactElement {
   const { workflowSubject, entryTabs } = props;
   const composition = React.useMemo(() => planTriageDetailTabsV1({ workflowSubject, entryTabs, fixPullRequest: null }),
@@ -826,7 +827,7 @@ export function TriageDetailRouteReading(props: Readonly<{
         <Stack style={DETAIL_FILL_STYLE_V1}>
           {composition.kind !== 'tabs' ? readingLines : (
             <TriageDetailTabbedBody pushed={props.pushed} tabs={composition.tabs}
-              entry={null} reading={readingLines} fixPullRequest={null} overviewTail={null} fallback={null} />
+              sessionTab={composition.sessionTab} tabSelection={props.tabSelection} entry={null} reading={readingLines} fixPullRequest={null} overviewTail={null} fallback={null} />
           )}
         </Stack>
       </Stack>
@@ -1318,6 +1319,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
                 pushed={props.pushed}
                 key={deriveTriageDetailMountInstanceKey(row.entryRef, selected.sourceInstanceId)}
                 tabs={composition.tabs}
+                sessionTab={composition.sessionTab}
                 tabSelection={tabSelection}
                 entry={null}
                 reading={readingLines}
@@ -1355,6 +1357,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
               pushed={props.pushed}
               key={entryMount.instanceKey}
               tabs={composition.tabs}
+              sessionTab={composition.sessionTab}
               tabSelection={tabSelection}
               companionInput={companionInput}
               {...(sourceActions === undefined ? {} : { actionsNavigation })}

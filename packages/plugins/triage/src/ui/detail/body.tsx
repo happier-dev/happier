@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import {
+  EmptyState,
   ScrollArea,
   Stack,
   Tabs,
@@ -186,9 +187,10 @@ export function TriageDetailTabbedBody(props: Readonly<{
   /** After the source's steps: Triage's own — the fix PR and ③ the agent. */
   overviewTail: React.ReactNode;
   /**
-   * Triage's own last tab: the linked Session, live (plan 05 §4.6). Absent without a linked
-   * Session, and never a source panel.
+   * Triage's own last tab: the linked Session, live (plan 05 §4.6).
+   * Error issues declare its place up front, while other details show it when a link arrives.
    */
+  sessionTab?: true;
   session?: React.ReactNode;
   fallback: React.ReactNode;
 }>): React.ReactElement {
@@ -197,7 +199,7 @@ export function TriageDetailTabbedBody(props: Readonly<{
   const [localSelected, setLocalSelected] = React.useState<string>('overview');
   const requested = props.tabSelection?.value ?? localSelected;
   const setSelected = props.tabSelection?.onChange ?? setLocalSelected;
-  const hasSession = props.session !== undefined && props.session !== null;
+  const hasSession = props.sessionTab === true || (props.session !== undefined && props.session !== null);
   type VisiblePanels = Readonly<{ instanceKey: string; panels: readonly string[] }> | null;
   const [entryPanels, setEntryPanels] = React.useState<VisiblePanels>(null);
   const [fixPanels, setFixPanels] = React.useState<VisiblePanels>(null);
@@ -260,7 +262,7 @@ export function TriageDetailTabbedBody(props: Readonly<{
     }), [props.actionsNavigation, props.fixPullRequestNavigation, props.fixPullRequestsEmpty, tabs, setSelected]);
 
   const selectedTab = tabs.find((tab) => tab.frameId === selected);
-  const slot = props.entry === null ? 'entry' : selected === 'session' ? 'session' : selectedTab?.from ?? 'unavailable';
+  const slot = selected === 'session' ? 'session' : props.entry === null ? 'entry' : selectedTab?.from ?? 'unavailable';
   const pageLead = React.useContext(TriageDetailPageLeadContext);
 
   return (
@@ -327,7 +329,11 @@ export function TriageDetailTabbedBody(props: Readonly<{
                   </Stack>
                 )}
               </Tabs.Item>
-              <Tabs.Item value="session" title="" retention="discard">{props.session}</Tabs.Item>
+              <Tabs.Item value="session" title="" retention="discard">
+                {props.session ?? (props.entry === null ? props.reading : (
+                  <EmptyState titleKey="plugins.triage.surface.detail.session.companion.none" title="No Session is linked to this entry." />
+                ))}
+              </Tabs.Item>
               <Tabs.Item value="none" title="">
                 <ScrollArea style={FILL_STYLE}>
                   <Stack gap="large">{props.pushed === true && slot === 'none' ? <Tabs.Lead /> : null}{props.overviewLead}{props.overviewTail}</Stack>
@@ -351,6 +357,7 @@ export function TriageDetailTabbedBody(props: Readonly<{
               value={tab.frameId}
               glyph={tab.kind === 'shared' ? SHARED_TAB_COPY[tab.id].glyph : 'file'}
               title={availableTabs[index]!.title}
+              reserveBadge={tab.kind === 'source' && tab.reserveCount}
               {...(summary === null ? {} : { badge: summary.value, badgeTone: summary.tone })}
             />
           );

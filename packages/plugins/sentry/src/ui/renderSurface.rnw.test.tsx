@@ -730,7 +730,7 @@ describe('the mounted Sentry issue detail body', () => {
     await expect(page.getByRole('tab', { name: 'Activity' })).resolves.toBeDefined();
   });
 
-  it('publishes framed panel visibility from the settled occurrence without extra event reads', async () => {
+  it('keeps the framed tabs declared across occurrence rereads without extra event reads', async () => {
     const publications: (readonly string[] | null)[] = [];
     frameNavigation = {
       panels: ['overview', 'occurrences', 'activity', 'stack-trace'],
@@ -741,25 +741,22 @@ describe('the mounted Sentry issue detail body', () => {
     const page = await mountDetail(harness, createSurfaceContextFixture(), undefined, 'overview');
 
     await expect(page.getByRole('button', { name: 'Reread this occurrence' })).resolves.toBeDefined();
-    expect(publications.at(-1)).toEqual(expect.arrayContaining(['overview', 'occurrences', 'activity']));
-    expect(publications.at(-1)).not.toContain('stack-trace');
+    expect(publications.every(panels => panels === null || panels.includes('stack-trace'))).toBe(true);
     expect(harness.countOf(SENTRY_ACTION_IDS.readEvent)).toBe(1);
 
     await act(async () => {
       await page.press(await page.getByRole('button', { name: 'Reread this occurrence' }));
     });
     await expect(page.getByText('ChargeDeclined: card was declined')).resolves.toBeDefined();
-    expect(publications.at(-1)).toContain('stack-trace');
+    expect(publications.every(panels => panels === null || panels.includes('stack-trace'))).toBe(true);
     expect(harness.countOf(SENTRY_ACTION_IDS.readEvent)).toBe(2);
 
     await act(async () => {
       await page.press(await page.getByRole('button', { name: 'Reread this occurrence' }));
     });
     await expect(page.getByRole('button', { name: 'Reread this occurrence' })).resolves.toBeDefined();
-    expect(publications.at(-1)).not.toContain('stack-trace');
+    expect(publications.every(panels => panels === null || panels.includes('stack-trace'))).toBe(true);
     expect(harness.countOf(SENTRY_ACTION_IDS.readEvent)).toBe(3);
-    await act(async () => { await page.retire(); });
-    expect(publications.at(-1)).toBeNull();
   });
 
   it('reads a chosen occurrence only when the reader chooses it', async () => {

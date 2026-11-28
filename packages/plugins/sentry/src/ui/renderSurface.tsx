@@ -1615,18 +1615,35 @@ function ReleasePanel({
   locale,
   nowMs,
 }: Readonly<{
-  summary: SentryIssueSummaryV1;
+  summary: SentryReadStateV1<SentryIssueSummaryV1>;
   locale: string;
   nowMs: number;
 }>): React.ReactElement {
   const text = usePluginTranslation();
+  if (summary.kind === 'loading') {
+    return <LoadingState title="Reading this issue from Sentry" titleKey="plugins.sentry.ui.readingIssue" />;
+  }
+  if (summary.kind === 'unavailable') {
+    return (
+      <ErrorState
+        title="Sentry could not complete this read."
+        titleKey="plugins.sentry.ui.readFailed"
+        action={<TriageSourceReadFailureDetails failures={[summary.failure]} />}
+      />
+    );
+  }
+  const { firstRelease, lastRelease } = summary.value;
+  if (firstRelease === undefined && lastRelease === undefined) {
+    return <EmptyState title="No projected facts" titleKey="plugins.sentry.ui.noFacts" />;
+  }
+
   const rows = [
-    ...(summary.firstRelease === undefined
+    ...(firstRelease === undefined
       ? []
-      : [{ label: text('plugins.sentry.ui.metadata.firstSeenIn', 'First seen in'), release: summary.firstRelease }]),
-    ...(summary.lastRelease === undefined
+      : [{ label: text('plugins.sentry.ui.metadata.firstSeenIn', 'First seen in'), release: firstRelease }]),
+    ...(lastRelease === undefined
       ? []
-      : [{ label: text('plugins.sentry.ui.metadata.lastSeenIn', 'Last seen in'), release: summary.lastRelease }]),
+      : [{ label: text('plugins.sentry.ui.metadata.lastSeenIn', 'Last seen in'), release: lastRelease }]),
   ];
 
   return (
@@ -1807,8 +1824,7 @@ function SentryDetailBody({
   // One render-time read, passed down as data, so no child owns a hidden clock.
   const nowMs = Date.now();
 
-  // The one Tier-A read the detail root owns. The Release association tab's very presence
-  // depends on it, and a conditional tab cannot read its own condition from inside its panel.
+  // Overview and Release association share the detail root's issue summary read.
   const summary = useSentryIssueSummary(input, signal);
   // The one selected-event owner. It lives here, above the tabs, because Overview, an
   // activated occurrence and Stack Trace are three consumers of one projection — and
@@ -1817,14 +1833,6 @@ function SentryDetailBody({
   const selectedEvent = useSentrySelectedEvent(input, signal);
   const overview = React.useMemo(() => projectSentryDetailOverview(input), [input]);
   const openFrameStackTrace = useTriageDetailPanelOpener('stack-trace');
-
-  const releaseSummary = summary.kind === 'ready' ? summary.value : null;
-  const hasReleaseAssociation = releaseSummary !== null
-    && (releaseSummary.firstRelease !== undefined || releaseSummary.lastRelease !== undefined);
-  const hasTraceEvidence = selectedEvent.read.kind === 'success'
-    && sentryProjectionHasTrace(selectedEvent.read.projection);
-  const visible = sentryVisibleDetailTabs({ hasReleaseAssociation, hasTraceEvidence });
-  const tab = sentryResolveSelectedTab(selected, visible);
 
   const panels: Readonly<Record<SentryDetailTabIdV1, React.ReactNode>> = {
     overview: (
@@ -1851,20 +1859,15 @@ function SentryDetailBody({
     'stack-trace': (
       <StackTracePanel controller={selectedEvent} locale={locale} nowMs={nowMs} />
     ),
-    release: releaseSummary === null
-      ? null
-      : <ReleasePanel summary={releaseSummary} locale={locale} nowMs={nowMs} />,
+    release: <ReleasePanel summary={summary} locale={locale} nowMs={nowMs} />,
     activity: <ActivityPanel input={input} locale={locale} nowMs={nowMs} />,
   };
 
-  // The Triage detail asked for one panel (r0.42): its frame draws the tabs.
-  // Stack trace, occurrences and the release are this source's own tabs,
-  // declared after the shared ones.
+  // The Triage frame draws the manifest's tabs. Reads only affect panel contents.
   if (input.panel !== undefined) {
     return (
       <Screen safeArea>
         <TriageDetailPanel
-          visiblePanels={visible.map((declaration) => declaration.id)}
           scrollOwner={input.panelScrollOwner}
           panel={input.panel}
           retention={DETAIL_PANEL_RETENTION}
@@ -1893,6 +1896,14 @@ function SentryDetailBody({
       </Screen>
     );
   }
+
+  const releaseSummary = summary.kind === 'ready' ? summary.value : null;
+  const hasReleaseAssociation = releaseSummary !== null
+    && (releaseSummary.firstRelease !== undefined || releaseSummary.lastRelease !== undefined);
+  const hasTraceEvidence = selectedEvent.read.kind === 'success'
+    && sentryProjectionHasTrace(selectedEvent.read.projection);
+  const visible = sentryVisibleDetailTabs({ hasReleaseAssociation, hasTraceEvidence });
+  const tab = sentryResolveSelectedTab(selected, visible);
 
   return (
     <Screen safeArea>

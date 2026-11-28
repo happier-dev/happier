@@ -47,6 +47,8 @@ export type TabsItemProps = Readonly<{
   /** Page is the default; a companion names an already admitted destination. */
   phonePlacement?: PluginUiPageNavigationItemV1['phonePlacement'];
   badge?: string;
+  /** Reserve space in the strip for a compact count that arrives after its tab. */
+  reserveBadge?: boolean;
   /** The badge's tone: quiet by default; a count that is itself a state ("2 failing") takes that state's tone. */
   badgeTone?: TextTone;
   /** A quiet state dot, announced with the tab title. */
