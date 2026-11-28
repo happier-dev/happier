@@ -464,8 +464,11 @@ it('changes the night-hour draft through the same mounted option as its visible 
     expect(picker().props.selectedId).toBe('21');
 });
 
-it('settles an acknowledged view switch after its own publication retires and refuses an old command before effects', async () => {
-    const { screen } = await mount(null, true);
+it.each([
+    { mountRetires: true },
+    { mountRetires: false },
+])('settles an acknowledged view switch and refuses its former commands (mount retires: $mountRetires)', async ({ mountRetires }) => {
+    const { screen } = await mount(null, mountRetires);
     await act(async () => {
         expect(await publishedSelectLayout!('costs', { signal: AbortSignal.abort() })).toBe(false);
     });
@@ -479,10 +482,20 @@ it('settles an acknowledged view switch after its own publication retires and re
     await flushHookEffects({ cycles: 10 });
     expect(screen.findByTestId('selected-layout')!.props.children).toBe('costs');
     expect(await pending).toMatchObject({ ok: true });
-    expect(reader!.resolveCurrentUiCommand(work.id)).toBeNull();
-    expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
-        input: { commandId: work.id }, context: { surface: 'agent' } })).toMatchObject({ ok: false, errorCode: 'unsupported_action' });
-    expect(screen.findByTestId('selected-layout')!.props.children).toBe('costs');
+    let former!: Awaited<ReturnType<typeof executeCurrentUiContextAction>>;
+    await act(async () => {
+        former = await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+            input: { commandId: work.id }, context: { surface: 'agent' } });
+    });
+    expect({ result: former, selected: screen.findByTestId('selected-layout')!.props.children }).toMatchObject({
+        result: { ok: false, errorCode: 'unsupported_action' }, selected: 'costs',
+    });
+    if (!mountRetires) {
+        const nextWork = reader!.readCurrentUiContext()!.commands.find(command => command.title === 'Work')!;
+        expect(nextWork.id).not.toBe(work.id);
+        await invoke(nextWork.id);
+        expect(screen.findByTestId('selected-layout')!.props.children).toBe('work');
+    }
 });
 
 it('keeps page command addresses across equivalent callbacks and scope changes, retiring on Account withdrawal', async () => {

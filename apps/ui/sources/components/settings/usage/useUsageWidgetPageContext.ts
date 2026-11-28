@@ -242,7 +242,7 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
                     ? { ok: true, result: { status: 'refreshed' } } as const
                     : projectActionResultForCurrentUiCommand(outcome);
             } }] : []),
-    ], canChange);
+    ], canChange, input.layoutId);
     const publication = React.useMemo(() => {
         if (!canChange()) return null;
         const enrichment: CurrentUiContextMountedEnrichment = {
