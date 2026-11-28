@@ -47,6 +47,21 @@ function createDeps(
 }
 
 describe('normalizeSessionCreateSpawnRequest', () => {
+  it('authors an exact Agent and model without opening the local Agent catalog', async () => {
+    const { spawnRequest } = parseSessionCreateSpawnOptions(['create', '--path', '/repo/project',
+      '--agent', 'agent:happier.agent.muse/muse', '--model', 'meta/muse-spark-1.3-contributor']);
+    await expect(normalizeSessionCreateSpawnRequest(spawnRequest, createDeps({
+      readAgentDefinitions: () => { throw new Error('Exact Agent authoring needs no local catalog'); },
+    }))).resolves.toMatchObject({
+      input: {
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.muse', localId: 'muse' } },
+        modelSelection: { ref: {
+          agentTargetKey: 'agent:happier.agent.muse/muse', modelId: 'meta/muse-spark-1.3-contributor',
+        } },
+      },
+    });
+  });
+
 
   it.each([
     ['not-a-target', 'claude', [], 'agent_target_parse_failed'],
@@ -175,7 +190,6 @@ describe('normalizeSessionCreateSpawnRequest', () => {
     const normalized = await normalizeSessionCreateSpawnRequest({
       directory: '/repo/project', backendTargetKey, modelId: 'chosen-model',
     }, createDeps({ readAgentDefinitions: () => readAgentCatalogSnapshot().agentDefinitionsById.values() }));
-    expect(normalized.agentId).toBe('custom-acp');
     expect(normalized.input.agentTarget).toEqual({
       kind: 'agent', identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, definitionId: 'chosen',
     });
@@ -195,7 +209,6 @@ describe('normalizeSessionCreateSpawnRequest', () => {
     ]);
     const normalized = await normalizeSessionCreateSpawnRequest(parsed.spawnRequest,
       createDeps({ readAgentDefinitions: () => readAgentCatalogSnapshot().agentDefinitionsById.values() }));
-    expect(normalized.agentId).toBe('claude');
     expect(normalized.input.agentTarget).toEqual({
       kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
     });
@@ -292,7 +305,7 @@ describe('normalizeSessionCreateSpawnRequest', () => {
     });
   });
 
-  it('resolves a qualified external Agent key through the catalog before legacy conversion', async () => {
+  it('authors a qualified external Agent and model for the receiving Machine', async () => {
     const normalized = await normalizeSessionCreateSpawnRequest({
       directory: '/repo/project',
       backendTargetKey: 'agent:com.acme.review/review-bot',
@@ -306,7 +319,6 @@ describe('normalizeSessionCreateSpawnRequest', () => {
       ],
     }));
 
-    expect(normalized.agentId).toBe('com.acme.review/review-bot');
     expect(normalized.input.agentTarget).toEqual({
       kind: 'agent',
       identity: { pluginId: 'com.acme.review', localId: 'review-bot' },

@@ -198,6 +198,12 @@ async function resolveAgentTarget(
   if (!requestedTarget && !selectedAgentId) {
     invalidSessionCreateArgument('the default Agent is unavailable.');
   }
+  const requestedTargetKey = buildBackendTargetKeyV2(requestedTarget);
+  if (requestedTarget?.kind === 'agent' && request.backendTargetKey === requestedTargetKey) {
+    // An exact identity needs no local alias lookup. The selected Machine
+    // supplies its declaration when the authored request is prepared.
+    return { agentTarget: requestedTarget, backendTargetKey: requestedTargetKey };
+  }
   const catalog = await deps.readAgentDefinitions();
   const isCatalog = isSpawnAgentCatalog(catalog);
   const definitions = [...(isCatalog ? catalog.definitions : catalog)];
@@ -205,12 +211,6 @@ async function resolveAgentTarget(
     ? readAgentRoutingIdForContributionIdentity(indexAgentRoutingIdsByContributionIdentity(definitions), requestedTarget.identity)
     : selectedAgentId;
   const agent = definitions.find((candidate) => candidate.id === resolvedAgentId);
-  const requestedTargetKey = buildBackendTargetKeyV2(requestedTarget);
-  if (!agent?.identity && requestedTarget.kind === 'agent' && request.backendTargetKey === requestedTargetKey) {
-    // An exact identity needs no local alias lookup. The selected Machine
-    // supplies its declaration when the authored request is prepared.
-    return { agentTarget: requestedTarget, backendTargetKey: requestedTargetKey };
-  }
   if (!agent?.identity) {
     const unavailable = isCatalog
       ? [
