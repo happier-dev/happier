@@ -39,7 +39,7 @@ describe('MI-R3 registered Project Open authority/effect boundary', () => {
     roots.push(root);
     const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes });
     const rows: ProjectAccountRowV1[] = [];
-    // Same canonical private projection fixture as registerProjectOpenRpcHandlers.test.ts;
+    // Same canonical private projection fixture as registerProjectOpenRpcHandlers.composed.test.ts;
     // the mocked boundary is authenticated Home HTTP, not Workspace/SCM logic.
     const authorization = { v: 1, token: 'admitted-requester-fixture', binding: {
       accountId, custodianAccountId: 'owner', serverIdentityId: 'srv_test_home', machineId: 'machine',

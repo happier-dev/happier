@@ -1,0 +1,258 @@
+import { randomUUID } from 'node:crypto';
+import { chmod, copyFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { expect, vi } from 'vitest';
+import { z } from 'zod';
+import { readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployments';
+import { isDeploymentRollbackSourceEligibleV1 } from '@happier-dev/deployments/contracts/v1';
+import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registries/registryActionsV1';
+import { DeploymentTemplateInstantiateResultV1Schema,
+    type DeploymentTemplateInstantiateInputV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
+import { DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptResultV1Schema, type DeploymentReceiptResultV1,
+    DeploymentDomainMutationResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
+import { DeploymentAppMachineAssociationV1Schema } from '@happier-dev/protocol/machines/enrollmentV1';
+import { DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1, MachineRolesGetResultV1Schema } from '@happier-dev/protocol/machines/roles/machineRolesV1';
+import { readDeploymentDomainArtifactV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
+import { parseDeploymentComposeSourceV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { createEnrollMachineFlowExecutorFromHappierJsonExecutor } from '../../../../packages/cli-common/src/systemTasks/executors/enrollMachineFlowExecutor';
+import { createHappierJsonExecutorFromTextRunner } from '../../../../packages/cli-common/src/systemTasks/executors/happierJsonExecutorFromTextRunner';
+import { resolveRemoteInstalledFirstPartyBinaryPath } from '../../../../packages/cli-common/src/systemTasks/ssh/remoteFirstPartyInstallPath';
+import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
+import * as serverLogging from '../../../server/sources/utils/logging/log';
+import { ApiClient } from '@/api/api';
+import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { configuration } from '@/configuration';
+import { resolveOwnServerDeploymentIdentityForHost } from './targets/ownServer/paths';
+import type { ProductionTelemetryCollectorAppJourney } from './deploymentTelemetryJourney.composed.testkit';
+
+const ListedMachines = z.looseObject({ items: z.array(z.looseObject({ machineId: z.string(),
+    deploymentApp: z.optional(z.nullable(DeploymentAppMachineAssociationV1Schema)) })) });
+const ComposeDocument = z.looseObject({ networks: z.record(z.string(), z.unknown()).optional(), services: z.record(z.string(), z.looseObject({
+    environment: z.record(z.string(), z.unknown()), volumes: z.optional(z.array(z.unknown())),
+})) });
+
+/** Shares the incumbent real Home, Accounts and native Docker boundary. */
+export const runCollectorAppJourney: ProductionTelemetryCollectorAppJourney = async context => {
+    const { home, initiator, nativeDocker } = context;
+    const catalog = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.sources.list'].parse(
+        await initiator.accepted('registries.sources.list', { kind: 'app' }, home.machineId)).sources
+        .find(source => 'packageContent' in source && source.origin.pluginId === 'happier.deployment.templates');
+    if (!catalog) throw new Error('The enrolled host must publish its bundled App catalog');
+    const selected = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(await initiator.accepted(
+        'registries.items.read', { kind: 'app', sourceId: catalog.id, itemId: 'telemetry-collector' }, home.machineId)).item;
+    if (selected.payload.kind !== 'app' || selected.payload.state !== 'ready' || !selected.summary.version) {
+        throw new Error('The catalog must produce the ready collector App');
+    }
+    const instantiate = {
+        mode: 'apply', serverId: home.serverId, machineId: home.machineId, projectSourceId: initiator.projectSourceId,
+        templateRef: { sourceId: catalog.id, itemId: selected.summary.itemId, version: selected.summary.version, ref: selected.payload.ref },
+        environment: { kind: 'create', name: 'F14 collector App', requestKey: randomUUID(), protection: 'nonProduction',
+            purpose: 'standard', deployerMode: 'managers', controllerMachineId: home.machineId },
+        target: { kind: 'new', installationId: home.installationId }, destination: { kind: 'stored' },
+        bindings: [{ purpose: 'variable', phase: 'runtime', name: 'HAPPIER_SERVER_URL', source: { kind: 'value', value: home.baseUrl } }],
+    } satisfies DeploymentTemplateInstantiateInputV1;
+    const useAttempt = await initiator.invokeSettled('deployments.templates.instantiate', instantiate, home.machineId);
+    expect(useAttempt.ok).toBe(false);
+    if (!useAttempt.ok) expect(useAttempt.effectAttempted).not.toBe(true);
+    await initiator.grantHostManage();
+    const applied = DeploymentTemplateInstantiateResultV1Schema.parse(
+        await initiator.accepted('deployments.templates.instantiate', instantiate, home.machineId));
+    if (applied.kind !== 'applied') throw new Error(`Collector template did not apply: ${applied.kind}`);
+    const environmentId = applied.environmentId;
+    const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: configuration.happyHomeDir,
+        serverId: home.serverId, environmentId });
+    const projectFilter = `label=com.docker.compose.project=${identity.projectName}`;
+    context.cleanup.push(async () => {
+        for (const [kind, args] of [['container', ['ps', '--all']], ['network', ['network', 'ls']], ['volume', ['volume', 'ls']]] as const) {
+            const listed = await nativeDocker([...args, '--filter', projectFilter, '--quiet']);
+            for (const id of listed.stdout.trim().split('\n').filter(Boolean)) {
+                await nativeDocker(kind === 'container' ? ['rm', '--force', '--volumes', id] : [kind, 'rm', id]);
+            }
+        }
+    });
+    const detail = DeploymentEnvironmentGetResultV1Schema.parse(await initiator.accepted('deployments.environments.get', {
+        serverId: home.serverId, environmentId }));
+    if (!detail.ok) throw new Error(detail.error);
+    const artifactStore = createCredentialedAccountArtifactStore(initiator.credentials);
+    const artifact = await runWithServerHttpBaseUrl(home.baseUrl, () => artifactStore.read(detail.environment.contentArtifactId));
+    const opened = readDeploymentEnvironmentArtifactV1(detail.environment, artifact);
+    if (!opened.ok) throw new Error(`Collector Environment content unavailable: ${opened.error}`);
+    const definition = opened.content.definition;
+    if (definition.kind !== 'stored') throw new Error('The collector template must create a stored definition');
+    const document = ComposeDocument.parse(await parseDeploymentComposeSourceV1(definition.document));
+    document.networks = { ...document.networks, default: { external: true, name: context.collectorHomeNetwork } };
+    const serviceName = selected.payload.app.compose.primaryService;
+    const service = serviceName ? document.services[serviceName] : undefined;
+    if (!serviceName || !service) throw new Error('The collector template must select its native service');
+    const homeDir = z.string().parse(service.environment.HAPPIER_HOME_DIR);
+    const binaryPath = resolveRemoteInstalledFirstPartyBinaryPath({ componentId: 'happier-cli', channel: 'stable', remoteHomeDir: homeDir });
+    // Establish the fixture's real HTTPS trust through ordinary authored Compose
+    // configuration. The image and enrollment transport remain unchanged.
+    const caPath = process.env.NODE_EXTRA_CA_CERTS;
+    if (!caPath) throw new Error('The native Home fixture must publish its public CA certificate path');
+    // The container runs under its image UID, which may differ from the Home fixture owner.
+    const mountedCaPath = join(home.baseDir, 'collector-public-ca.pem');
+    await copyFile(caPath, mountedCaPath);
+    await chmod(mountedCaPath, 0o644);
+    const guestCaPath = '/home/happier/home-fixture-ca.pem';
+    service.environment.NODE_EXTRA_CA_CERTS = guestCaPath;
+    service.volumes = [...service.volumes ?? [], { type: 'bind', source: mountedCaPath, target: guestCaPath, read_only: true }];
+    await initiator.accepted('deployments.environments.update', { serverId: home.serverId, environmentId,
+        expectedRevision: detail.environment.revision, contentArtifactId: detail.environment.contentArtifactId,
+        contentHeaderVersion: detail.environment.contentHeaderVersion, contentBodyVersion: detail.environment.contentBodyVersion,
+        patch: { definition: { from: 'compose', document: JSON.stringify(document),
+            profiles: definition.profiles, services: definition.services } } });
+    const serviceFilter = `label=com.docker.compose.service=${serviceName}`;
+    const listCollectorContainers = async () => {
+        const listed = await nativeDocker(['ps', '--all', '--filter', projectFilter, '--filter', serviceFilter, '--format', '{{.ID}}']);
+        return listed.stdout.trim().split('\n').filter(Boolean);
+    };
+    const captureCollectorContainers = async (trigger: string, observedAt: string, machineId?: string) => {
+        const ids = await listCollectorContainers().catch(() => null);
+        const containers = ids && await Promise.all(ids.map(async id => {
+            const [state, logs] = await Promise.allSettled([
+                nativeDocker(['inspect', '--format', 'restarts={{.RestartCount}} {{json .State}}', id]),
+                nativeDocker(['logs', '--timestamps', '--tail', '80', id]),
+            ]);
+            return {
+                id,
+                state: state.status === 'fulfilled' ? redactBugReportSensitiveText(state.value.stdout.trim()) : null,
+                logs: logs.status === 'fulfilled' ? redactBugReportSensitiveText(
+                    `${logs.value.stdout}\n${logs.value.stderr}`.replace(
+                        /(x-happier-plugin-installation-manifest-publisher:\s*)[^\s'"\\]+/gi, '$1[REDACTED]')) : null,
+            };
+        }));
+        return { trigger, observedAt, machineId, containers };
+    };
+    // Start the Docker reads at the Home's child disconnect, before the deploy
+    // failure can remove the candidate. Keep the real logger and socket path.
+    let disconnectCapture: ReturnType<typeof captureCollectorContainers> | undefined;
+    const log = serverLogging.log;
+    const socketObservation = vi.spyOn(serverLogging, 'log').mockImplementation((facts: unknown, ...args: unknown[]) => {
+        log(facts, ...args);
+        if (disconnectCapture || typeof facts !== 'object' || facts === null
+            || !('module' in facts) || facts.module !== 'websocket'
+            || !('clientType' in facts) || facts.clientType !== 'machine-scoped'
+            || !('reason' in facts)
+            || !('machineId' in facts) || typeof facts.machineId !== 'string'
+            || facts.machineId === home.machineId || facts.machineId === 'none') return;
+        disconnectCapture = captureCollectorContainers('child-socket-disconnect', new Date().toISOString(), facts.machineId);
+    });
+    let receipt: DeploymentReceiptResultV1;
+    try {
+        receipt = DeploymentReceiptResultV1Schema.parse(await initiator.accepted('deployments.deploy', {
+            serverId: home.serverId, environmentId, targetLinkId: applied.targetLinkId, requestKey: randomUUID() }));
+        if (!receipt.ok || !('state' in receipt) || !isDeploymentRollbackSourceEligibleV1(receipt.state)) {
+            throw new Error(`The collector App deployment must settle successfully: ${JSON.stringify(receipt)}`);
+        }
+    } catch (error) {
+        const capture = await disconnectCapture;
+        const remaining = await captureCollectorContainers('deployment-failure', new Date().toISOString());
+        console.info('F14 collector Docker evidence', JSON.stringify({ capture, remaining }));
+        throw error;
+    } finally {
+        socketObservation.mockRestore();
+        await disconnectCapture;
+    }
+    const machines = ListedMachines.parse(await initiator.accepted('machines.list', { serverId: home.serverId, refresh: true })).items
+        .filter(machine => machine.deploymentApp?.environmentId === environmentId);
+    if (machines.length !== 1) throw new Error('The deployed App must publish exactly one enrolled child Machine');
+    const machineId = machines[0].machineId;
+    const api = await ApiClient.create(initiator.credentials);
+    const machine = await runWithServerHttpBaseUrl(home.baseUrl, () => api.getMachine(machineId));
+    if (!machine || machine.deploymentApp?.deploymentId !== receipt.deploymentId) throw new Error('The child must retain its accepted deployment association');
+    const roles = MachineRolesGetResultV1Schema.parse(await initiator.accepted('machines.roles.get', { serverId: home.serverId, machineId }));
+    if (roles.status !== 'ready' || !roles.policy.active.includes(DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1)) {
+        throw new Error('The enrolled App must activate the canonical Telemetry role');
+    }
+    await initiator.accepted('machines.access.grant.set', { serverId: home.serverId, machineId,
+        principal: { kind: 'team', teamId: initiator.teamId }, level: 'view' });
+    // The deploying Account's enrolled child holds the keys for this grant.
+    await initiator.accepted('machines.access.prepareKeys', { serverId: home.serverId, machineId }, machineId);
+    const ids = await listCollectorContainers();
+    if (ids.length !== 1) throw new Error('The collector must run in its admitted native container');
+    const containerId = ids[0];
+    const assertReady = async () => {
+        const executor = createHappierJsonExecutorFromTextRunner(async args => ({ status: 0,
+            ...await nativeDocker(['exec', containerId, binaryPath, ...args]) }));
+        const ready = await createEnrollMachineFlowExecutorFromHappierJsonExecutor({ executor }).waitForReadyDaemon!({
+            signal: context.signal, requireServiceInstalled: false, requireMachineControlReady: true });
+        if (ready.machineId !== machineId) throw new Error('The restarted App must retain its registered Machine');
+        await nativeDocker(['exec', containerId, 'sh', '-c',
+            `test "$(readlink /proc/1/exe)" = "$(readlink -f ${safeBashSingleQuote(binaryPath)})"`]);
+    };
+    await assertReady();
+    const domains = new Map<string, Readonly<{ id: string; revision: number; hostname: string }>>();
+    return { machineId, environmentId,
+        readCollectorActionFailures: async () => {
+            const { stdout } = await nativeDocker(['exec', containerId, 'sh', '-c',
+                'for log in "$1"/logs/*.log; do [ ! -f "$log" ] || grep -F "Plugin Action failed" "$log"; done; exit 0',
+                'collector-action-diagnostics', homeDir]);
+            const fact = z.object({ pluginId: z.literal('happier.telemetry'), localId: z.literal('capture/costs/read'),
+                requestId: z.string(), code: z.string().optional(), causeClass: z.string().optional(),
+                causeCode: z.string().optional(), projectionCollapsed: z.boolean().optional() });
+            return stdout.split('\n').flatMap(line => {
+                const match = /Plugin Action failed (\{.*\})/.exec(line);
+                if (!match) return [];
+                const parsed = fact.safeParse(JSON.parse(match[1]));
+                return parsed.success ? [parsed.data] : [];
+            });
+        },
+        restart: async () => { await nativeDocker(['restart', containerId]); await assertReady(); },
+        stop: async () => { await nativeDocker(['stop', containerId]); },
+        start: async () => { await nativeDocker(['start', containerId]); await assertReady(); },
+        prepareEnvironment: async monitoredId => {
+            const current = await context.readEnvironment(monitoredId);
+            const link = current.targetLinks.find(item => item.id === current.environment.runtimeTargetLinkId);
+            if (!link) throw new Error('The monitored Environment must retain its runtime target');
+            const existing = domains.get(monitoredId);
+            const id = existing?.id ?? randomUUID();
+            const hostname = existing?.hostname ?? `f14-telemetry-${id}.localhost`;
+            const domain = await context.accepted('deployments.domains.add', {
+                serverId: home.serverId, environmentId: monitoredId, targetLinkId: link.id,
+                expectedRevision: current.environment.revision, expectedTargetLinkRevision: link.revision,
+                domainId: id, ...(existing ? { expectedDomainRevision: existing.revision } : {}), requestKey: randomUUID(),
+                content: { hostname, target: { kind: 'telemetry' } } }).then(result => DeploymentDomainMutationResultV1Schema.parse(result), async (error: unknown) => {
+                console.info('F14 live collector containers at Domain refusal', { count: (await listCollectorContainers().catch(() => null))?.length ?? null });
+                throw error;
+            });
+            if (!domain.ok || domain.domain.state === 'failed') throw new Error('The selected collector must expose the normal telemetry Domain');
+            console.info('F14 telemetry Domain accepted', { state: domain.domain.state });
+            let verifiedRevision = domain.domain.revision;
+            if (!existing) {
+                const store = createCredentialedAccountArtifactStore(context.credentials);
+                const assertPrivateBinding = async (header: typeof domain.domain) => {
+                    const capture = header.placements?.find(item => item.desired && item.listener === 'privateOrigin');
+                    if (!capture) throw new Error('F14 requires a desired private collector placement');
+                    const artifact = await runWithServerHttpBaseUrl(home.baseUrl, () => store.read(capture.content.contentArtifactId));
+                    const retained = readDeploymentDomainArtifactV1(capture.content, artifact);
+                    if (!retained.ok) throw new Error(`Collector Domain content unavailable: ${retained.error}`);
+                    const bindings = retained.content.privatePlacementBindings ?? [];
+                    const matches = bindings.some(binding => binding.machineId === capture.placement.machineId
+                        && binding.installationId === capture.placement.installationId
+                        && binding.nativeServer === capture.placement.nativeServer && binding.dockerEngineId === capture.dockerEngineId);
+                    expect(matches, 'The protected Domain must retain its exact private collector placement').toBe(true);
+                    return bindings.length;
+                };
+                const afterAdd = await assertPrivateBinding(domain.domain);
+                console.info('F14 collector Add retained the private binding', { bindingCount: afterAdd });
+                const verified = DeploymentDomainMutationResultV1Schema.parse(await context.accepted('deployments.domains.verify', {
+                    serverId: home.serverId, environmentId: monitoredId, domainId: id,
+                    expectedRevision: domain.revision, expectedDomainRevision: domain.domain.revision, requestKey: randomUUID(),
+                }));
+                if (!verified.ok) throw new Error(`The collector Domain Verify refused: ${verified.error}`);
+                expect(verified.domain.state).toBe('active');
+                expect(verified.domain.networkExposure?.some(({ listener, observation }) =>
+                    listener === 'privateOrigin' && observation.kind === 'ready'
+                    && observation.listeners.some(item => item.endpoints.some(endpoint => endpoint.audience === 'privateNetwork')))).toBe(true);
+                const afterVerify = await assertPrivateBinding(verified.domain);
+                expect(afterVerify).toBe(afterAdd);
+                console.info('F14 collector Domain Verify active with a private listener', { bindingCount: afterVerify });
+                verifiedRevision = verified.domain.revision;
+            }
+            domains.set(monitoredId, { id, hostname, revision: verifiedRevision });
+        },
+    };
+};

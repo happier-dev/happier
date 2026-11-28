@@ -8,7 +8,7 @@ import { MANAGED_TOOLS_ROOT_ENV_KEY } from '@happier-dev/cli-common/firstPartyRu
 import { admitDaemonForegroundAgentRuntime } from '@/daemon/controlClient';
 import { createForegroundAdmissionError } from '@/cli/foregroundAdmissionFailure';
 import { readDaemonState } from '@/persistence';
-import { startInstalledDaemonFixture } from '@/daemon/testkit/installedDaemon.testkit';
+import { startInstalledDaemonFixture } from '@/daemon/testkit/installedDaemon.composed.testkit';
 
 it.each(['plugin_runtime', 'account_catalogs'] as const)('registers the real daemon and serves its control listener when %s is unavailable', async capability => {
   const mkdir = filesystem.mkdir;

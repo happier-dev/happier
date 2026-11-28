@@ -8,7 +8,7 @@ it('serves a throwaway source daemon without requesting workspace builds during 
     const launched = performance.now();
     const initialCpu = process.cpuUsage();
     console.log(JSON.stringify({ sourceDaemonBoot: { phase: 'launch', pid: process.pid } }));
-    const { startInstalledDaemonFixture } = await import('../testkit/installedDaemon.testkit');
+    const { startInstalledDaemonFixture } = await import('../testkit/installedDaemon.composed.testkit');
     const { readDaemonState } = await import('@/persistence');
     const imported = performance.now();
     console.log(JSON.stringify({ sourceDaemonBoot: { phase: 'fixtureImported', elapsedMs: Math.round(imported - launched) } }));

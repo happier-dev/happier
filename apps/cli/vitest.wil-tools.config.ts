@@ -16,5 +16,5 @@ export default {
         { find: '@', replacement: resolve(__dirname, 'src') },
     ] },
     test: { ...config.test, pool: 'forks', isolate: true, globals: false,
-        setupFiles: [resolve(__dirname, '../../scripts/testing/vitestAgentSetup.mjs'), './src/vitestSetup.ts'], sequence: { setupFiles: 'list' }, globalSetup: [], include: ['src/**/*.test.ts'], testTimeout: 30_000 },
+        setupFiles: [resolve(__dirname, '../../scripts/testing/vitestAgentSetup.mjs'), './src/vitestSetup.composed.testkit.ts'], sequence: { setupFiles: 'list' }, globalSetup: [], include: ['src/**/*.test.ts'], testTimeout: 30_000 },
 };

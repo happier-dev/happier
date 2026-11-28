@@ -26,7 +26,7 @@ import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/act
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { ensureCliActionPolicySettings } from './ensureCliActionPolicySettings';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { REQUESTER_ACCOUNT_MCP_AGENT_PLUGIN, startRequesterAccountMcpSession } from '@/agent/runtime/session/loop/requesterAccountMcpSession.testkit';
+import { REQUESTER_ACCOUNT_MCP_AGENT_PLUGIN, startRequesterAccountMcpSession } from '@/agent/runtime/session/loop/requesterAccountMcpSession.composed.testkit';
 
 // Only Home/provider HTTP and the gh executable boundary vary; runtime owners remain real.
 vi.mock('undici', async importOriginal => {

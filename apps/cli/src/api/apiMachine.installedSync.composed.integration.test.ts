@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { handleActionsCommand } from '@/cli/commands/actions';
-import { startInstalledDaemonFixture } from '@/daemon/testkit/installedDaemon.testkit';
+import { startInstalledDaemonFixture } from '@/daemon/testkit/installedDaemon.composed.testkit';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 
 // The normal CLI, authenticated Home and installed daemon execute unchanged.

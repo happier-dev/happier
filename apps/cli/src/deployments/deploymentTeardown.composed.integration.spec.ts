@@ -50,7 +50,7 @@ import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/acces
 import { registerAutomationActionIndexRoutes } from '../../../server/sources/app/api/routes/automations/registerAutomationActionIndexRoutes';
 import { registerAutomationV3Routes } from '../../../server/sources/app/api/routes/automations/registerAutomationV3Routes';
 import { registerWorkflowRunStorageRoutes } from '../../../server/sources/app/api/routes/automations/registerWorkflowRunStorageRoutes';
-import { createS0DeploymentDaemonIngress } from './deploymentDaemonIngress.testkit';
+import { createS0DeploymentDaemonIngress } from './deploymentDaemonIngress.composed.testkit';
 import { createProductionDaemonWorkflowRuntime } from '@/daemon/workflows/daemonRuntime';
 import { createAutomationClaimClient } from '@/daemon/automation/automationClaimClient';
 import { resolveAutomationWorkerAccountEncryption } from '@/plugins/runtime/automations/automationAccountCurrentness';

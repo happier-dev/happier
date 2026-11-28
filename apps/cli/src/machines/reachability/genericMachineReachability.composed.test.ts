@@ -1,7 +1,7 @@
 // Load the OS boundary before the production owners or named filesystem imports.
 import { createDockerNetworkAuthoredProvider, createGenericDefaultFactoryJourney, executeReviewedReachabilityConfigure,
   installationId, journey, machineId, parseCompletedReachabilityConfigure, parseReachabilityInspectResult, selection,
-} from './genericMachineReachability.testkit';
+} from './genericMachineReachability.composed.testkit';
 import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';

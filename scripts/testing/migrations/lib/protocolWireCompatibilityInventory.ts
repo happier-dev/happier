@@ -432,7 +432,7 @@ export const PROTOCOL_WIRE_COMPATIBILITY_INVENTORY: readonly ProtocolWireCompati
       'apps/cli/src/daemon/spawn/resolveSpawnChildEnvironment.pluginHooks.test.ts',
       'apps/cli/src/daemon/spawn/resolveSpawnChildEnvironment.providerOrdering.test.ts',
       'apps/cli/src/agent/runtime/bridges/session/SessionHostBridge.hooks.test.ts',
-      'apps/cli/src/agent/runtime/bridges/executionRun/ExecutionRunHostBridge.registry.test.ts',
+      'apps/cli/src/agent/runtime/bridges/executionRun/ExecutionRunHostBridge.registry.composed.test.ts',
       'apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.integration.test.ts',
       'packages/tests/suites/core-e2e/bridge.lifecycleHookDispatch.slow.e2e.test.ts',
       'packages/tests/suites/core-e2e/plugins.hookExecution.slow.e2e.test.ts',

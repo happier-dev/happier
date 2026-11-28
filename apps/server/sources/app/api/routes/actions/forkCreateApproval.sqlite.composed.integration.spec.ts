@@ -34,7 +34,7 @@ import { projectDeploymentDomainHeader } from '@/app/deployments/deploymentDomai
 import { projectDeploymentReceiptHeader } from '@/app/deployments/deploymentService';
 import { withConfiguredDaemonTestHome } from '../../../../../../cli/src/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { createDaemonDeploymentActionDeps } from '../../../../../../cli/src/deployments/createDaemonDeploymentActionDeps';
-import { createS0DeploymentDaemonIngress, installationBoundary, readS0ControllerCredentials, readS0Installation } from '../../../../../../cli/src/deployments/deploymentDaemonIngress.testkit';
+import { createS0DeploymentDaemonIngress, installationBoundary, readS0ControllerCredentials, readS0Installation } from '../../../../../../cli/src/deployments/deploymentDaemonIngress.composed.testkit';
 import { createCliActionExecutorFromCredentials } from '../../../../../../cli/src/session/actions/createCliActionExecutorFromCredentials';
 import { adoptServerProfileHomeConnectionDescriptor } from '../../../../../../cli/src/server/serverProfiles';
 import { configuration } from '../../../../../../cli/src/configuration';

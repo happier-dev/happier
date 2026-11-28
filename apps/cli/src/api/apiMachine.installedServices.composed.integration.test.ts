@@ -10,7 +10,7 @@ import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openPr
 import { DaemonLocalServiceLauncherSnapshotResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { createProjectServiceDeclarationTargetIdV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import { MachineProcessesAnswerV1Schema } from '@happier-dev/protocol/machines/processes/machineProcessesV1';
-import { startInstalledDaemonFixture } from '@/daemon/testkit/installedDaemon.testkit';
+import { startInstalledDaemonFixture } from '@/daemon/testkit/installedDaemon.composed.testkit';
 import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { ExternalActionRequesterInvocationV1Schema } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';

@@ -31,7 +31,7 @@ import type { ResolveEngineRegistryParams } from './types';
 import { resolveBackendEngineAdapterResolution, resolveCliEngineRegistry } from './registry';
 import { resolveAccountConfiguredAcpLaunch, resolveAccountConfiguredAcpLaunchForAgent } from './accountConfiguredAcp';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { createNativeAgentLaunchPreparationFixture } from './nativeAgentSession.testkit';
+import { createNativeAgentLaunchPreparationFixture } from './nativeAgentSession.composed.testkit';
 import { waitForCondition } from '@/testkit/async/waitFor';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { readNewSessionDraftFromRepository, writeNewSessionDraftToRepository } from '../../../../../../../apps/ui/sources/components/sessions/composer/newSessionDraftRepositoryAdapter';

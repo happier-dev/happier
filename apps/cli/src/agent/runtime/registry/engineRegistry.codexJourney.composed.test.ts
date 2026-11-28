@@ -21,7 +21,7 @@ import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { logger } from '@/utils/logger';
 import { withCodexNativeAttachFixture } from '../../../../../../packages/plugins/codex/src/agent/runtime/appServer/runtime.nativeAttach.test-support';
 import { resolveBackendEngineAdapterResolution } from './engineRegistry';
-import { bindNativeAgentLaunchPreparationFixture, createNativeAgentLaunchPreparationFixture, createNativeAgentJourneyTranscriptFixture } from './engineRegistry/nativeAgentSession.testkit';
+import { bindNativeAgentLaunchPreparationFixture, createNativeAgentLaunchPreparationFixture, createNativeAgentJourneyTranscriptFixture } from './engineRegistry/nativeAgentSession.composed.testkit';
 
 afterAll(() => pluginReloadController.shutdown());
 

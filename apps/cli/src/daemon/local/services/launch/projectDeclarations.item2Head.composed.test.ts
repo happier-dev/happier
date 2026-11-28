@@ -106,7 +106,7 @@ import { createProjectWorkerAction } from '@/workspaces/execution/projectWorkerA
 import * as machineRpcBoundary from '@/session/transport/rpc/machineRpc';
 import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
-import { createProjectServiceMoveHome } from './projectServiceMoveHome.testkit';
+import { createProjectServiceMoveHome } from './projectServiceMoveHome.composed.testkit';
 import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';

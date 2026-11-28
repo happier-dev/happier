@@ -26,7 +26,7 @@ import { createDeploymentSocketHome } from '../../../server/sources/testkit/depl
 import { db } from '../../../server/sources/storage/db';
 import { createDaemonDeploymentActionDeps } from './createDaemonDeploymentActionDeps';
 import { createS0DeploymentDaemonIngress, installationBoundary, readS0ControllerCredentials,
-    readS0Installation } from './deploymentDaemonIngress.testkit';
+    readS0Installation } from './deploymentDaemonIngress.composed.testkit';
 import { createOwnServerDeploymentRuntimeForHost } from './targets/ownServer/ownServerDeploymentHostRuntime';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });

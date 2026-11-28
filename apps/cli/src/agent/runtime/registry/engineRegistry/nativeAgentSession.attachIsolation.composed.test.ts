@@ -12,7 +12,7 @@ import { configuration } from '@/configuration';
 import { hashProcessCommand } from '@/daemon/sessionRegistry';
 import * as processIdentity from '@/daemon/processIdentity';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
-import { createNativeAgentRuntimeSessionPlanFixture, createSessionHostServiceOwners } from './nativeAgentSession.testkit';
+import { createNativeAgentRuntimeSessionPlanFixture, createSessionHostServiceOwners } from './nativeAgentSession.composed.testkit';
 import { projectEngineRuntimeContributionFromAgent } from './contributions';
 import { buildPluginSessionBindingInput } from '@/plugins/runtime/runtimeCore/plugin/sessionLaunch';
 import { createProviderCliAttachSurface, attachObservedNativeClient } from '@/session/attach/providerCliAttach';

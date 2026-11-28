@@ -1,4 +1,3 @@
-import '../../ui/sources/dev/vitestDomTextEncoding';
 import './configureZodLocale';
 import './vitestHomeGuard';
 import { writeFileSync, chmodSync } from 'node:fs';

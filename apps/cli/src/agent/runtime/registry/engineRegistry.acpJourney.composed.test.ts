@@ -24,7 +24,7 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 
 import { resolveBackendEngineAdapterResolution } from './engineRegistry';
-import { bindNativeAgentLaunchPreparationFixture, createNativeAgentLaunchPreparationFixture } from './engineRegistry/nativeAgentSession.testkit';
+import { bindNativeAgentLaunchPreparationFixture, createNativeAgentLaunchPreparationFixture } from './engineRegistry/nativeAgentSession.composed.testkit';
 
 describe('OpenCode ACP catalog-to-native conversation', () => {
   afterAll(() => pluginReloadController.shutdown());

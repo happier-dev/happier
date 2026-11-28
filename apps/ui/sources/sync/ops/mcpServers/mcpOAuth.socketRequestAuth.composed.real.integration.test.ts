@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, it } from 'vitest';
-import '../../../../../cli/src/vitestSetup';
+import '../../../../../cli/src/vitestSetup.composed.testkit';
 
 import {
     exerciseMcpOAuthMachineTest,

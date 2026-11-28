@@ -49,7 +49,7 @@ import { createMachineSessionDirectTargetTransport } from '@/rpc/handlers/sessio
 import { registerPrivateSpawnSessionRpcHandlers } from '@/rpc/handlers/sessionLifecycle';
 import { registerSessionCreationTargetPreparationRpc } from '@/session/creation/registerSessionCreationTargetPreparationRpc';
 import { readSessionTeamCredentialResourceCatalog } from '@/session/services/sessionTeamCredentialLaunch';
-import { createNativeSessionClientTestPort } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession.testkit';
+import { createNativeSessionClientTestPort } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession.composed.testkit';
 import { createCurrentSessionPresentationHost } from '@/session/presentation/currentSessionPresentationService';
 import { SessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { resolveHostSessionRuntimeFactoryResult } from '@/agent/runtime/session/loop/factoryResult';

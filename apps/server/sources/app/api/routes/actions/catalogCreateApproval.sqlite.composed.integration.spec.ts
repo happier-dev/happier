@@ -9,7 +9,7 @@ import { createDeploymentSocketHome } from '@/testkit/deploymentSocketHome.testk
 import { db } from '@/storage/db';
 import { withConfiguredDaemonTestHome } from '../../../../../../cli/src/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { createDaemonDeploymentActionDeps } from '../../../../../../cli/src/deployments/createDaemonDeploymentActionDeps';
-import { createS0DeploymentDaemonIngress, readS0ControllerCredentials } from '../../../../../../cli/src/deployments/deploymentDaemonIngress.testkit';
+import { createS0DeploymentDaemonIngress, readS0ControllerCredentials } from '../../../../../../cli/src/deployments/deploymentDaemonIngress.composed.testkit';
 import { createCliActionExecutorFromCredentials } from '../../../../../../cli/src/session/actions/createCliActionExecutorFromCredentials';
 import { createCliPromptLibraryStore } from '../../../../../../cli/src/settings/prompts/promptLibraryStore';
 import { adoptServerProfileHomeConnectionDescriptor } from '../../../../../../cli/src/server/serverProfiles';

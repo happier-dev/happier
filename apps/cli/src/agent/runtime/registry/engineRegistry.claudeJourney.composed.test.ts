@@ -22,7 +22,7 @@ import { resolveBackendEngineAdapterResolution } from './engineRegistry';
 import {
     bindNativeAgentLaunchPreparationFixture,
     createNativeAgentLaunchPreparationFixture,
-} from './engineRegistry/nativeAgentSession.testkit';
+} from './engineRegistry/nativeAgentSession.composed.testkit';
 
 it.skipIf(process.platform === 'win32')('prepares the catalog-selected Claude Session, replies, and reopens the native conversation', async () => {
     await withTempDir('claude-catalog-session-journey-', async directory => {

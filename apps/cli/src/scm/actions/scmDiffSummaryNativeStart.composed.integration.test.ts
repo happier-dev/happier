@@ -8,7 +8,7 @@ import {
   ScmDiffSummaryResultResponseSchema, SessionSpawnNewActionResultV1Schema, SessionSpawnNewInputV2Schema,
   projectSessionSpawnNewActionInputV2,
 } from '@happier-dev/protocol';
-import { startInstalledDaemonFixture } from '@/daemon/testkit/installedDaemon.testkit';
+import { startInstalledDaemonFixture } from '@/daemon/testkit/installedDaemon.composed.testkit';
 import { createFirstConversationAgentFixture } from '@/daemon/testkit/firstConversationAgent.testkit';
 import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContractFixtures';
 import { removeTempDir } from '@/testkit/fs/tempDir';

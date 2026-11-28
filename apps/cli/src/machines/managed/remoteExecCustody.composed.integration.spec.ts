@@ -49,7 +49,7 @@ import { readManagedMachinePolicyCensus } from '@/daemon/startup/managedMachineP
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
 import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
-import { createS0DeploymentDaemonIngress, installationBoundary, readS0ControllerCredentials, readS0Installation } from '@/deployments/deploymentDaemonIngress.testkit';
+import { createS0DeploymentDaemonIngress, installationBoundary, readS0ControllerCredentials, readS0Installation } from '@/deployments/deploymentDaemonIngress.composed.testkit';
 import * as installationStore from '@/daemon/identity/store';
 import { decodeStoredCredentials, encodeStoredCredentials, updateSettings, writeCredentialsDataKey, type StoredCredentials } from '@/persistence';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';

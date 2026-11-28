@@ -2,7 +2,7 @@ import { expect, it, vi } from 'vitest';
 import axios from 'axios';
 
 import { readDaemonPluginCatalog } from '@/daemon/controlClient';
-import { startInstalledDaemonFixture } from '@/daemon/testkit/installedDaemon.testkit';
+import { startInstalledDaemonFixture } from '@/daemon/testkit/installedDaemon.composed.testkit';
 import { readDaemonState } from '@/persistence';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 

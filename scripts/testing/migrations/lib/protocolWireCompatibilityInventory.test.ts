@@ -126,7 +126,7 @@ test('the plugin and hook ABI inventory pins hook catalogs and bridge lifecycle 
   assert.ok(entry.proofTests.includes('apps/cli/src/plugins/runtime/hooks/execution/dispatchBridgeLifecycleHookEvent.test.ts'));
   assert.ok(entry.proofTests.includes('apps/cli/src/daemon/spawn/resolveSpawnChildEnvironment.pluginHooks.test.ts'));
   assert.ok(entry.proofTests.includes('apps/cli/src/agent/runtime/bridges/session/SessionHostBridge.hooks.test.ts'));
-  assert.ok(entry.proofTests.includes('apps/cli/src/agent/runtime/bridges/executionRun/ExecutionRunHostBridge.registry.test.ts'));
+  assert.ok(entry.proofTests.includes('apps/cli/src/agent/runtime/bridges/executionRun/ExecutionRunHostBridge.registry.composed.test.ts'));
   assert.ok(entry.proofTests.includes('packages/tests/suites/core-e2e/bridge.lifecycleHookDispatch.slow.e2e.test.ts'));
   assert.ok(entry.proofTests.includes('packages/tests/suites/core-e2e/plugins.hookExecution.slow.e2e.test.ts'));
 });

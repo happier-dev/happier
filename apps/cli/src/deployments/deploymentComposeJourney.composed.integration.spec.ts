@@ -80,11 +80,11 @@ import { registerTeamCredentialResourceRoutes } from '../../../server/sources/ap
 import { sessionRoutes } from '../../../server/sources/app/api/routes/session/sessionRoutes';
 import { sessionPendingRoutes } from '../../../server/sources/app/api/routes/session/pendingRoutes';
 import { registerAutomationActionIndexRoutes } from '../../../server/sources/app/api/routes/automations/registerAutomationActionIndexRoutes';
-import { runDeploymentRootBackupCoverage } from './deploymentRootBackupCoverage.testkit';
-import { runDeploymentRootProviderCoverage } from './deploymentRootProviderCoverage.testkit';
-import { runRailwayVolumeRemovalCoverage } from './railwayVolumeRemovalCoverage.testkit';
-import { runRailwayScopeDeletePreviewCoverage } from './railwayScopeDeletePreviewCoverage.testkit';
-import { runDeploymentRootMoveCoverage } from './deploymentRootMoveCoverage.testkit';
+import { runDeploymentRootBackupCoverage } from './deploymentRootBackupCoverage.composed.testkit';
+import { runDeploymentRootProviderCoverage } from './deploymentRootProviderCoverage.composed.testkit';
+import { runRailwayVolumeRemovalCoverage } from './railwayVolumeRemovalCoverage.composed.testkit';
+import { runRailwayScopeDeletePreviewCoverage } from './railwayScopeDeletePreviewCoverage.composed.testkit';
+import { runDeploymentRootMoveCoverage } from './deploymentRootMoveCoverage.composed.testkit';
 import { createSignedAccountContentBinding } from '../../../server/sources/testkit/accountEncryption';
 import { db } from '../../../server/sources/storage/db';
 import { inTx } from '../../../server/sources/storage/inTx';
@@ -127,8 +127,8 @@ import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { createExternalMcpServer } from '@/mcp/createExternalMcpServer';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 if (process.env.HAPPIER_RUN_DBW_TELEMETRY_F14 === '1') {
-    const { registerProductionTelemetrySetupJourney } = await import('./deploymentTelemetryJourney.testkit');
-    const { runCollectorAppJourney } = await import('./deploymentCollectorAppJourney.testkit');
+    const { registerProductionTelemetrySetupJourney } = await import('./deploymentTelemetryJourney.composed.testkit');
+    const { runCollectorAppJourney } = await import('./deploymentCollectorAppJourney.composed.testkit');
     registerProductionTelemetrySetupJourney({ nativeDeploymentArtifacts, sourceRequesterForHome, settlePublicApproval,
         collectorAppJourney: runCollectorAppJourney });
 }
@@ -377,8 +377,8 @@ process.stdin.resume();
     return { directory, agentEntry, tsx };
 }
 
-import { createS0DeploymentDaemonIngress, installationBoundary, readS0ControllerCredentials, readS0Installation } from './deploymentDaemonIngress.testkit';
-export { createS0DeploymentDaemonIngress } from './deploymentDaemonIngress.testkit';
+import { createS0DeploymentDaemonIngress, installationBoundary, readS0ControllerCredentials, readS0Installation } from './deploymentDaemonIngress.composed.testkit';
+export { createS0DeploymentDaemonIngress } from './deploymentDaemonIngress.composed.testkit';
 
 /** P11 consumes observations from this same enrolled Machine/Investigate hop.
  * P40 invokes this after the real preview/set and native probe producers land;

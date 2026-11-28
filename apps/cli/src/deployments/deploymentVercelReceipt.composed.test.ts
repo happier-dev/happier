@@ -11,7 +11,7 @@ import { reloadConfiguration } from '@/configuration';
 import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
 import { getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { REQUESTER_ACCOUNT_MCP_AGENT_PLUGIN, startRequesterAccountMcpSession } from '@/agent/runtime/session/loop/requesterAccountMcpSession.testkit';
+import { REQUESTER_ACCOUNT_MCP_AGENT_PLUGIN, startRequesterAccountMcpSession } from '@/agent/runtime/session/loop/requesterAccountMcpSession.composed.testkit';
 import { resolve } from 'node:path';
 import fastify from 'fastify';
 import nacl from 'tweetnacl';

@@ -19,7 +19,7 @@ import { adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfi
 import * as installationStore from '@/daemon/identity/store';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
-import { createS0DeploymentDaemonIngress, installationBoundary, readS0ControllerCredentials, readS0Installation } from './deploymentDaemonIngress.testkit';
+import { createS0DeploymentDaemonIngress, installationBoundary, readS0ControllerCredentials, readS0Installation } from './deploymentDaemonIngress.composed.testkit';
 import { createOwnServerDeploymentRuntimeForHost } from './targets/ownServer/ownServerDeploymentHostRuntime';
 import { configuration } from '@/configuration';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';

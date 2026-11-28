@@ -6,7 +6,7 @@ import { createTestMetadata } from '../../../../apps/cli/src/testkit/backends/se
 import {
   createExternalContributionFixtures, createLease, createNativeAgentRuntimeSessionPlanFixture,
   createNativeSessionClientTestPort, createSessionHostServiceOwners,
-} from '../../../../apps/cli/src/agent/runtime/registry/engineRegistry/nativeAgentSession.testkit';
+} from '../../../../apps/cli/src/agent/runtime/registry/engineRegistry/nativeAgentSession.composed.testkit';
 import { buildPluginSessionBindingInput } from '../../../../apps/cli/src/plugins/runtime/runtimeCore/plugin/sessionLaunch';
 import { createSessionRuntimeModelsPublisher } from '../../../../apps/cli/src/agent/runtime/controls/sessionRuntimeModelsPublisher';
 import { getModelOptionsForSession } from '../../../../apps/ui/sources/sync/domains/models/modelOptions';

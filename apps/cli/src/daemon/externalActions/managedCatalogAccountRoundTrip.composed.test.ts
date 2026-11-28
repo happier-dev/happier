@@ -175,7 +175,7 @@ import { registerAuthPingRoute } from '../../../../server/sources/app/api/routes
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
-import { MCP_REQUESTER_SDK_FIXTURE_KEY, startMcpRequesterParent } from '@/agent/runtime/session/loop/runHostSessionRuntime.mcpRequester.testkit';
+import { MCP_REQUESTER_SDK_FIXTURE_KEY, startMcpRequesterParent } from '@/agent/runtime/session/loop/runHostSessionRuntime.mcpRequester.composed.testkit';
 import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { WORKFLOW_RUN_STORAGE_HTTP_PATH } from '@/daemon/workflows/workflowRunStorageClient';
 import { prepareWorkflowRunStartV1, WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows';

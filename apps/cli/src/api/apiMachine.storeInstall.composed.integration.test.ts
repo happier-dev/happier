@@ -9,7 +9,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readMachineAdminAccessV1, MachineAdminAccessMutationResultV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
 import { ACTION_OPERATION_RPC_METHODS_V2, ActionOperationGetV1ResponseSchema,
   ActionOperationListV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
-import { startInstalledDaemonFixture } from '@/daemon/testkit/installedDaemon.testkit';
+import { startInstalledDaemonFixture } from '@/daemon/testkit/installedDaemon.composed.testkit';
 import { getLiveSystemTasksRunnerAdapter } from '@/capabilities/systemTasks/liveSystemTasksRunner';
 import { installRealActionExecutorModuleLoader } from '../../../ui/sources/dev/testkit/harness/actionHomesHttpHarness';
 import { loadSyncSingletonForTests } from '../../../ui/sources/dev/testkit/harness/syncSingletonLoader';

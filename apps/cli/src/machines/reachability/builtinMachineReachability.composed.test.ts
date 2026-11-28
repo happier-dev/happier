@@ -1,7 +1,7 @@
 // Install the genuine OS boundary before importing production native owners.
 import { createDockerNetworkAuthoredProvider, createGenericDefaultFactoryJourney, executeReviewedReachabilityConfigure,
   journey, machineId, parseCompletedReachabilityConfigure, parseReachabilityInspectResult, selection,
-} from './genericMachineReachability.testkit';
+} from './genericMachineReachability.composed.testkit';
 import { userInfo } from 'node:os';
 import { lstat, readFile, unlink } from 'node:fs/promises';
 import { resolveMachineEffectCli } from '../adminAccess/machineEffectCli';

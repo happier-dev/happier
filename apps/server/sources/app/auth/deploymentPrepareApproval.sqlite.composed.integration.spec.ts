@@ -24,7 +24,7 @@ import { configuration } from '../../../../cli/src/configuration';
 import { createRequesterCurrentnessSocketHarness } from '../../../../cli/src/testkit/backends/requesterCurrentnessSocketHarness';
 import { admitRequesterAccountActionContext } from '../../../../cli/src/daemon/sessionEncryption/requesterAccountActionProjection';
 import { resolveExternalActionServerRequestHeaders, projectExternalActionRequesterHttpAuthorization } from '../../../../cli/src/api/externalActionExecutionAuthorization';
-import { readS0ControllerCredentials } from '../../../../cli/src/deployments/deploymentDaemonIngress.testkit';
+import { readS0ControllerCredentials } from '../../../../cli/src/deployments/deploymentDaemonIngress.composed.testkit';
 import { resetInMemoryAccountSettingsContextForTests } from '../../../../cli/src/settings/accountSettings/bootstrapAccountSettingsContext';
 import { createAdmittedPluginRuntimeFixture } from '../../../../cli/src/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '../../../../cli/src/plugins/runtime/reload/singleton';

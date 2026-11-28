@@ -14,7 +14,7 @@ import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 import { reloadConfiguration } from '@/configuration';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import * as installationStore from '@/daemon/identity/store';
-import { createS0DeploymentDaemonIngress, installationBoundary, readS0Installation, readS0ControllerCredentials } from '@/deployments/deploymentDaemonIngress.testkit';
+import { createS0DeploymentDaemonIngress, installationBoundary, readS0Installation, readS0ControllerCredentials } from '@/deployments/deploymentDaemonIngress.composed.testkit';
 import { dispatchOriginalAccountAction } from '@/api/externalActionExecutionAuthorization';
 import { decodeStoredCredentials, encodeStoredCredentials } from '@/persistence';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';

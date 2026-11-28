@@ -14,7 +14,7 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { captureSessionLaunchControlMetadata, createSessionMetadata } from '@/agent/runtime/createSessionMetadata';
 import { configuration } from '@/configuration';
 import { createUsageObservationPublisher } from '@/usage/createUsageObservationPublisher';
-import type { readS0ControllerCredentials } from './deploymentDaemonIngress.testkit';
+import type { readS0ControllerCredentials } from './deploymentDaemonIngress.composed.testkit';
 import { adoptProductionTelemetryHealthCheck, productionTelemetryHealthSetupSchema } from './deploymentMetricsJourney.composed.testkit';
 import { healthResultProjectionPageSchema } from '../../../../packages/plugins/machine-services/src/healthResultProjection';
 

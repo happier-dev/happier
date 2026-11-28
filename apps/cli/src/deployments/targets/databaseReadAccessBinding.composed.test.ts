@@ -52,7 +52,7 @@ import {
   installationBoundary,
   readS0ControllerCredentials,
   readS0Installation,
-} from '../deploymentDaemonIngress.testkit';
+} from '../deploymentDaemonIngress.composed.testkit';
 import { createDaemonDeploymentActionDeps } from '../createDaemonDeploymentActionDeps';
 import { sealMachineSecretGrant } from '../secrets/machineSecretGrant';
 import { createOwnServerDeploymentRuntimeForHost } from './ownServer/ownServerDeploymentHostRuntime';

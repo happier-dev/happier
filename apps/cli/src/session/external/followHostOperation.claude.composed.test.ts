@@ -483,7 +483,7 @@ it.each(['runner_http_fresh_terminal_inventory_refresh', 'runner_http_fresh_term
         if (liveAppend) {
           if (!nativePublisher) throw new Error('Expected native publisher');
           const publisher = nativePublisher;
-          const { createNativeAgentRuntimeSessionPlanFixture, createExternalContributionFixtures, createSessionHostServiceOwners } = await import('@/agent/runtime/registry/engineRegistry/nativeAgentSession.testkit');
+          const { createNativeAgentRuntimeSessionPlanFixture, createExternalContributionFixtures, createSessionHostServiceOwners } = await import('@/agent/runtime/registry/engineRegistry/nativeAgentSession.composed.testkit');
           const { buildPluginSessionBindingInput } = await import('@/plugins/runtime/runtimeCore/plugin/sessionLaunch');
           const { subscribeSessionRuntimePublicationToMetadata } = await import('@/agent/runtime/identity/metadata/subscription');
           const { createCliRuntimeSessionStateBridge } = await import('@/agent/runtime/state/bridge');

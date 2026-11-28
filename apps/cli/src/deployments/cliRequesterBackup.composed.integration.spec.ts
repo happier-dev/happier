@@ -38,7 +38,7 @@ import { writeDaemonState } from '@/persistence';
 import { resolveLiveDaemonControlTargetForServer } from '@/daemon/multiDaemon';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { nativeRestic0191 } from '@/daemon/local/services/launch/nativeResticRegistry.testkit';
-import { createS0DeploymentDaemonIngress, installationBoundary, readS0ControllerCredentials, readS0Installation } from './deploymentDaemonIngress.testkit';
+import { createS0DeploymentDaemonIngress, installationBoundary, readS0ControllerCredentials, readS0Installation } from './deploymentDaemonIngress.composed.testkit';
 import { createOwnServerDeploymentRuntimeForHost } from './targets/ownServer/ownServerDeploymentHostRuntime';
 import { createOwnServerDockerBoundary } from './targets/ownServer/ownServerDeployment.testkit';
 import { installRestoreBoundary } from './targets/ownServer/nativeRestore.testkit';

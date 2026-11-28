@@ -29,7 +29,7 @@ import { EncryptionCache } from '../../../../ui/sources/sync/encryption/encrypti
 import { applyCurrentSessionPresentationCommand } from '../../../../ui/sources/components/sessions/presentation/applyCurrentSessionPresentationCommand';
 import { createNativeAgentRuntimeSessionPlan } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
 import { createNativeAgentSessionHostServiceOwners } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionHostServiceOwners';
-import { createExternalContributionFixtures, createLease, createNativeAgentLaunchPreparationFixture } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession.testkit';
+import { createExternalContributionFixtures, createLease, createNativeAgentLaunchPreparationFixture } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession.composed.testkit';
 import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import { buildPluginSessionBindingInput } from '@/plugins/runtime/runtimeCore/plugin/sessionLaunch';

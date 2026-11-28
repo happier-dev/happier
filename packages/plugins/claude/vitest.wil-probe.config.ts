@@ -31,7 +31,7 @@ export default {
       'apps/cli/src/agent/executionRuns/policy/executionRunPermissionDecision.handsOff.test.ts',
       'apps/cli/src/api/machine/resolveExecutionRunAccountSettingsSnapshot.test.ts',
       'apps/cli/src/mcp/servers/materializeMcpServerConfigRecord.test.ts',
-      'apps/cli/src/mcp/runtime/resolveRunnerMcpServers.test.ts',
+      'apps/cli/src/mcp/runtime/resolveRunnerMcpServers.composed.test.ts',
       'apps/cli/src/mcp/runtime/resolveRunnerMcpServers.runBinding.test.ts',
       'apps/cli/src/agent/runtime/bridges/executionRun/runtime/openInputs.test.ts',
       'apps/cli/src/agent/runtime/bridges/executionRun/resolveExecutionRunResumeBackendOptions.test.ts',

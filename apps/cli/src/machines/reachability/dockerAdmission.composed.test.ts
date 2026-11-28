@@ -1,7 +1,7 @@
 // The canonical journey substitutes native OS boundaries and runs the real Home/Action path.
 import { createDockerNetworkAuthoredProvider, createGenericDefaultFactoryJourney, executeReviewedReachabilityConfigure,
   journey, machineId, parseReachabilityInspectResult, selection,
-} from './genericMachineReachability.testkit';
+} from './genericMachineReachability.composed.testkit';
 import { userInfo } from 'node:os';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 

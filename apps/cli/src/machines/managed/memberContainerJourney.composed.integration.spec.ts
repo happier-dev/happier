@@ -33,7 +33,7 @@ import { registerCapabilitiesHandlers } from '@/rpc/handlers/capabilities';
 import { CURRENT_MACHINE_OPERATION_PROTOCOL_CAPABILITIES_V1 } from '@/api/apiMachine';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import * as installationStore from '@/daemon/identity/store';
-import { createS0DeploymentDaemonIngress, installationBoundary, readS0Installation } from '@/deployments/deploymentDaemonIngress.testkit';
+import { createS0DeploymentDaemonIngress, installationBoundary, readS0Installation } from '@/deployments/deploymentDaemonIngress.composed.testkit';
 import { fixture as nativeFixture } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
 import { acquireEnrollmentJourneyGuest } from './enrollmentJourney.testkit';
 

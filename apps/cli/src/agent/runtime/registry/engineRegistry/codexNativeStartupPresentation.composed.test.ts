@@ -13,7 +13,7 @@ import {
     createNativeAgentRuntimeSessionPlanFixture,
     createNativeSessionClientTestPort,
     createSessionHostServiceOwners,
-} from './nativeAgentSession.testkit';
+} from './nativeAgentSession.composed.testkit';
 
 // Isolate the native startup lock at its OS boundary; retain real file locking.
 vi.mock('node:os', async importOriginal => {

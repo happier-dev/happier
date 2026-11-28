@@ -12,7 +12,7 @@ import { createCurrentSessionPresentationHost } from '@/session/presentation/cur
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { resolveBackendRuntimeCore } from '../registry/engineRegistry/runtimeCore';
 import { createEmptyBackendExecutionSurfaces } from '../registry/engineRegistryTypes';
-import { createExternalContributionFixtures, createLease } from '../registry/engineRegistry/nativeAgentSession.testkit';
+import { createExternalContributionFixtures, createLease } from '../registry/engineRegistry/nativeAgentSession.composed.testkit';
 import { isHostSessionRuntimePlan } from '../session/loop/plan';
 import { resolveHostSessionRuntimeFactoryResult } from '../session/loop/factoryResult';
 import { createRepositoryCheckpointPromptLifecycle } from './repositoryCheckpointPromptLifecycle';

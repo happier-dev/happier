@@ -6,7 +6,7 @@ import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
-import type { readS0ControllerCredentials } from './deploymentDaemonIngress.testkit';
+import type { readS0ControllerCredentials } from './deploymentDaemonIngress.composed.testkit';
 import { keyFlowReadResultSchema, type KeyFlowMeasure } from '../../../../packages/plugins/telemetry/src/healthSchemas';
 import { healthResultProjectionPageSchema } from '../../../../packages/plugins/machine-services/src/healthResultProjection';
 

@@ -7,7 +7,7 @@ import { createSessionOwnerMetadataV1, SessionOwnerMetadataV1Schema } from '@hap
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import { createPluginInvocationLogger } from '@/plugins/runtime/invocation/services/logger';
 import { createNativeAgentRuntimeSessionPlanFixture, createNativeSessionClientTestPort,
-  createSessionHostServiceOwners } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession.testkit';
+  createSessionHostServiceOwners } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession.composed.testkit';
 import { resolveBackendEngineAdapterResolution } from '@/agent/runtime/registry/engineRegistry';
 import { withHostSessionRuntimeIdentityPublication } from '@/agent/runtime/identity/publication/withHostSession';
 import { subscribeSessionRuntimePublicationToMetadata } from '@/agent/runtime/identity/metadata/subscription';

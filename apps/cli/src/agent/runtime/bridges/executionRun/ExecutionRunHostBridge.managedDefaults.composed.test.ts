@@ -10,7 +10,7 @@ vi.mock('node:fs', async (importOriginal) => {
   return createBundledPluginPublicationFsFixture(actual);
 });
 
-import { runRequesterAttributionCase } from './testkit/admittedSessionRun';
+import { runRequesterAttributionCase } from './testkit/admittedSessionRun.composed';
 import { readRetainedExecutionRunRecord } from '@/daemon/executionRunRegistry';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 

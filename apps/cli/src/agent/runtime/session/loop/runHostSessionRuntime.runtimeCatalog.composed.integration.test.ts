@@ -52,7 +52,7 @@ import { CODEX_PROVIDER_BINDING_ADAPTER_V1 } from '../../../../../../../packages
 import * as daemonControl from '@/daemon/controlClient';
 import { logger } from '@/ui/logger';
 import { createManifestAgentCatalogEntry } from '@/plugins/projection/registry/agentCliMetadata';
-import { createExternalContributionFixtures, createNativeAgentRuntimeSessionPlanFixture, createLease as createReplacementLease, createSessionHostServiceOwners as createReplacementHostOwners } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession.testkit';
+import { createExternalContributionFixtures, createNativeAgentRuntimeSessionPlanFixture, createLease as createReplacementLease, createSessionHostServiceOwners as createReplacementHostOwners } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession.composed.testkit';
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import { buildPluginSessionBindingInput } from '@/plugins/runtime/runtimeCore/plugin/sessionLaunch';
 import { createNativeAgentHostSessionRuntimePlan } from '@/plugins/runtime/runtimeCore/plugin/session';
@@ -8725,7 +8725,7 @@ describe('runHostSessionRuntime', () => {
     const [{ createNativeAgentRuntimeSessionPlan }, fixtures, { buildPluginSessionBindingInput },
       { PluginError }, { createTestWorkflowCoordinator, createInMemoryWorkflowCoordinatorStore }] = await Promise.all([
       import('@/agent/runtime/registry/engineRegistry/nativeAgentSession'),
-      import('@/agent/runtime/registry/engineRegistry/nativeAgentSession.testkit'),
+      import('@/agent/runtime/registry/engineRegistry/nativeAgentSession.composed.testkit'),
       import('@/plugins/runtime/runtimeCore/plugin/sessionLaunch'),
       import('@happier-dev/plugin-sdk'),
       import('@/daemon/workflows/workflowCoordinator.testkit'),
@@ -11558,7 +11558,7 @@ describe('runHostSessionRuntime', () => {
     const { createReducer, reducer } = await import('@happier-dev/session-core');
     const [{ createNativeAgentRuntimeSessionPlan }, fixtures, { buildPluginSessionBindingInput }] = await Promise.all([
       import('@/agent/runtime/registry/engineRegistry/nativeAgentSession'),
-      import('@/agent/runtime/registry/engineRegistry/nativeAgentSession.testkit'),
+      import('@/agent/runtime/registry/engineRegistry/nativeAgentSession.composed.testkit'),
       import('@/plugins/runtime/runtimeCore/plugin/sessionLaunch'),
     ]);
     // FX 0.0.14 wire error format, observed 2026-10-28 in FXMCP-CONTRACT.md.
@@ -11611,7 +11611,7 @@ describe('runHostSessionRuntime', () => {
       { createUnavailablePluginServices }, { createCodexAgentRuntime }, { PLUGIN_MANIFEST },
       { ingestPluginManifestV2 }] = await Promise.all([
       import('@/agent/runtime/registry/engineRegistry/nativeAgentSession'),
-      import('@/agent/runtime/registry/engineRegistry/nativeAgentSession.testkit'),
+      import('@/agent/runtime/registry/engineRegistry/nativeAgentSession.composed.testkit'),
       import('@/plugins/runtime/runtimeCore/plugin/sessionLaunch'),
       import('@/plugins/runtime/invocation/services/unavailable'),
       import('../../../../../../../packages/plugins/codex/src/agent/runtime/engine'),
@@ -11703,7 +11703,7 @@ describe('runHostSessionRuntime', () => {
   it('retains the real Codex startup cause through the runner construction-failure log', async () => {
     const [{ createNativeAgentRuntimeSessionPlan }, fixtures, { buildPluginSessionBindingInput }] = await Promise.all([
       import('@/agent/runtime/registry/engineRegistry/nativeAgentSession'),
-      import('@/agent/runtime/registry/engineRegistry/nativeAgentSession.testkit'),
+      import('@/agent/runtime/registry/engineRegistry/nativeAgentSession.composed.testkit'),
       import('@/plugins/runtime/runtimeCore/plugin/sessionLaunch'),
     ]);
     const harness = createHarness();
@@ -11754,7 +11754,7 @@ describe('runHostSessionRuntime', () => {
         import('@/api/session/client/transport/mutations/createRuntimeSessionClientDurableMutationOutbox'),
         import('@happier-dev/protocol/sessions/control/contract'),
         import('@/agent/runtime/registry/engineRegistry/nativeAgentSession'),
-        import('@/agent/runtime/registry/engineRegistry/nativeAgentSession.testkit'),
+        import('@/agent/runtime/registry/engineRegistry/nativeAgentSession.composed.testkit'),
         import('@/plugins/runtime/runtimeCore/plugin/sessionLaunch'),
       ]);
       const database = await createLightSqliteHarness({ tempDirPrefix: 'codex-startup-status-', initAuth: false });
