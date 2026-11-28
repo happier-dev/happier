@@ -124,7 +124,8 @@ export function createClientActionReverseDispatcher(
     const workflowViewAction = isWorkflowLibraryViewActionId(actionId) || isWorkflowRunViewActionId(actionId);
     const readsWorkflowView = actionId === WORKFLOW_LIBRARY_VIEW_ACTION_IDS.get || actionId === WORKFLOW_RUN_VIEW_ACTION_IDS.get;
     const listsThemeDevices = actionId === THEME_ACTION_IDS.list && input !== null && typeof input === 'object' && Reflect.get(input, 'includeDevices') === true;
-    const listsAnsweringClients = listsThemeDevices || actionId === 'plugins.execution_origin.list' || readsWorkflowView;
+    const reportsAnsweringClient = actionId === 'plugins.execution_origin.list' || readsWorkflowView;
+    const listsAnsweringClients = listsThemeDevices || reportsAnsweringClient;
     const answeringClient = { ...(clientId ? { clientId } : {}), requireSingle: true as const,
       ...(listsAnsweringClients ? { includeCandidates: true as const } : {}) };
     // Project only the address from the already-admitted full Action input.
@@ -197,7 +198,14 @@ export function createClientActionReverseDispatcher(
       });
       if (!response.ok) {
         if (response.errorCode === RPC_ERROR_CODES.CLIENT_AMBIGUOUS) return clientActionAmbiguous(response.answeringClients);
-        if (response.errorCode === RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE) return unavailable();
+        if (response.errorCode === RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE) {
+          const result = unavailable();
+          if (!reportsAnsweringClient || result.ok) return result;
+          return { ...result, failureCause: {
+            phase: issued ? 'action.client_selection' : 'action.client_delivery',
+            errorClass: 'RpcError', errorCode: response.errorCode, httpStatus: null,
+          } };
+        }
         if (answeringClient && response.errorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) return { ok: false,
           errorCode: 'client_routing_update_required', error: 'Update the Home server to support answering-client routing' };
         if (response.errorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
@@ -225,7 +233,7 @@ export function createClientActionReverseDispatcher(
         ...(response.answeringClients ? { answeringClients: [...response.answeringClients] } : {}),
       } : null;
       if (readsWorkflowView && execution && !execution.ok
-        && execution.errorCode === 'unavailable' && answeringClients) {
+        && (execution.errorCode === 'unavailable' || execution.errorCode === 'client_surface_unavailable') && answeringClients) {
         return { ...execution, details: {
           ...(execution.details && typeof execution.details === 'object' && !Array.isArray(execution.details) ? execution.details : {}),
           ...answeringClients,

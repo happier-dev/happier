@@ -15,6 +15,8 @@ import { uiBrowserAutomationDispatchMethod, UiBrowserAutomationDispatchRequestV1
 import { BrowserDiagnosticsEvalResultV1Schema } from '@happier-dev/protocol/browser/diagnostics/v1';
 import { WidgetInstanceActionInputSchemasV1 } from '@happier-dev/protocol/widgets/actionsV1';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { projectExternalActionExecutionResultV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { normalizeActionExecuteResult, projectCliActionFailure } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 
 function executor(client: ClientActionMachineRpc | null) {
   return createActionExecutor({ ...createUnavailableActionTransportDeps(),
@@ -663,6 +665,43 @@ describe('client Action reverse delivery', () => {
     expect(await executor(client).execute('plugins.execution_origin.clear', { pluginId: 'acme.plugin' },
       { surface: 'cli', authority: 'account_automation' })).toMatchObject({ ok: false, errorCode: 'client_ambiguous' });
   });
+  it.each([
+    { actionId: 'plugins.execution_origin.list', input: { pluginId: 'acme.plugin' }, phase: 'selection' },
+    { actionId: WORKFLOW_LIBRARY_VIEW_ACTION_IDS.get, input: {}, phase: 'selection' },
+    { actionId: WORKFLOW_LIBRARY_VIEW_ACTION_IDS.get, input: {}, phase: 'delivery' },
+  ] as const)('keeps the transport refusal for $actionId at client $phase', async ({ actionId, input, phase }) => {
+    const client: ClientActionMachineRpc = {
+      hasConnectedClientRpcHandler: () => true,
+      callConnectedClientRpc: async (_method, _request, options) => {
+        if (phase === 'selection') options.onIssued();
+        return { ok: false, errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE };
+      },
+    };
+    const execution = await executor(client).execute(actionId, input, { surface: 'cli', authority: 'account_automation' });
+    const externalExecution = projectExternalActionExecutionResultV1(execution);
+    if (!externalExecution) throw new Error('Expected a public Action failure');
+    const failure = normalizeActionExecuteResult(externalExecution);
+    if (failure.ok) throw new Error('Expected a CLI Action failure');
+    expect(projectCliActionFailure(failure))
+      .toMatchObject({ code: 'unavailable', failureCause: {
+        phase: `action.client_${phase}`, errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE,
+      } });
+  });
+
+  it('keeps the Workflow Library mount refusal and the identity of the App that answered', async () => {
+    const failure = { ok: false, errorCode: 'client_surface_unavailable', error: 'client_surface_unavailable' };
+    const answeringClientId = 'app-a';
+    const client: ClientActionMachineRpc = {
+      hasConnectedClientRpcHandler: () => true,
+      callConnectedClientRpc: async (_method, _request, options) => {
+        options.onIssued();
+        return { ok: true, result: { v: 1, execution: failure }, answeringClientId };
+      },
+    };
+    expect(await executor(client).execute(WORKFLOW_LIBRARY_VIEW_ACTION_IDS.get, {}, { surface: 'cli', authority: 'account_automation' }))
+      .toEqual({ ...failure, details: { answeringClientId } });
+  });
+
   it('selects the sole Run-on reader and exposes its current address for the next mutation', async () => {
     const { selectRpcTarget } = await import('../../../../server/sources/app/api/socket/rpc/rpcTargetSelection');
     const result = { status: 'available', storedTarget: null, storedOrigin: null, selectedOrigin: null, selectionSource: null, candidates: [] };

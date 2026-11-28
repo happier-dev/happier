@@ -7390,6 +7390,10 @@ operation scope. No matching view is `noClient`; multiple matching views are
 Unbound calls use the generic client room with the same selection rule.
 Daemon availability advertisements are hints, and the server's current
 registration selection decides absence rather than a daemon-local negative.
+In 0.3 development, the Plugin Execution Origin list and Workflow view reads
+carry `RPC_CLIENT_NOT_AVAILABLE` in the failure cause when reverse delivery
+returns that refusal. A Workflow view refusal of `client_surface_unavailable`
+includes the answering App's ID when the server selected an App that replied.
 Action inputs still address their exact Session, composer or
 mounted surface where supported; client choice does not retarget an absent view.
 Browser automation retains its separate exact-view controller
