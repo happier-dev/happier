@@ -2,6 +2,7 @@ import { expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { flushHookEffects, renderHook } from '@/dev/testkit';
 import * as cache from '@/sync/domains/models/dynamicModelProbeCache';
+import { discoverMachineModels } from '@/sync/ops/modelDiscovery';
 import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
 import { useNewSessionPreflightModelsState } from './useNewSessionPreflightModelsState';
 
@@ -74,4 +75,38 @@ it('uses only completed model discovery for the exact launch target', async () =
     await act(async () => { screen.getCurrent().probe.onRefresh?.(); });
     expect(screen.getCurrent().readMissingConfiguredModel(launchTarget)).toBeNull();
     await screen.unmount();
+});
+
+it('keeps the newer catalog when an older model observation arrives later', async () => {
+    cache.resetDynamicModelProbeCacheForTests();
+    machineCapabilitiesInvokeMock.mockReset();
+    const target = { machineId: 'launch-machine', serverId: 'launch-server', cwd: '/repo' };
+    const input = {
+        ...target,
+        cacheKey: buildDynamicModelProbeCacheKey({ ...target, targetKey: 'agent:codex' })!,
+        agentType: 'codex' as const,
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' } as const,
+        capabilityParams: { cwd: target.cwd },
+    };
+    const now = Date.now();
+    let finishOlderProbe!: (result: unknown) => void;
+    machineCapabilitiesInvokeMock.mockImplementationOnce(() => new Promise((resolve) => {
+        finishOlderProbe = resolve;
+    }));
+    const olderProbe = discoverMachineModels({ ...input, includeConfiguredModel: true });
+    machineCapabilitiesInvokeMock.mockResolvedValueOnce({ supported: true, response: { ok: true, result: {
+        source: 'dynamic', observedAt: now, availableModels: [{ id: 'current', name: 'Current' }],
+    } } });
+    await discoverMachineModels({ ...input, bypassCache: true });
+    finishOlderProbe({ supported: true, response: { ok: true, result: {
+        source: 'dynamic', observedAt: now - 1000, availableModels: [{ id: 'old', name: 'Old' }],
+        configuredModelId: 'current',
+    } } });
+
+    const delayed = await olderProbe;
+    expect(delayed.entry).toMatchObject({ kind: 'success', updatedAt: now, value: {
+        availableModels: [{ id: 'current', name: 'Current' }],
+    } });
+    expect(cache.readDynamicModelProbeCache(input.cacheKey)).toEqual(delayed.entry);
+    expect(delayed.missingConfiguredModelId).toBeUndefined();
 });

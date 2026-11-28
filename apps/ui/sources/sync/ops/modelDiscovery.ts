@@ -68,6 +68,10 @@ export async function discoverMachineModels(params: MachineModelProbeInput & Rea
                 const observedAt = typeof record.observedAt === 'number' && Number.isFinite(record.observedAt)
                     ? record.observedAt : Date.now();
                 if (!failed) {
+                    // Refresh and background inventory may settle in a different order than they were observed.
+                    if (previous?.kind === 'success' && !previous.staticFallback && previous.updatedAt > observedAt) {
+                        return { entry: previous };
+                    }
                     if (record.cacheable === false) {
                         writeDynamicModelProbeCacheTransientSuccess(params.cacheKey, list, observedAt);
                     } else {
