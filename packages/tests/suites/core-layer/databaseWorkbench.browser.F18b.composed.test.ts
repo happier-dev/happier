@@ -21,4 +21,4 @@ it('F18b G1 known-good Session and Action deliver the agent-installed browser se
         const evidence = JSON.parse(result.brief.evidence.items[0]!.text);
         expect(evidence.browserSetup).toMatchObject({ browser: expect.any(String), route: expect.any(String) });
     } finally { await fixture.stop(); }
-});
+}, 0);
