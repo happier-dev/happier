@@ -6,7 +6,6 @@ it('offers ordered setup-only security presets without choosing required machine
   const expected = {
     'secure-web-host-v1': ['automatic-security-updates', 'ssh-hardening', 'ssh-fail2ban', 'audit-logging', 'bounded-journal', 'docker-engine', 'caddy', 'firewall'],
     'private-box-v1': ['automatic-security-updates', 'ssh-hardening', 'bounded-journal', 'tailscale-server', 'firewall'],
-    'production-web-server-v1': ['automatic-security-updates', 'ssh-hardening', 'ssh-fail2ban', 'audit-logging', 'bounded-journal', 'docker-engine', 'caddy', 'firewall'],
   };
   expect(Object.keys(securityPresets)).toEqual(Object.keys(expected));
   for (const [id, recipeIds] of Object.entries(expected)) {
@@ -16,5 +15,4 @@ it('offers ordered setup-only security presets without choosing required machine
       ref: { pluginId: 'happier.machine.recipes', recipeId, revision: '1' }, inputs: {},
     } })));
   }
-  expect(securityPresets['production-web-server-v1']?.setup).toEqual(securityPresets['secure-web-host-v1']?.setup);
 });
