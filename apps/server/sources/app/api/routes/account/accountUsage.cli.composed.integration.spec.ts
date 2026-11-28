@@ -124,8 +124,8 @@ describe('usage.query CLI HTTP → Account routes → SQLite accounting', () => 
                 source: 'native', path: 'native', status: 'partial', historyComplete: false,
             })] });
             expect(slice.sources).toContainEqual(expect.objectContaining({ source: 'accounting', status: 'available' }));
-            expect(slice.sources).toContainEqual({ source: 'quota', status: 'available' });
-            expect(slice.quota).toEqual([]);
+            expect(slice.sources).toContainEqual({ source: 'quota', status: 'unsupported', errorCode: 'no_connected_accounts' });
+            expect(slice.quota).toBeUndefined();
             expect(slice.requestedQuery).toEqual(slice.shownQuery);
         }
         // Account ownership is checked by the real query route before aggregation.

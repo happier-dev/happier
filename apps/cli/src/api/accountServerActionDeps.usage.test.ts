@@ -1,3 +1,6 @@
+import { randomBytes } from 'node:crypto';
+import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { sealAccountSettingsV2RawContent } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -374,6 +377,62 @@ describe('CLI and MCP personal usage Account transport', () => {
       }
     } finally { await app.close(); }
   });
+  it.each([
+    { status: null, expected: { status: 'unsupported', errorCode: 'no_connected_accounts' } },
+    { status: 'needs_reauth' as const, expected: { status: 'error', errorCode: 'connected_account_needs_reauth' } },
+    { status: 'connected' as const, expected: { status: 'unsupported', errorCode: 'no_quota_capable_accounts' } },
+  ])('reports the Account quota availability through standalone Usage ($status)', async ({ status, expected }) => {
+    const app = fastify();
+    const keys = tweetnacl.box.keyPair();
+    const credentials = { token: 'owner-token', encryption: {
+      type: 'dataKey' as const, machineKey: keys.secretKey, publicKey: keys.publicKey,
+    } };
+    app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture({
+      mode: 'e2ee', contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(keys.publicKey),
+    }));
+    app.get('/v2/account/settings', async () => ({ version: 1, content: sealAccountSettingsV2RawContent({
+      credentials, raw: {}, envelopeKind: 'encrypted', randomBytes,
+    }) }));
+    app.get('/v1/account/profile', async () => ({ id: 'account', connectedAccountsV4: status ? [{
+      ref: { service: status === 'connected'
+        ? { pluginId: 'happier.review.coderabbit', localId: 'coderabbit-account' }
+        : { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, accountId: 'fixture-account' },
+      status, authenticationModeId: status === 'connected' ? 'native-login' : 'oauth', revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [],
+    }] : [] }));
+    let quotaResolutions = 0;
+    app.get('/v4/connect/qualified/provider-account-usage/sources/resolve', async (_request, reply) => {
+      quotaResolutions++;
+      return reply.code(404).send({ error: 'not_found' });
+    });
+    registerAccountingRoutes(app, async () => response);
+    const serverHttpBaseUrl = 'http://usage-quota-availability.test';
+    cleanup = installAxiosFastifyAdapter({ app, origin: serverHttpBaseUrl });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...createAccountServerActionDeps({
+      token: credentials.token, credentials, serverId: 'home', serverHttpBaseUrl,
+    }) });
+    const period = { relative: 'today' } as const;
+    try {
+      const control = await executor.execute(USAGE_QUERY_ACTION_ID_V1, { queries: [{ period,
+        includeQuota: false, includeComparison: false, includeSessionEvidence: false,
+        includeTranscriptEvidence: false, includeWorkEvidence: false, includeCoach: false,
+      }] }, { surface: 'cli', serverId: 'home' });
+      expect(UsageQueryBatchResultSchema.parse(control.ok ? control.result : undefined).results[0]?.accounting?.totals)
+        .toEqual(response.totals);
+
+      const query = normalizeUsageQuery({ period, includeAccounting: false, includeComparison: false,
+        includeQuota: true, includeQuotaHistory: status !== 'connected', includeQuotaExactHistory: false, includeSessionEvidence: false,
+        includeTranscriptEvidence: false, includeWorkEvidence: false, includeCoach: false });
+      const result = await executor.execute(USAGE_QUERY_ACTION_ID_V1, { queries: [query] }, { surface: 'cli', serverId: 'home' });
+      const slice = UsageQueryBatchResultSchema.parse(result.ok ? result.result : undefined).results[0]!;
+      expect(slice.key).toBe(getUsageQueryKey(query));
+      expect(slice.sources.find(source => source.source === 'quota')).toEqual({ source: 'quota', ...expected });
+      expect(slice.quota).toBeUndefined();
+      expect(slice.pending).toBe(false);
+      expect(quotaResolutions).toBe(0);
+    } finally { await app.close(); }
+  });
+
   it('keeps the Profile authority refusal on Usage quota while Accounting still lands', async () => {
     const app = fastify();
     app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture());
@@ -961,7 +1020,7 @@ describe('CLI and MCP personal usage Account transport', () => {
     vi.spyOn(Date, 'now').mockReturnValue(1_000);
     const app = fastify();
     const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 } });
-    const source = { bindingKind: 'account' as const, ref: { service: { pluginId: 'example.usage', localId: 'quota' }, accountId: 'work' } };
+    const source = { bindingKind: 'account' as const, ref: { service: { pluginId: 'happier.agent.cursor', localId: 'cursor-account' }, accountId: 'work' } };
     const key = { providerId: 'test', accountSubjectId: 'subject', subjectKind: 'account' as const, quotaScope: 'account' as const };
     const snapshot = ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordId: buildProviderAccountUsageRecordId(key), recordKey: key,
       providerId: 'test', accountSubject: { kind: 'providerSubject', id: 'subject' }, observedAtMs: 150, fetchedAtMs: 150,
@@ -1300,7 +1359,7 @@ describe('CLI and MCP personal usage Account transport', () => {
     let state: 'current' | 'denied' | 'retired' | 'cancelled' = 'current';
     const controller = new AbortController();
     let current = true;
-    const source = { bindingKind: 'account' as const, ref: { service: { pluginId: 'example.usage', localId: 'quota' }, accountId: 'work' } };
+    const source = { bindingKind: 'account' as const, ref: { service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, accountId: 'work' } };
     const recordKey = { providerId: 'test', accountSubjectId: 'subject', subjectKind: 'account' as const, quotaScope: 'account' as const };
     const snapshot = ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
       providerId: 'test', accountSubject: { kind: 'providerSubject', id: 'subject' }, observedAtMs: 100, fetchedAtMs: 100,

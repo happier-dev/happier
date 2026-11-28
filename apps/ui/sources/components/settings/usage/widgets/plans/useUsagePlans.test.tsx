@@ -34,7 +34,7 @@ import { PluginMachineMaterializationV1Schema } from '@happier-dev/protocol/plug
 import { ConnectedAccountUiProjectionEntryV1Schema } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 import { advanceConnectedAccountDescriptorProjectionState, createConnectedAccountDescriptorProjectionLoadingState } from '@/sync/domains/connectedServices/connectedAccountDescriptorProjection';
-import { getConnectedServiceRegistrySnapshot, isConnectedServiceUsageCapable } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { getConnectedServiceRegistrySnapshot, readConnectedServiceDeclaredCapabilities } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 let home: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
@@ -342,7 +342,7 @@ it('keeps external usage rows on a first Plans mount after every Machine sleeps'
     const registry = getConnectedServiceRegistrySnapshot();
     expect.soft(registry.status).toBe('ready');
     // Sleeping Machines withdraw native declarations; admitted Usage facts remain readable.
-    expect(isConnectedServiceUsageCapable(service, registry)).toBe(false);
+    expect(readConnectedServiceDeclaredCapabilities(service, registry)).toBeUndefined();
     expect(registry.entries.find(entry => entry.service?.pluginId === service.pluginId)).toBeUndefined();
     const source = QualifiedConnectedServiceUsageSourceV4Schema.parse({ bindingKind: 'account', ref });
     const slice = resolveUsagePageAggregation({ queries: [normalizeUsageQuery({})],

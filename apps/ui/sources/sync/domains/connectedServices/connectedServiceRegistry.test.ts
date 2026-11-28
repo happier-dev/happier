@@ -17,7 +17,7 @@ import {
   canExecuteConnectedServiceAction,
   getConnectedServiceSetupPresentation,
   getConnectedServiceRegistryIdentityFallback,
-  isConnectedServiceUsageCapable,
+  readConnectedServiceDeclaredCapabilities,
   getConnectedAccountAuthentication,
   getConnectedAccountNativeLoginConstraints,
   projectConnectedServiceRegistryEntries,
@@ -261,17 +261,17 @@ describe('connectedServiceRegistry', () => {
       pluginId: builtIn.pluginId, ui: { setup: { firstRun: false } },
     } })).toEqual({ firstRun: false });
   });
-  it('selects usage services by their exact capability owner, including installed services', () => {
+  it('reads declared capabilities by qualified identity, including installed services', () => {
     const descriptor = (pluginId: string, capabilities: string[]) => ({
       id: 'account', serviceId: 'account', pluginId, title: 'Account', provenance: 'external' as const,
       sourceKind: 'installed', authentication: manualAuthentication([]), capabilities,
       availability: { state: 'available' as const, reason: 'resolved' }, diagnostics: [],
     });
     install([descriptor('acme.metered', ['usage']), descriptor('acme.email', [])]);
-    expect(isConnectedServiceUsageCapable({ pluginId: 'acme.metered', localId: 'account' })).toBe(true);
-    expect(isConnectedServiceUsageCapable({ pluginId: 'acme.email', localId: 'account' })).toBe(false);
-    expect(isConnectedServiceUsageCapable({ pluginId: 'unknown', localId: 'openai-codex' })).toBe(false);
-    expect(isConnectedServiceUsageCapable({ pluginId: 'happier.agent.codex', localId: 'openai-codex' })).toBe(true);
+    expect(readConnectedServiceDeclaredCapabilities({ pluginId: 'acme.metered', localId: 'account' })).toEqual(['usage']);
+    expect(readConnectedServiceDeclaredCapabilities({ pluginId: 'acme.email', localId: 'account' })).toEqual([]);
+    expect(readConnectedServiceDeclaredCapabilities({ pluginId: 'unknown', localId: 'openai-codex' })).toBeUndefined();
+    expect(readConnectedServiceDeclaredCapabilities({ pluginId: 'happier.agent.codex', localId: 'openai-codex' })).toEqual(['usage']);
   });
   const install = (
     descriptors: ConnectedAccountDescriptorProjectionState['descriptors'],

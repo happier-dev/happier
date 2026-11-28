@@ -1,7 +1,7 @@
 import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
 import { BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
 import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
-import { ConnectedServiceIdSchema, isBuiltInLegacyConnectedAccountPeerOperationSupported, type ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { ConnectedServiceIdSchema, type ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { PluginConnectedAccountAuthenticationModeV2, PluginConnectedAccountAuthenticationV2 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import type { ConnectedAccountUiProjectionEntryV1 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 import type {
@@ -428,19 +428,16 @@ export function getConnectedServiceRegistrySnapshot(scope?: ServerAccountScope):
 }
 
 /** Read capability, not execution admission: sleeping services keep their usage identity. */
-export function isConnectedServiceUsageCapable(
+export function readConnectedServiceDeclaredCapabilities(
   service: PluginContributionIdentityV1,
   snapshot: Pick<ConnectedServiceRegistrySnapshot, 'entries'> = getConnectedServiceRegistrySnapshot(),
-): boolean {
+): readonly string[] | null | undefined {
   const entry = snapshot.entries.find(candidate => candidate.service && sameService(candidate.service, service));
-  if (entry?.projectedDescriptorCandidates && entry.projectedDescriptorCandidates.length > 1) return false;
-  if (entry?.projectedDescriptor?.capabilities.includes('usage')) return true;
-  const legacyId = resolveLegacyServiceId(service);
-  return legacyId !== null && isBuiltInLegacyConnectedAccountPeerOperationSupported({
-    serviceId: legacyId,
-    peerClass: 'revisioned_v2_v3',
-    operation: 'quota_read',
-  });
+  if (entry?.projectionStatus === 'conflict' || (entry?.projectedDescriptorCandidates?.length ?? 0) > 1) return null;
+  const descriptor = entry?.projectedDescriptor ?? BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS[
+    buildQualifiedPluginContributionKey(service)
+  ]?.descriptor;
+  return descriptor ? descriptor.capabilities ?? [] : undefined;
 }
 
 /**

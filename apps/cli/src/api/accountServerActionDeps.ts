@@ -771,8 +771,7 @@ export function createAccountServerActionDeps(input: Readonly<{
           })));
           const { readCliUsageQuota } = await import('@/usage/readCliUsageQuota');
           const quotaReads = await readCliUsageQuota({ queries: request.queries.filter(query => !appEnvironments(query)), nowMs: accountingNowMs, context, readQuota,
-            sources: profile.connectedAccountsV4.filter(account => account.status !== 'needs_reauth')
-              .map(account => ({ bindingKind: 'account', ref: account.ref })),
+            accounts: profile.connectedAccountsV4,
           });
           await check();
           quotaByQuery = quotaReads;

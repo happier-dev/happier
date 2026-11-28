@@ -78,7 +78,7 @@ import { isTransientConnectivityError, RetryableServerResponseError } from '@/sy
 import { UsageModelPriceCatalogSchema, type UsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import { HappyError } from '@/utils/errors/errors';
 import { readMachineName } from '@/utils/sessions/machineDisplayNames';
-import { getUsageQueryMachineInvalidationKey, getUsageQueryPoolMachineSelection, isUsagePresentationHomeAccountChange, isUsageQuotaHomeAccountChange, isUsageProjectionHomeAccountChange, readUsageAccountingChangeScope, readUsageQuotaAccounts, readUsageQuotaBindingServiceKeys, readUsageQuotaChangedRecordIds, usageQuotaRecordChangeAffects, subscribeUsageQueryStateInvalidation, usageAccountingChangeAffectsQueries, type UsageQueryStateInvalidation } from './usageQueryInvalidation';
+import { getUsageQueryMachineInvalidationKey, getUsageQueryPoolMachineSelection, isUsagePresentationHomeAccountChange, isUsageQuotaHomeAccountChange, isUsageProjectionHomeAccountChange, readUsageAccountingChangeScope, readUsageQuotaAccountProjection, readUsageQuotaBindingServiceKeys, readUsageQuotaChangedRecordIds, usageQuotaRecordChangeAffects, subscribeUsageQueryStateInvalidation, usageAccountingChangeAffectsQueries, type UsageQueryStateInvalidation } from './usageQueryInvalidation';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ProviderAccountUsageProjectionDocuments, ProviderAccountUsageQuotaViewDemand } from './apiProviderAccountUsage';
 import type { ProviderAccountUsageDayChangeV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
@@ -109,9 +109,10 @@ function readOpenedQuotaScope(context: UsageQueryAccountContext) {
         || state.profile.id !== scope.accountId || !areServerProfileIdentifiersEquivalent(serverBasis.serverId, scope.serverId)) return null;
     const credentialsKey = resolveAuthCredentialsScopeKey(context.credentials);
     const credentialScope = [scope.serverId, String(serverBasis.generation), credentialsKey].join('\u0000');
-    return { state, providerScope: buildProviderAccountUsageScopeKey({ serverId: scope.serverId,
+    const quota = readUsageQuotaAccountProjection(state.profile.connectedAccountsV4);
+    return { state, quotaUnavailable: quota.unavailable, providerScope: buildProviderAccountUsageScopeKey({ serverId: scope.serverId,
         generation: serverBasis.generation, credentialScope: credentialsKey }),
-        sources: readUsageQuotaAccounts(state.profile.connectedAccountsV4).map(account => ({
+        sources: quota.accounts.map(account => ({
             source: { bindingKind: 'account' as const, ref: account.ref },
             key: buildQualifiedQuotaSnapshotScopeKey({ credentialScope, ref: account.ref,
                 serverBasis: { serverId: scope.serverId, generation: serverBasis.generation } }),
@@ -253,9 +254,7 @@ function reconcileQuotaRead(input: Readonly<{
 function readOpenedQuota(context: UsageQueryAccountContext, queries: readonly UsageQuery[], previous?: UsageQueryBatchResult): OpenedQuotaRead {
     const scope = readOpenedQuotaScope(context);
     if (!scope) return { status: 'unknown', errorCode: 'account_profile_unavailable' };
-    if (scope.sources.length === 0) return scope.state.profile.connectedAccountsV4.length === 0
-        ? { status: 'unsupported', errorCode: 'no_connected_accounts' }
-        : { status: 'error', errorCode: 'connected_account_needs_reauth' };
+    if (scope.quotaUnavailable) return scope.quotaUnavailable;
     const decision = readQuotaFeatureDecision(context, scope);
     if (decision?.state !== 'enabled') return { status: decision?.state === 'unknown' || !decision ? 'unknown' : 'unsupported' };
     const rows = getProviderAccountUsageCacheState().entriesByCredentialScope[scope.providerScope] ?? {};

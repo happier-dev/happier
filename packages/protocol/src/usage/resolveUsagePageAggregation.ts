@@ -12,6 +12,9 @@ import type { ScmBranchWorkEvidence } from '../scm/branches.js';
 import { resolveUsageHowYouWork, UsageHowYouWorkSchema, type UsageHowYouWorkDetailInput, type UsageSessionEvidenceCoverage } from './resolveUsageHowYouWork.js';
 import type { UsageWorkIntervalsInput } from './usageWorkIntervals.js';
 import { ConnectedServiceQuotaGetResultV1Schema, type ConnectedServiceQuotaGetResultV1 } from '../connect/providerAccountUsageHistorySchemasV1.js';
+import { isBuiltInLegacyConnectedAccountPeerOperationSupported, readBuiltInLegacyConnectedServiceIdForQualifiedService } from '../connect/connectedServiceBindings.js';
+import { isConnectedServiceCredentialHealthStatusReconnectRequired, type ConnectedServiceCredentialHealthStatusV1 } from '../connect/connectedServiceSchemas.js';
+import type { PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
 import { isConnectedServiceQuotaObservationFresh, wasConnectedServiceQuotaObserved } from '../connect/quotaObservationTime.js';
 import { evaluateUsageCoach } from './coach/evaluateUsageCoach.js';
 import { createUsageCoachDigestSuggestion } from './coach/coachDigestSuggestion.js';
@@ -768,6 +771,35 @@ export type UsageQuotaSourceSnapshot = Readonly<Omit<UsageQuerySourceState, 'sou
   value?: readonly ConnectedServiceQuotaGetResultV1[];
   sources?: readonly UsageQuerySourceState[];
 }>;
+
+/** Distinguish an Account with no eligible sources from a completed empty quota read. */
+export function projectUsageQuotaAccountSources<Account extends Readonly<{
+    ref: Readonly<{ service: PluginContributionIdentityV1 }>;
+    status: ConnectedServiceCredentialHealthStatusV1;
+}>>(
+    accounts: readonly Account[],
+    // A conflict (null) cannot use the released fallback for a missing declaration (undefined).
+    readCapabilities: (service: PluginContributionIdentityV1) => readonly string[] | null | undefined,
+): Readonly<{ accounts: readonly Account[]; unavailable?: UsageQuotaSourceSnapshot }> {
+    if (accounts.length === 0) {
+        return { accounts: [], unavailable: { status: 'unsupported', errorCode: 'no_connected_accounts' } };
+    }
+    const capable = accounts.filter(({ ref: { service } }) => {
+        const capabilities = readCapabilities(service);
+        if (capabilities === null) return false;
+        if (capabilities?.includes('usage')) return true;
+        const legacyServiceId = readBuiltInLegacyConnectedServiceIdForQualifiedService(service);
+        return legacyServiceId !== null && isBuiltInLegacyConnectedAccountPeerOperationSupported({
+            serviceId: legacyServiceId, peerClass: 'revisioned_v2_v3', operation: 'quota_read',
+        });
+    });
+    if (capable.length === 0) {
+        return { accounts: [], unavailable: { status: 'unsupported', errorCode: 'no_quota_capable_accounts' } };
+    }
+    const eligible = capable.filter(({ status }) => !isConnectedServiceCredentialHealthStatusReconnectRequired(status));
+    return eligible.length > 0 ? { accounts: eligible }
+        : { accounts: [], unavailable: { status: 'error', errorCode: 'connected_account_needs_reauth' } };
+}
 
 export type UsageQuotaCoverageRead = Readonly<{
     value: ConnectedServiceQuotaGetResultV1 | null;

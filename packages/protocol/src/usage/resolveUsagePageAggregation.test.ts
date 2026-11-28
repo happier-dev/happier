@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import * as coachEvaluation from './coach/evaluateUsageCoach.js';
 import { normalizeUsageQuery, resolveUsageQueryPeriod, usageQueryToAnalyticsRequest, type UsageQuery } from '../inputs/usageQuery.js';
 import { UsageAnalyticsQueryResponseSchema, UsageAnalyticsSourceCoverageSchema, type UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
-import { readUsageAgentAccountingCalendar, resolveUsagePageAggregation, resolveUsagePageAccountingRequests, projectUsageAccountingSnapshotPrices, projectUsageAccountingSnapshotCalendar, retainUsageQueryResultReferences, UsageQueryBatchResultSchema, withdrawUsageQueryWork, type UsageWorkSourceSnapshot } from './resolveUsagePageAggregation.js';
+import { readUsageAgentAccountingCalendar, projectUsageQuotaCoverage, resolveUsagePageAggregation, resolveUsagePageAccountingRequests, projectUsageAccountingSnapshotPrices, projectUsageAccountingSnapshotCalendar, retainUsageQueryResultReferences, UsageQueryBatchResultSchema, withdrawUsageQueryWork, type UsageWorkSourceSnapshot } from './resolveUsagePageAggregation.js';
 import type { UsageWorkEvidence } from './usageOutcomeAllocation.js';
 import { buildProviderAccountUsageRecordId } from '../connect/providerAccountUsagePrimitives.js';
 import { ConnectedServiceQuotaGetResultV1Schema } from '../connect/providerAccountUsageHistorySchemasV1.js';
@@ -98,6 +98,23 @@ it('evaluates no Coach detectors for chart demand while retaining Session interv
     expect(coach.coach).toBeDefined();
     expect(coach.howYouWork?.intervals?.agentTimeMs).toBe(300);
   } finally { evaluations.mockRestore(); }
+});
+
+it('delivers an available empty quota result after an admitted source settles', () => {
+  const query = normalizeUsageQuery({ includeAccounting: false, includeQuota: true });
+  const quota = projectUsageQuotaCoverage([
+    { value: null, state: { source: 'quota:admitted', status: 'available' } },
+  ], 'available');
+  const page = UsageQueryBatchResultSchema.parse(resolveUsagePageAggregation({
+    queries: [query], quota,
+  }, bundledUsageModelPriceCatalog));
+  expect(page.results[0]).toMatchObject({
+    quota: [],
+    pending: false,
+    sources: expect.arrayContaining([
+      { source: 'quota', status: 'available' }, { source: 'quota:admitted', status: 'available' },
+    ]),
+  });
 });
 
 it.each([false, true])('does not attach or await undemanded quota sources (accounting %s)', includeAccounting => {

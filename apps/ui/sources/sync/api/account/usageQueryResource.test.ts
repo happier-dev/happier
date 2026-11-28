@@ -6514,12 +6514,15 @@ describe('usage query captured Resource adapter', () => {
   it.each([
     { status: null, expected: { status: 'unsupported', errorCode: 'no_connected_accounts' } },
     { status: 'needs_reauth' as const, expected: { status: 'error', errorCode: 'connected_account_needs_reauth' } },
+    { status: 'connected' as const, expected: { status: 'unsupported', errorCode: 'no_quota_capable_accounts' } },
   ])('settles allowance reads without eligible accounts ($status)', async ({ status, expected }) => {
     const captured = await context(request => request.path === '/v2/usage/query' ? Response.json(value) : undefined);
     storage.setState({ profileScope: captured.accountLifetime.scope,
       profile: AccountProfileSchema.parse({ id: captured.accountLifetime.scope.accountId,
-        connectedAccountsV4: status ? [{ ref: { service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
-          accountId: 'reauth-account' }, status, authenticationModeId: 'oauth', revisionSemantics: 'revisioned',
+        connectedAccountsV4: status ? [{ ref: { service: status === 'connected'
+          ? { pluginId: 'happier.review.coderabbit', localId: 'coderabbit-account' }
+          : { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+          accountId: 'fixture-account' }, status, authenticationModeId: status === 'connected' ? 'native-login' : 'oauth', revisionSemantics: 'revisioned',
           credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] }] : [] }) });
     const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [{ period: { relative: '7days' } }] }) });
     const release = entry.subscribe(() => {}, false);
