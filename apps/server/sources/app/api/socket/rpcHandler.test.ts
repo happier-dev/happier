@@ -21,6 +21,7 @@ const dbMockFns = vi.hoisted(() => ({
 
 vi.mock("@/utils/logging/log", () => ({
     log: vi.fn(),
+    warn: vi.fn(),
 }));
 
 vi.mock("./rpcForwardTimeout", () => ({

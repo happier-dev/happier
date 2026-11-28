@@ -1,5 +1,5 @@
 import { getRedisClient } from "@/storage/redis/redis";
-import { log } from "@/utils/logging/log";
+import { warn } from "@/utils/logging/log";
 
 export type RpcRedisRegistryConfig =
     | { enabled: false }
@@ -20,6 +20,11 @@ const REFRESH_IF_OWNER_SCRIPT =
 
 function rpcRouteKey(userId: string, method: string): string {
     return `rpc:${userId}:${method}`;
+}
+
+// A REGISTER can commit before the connection drops. Replaying it could replace a newer owner.
+function getRpcRegistryRedis() {
+    return getRedisClient("fail-on-disconnect");
 }
 
 export function createRpcRedisRegistryCoordinator(params: {
@@ -43,7 +48,7 @@ export function createRpcRedisRegistryCoordinator(params: {
             void Promise.allSettled(refreshes).then(results => {
                 const failure = results.find(result => result.status === "rejected");
                 if (failure) {
-                    log({ module: "websocket", level: "warn", socketId, error: failure.reason },
+                    warn({ module: "websocket", socketId, error: failure.reason },
                         "Failed to refresh Redis RPC registrations");
                 }
             });
@@ -59,7 +64,7 @@ export function createRpcRedisRegistryCoordinator(params: {
 
     async function registerMethod(method: string): Promise<void> {
         if (!config.enabled) return;
-        const redis = getRedisClient();
+        const redis = getRpcRegistryRedis();
         const ttlSeconds = config.ttlSeconds ?? 120;
         ownedMethods.add(method);
         startRefresh(redis, ttlSeconds);
@@ -70,9 +75,11 @@ export function createRpcRedisRegistryCoordinator(params: {
     }
 
     async function unregisterMethod(method: string): Promise<void> {
-        if (!ownedMethods.delete(method)) return;
+        if (!config.enabled) return;
+        // Stop refreshing immediately. A repeated withdrawal can still retry the owner-checked deletion.
+        ownedMethods.delete(method);
         stopRefreshIfIdle();
-        await getRedisClient().eval(DEL_IF_SOCKET_ID_SCRIPT, 1, rpcRouteKey(userId, method), socketId);
+        await getRpcRegistryRedis().eval(DEL_IF_SOCKET_ID_SCRIPT, 1, rpcRouteKey(userId, method), socketId);
     }
 
     async function unregisterAll(): Promise<void> {
@@ -81,7 +88,7 @@ export function createRpcRedisRegistryCoordinator(params: {
 
     async function lookupSocketId(targetUserId: string, method: string): Promise<string | null> {
         if (!config.enabled) return null;
-        const [socketId] = await getRedisClient().hmget(rpcRouteKey(targetUserId, method), "socketId");
+        const [socketId] = await getRpcRegistryRedis().hmget(rpcRouteKey(targetUserId, method), "socketId");
         return typeof socketId === "string" && socketId.trim().length > 0 ? socketId : null;
     }
 

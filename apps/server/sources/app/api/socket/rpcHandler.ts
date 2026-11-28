@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { log } from "@/utils/logging/log";
+import { log, warn } from "@/utils/logging/log";
 import { Server, Socket } from "socket.io";
 import {
     parseSocketRpcAuthorizationContext,
@@ -533,41 +533,43 @@ export function rpcHandler(
                     const local = lookupInMemoryTargetSocket();
                     return local?.connected ? local : null;
                 };
-                let localTarget: Socket | null;
-                let targetSocketId: string | null;
-                if (redisRegistry.enabled) {
-                    targetSocketId = await waitForRpcTargetAvailability(method, () => redisRegistry.lookupSocketId(targetUserId, method));
-                    const local = lookupConnectedLocalTarget();
-                    localTarget = local && local.id === targetSocketId ? local : null;
-                } else {
-                    const initialLocalTarget = targetResolution.targetSocket;
-                    localTarget = initialLocalTarget?.connected
-                        ? initialLocalTarget
-                        : await waitForRpcTargetAvailability(method, lookupConnectedLocalTarget);
-                    targetSocketId = localTarget?.id ?? null;
-                }
-                if (!targetSocketId) {
+                const needsRemoteMachine = Boolean(
+                    resolveSocketRpcProviderStartingMethod(method) || explicitMachineStopRequest,
+                );
+                let unreachableRemoteId: string | null = null;
+                const target = redisRegistry.enabled
+                    ? await waitForRpcTargetAvailability(method, async () => {
+                        const id = await redisRegistry.lookupSocketId(targetUserId, method);
+                        if (!id) {
+                            unreachableRemoteId = null;
+                            return null;
+                        }
+                        const local = lookupConnectedLocalTarget();
+                        if (local?.id === id) return { id, local, metadata: local };
+                        if (!needsRemoteMachine || id === socket.id) return { id, local: null, metadata: null };
+
+                        // Reuse the reconnect window without running a cluster lookup on every poll.
+                        if (id === unreachableRemoteId) return null;
+                        const candidates = await ctx.io.in(id).fetchSockets();
+                        const remote = candidates.find(candidate => candidate.id === id);
+                        unreachableRemoteId = remote ? null : id;
+                        return remote ? { id, local: null, metadata: remote } : null;
+                    })
+                    : await waitForRpcTargetAvailability(method, () => {
+                        const initial = targetResolution.targetSocket;
+                        const local = initial?.connected ? initial : lookupConnectedLocalTarget();
+                        return local ? { id: local.id, local, metadata: local } : null;
+                    });
+                if (!target) {
                     callback?.({ ok: false, error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
                     return;
                 }
+                const { id: targetSocketId, local: localTarget, metadata: targetWithMetadata } = target;
                 if (targetSocketId === socket.id) {
                     callback?.({ ok: false, error: 'Cannot call RPC on the same socket' });
                     return;
                 }
 
-                let targetWithMetadata: Pick<Socket, "data"> | null = localTarget;
-                const needsRemoteMachine = !localTarget && Boolean(
-                    resolveSocketRpcProviderStartingMethod(method) || explicitMachineStopRequest,
-                );
-                if (needsRemoteMachine) {
-                    const currentTargets = await ctx.io.in(targetSocketId).fetchSockets();
-                    const currentTarget = currentTargets.find(candidate => candidate.id === targetSocketId);
-                    if (!currentTarget) {
-                        callback?.({ ok: false, error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
-                        return;
-                    }
-                    targetWithMetadata = currentTarget;
-                }
                 if (targetWithMetadata) {
                     const stopTargetMismatch = readExplicitMachineStopTargetMismatch({
                         socket: targetWithMetadata,
@@ -578,7 +580,7 @@ export function rpcHandler(
                         return;
                     }
                     const machineId = readMachineScopedSocketMachineId(targetWithMetadata);
-                    if (needsRemoteMachine && !machineId) {
+                    if (!localTarget && needsRemoteMachine && !machineId) {
                         callback?.({ ok: false, error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
                         return;
                     }
@@ -658,7 +660,7 @@ export function rpcHandler(
         pruneUserRpcListenerMapIfEmpty(allRpcListeners, userId, listeners);
 
         void redisRegistry.unregisterAll().catch(error => {
-            log({ module: "websocket", level: "warn", socketId: socket.id, error }, "Failed to unregister Redis RPC routes on disconnect");
+            warn({ module: "websocket", socketId: socket.id, error }, "Failed to unregister Redis RPC routes on disconnect");
         });
     });
 }

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { Socket as TcpSocket } from "node:net";
 
 import { RPC_ERROR_CODES, RPC_METHODS } from "@happier-dev/protocol/rpc";
 import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
@@ -13,8 +14,8 @@ import { rpcHandler } from "./rpcHandler";
 const findMachine = vi.hoisted(() => vi.fn());
 vi.mock("@/storage/db", () => ({ db: { machine: { findFirst: findMachine } } }));
 
-const logMock = vi.hoisted(() => vi.fn());
-vi.mock("@/utils/logging/log", () => ({ log: logMock }));
+const warnMock = vi.hoisted(() => vi.fn());
+vi.mock("@/utils/logging/log", () => ({ log: vi.fn(), warn: warnMock }));
 
 const machine = { revokedAt: null, replacedByMachineId: null };
 const refreshIntervalMs = 60_000;
@@ -34,7 +35,7 @@ describe("Redis-backed RPC registration lifecycle", () => {
     beforeEach(() => {
         vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
         findMachine.mockReset().mockResolvedValue(machine);
-        logMock.mockReset();
+        warnMock.mockReset();
         userId = `rpc-route-${randomUUID()}`;
     });
 
@@ -48,7 +49,7 @@ describe("Redis-backed RPC registration lifecycle", () => {
 
     afterAll(async () => {
         try {
-            await redis?.quit();
+            await Promise.all([redis?.quit(), getRedisClient("fail-on-disconnect").quit()]);
         } finally {
             vi.unstubAllEnvs();
             await redisMemory?.stop();
@@ -59,7 +60,7 @@ describe("Redis-backed RPC registration lifecycle", () => {
 
     async function runRefreshTick() {
         vi.advanceTimersByTime(refreshIntervalMs);
-        await getRedisClient().ping();
+        await getRedisClient("fail-on-disconnect").ping();
     }
 
     function attach(
@@ -108,6 +109,83 @@ describe("Redis-backed RPC registration lifecycle", () => {
             await triggerSocketHandler(target, "disconnect");
         },
     );
+
+    it("waits for a replacement when the registered remote socket is unreachable", async () => {
+        const method = `machine-1:${RPC_METHODS.SPAWN_HAPPY_SESSION}`;
+        const previous = attach(machineSocket(), {} as Server, "previous-node");
+        const replacement = attach(createFakeSocket({
+            id: "replacement", data: { clientType: "machine-scoped", machineId: "machine-1" },
+        }), {} as Server, "replacement-node");
+        let signalMissing!: () => void;
+        const previousWasMissing = new Promise<void>(resolve => { signalMissing = resolve; });
+        const inRoom = vi.fn((id: string) => ({
+            fetchSockets: async () => {
+                if (id === replacement.id) return [replacement];
+                signalMissing();
+                return [];
+            },
+        }));
+        const to = vi.fn(() => ({ emitWithAck: async () => ["replacement"] }));
+        const caller = attach(createFakeSocket({ id: "caller" }), {
+            in: inRoom,
+            timeout: () => ({ to }),
+        } as unknown as Server, "caller-node");
+
+        try {
+            await triggerSocketHandler(previous, SOCKET_RPC_EVENTS.REGISTER, { method });
+            const response = call(caller, method);
+            await previousWasMissing;
+            await triggerSocketHandler(replacement, SOCKET_RPC_EVENTS.REGISTER, { method });
+            expect(await response).toEqual({ ok: true, result: "replacement" });
+            expect(inRoom.mock.calls).toEqual([[previous.id], [replacement.id]]);
+            expect(to.mock.calls).toEqual([[replacement.id]]);
+        } finally {
+            await triggerSocketHandler(previous, "disconnect");
+            await triggerSocketHandler(replacement, "disconnect");
+        }
+    });
+
+    it("does not replay an unacknowledged registration over a newer owner", async () => {
+        const method = "example";
+        const target = attach(createFakeSocket({ id: "first" }), {} as Server, "first-node");
+        const registry = getRedisClient("fail-on-disconnect");
+        const observer = getRedisClient();
+        const key = routeKey(method);
+        await registry.ping();
+        // Hold replies at the TCP boundary without withholding the write from Redis.
+        const stream = (registry as unknown as { connector: { stream: TcpSocket } }).connector.stream;
+        stream.pause();
+        try {
+            const registration = triggerSocketHandler(target, SOCKET_RPC_EVENTS.REGISTER, { method });
+            await vi.waitFor(async () => expect(await observer.hget(key, "socketId")).toBe(target.id));
+            await observer.hset(key, "instanceId", "second-node", "socketId", "second");
+            stream.destroy();
+
+            await registration;
+            await registry.ping();
+            expect(await observer.hget(key, "socketId")).toBe("second");
+        } finally {
+            stream.destroy();
+            await triggerSocketHandler(target, "disconnect");
+        }
+    });
+
+    it("retries owner withdrawal when the first deletion failed", async () => {
+        const method = "example";
+        const target = attach(createFakeSocket({ id: "target" }), {} as Server, "target-node");
+        const redis = getRedisClient();
+        const key = routeKey(method);
+        await triggerSocketHandler(target, SOCKET_RPC_EVENTS.REGISTER, { method });
+        const fields = await redis.hgetall(key);
+        await redis.set(key, "wrong-type");
+        await triggerSocketHandler(target, SOCKET_RPC_EVENTS.UNREGISTER, { method });
+        expect(target.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({ type: "unregister" }));
+
+        await redis.del(key);
+        await redis.hset(key, fields);
+        await triggerSocketHandler(target, SOCKET_RPC_EVENTS.UNREGISTER, { method });
+        expect(await redis.exists(key)).toBe(0);
+    });
 
     it.each(["unregister", "disconnect"] as const)(
         "does not publish a route after %s during registration admission",
@@ -217,7 +295,7 @@ describe("Redis-backed RPC registration lifecycle", () => {
         const fields = await redis.hgetall(key);
         await redis.set(key, "wrong-type");
         await runRefreshTick();
-        await vi.waitFor(() => expect(logMock).toHaveBeenCalledWith(expect.anything(), expect.stringContaining("Failed to refresh")));
+        await vi.waitFor(() => expect(warnMock).toHaveBeenCalledWith(expect.anything(), expect.stringContaining("Failed to refresh")));
 
         await redis.del(key);
         await redis.hset(key, { ...fields, updatedAt: "before-refresh" });
