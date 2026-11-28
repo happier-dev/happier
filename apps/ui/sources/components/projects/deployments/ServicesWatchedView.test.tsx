@@ -34,38 +34,6 @@ const NO_COUNT = () => {};
 const notLoadedLine = (screen: Readonly<{ findHostByTestId: (id: string) => unknown }>) =>
   screen.findHostByTestId('services.watched.coverage.partial') ?? screen.findHostByTestId('services.watched.coverage.incomplete');
 
-const { createAutomationDefinitionSummary } = await import('@/sync/domains/automations/automationDefinitionProjection');
-const { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1 } = await import('@happier-dev/protocol/deployments/healthCheckV1');
-const healthCheckSummary = (id: string) => createAutomationDefinitionSummary({ id, name: `Check ${id}`, description: null, enabled: true,
-  targetType: 'existingSession', existingSessionId: 'session-1', templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1, assignments: [],
-  triggers: [{ id: `33333333-3333-4333-8333-33333333333${id}`, revision: 1, enabled: true, createdAt: 1, updatedAt: 1, kind: 'pluginEvent',
-    eventRef: { pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, localId: 'health-status' }, sourceSelectorId: '22222222-2222-4222-8222-222222222222',
-    sourceContractVersion: 1, observation: { kind: 'checkpointedPull', watcher: null }, sourceStatus: null, sourceCatalogStatus: null }] } as never);
-
-const checkRowId = (id: string) => `services.checks.row.${id}.${healthCheckSummary(id).triggers[0]!.id}`;
-
-/** The saved Check's private definition as the Home answers it (managedOperationalInventory.test's fixture shape). */
-async function healthCheckDetail(id: string) {
-  const { sealAutomationTriggerDefinitionStoredEnvelopeV1 } = await import('@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent');
-  const { AutomationDefinitionDetailSchema } = await import('@happier-dev/protocol/automations/automationApiV3');
-  const { AutomationSourceSelectorIdV1Schema } = await import('@happier-dev/protocol/automations/automationEventDeclarationV1');
-  const summary = healthCheckSummary(id);
-  const { detail: _privateDetail, linkedExistingSessionId: _linkedSession, ...summaryInput } = summary;
-  const trigger = summary.triggers[0]!;
-  if (trigger.kind !== 'pluginEvent') throw new Error('Expected health Event fixture');
-  return AutomationDefinitionDetailSchema.parse({ ...summaryInput, targetType: null, existingSessionId: null,
-    observationOnly: { kind: 'observationOnly', templateVersion: summary.templateVersion },
-    triggers: [{ ...trigger, triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
-      mode: 'plain' as const,
-      binding: { v: 1, automationId: summary.id, triggerId: trigger.id, triggerRevision: trigger.revision,
-        triggerKind: 'pluginEvent', eventRef: trigger.eventRef, sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(trigger.sourceSelectorId) },
-      definition: { v: 1, sourceInstanceId: `health:shop:${id}`, displayLabel: `Check ${id}`,
-        sourceConfig: { v: 1, subject: { kind: 'environment', environmentId: 'shop' }, checks: [{ checkId: 'readiness',
-          kind: { pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, localId: 'http' }, binding: { kind: 'healthCheck' },
-          config: { endpoint: 'https://shop.example/ready', expectStatus: 204 }, periodMs: 300_000, consecutiveFailuresBeforeAlerting: 1 }] },
-        filter: null, maximumObservationAgeMs: null },
-    })) }] });
-}
 
 // QA-DEPLOY-1114 #16: Account A's Watched view said "Nothing watched yet" while some of its Machines were still unread.
 it('says some watched services have not loaded while a Machine is unread, never "Nothing watched yet"', async () => {
@@ -124,47 +92,6 @@ it('says some watched services have not loaded while a Machine is unread, never 
   expect(screen.findHostByTestId('services.watched.empty')).toBeNull();
 });
 
-// Partly read results (a Check's health history) are facts of listed rows, not missing rows: no "haven't loaded" line.
-it('lists saved Checks without a "haven\'t loaded" line while only their results are partly read', async () => {
-  const { ServicesChecksView } = await import('./ServicesChecks');
-  await account.restore({ serverIdentityId: 'srv_services_checks_results', machines: [], httpAnswers: {
-    'POST /v3/automations/query': { body: { automations: await Promise.all(['1', '2'].map(healthCheckDetail)), nextCursor: null } } } });
-  const scope = storage.getState().settingsScope!;
-  await act(async () => { storage.setState({ automations: { '1': healthCheckSummary('1'), '2': healthCheckSummary('2') }, isDataReady: true, automationDefinitionNextCursor: null }); });
-  const screen = await renderScreen(<InboxArtifactSourceBoundary>
-    <ServicesChecksView scope={scope} presented selectedKey={null} onSelect={NO_COUNT} onSelectedRow={NO_COUNT} onCount={NO_COUNT} />
-  </InboxArtifactSourceBoundary>);
-  await vi.waitFor(() => expect(screen.findHostByTestId(checkRowId('2'))).not.toBeNull());
-  expect(screen.findHostByTestId('services.checks.coverage.partial')).toBeNull();
-});
-
-it('shows saved Checks from the next Automation page without requiring Show more', async () => {
-  const { ServicesChecksView } = await import('./ServicesChecks');
-  const [first, second] = await Promise.all(['1', '2'].map(healthCheckDetail));
-  const counts: string[] = [];
-  const nextPage = Promise.withResolvers<void>();
-  await account.restore({ serverIdentityId: 'srv_services_checks_paged', machines: [], httpAnswers: {
-    'POST /v3/automations/query': { select: input => {
-      const next = typeof input === 'object' && input !== null && 'cursor' in input && input.cursor === 'cursor-2';
-      return next
-        ? { body: { automations: [second], nextCursor: null }, respondAfter: nextPage.promise }
-        : { body: { automations: [first], nextCursor: 'cursor-2' } };
-    } },
-  } });
-  const scope = storage.getState().settingsScope!;
-  await act(async () => { storage.setState({ automations: { '1': healthCheckSummary('1') }, isDataReady: true, automationDefinitionNextCursor: 'cursor-2' }); });
-  const screen = await renderScreen(<InboxArtifactSourceBoundary>
-    <ServicesChecksView scope={scope} presented selectedKey={null} onSelect={NO_COUNT} onSelectedRow={NO_COUNT} onCount={(count) => counts.push(count.parts.filter(Boolean).join(' · '))} />
-  </InboxArtifactSourceBoundary>);
-  try {
-    await vi.waitFor(() => expect(counts.at(-1)).toBe('1+ check'));
-  } finally {
-    nextPage.resolve();
-  }
-  await vi.waitFor(() => expect(screen.findHostByTestId(checkRowId('2'))).not.toBeNull());
-  expect(screen.findHostByTestId(checkRowId('1'))).not.toBeNull();
-  expect(screen.findHostByTestId('services.checks.paging.more')).toBeNull();
-});
 
 it('says a Machine\'s watches have not loaded beside the services already listed', async () => {
   const watch = (watchId: string, name: string) => ({ v: 1, watchId, name, adapter: { pluginId: 'example.service', localId: 'native' },

@@ -6,28 +6,18 @@ import {
   type DeploymentReadDemandV1,
 } from '@happier-dev/deployments';
 
-import { useAccountConfiguredChecks } from '@/components/store/inventory/managedOperationalInventory';
 import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 
 import { databaseEngineTitle } from './databasePresentation';
 import { deploymentDomainAttention } from './deploymentDomainAttention';
-import {
-  buildDeploymentEnvironmentHref,
-  SERVICES_ROUTE,
-} from './deploymentNavigation';
+import { buildDeploymentEnvironmentHref } from './deploymentNavigation';
 import {
   DeploymentTreeRow,
   type DeploymentRowState,
   type DeploymentTreeRowKind,
 } from './rows/DeploymentEnvironmentRow';
-import {
-  readServiceCheckFacts,
-  serviceCheckListFacts,
-  serviceCheckStatusTone,
-  serviceCheckStatusWord,
-} from './serviceCheckPresentation';
 import {
   useDeploymentDataServicePage,
   useDeploymentDomainPage,
@@ -46,8 +36,9 @@ type TypeRow = Readonly<{
 }>;
 
 /**
- * The Services column By type (owner 2026-11-16 10:20Z; lab monitoring-1115 monC): after Apps (the Projects tree the
- * column draws), Databases, Domains and Checks each stand as a section, only when they have items. Every row is the
+ * The Deployments column By type (owner 2026-11-16 10:20Z; lab monitoring-1115 monC): after Apps (the Projects tree the
+ * column draws), Databases and Domains each stand as a section, only when they have items; Checks live only in
+ * Monitoring (owner 11-28). Every row is the
  * one Environment row (`DeploymentTreeRow`); its end is its state (the compact dot) or its one quiet fact. The reads
  * mount only while this grouping is shown.
  */
@@ -68,7 +59,6 @@ export function ServicesColumnTypeSections(props: TypeSectionsProps) {
     { operationalFacts: false },
   );
   const domains = useDeploymentDomainPage(props.controller, props.demand);
-  const checks = useAccountConfiguredChecks(props.scope, props.demand.mounted && props.demand.visible && props.demand.focused);
   const databaseItems = databases.snapshot.value?.items;
   const domainItems = domains.snapshot.value?.items;
   const sections = React.useMemo(() => {
@@ -134,25 +124,6 @@ export function ServicesColumnTypeSections(props: TypeSectionsProps) {
           : null,
       };
     });
-    // A check says its state while it fails or is switched off (the Check presentation owner); its list is Services → Checks.
-    const checkRows: TypeRow[] = checks.rows
-      .map((row) => {
-        const status = readServiceCheckFacts(row.lastResults).status;
-        const tone = serviceCheckStatusTone(status);
-        const state: DeploymentRowState | null = !row.native.enabled
-          ? { tone: 'muted', text: t('projects.deployments.healthNotChecked') }
-          : tone
-            ? { tone, text: serviceCheckStatusWord(status) }
-            : null;
-        return {
-          key: row.key,
-          kind: 'check' as const,
-          title: serviceCheckListFacts(row).title ?? row.native.name,
-          fact: null,
-          state,
-          href: `${SERVICES_ROUTE}?view=checks`,
-        };
-      });
     return (
       [
         [
@@ -161,7 +132,6 @@ export function ServicesColumnTypeSections(props: TypeSectionsProps) {
           namedDatabaseRows,
         ],
         ['domains', t('projects.deployments.services.domains'), domainRows],
-        ['checks', t('projects.deployments.services.checks'), checkRows],
       ] as const
     )
       .map(([id, title, rows]) => ({ id, title, rows: rows.filter(matches) }))
@@ -169,7 +139,6 @@ export function ServicesColumnTypeSections(props: TypeSectionsProps) {
   }, [
     databaseItems,
     domainItems,
-    checks.rows,
     needle,
     props.scope?.accountId,
     serverId,

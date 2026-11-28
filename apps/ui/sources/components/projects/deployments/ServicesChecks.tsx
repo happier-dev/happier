@@ -4,7 +4,6 @@ import { useUnistyles } from 'react-native-unistyles';
 import { MachineManagedInventorySection } from '@/components/machines/page/MachineManagedInventorySection';
 import { ManagedInventoryCoverage } from '@/components/store/inventory/ManagedInventoryCoverage';
 import type { ManagedInventorySectionsState } from '@/components/store/inventory/ManagedInventorySections';
-import { isConfiguredCheckResultsPartial, type ManagedConfiguredCheckRow } from '@/components/store/inventory/managedOperationalInventory';
 import { partialInventoryCoverageState } from '@/components/store/inventory/inventoryCoverage';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
@@ -25,15 +24,11 @@ import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 
-import { serviceCheckMonitorSummary } from './serviceCheckPresentation';
-import { ServiceCheckList, type ServiceCheckSelection } from './ServiceCheckList';
-import { useServiceCheckOfflineObservers } from './useServiceCheckOfflineObservers';
 import { SERVICES_ONE_SHEET, ServicesPageList } from './DeploymentEnvironmentRows';
 import { watchedServiceBands, watchedServiceItems, type WatchedMachineRead, type WatchedServiceItem } from './watchedServiceItems';
 import { ServicesPaging, useReportViewCount, type ServicesViewCount } from './ServicesViews';
 
 const NO_OPEN = () => {};
-const CHECK_KINDS = ['configuredCheck'] as const;
 const WATCHED_KINDS = ['watchedService'] as const;
 
 type ServicesFamily = ManagedInventorySectionsState['families'][number];
@@ -65,105 +60,6 @@ export function servicesFamilyMore(family: ServicesFamily | undefined, rowFacts?
   if (!family || typeof coverage !== 'object' || 'unavailable' in coverage || rowFacts?.(coverage.partial) === true) return null;
   if (partialInventoryCoverageState(coverage.partial) !== 'paged') return null;
   return typeof family.result.continuation === 'function' ? family.result.continuation as () => unknown : null;
-}
-
-/**
- * Services → Checks (pfc-redesign svcChk): the Account's saved Checks from the managed inventory owner, each with the
- * state and 30-day uptime its health results report. A Check opens beside the page (DetailsPane) or as its page.
- */
-export function ServicesChecksView(
-  props: Readonly<{
-    scope: ServerAccountScope | null;
-    presented: boolean;
-    selectedKey: string | null;
-    onSelect: (row: ManagedConfiguredCheckRow) => void;
-    /** The selected Check's current row (its results move on), for the details pane the page hosts. */
-    onSelectedRow: (row: ManagedConfiguredCheckRow | null) => void;
-    onCount: (count: ServicesViewCount) => void;
-  }>,
-) {
-  const query = React.useMemo(
-    () => ({
-      scope: props.scope,
-      machine: null,
-      projectKey: null,
-      presented: props.presented,
-      kinds: CHECK_KINDS,
-      completeConfiguredChecks: true,
-    }),
-    [props.presented, props.scope],
-  );
-  const { selectedKey, onSelect, onSelectedRow } = props;
-  const selection = React.useMemo<ServiceCheckSelection>(() => ({ selectedKey, onSelect, onSelectedRow }),
-    [onSelect, onSelectedRow, selectedKey]);
-  return (
-    <MachineManagedInventorySection
-      query={query}
-      groupBy="kind"
-      openKey={null}
-      onOpenChange={NO_OPEN}
-    >
-      {(state) => {
-        const rows = state.rows.filter(
-          (row): row is ManagedConfiguredCheckRow =>
-            row.kind === 'configuredCheck',
-        );
-        const family = state.families.find((candidate) => candidate.kind === 'configuredCheck');
-        const pending = servicesFamilyCoverage(family, rows.length > 0, 'services.checks', isConfiguredCheckResultsPartial);
-        if (rows.length === 0) {
-          return (
-            pending ?? (
-              <EmptyState
-                testID="services.checks.empty"
-                layout="page"
-                scene="noAutomations"
-                title={t('projects.deployments.services.noChecks')}
-                subtitle={t('projects.deployments.services.noChecksBody')}
-              />
-            )
-          );
-        }
-        const more = servicesFamilyMore(family, isConfiguredCheckResultsPartial);
-        const coverage = family?.result.coverage;
-        const partial = typeof coverage === 'object' && ('unavailable' in coverage
-          || coverage.partial === 'automation_loading' || coverage.partial === 'automation_page' || coverage.partial === 'check_definition');
-        return (
-          <>
-            {pending}
-            <ChecksList rows={rows} scope={props.scope} selection={selection} onCount={props.onCount} partial={partial} />
-            <ServicesPaging testID="services.checks.paging" more={more} />
-          </>
-        );
-      }}
-    </MachineManagedInventorySection>
-  );
-}
-
-
-/** Services → Checks: the shared Checks collection, and the view's count with how many fail. */
-function ChecksList(props: Readonly<{
-  rows: readonly ManagedConfiguredCheckRow[];
-  scope: ServerAccountScope | null;
-  selection: ServiceCheckSelection;
-  onCount: (count: ServicesViewCount) => void;
-  /** More Automation pages may hold more Checks: the count says "at least" until they are read. */
-  partial: boolean;
-}>) {
-  const { rows, partial } = props;
-  const offlineObservers = useServiceCheckOfflineObservers(rows, props.scope);
-  const summary = React.useMemo(() => serviceCheckMonitorSummary(rows, offlineObservers), [rows, offlineObservers]);
-  const { down, degraded } = summary;
-  // Monitoring's words and tones (monitoring-1115 A1 "1 down · 1 slow"): one word per state on every Check surface.
-  const count = React.useMemo(() => [partial ? t('projects.deployments.monitoring.checksAtLeast', { count: rows.length })
-    : t('projects.deployments.services.countChecks', { count: rows.length }),
-    down > 0 ? { text: t('projects.deployments.monitoring.glanceDown', { count: down }), tone: 'danger' as const } : null,
-    degraded > 0 ? { text: t('projects.deployments.monitoring.glanceFailing', { count: degraded }), tone: 'warning' as const } : null],
-  [degraded, down, partial, rows.length]);
-  useReportViewCount('checks', count, props.onCount, down);
-  return (
-    <ServiceCheckList testID="services.checks" rows={rows} scope={props.scope} selection={props.selection}
-      accessibilityLabel={t('projects.deployments.services.checks')} />
-  );
 }
 
 /**

@@ -54,6 +54,8 @@ export function MonitoringScreen() {
       projectKey: null,
       presented,
       kinds: CHECK_KINDS,
+      // The one Checks home lists every saved Check, following Automation pages by itself (no Show more).
+      completeConfiguredChecks: true,
     }),
     [presented, scope],
   );

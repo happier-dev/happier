@@ -36,14 +36,13 @@ import {
 } from './useDeploymentReads';
 
 /**
- * The Services page's views (pfc-redesign svcApps · svcDb · svcDom): one collection seen three ways, so a tab bar.
- * Checks and Watched join when their Account-wide reads exist; a view never computes a fact its owner doesn't report.
+ * The Deployments page's views (pfc-redesign svcApps · svcDb · svcDom, plus Watched): one collection seen several ways,
+ * so a tab bar. Checks live only in Monitoring (owner 11-28); a view never computes a fact its owner doesn't report.
  */
 export const SERVICES_VIEWS = [
   { id: 'apps', labelKey: 'projects.deployments.services.apps' },
   { id: 'databases', labelKey: 'projects.deployments.services.databases' },
   { id: 'domains', labelKey: 'projects.deployments.services.domains' },
-  { id: 'checks', labelKey: 'projects.deployments.services.checks' },
   { id: 'watched', labelKey: 'projects.deployments.services.watched' },
 ] as const;
 export type ServicesView = typeof SERVICES_VIEWS[number]['id'];

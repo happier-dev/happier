@@ -36,10 +36,7 @@ import { useAppShellPluginUiDeclarationProjection, useProjectedPluginLocalizedTe
 import { useDeploymentInventory } from './useDeploymentProject';
 import { readServicesView, SERVICES_VIEWS, ServicesDatabasesView, ServicesDomainsView, ServicesPaging, servicesCountTone, ServicesViewTabs, type ServicesView, type ServicesViewCount, type ServicesViewNeedYou } from './ServicesViews';
 import { deploymentEnvironmentRowState, deploymentReadIssue } from './deploymentPresentation';
-import { ServicesChecksView, ServicesWatchedView } from './ServicesChecks';
-import { useServiceCheckSelection } from './ServiceCheckList';
-import type { ManagedConfiguredCheckRow } from '@/components/store/inventory/managedOperationalInventory';
-import { DetailsPaneHost } from '@/components/appShell/panes/details/DetailsPaneHost';
+import { ServicesWatchedView } from './ServicesChecks';
 import type { DeploymentReadControllerV1, DeploymentReadDemandV1 } from '@happier-dev/deployments';
 import type { HappierPageCountPart } from '@happier-dev/plugin-ui/presentation';
 import { useVisibleBackupCoverage } from './useVisibleBackupCoverage';
@@ -59,9 +56,9 @@ export type AllDeploymentsRead = Pick<
 > & Partial<Pick<ReturnType<typeof useDeploymentInventory>, 'setHealthEnvironmentIds'>>;
 
 /**
- * Services (pfc-redesign; formerly Projects → All deployments, owner ruling Q9): everything this Account runs, as
- * views of one collection. Apps lists every Environment, one demanded page at a time, grouped by its Project; a row
- * opens the Environment on its Project's Deployments page. The view is the route's own (`view`).
+ * Deployments (pfc-redesign Services, renamed 11-28; formerly Projects → All deployments, owner ruling Q9): everything
+ * this Account runs, as views of one collection. Apps lists every Environment, one demanded page at a time, grouped
+ * by its Project; a row opens the Environment on its Project's Deployments page. The view is the route's own (`view`).
  */
 export const AllDeploymentsScreen = React.memo(function AllDeploymentsScreen() {
   const lifetime = useActiveServerAccountScopeLifetime();
@@ -73,33 +70,16 @@ export const AllDeploymentsScreen = React.memo(function AllDeploymentsScreen() {
   const selectView = React.useCallback((next: ServicesView) => {
     router.setParams({ view: next === 'apps' ? undefined : next });
   }, [router]);
-  // A Check opens beside the page where a pane fits, otherwise as its own page (the one selection owner).
-  const { selection: checks, details, closeCheck } = useServiceCheckSelection(view === 'checks');
-  const title = t('projects.deployments.services.title');
-  const mainColumn = React.useMemo(() => ({
-    hideLabel: t('panes.mainColumn.hidePage', { title }),
-    showLabel: t('panes.mainColumn.showPage', { title }),
-    identity: { name: title },
-  }), [title]);
   return (
-    <DetailsPaneHost
-      testID="services.detailPane"
-      mainColumn={mainColumn}
-      onCloseDetails={closeCheck}
-      details={details}
-      main={(
-        <AllDeploymentsView
-          read={read}
-          serverId={lifetime?.scope.serverId ?? null}
-          lifetime={lifetime}
-          presented={demand.visible}
-          controller={read.controller}
-          demand={demand}
-          view={view}
-          onSelectView={selectView}
-          checks={checks}
-        />
-      )}
+    <AllDeploymentsView
+      read={read}
+      serverId={lifetime?.scope.serverId ?? null}
+      lifetime={lifetime}
+      presented={demand.visible}
+      controller={read.controller}
+      demand={demand}
+      view={view}
+      onSelectView={selectView}
     />
   );
 });
@@ -118,9 +98,6 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
     demand?: DeploymentReadDemandV1;
     view?: ServicesView;
     onSelectView?: (view: ServicesView) => void;
-    /** The Checks view's selection, hosted by the page's details pane. */
-    checks?: Readonly<{ selectedKey: string | null; onSelect: (row: ManagedConfiguredCheckRow) => void;
-      onSelectedRow: (row: ManagedConfiguredCheckRow | null) => void }>;
   }>,
 ) {
   const { read, serverId } = props;
@@ -270,10 +247,6 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
   ) : view === 'domains' && props.controller && serverId ? (
     <ServicesDomainsView controller={props.controller} demand={viewDemand} serverId={serverId}
       accountId={props.lifetime?.scope.accountId ?? ''} phone={phone} onCount={setViewCount} />
-  ) : view === 'checks' && props.checks ? (
-    <ServicesChecksView scope={props.lifetime?.scope ?? null} presented={viewDemand.visible}
-      selectedKey={props.checks.selectedKey} onSelect={props.checks.onSelect} onSelectedRow={props.checks.onSelectedRow}
-      onCount={setViewCount} />
   ) : view === 'watched' ? (
     <ServicesWatchedView scope={props.lifetime?.scope ?? null} presented={viewDemand.visible} onCount={setViewCount} />
   ) : null;

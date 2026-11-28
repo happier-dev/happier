@@ -251,7 +251,9 @@ describe('All deployments → Not backed up', () => {
       expect(reads).toHaveLength(2);
       const enabledFilter = (await readCommands()).find(command => command.title === t('projects.deployments.notBackedUp'))!;
       expect(enabledFilter.description).toBe(t('common.on'));
-      for (const view of ['databases', 'domains', 'checks', 'watched', 'apps'] as const) {
+      // Monitoring is the one home for Checks (owner 11-28): Deployments offers no Checks view.
+      expect((await readCommands()).some(candidate => candidate.title === t('projects.deployments.monitoring.checks'))).toBe(false);
+      for (const view of ['databases', 'domains', 'watched', 'apps'] as const) {
         const command = (await readCommands()).find(candidate => candidate.title === t(`projects.deployments.services.${view}`));
         expect(command, `the ${view} view is discoverable`).toBeDefined();
         if (!command) throw new Error(`${view} command is missing`);
