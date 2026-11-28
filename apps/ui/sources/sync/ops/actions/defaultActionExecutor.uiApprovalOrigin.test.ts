@@ -903,12 +903,60 @@ describe('present-user UI approval origin at the Action host', () => {
         expect(harness.artifacts(serverId).list()).toEqual([]);
     });
 
-    it('does not promote an Agent caller that claims present-user authority', async () => {
+    it('demotes an Agent caller claiming present-user authority to account_automation and holds access grants for human approval', async () => {
         const serverId = await harness.addHome({ name: 'Agent Home', serverUrl: 'https://agent-origin.test', accountId: 'alice' });
-        const result = await createDefaultActionExecutor().execute('artifact.access.grants.set', {
+        let raw: Record<string, unknown> = {};
+        let version = 0;
+        harness.answer(serverId, '/v2/account/settings', { select: (input: unknown) => {
+            if (input === null || input === undefined) return { body: { content: { t: 'plain', v: raw }, version } };
+            const request = AccountSettingsV2UpdateRequestSchema.parse(input);
+            if (request.expectedVersion !== version) return { body: { success: false, error: 'version-mismatch', currentVersion: version,
+                currentContent: { t: 'plain', v: raw } } };
+            if (request.content?.t !== 'plain') throw new Error('Expected Plain Account settings');
+            raw = request.content.v;
+            return { body: { success: true, version: ++version } };
+        } });
+        const executor = createDefaultActionExecutor();
+        const seeded = await executor.execute('roles.create', { roleId: 'shared-role', role: BUILT_IN_ROLES_V1.builder }, { serverId });
+        expect(seeded, JSON.stringify(seeded)).toMatchObject({ ok: true, result: { roleId: 'shared-role' } });
+        const projection = { artifactId: 'shared-role', ownerAccountId: 'alice', access: 'owner', grants: [] };
+        harness.answer(serverId, 'GET /v1/artifacts/shared-role/access/grants', { body: projection });
+        harness.answer(serverId, 'PUT /v1/artifacts/shared-role/access/grants', { body: {
+            ...projection, changed: true, grants: [{ principal: { kind: 'account', accountId: 'bob' }, accessLevel: 'view',
+                createdByAccountId: 'alice', createdAt: 1, display: { name: 'Bob' } }],
+        } });
+        const result = await executor.execute('artifact.access.grants.set', {
             artifactId: 'shared-role', principal: { kind: 'account', accountId: 'bob' }, accessLevel: 'view',
         }, { surface: 'agent', authority: 'present_user', serverId });
-        expect(result).toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable' });
-        expect(harness.artifacts(serverId).list()).toEqual([]);
+        expect(result, JSON.stringify(result)).toMatchObject({
+            ok: true,
+            result: { kind: 'approval_request_created', artifactId: expect.any(String), actionId: 'artifact.access.grants.set' },
+        });
+        if (!result.ok) throw new Error(result.error);
+        const created = result.result as { artifactId: string };
+        const body = harness.artifacts(serverId).readPlainBody(created.artifactId);
+        if (body === null) throw new Error('Approval Artifact was not persisted');
+        const request = ApprovalRequestSchema.parse(JSON.parse(body));
+        expect(request).toMatchObject({
+            v: 2,
+            actionId: 'artifact.access.grants.set',
+            status: 'open',
+            executionOriginV1: {
+                authority: 'account_automation',
+                surface: 'agent',
+                serverId,
+                accountId: 'alice',
+            },
+        });
+        if (request.v !== 2) throw new Error('Expected durable approval provenance');
+        expect(request.executionOriginV1.requestId).not.toBe('');
+        // Zero grant effect before human approval.
+        expect(harness.requests.some(({ path }) => path.endsWith('/access/grants'))).toBe(false);
+        const decision = await executor.execute('approval.request.decide', {
+            artifactId: created.artifactId, decision: 'approve',
+        }, { surface: 'ui', serverId });
+        expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true, result: { status: 'executed' } });
+        expect(harness.requestsFor('/v1/artifacts/shared-role/access/grants').filter(({ input }) => input !== null).map(({ input }) => input))
+            .toEqual([{ artifactId: 'shared-role', principal: { kind: 'account', accountId: 'bob' }, accessLevel: 'view' }]);
     });
 });

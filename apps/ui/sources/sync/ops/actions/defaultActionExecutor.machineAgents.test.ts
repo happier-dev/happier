@@ -735,8 +735,11 @@ describe('UI machine Agent inventory Action transport', () => {
             machineId: 'machine-1', agentId: 'gemini', method: 'connected', serviceId: 'gemini-account',
         }, { surface, authority: 'present_user', serverId, signal });
         if (surface === 'agent') {
-            // An Agent cannot bypass the existing present-user approval gate.
-            expect(result).toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable' });
+            // An Agent cannot bypass the existing present-user approval gate; it is held for human approval.
+            expect(result).toMatchObject({
+                ok: true,
+                result: { kind: 'approval_request_created', actionId: 'machines.agents.signIn.start' },
+            });
             expect(rpc.machine).not.toHaveBeenCalled();
             return;
         }

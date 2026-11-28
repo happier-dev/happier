@@ -5606,7 +5606,7 @@ type VoiceActionExecutorBinding = Readonly<{
       authority,
       ...(actionCaller ? { actionCaller } : {}),
       ...(accountContext ? { managedMachineCreationEnabled: accountContext.settings.managedMachineCreationEnabled } : {}),
-      ...((surface === 'ui' || surface === 'voice' || surface === 'plugin') && (credential === 'account' || credential === 'terminal')
+      ...((surface === 'ui' || surface === 'voice' || surface === 'plugin' || surface === 'agent') && (credential === 'account' || credential === 'terminal')
         ? { actionRequestId: context?.actionRequestId ?? (creationKey || randomUUID()) }
         : {}),
     };
