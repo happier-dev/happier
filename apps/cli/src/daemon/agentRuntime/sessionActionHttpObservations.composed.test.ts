@@ -4,6 +4,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import { createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { executeActionOperationActionV1 } from '@happier-dev/protocol/actions/executor/actionOperationActions';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
@@ -861,6 +862,34 @@ it('lists internal Tasks through the Session agent Account provider', async () =
     expect(outcome, JSON.stringify({ outcome, observations: f.observations })).toMatchObject({
       ok: true, result: { status: 'ok', todos: [], undoneOrder: [], completedOrder: [] },
     });
+  } finally { await f.close(); }
+});
+
+it('lists Fleet Activity through the Session requester Account and refuses another Home', async () => {
+  const f = await fixture();
+  f.app.get('/v1/account/encryption', { preHandler: f.app.authenticate }, async () => ({ mode: 'plain', updatedAt: 1 }));
+  f.setActionsSettings(normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: {
+    'machines.activity.list': ['agent'],
+  } }));
+  const refusedRoot = projectExternalActionHttpError('target_unavailable', 'signed-observation');
+  f.failAuthorization(409, undefined, refusedRoot.payload);
+  const environment = createDeploymentEnvironmentHeaderV1({ serverId });
+  const receipt = createDeploymentReceiptHeaderV1({ environmentId: environment.id, contentArtifactId: null });
+  f.app.get('/v1/deployments/environments', { preHandler: f.app.authenticate }, async () =>
+    ({ ok: true, items: [environment], nextCursor: null }));
+  f.app.get(`/v1/deployments/environments/${environment.id}/deployments`, { preHandler: f.app.authenticate }, async () =>
+    ({ ok: true, items: [receipt], nextCursor: null }));
+  const caller = { sessionId, isCurrent: async () => true };
+  try {
+    const outcome = await f.execute(f.operation('machines.activity.list', { serverId, kind: 'receipt', limit: 1 }), caller);
+    expect(outcome, JSON.stringify({ outcome, observations: f.observations })).toMatchObject({
+      ok: true, result: { items: [{ kind: 'receipt', receipt: { id: receipt.id } }], coverage: 'complete' },
+    });
+    expect(f.observations.filter(row => row.path.startsWith('/v1/deployments/'))).toMatchObject([
+      { status: 200, signed: false, bearer: true }, { status: 200, signed: false, bearer: true },
+    ]);
+    const foreign = await f.execute(f.operation('machines.activity.list', { serverId: 'other-home', kind: 'receipt', limit: 1 }), caller);
+    expect(foreign).toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
   } finally { await f.close(); }
 });
 

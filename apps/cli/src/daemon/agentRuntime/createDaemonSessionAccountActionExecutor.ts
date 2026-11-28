@@ -15,6 +15,7 @@ import { isWorkspaceSyncStopAction, prepareWorkspaceSyncStopPlacement } from '@/
 import { TELEMETRY_COSTS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { USAGE_SOURCE_DISMISS_ACTION_ID, USAGE_SOURCE_GET_ACTION_ID } from '@happier-dev/protocol/usage/usageSources';
 import { USAGE_QUERY_ACTION_ID_V1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
+import { MACHINE_ACTIVITY_LIST_ACTION_ID } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
 import { readPluginActionExecutionReference } from '@/session/actions/createDaemonPluginActionExecutor';
 import { blocksPublicProviderComment, INTERNAL_DISCUSSION_REPLY_MESSAGE, INTERNAL_DISCUSSION_REPLY_REQUIRED }
   from '@/plugins/runtime/invocation/actions/internalDiscussionCommentPolicy';
@@ -376,9 +377,10 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
     // Account. Retain the Session host's workspace without minting an Action root.
     const requesterHistoryWorkspace = params.credentials && actionSpec.bindings?.rpcMethod === RPC_METHODS.SCM_HISTORY_ENTRIES
       ? operation.scmWorkspace : undefined;
-    // The one selection point for reads served by the requester Account's
-    // authenticated exact-Machine route instead of an Action root.
-    const requesterAccountRead = requesterOutputRead || requesterHistoryWorkspace !== undefined;
+    // Fleet Activity joins reads from the requester Home and its exact Machines.
+    // No single Machine authorization can admit that Account-wide read.
+    const requesterFleetActivityRead = params.credentials !== undefined && operation.actionId === MACHINE_ACTIVITY_LIST_ACTION_ID;
+    const requesterAccountRead = requesterOutputRead || requesterHistoryWorkspace !== undefined || requesterFleetActivityRead;
     const requiresMachineAuthorization = executionPlacement !== 'account'
       && executionPlacement !== 'client'
       && !requesterAppReview
