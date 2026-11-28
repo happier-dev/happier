@@ -1,8 +1,9 @@
 import * as React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createDeploymentReadControllerV1,
-  type DeploymentReadTransportV1,
+  type DeploymentDomainReadItemV1,
 } from '@happier-dev/deployments';
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { OwnServerDeploymentInputBasisV1Schema } from '@happier-dev/deployments/contracts/v1';
@@ -10,12 +11,34 @@ import { DeploymentDomainContentV1Schema } from '@happier-dev/protocol/deploymen
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import {
   act,
+  createDeferred,
   standardCleanup,
   waitForTestEvent,
 } from '@/dev/testkit';
 import { t } from '@/text';
 import { renderAccountScreen as renderScreen } from '@/dev/testkit/render/renderAccountScreen';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import {
+  DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1,
+  DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
+  DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1,
+  DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
+} from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
+import { DeploymentActionInputSchemasV1 } from '@happier-dev/deployment-protocol/v1';
+import {
+  ExternalActionRequestEnvelopeV1Schema,
+  projectDeploymentReadAdmissionV1,
+} from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { DEPLOYMENT_DOMAIN_DNS_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isJsonObject, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { PluginContributesV2Schema } from '@happier-dev/protocol/plugins/contributions/v2';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { DomainIngressInspection } from './DeploymentDomainIngressFields';
+import type { DeploymentDomainEditing } from './DeploymentDomainsPanel';
 
 vi.mock('yaml', { spy: true });
 vi.mock('react-native', async () =>
@@ -44,8 +67,7 @@ vi.mock(
       renderCustomModals: true,
     }).module,
 );
-// The person's choice in the shared Saved Secret picker sheet, and the signed-in Account it is chosen under, are the
-// boundaries here; the Domain page, its Environment read and the bindings Action input stay real.
+// The person's choice in the shared Saved Secret picker is supplied at the sheet boundary.
 const picked = vi.hoisted(() => ({ ref: '', resourceRevision: 4 }));
 vi.mock(
   '@/components/ui/forms/valueRefs/presentSavedSecretReferencePicker',
@@ -56,17 +78,29 @@ vi.mock(
     })),
   }),
 );
-vi.mock('@/sync/ops/actions/actionAccountContext', () => ({
-  captureLazyActionAccountContext: vi.fn(async () => ({
-    accountLifetime: {
-      scope: { serverId: 'home', accountId: 'account-owner' },
-      isCurrent: () => true,
-      onRetire: () => ({ dispose() {} }),
-    },
-    dispose() {},
-  })),
-}));
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+vi.mock('expo/fetch', () => ({ fetch: (input: RequestInfo | URL, init?: RequestInit) => homes.request(input, init) }));
+const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+const { createDeploymentReadTransport } = await import('./deploymentReadTransport');
+const { createDeploymentActions } = await import('./deploymentActions');
+let account: Awaited<ReturnType<typeof captureLazyActionAccountContext>>;
+let scope: typeof account.accountLifetime.scope & { projectSourceId: string };
+let installedCloudflare: { dispose(): Promise<void> } | undefined;
+let restoreDesktopFetch: (() => void) | undefined;
+beforeEach(async () => {
+  await homes.reset();
+  const serverId = await homes.addHome({ name: 'Domains Home', serverUrl: 'https://domains-home.test',
+    serverIdentityId: `srv_${'d'.repeat(32)}`, accountId: 'account-owner', currentAccount: true });
+  account = await captureLazyActionAccountContext(serverId);
+  scope = { ...account.accountLifetime.scope, projectSourceId: 'source-app' };
+});
 afterEach(async () => {
+  await installedCloudflare?.dispose();
+  installedCloudflare = undefined;
+  restoreDesktopFetch?.();
+  restoreDesktopFetch = undefined;
+  account?.dispose();
   standardCleanup();
   (await import('./inlineAddDraft')).forgetInlineAddDraftsForTest();
 });
@@ -76,11 +110,6 @@ const { DeploymentEnvironmentDetail } =
 const { PresentedDetailNavigationProvider } =
   await import('@/components/appShell/rightSidebar/usePresentedDetailNavigation');
 
-const scope = {
-  serverId: 'home',
-  accountId: 'account-owner',
-  projectSourceId: 'source-app',
-};
 const shown = { mounted: true, visible: true, focused: true };
 const noReview = { pendingId: null, request: () => {}, open: () => {} };
 const id = 'project-deployments.environment.domains.add';
@@ -89,8 +118,8 @@ type Detail = ReturnType<typeof createDeploymentEnvironmentDetailV1>;
 function domain(
   domainId: string,
   hostname: string,
-  extra: Record<string, unknown> = {},
-) {
+  extra: Partial<DeploymentDomainReadItemV1['content']> = {},
+): DeploymentDomainReadItemV1 {
   return {
     domain: {
       v: 1 as const,
@@ -116,51 +145,96 @@ function domain(
   };
 }
 
+async function seedArtifact(artifactId: string, kind: string, title: string, body: unknown) {
+  if (homes.artifacts(scope.serverId).list().some(artifact => artifact.id === artifactId)) return;
+  await account.createArtifactDocument({ artifactId, header: { kind, title }, body: JSON.stringify(body) });
+}
+
+async function seedDomains(environmentId: string, items: readonly DeploymentDomainReadItemV1[]) {
+  for (const { domain: header, content, title } of items) {
+    await seedArtifact(header.contentArtifactId, DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1, title, content);
+  }
+  homes.answer(scope.serverId, `GET /v1/deployments/environments/${environmentId}/domains`, {
+    body: { ok: true, environmentId, revision: 1, domains: items.map(item => item.domain), nextCursor: null },
+  });
+}
+
+function answerDomainHealth(environment: Detail['environment'], items: readonly DeploymentDomainReadItemV1[]) {
+  const actionId = 'deployments.health.current';
+  const path = `/v1/actions/${actionId}`;
+  const { serverId, accountId } = scope;
+  const input = { serverId, machineId: environment.controllerMachineId, environmentId: environment.id,
+    targetLinkId: environment.runtimeTargetLinkId, domainIds: items.map(item => item.domain.id) };
+  const bytes = Buffer.from(JSON.stringify({ ok: true, environmentId: input.environmentId, targetLinkId: input.targetLinkId,
+    observation: null, domainHealth: items.flatMap(item => item.health
+      ? [{ domainId: item.domain.id, domainRevision: item.domain.revision, facts: item.health, observations: [] }] : []) }));
+  const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+  homes.answer(serverId, `POST ${path}/execution-authorization`, { select: body => {
+    const envelope = ExternalActionRequestEnvelopeV1Schema.parse((body as { envelope: unknown }).envelope);
+    return { body: { v: 1, token: 'domain-health-proof', binding: {
+      serverIdentityId: account.serverIdentityId, accountId,
+      authentication: { kind: 'account', tokenEpoch: 0 }, actionId, requestId: envelope.requestId,
+      target: { kind: 'machine', machineId: input.machineId }, machineId: input.machineId, installationId: 'installation-a',
+      custodianAccountId: accountId, accountEncryptionMode: 'plain',
+      deploymentReadAdmission: projectDeploymentReadAdmissionV1(actionId, input),
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+    } } };
+  } });
+  homes.answer(serverId, `POST ${path}`, { select: body => {
+    const envelope = ExternalActionRequestEnvelopeV1Schema.parse((body as { envelope: unknown }).envelope);
+    const continuation = envelope.resourceContinuation;
+    if (continuation?.method !== RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) throw new Error('Expected a Domain health Resource read');
+    return { body: { v: 1, actionId, requestId: envelope.requestId, execution: { ok: true,
+      result: { ok: true, resource: continuation.params.resource, contentType: 'application/json',
+        bytesBase64: bytes.toString('base64'), digest } } } };
+  } });
+  return { actionId, digest: () => digest };
+}
+
+function createController() {
+  return createDeploymentReadControllerV1({ scope, transport: createDeploymentReadTransport(account.accountLifetime) });
+}
+
 async function renderDomains(
   detail: Detail,
-  items: readonly unknown[],
-  domainActions: Record<string, unknown>,
+  items: readonly DeploymentDomainReadItemV1[],
+  boundary: DomainBoundary,
   healthSetup = false,
   receipt = createDeploymentReceiptDetailV1(),
   phone = false,
-  review: Record<string, unknown> = noReview,
+  review: React.ComponentProps<typeof DeploymentEnvironmentDetail>['review'] = noReview,
 ) {
-  const transport: Partial<DeploymentReadTransportV1> = {
-    listEnvironments: async () => ({
-      ok: true,
-      value: { items: [], nextCursor: null },
-    }),
-    readEnvironment: async () => ({ ok: true, value: detail }),
-    listHistory: async () => ({
-      ok: true,
-      value: { ok: true, items: [], nextCursor: null },
-    }),
-    readReceipt: async () => ({ ok: true, value: receipt }),
-    listDomains: async () => ({
-      ok: true,
-      value: { items: items as never, nextCursor: null },
-    }),
-  };
-  const controller = createDeploymentReadControllerV1({
-    scope,
-    transport: transport as DeploymentReadTransportV1,
+  const { serverId, accountId } = scope;
+  const environment = { ...detail.environment, serverId };
+  homes.answer(serverId, `GET /v1/deployments/environments/${environment.id}`, { body: {
+    ok: true, environment, targetLinks: detail.targetLinks.map(row => row.targetLink), secretScope: detail.secretScope,
+  } });
+  await seedArtifact(environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, 'Staging', detail.content);
+  for (const { targetLink, content } of detail.targetLinks) {
+    if (content) await seedArtifact(targetLink.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, 'Runtime target', content);
+  }
+  await seedDomains(environment.id, items);
+  homes.answer(serverId, `GET /v1/deployments/receipts/${receipt.deployment.id}`, {
+    body: { ok: true, deployment: receipt.deployment },
   });
+  await seedArtifact(receipt.deployment.contentArtifactId, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, 'Serving deployment', receipt.content);
+  const controller = createController();
+  const actions = await connectDomainActions(environment, boundary);
   const screen = await renderScreen(
     <PresentedDetailNavigationProvider>
       <DeploymentEnvironmentDetail
         controller={controller}
         environmentId={detail.environment.id}
         demand={shown}
-        accountId="account-owner"
-        serverId="home"
+        accountId={accountId}
+        serverId={serverId}
         phone={phone}
         deploy={null}
-        review={review as typeof noReview}
+        review={review}
         onOpenReceipt={() => {}}
         destination={{ tab: 'domains', section: null }}
-        domainActions={domainActions as never}
-        lifetime={healthSetup ? { scope: { serverId: 'home', accountId: 'account-owner' },
-          isCurrent: () => true, onRetire: () => ({ dispose() {} }) } : undefined}
+        domainActions={actions}
+        lifetime={healthSetup ? account.accountLifetime : undefined}
       />
     </PresentedDetailNavigationProvider>,
   );
@@ -196,21 +270,114 @@ it('offers the shared investigation beside a failed Domain only; one that needs 
   } finally { await screen.unmount(); controller.retire(); }
 });
 
+type ActionBoundary = (input: unknown) => unknown;
+type DomainBoundary = {
+  addDomain: ActionBoundary;
+  setBindings?: ActionBoundary;
+  previewDomainDns?: ActionBoundary;
+  createDomainDns?: ActionBoundary;
+  inspectPlatformTarget?: DomainIngressInspection;
+  offerDomainAddress?: ActionBoundary;
+};
+
+// The published Account plugin is the provider boundary. Its declarations,
+// admission, schema checks, cancellation and error presentation stay real.
+async function installCloudflareInspection(inspect: DomainIngressInspection) {
+  if (installedCloudflare) await installedCloudflare.dispose();
+  const [{ manifest }, { installPortableAccountPluginReleaseForTest }, desktopFetch] = await Promise.all([
+    import('../../../../../../packages/plugins/deploy-cloudflare/src/manifest'),
+    import('@/dev/testkit/harness/portableAccountPlugin'),
+    import('@/utils/platform/tauri/transferFetch'),
+  ]);
+  // Desktop places the Account Action locally. Home HTTP still uses its ordinary fixture.
+  if (!restoreDesktopFetch) {
+    const transport = vi.spyOn(desktopFetch, 'resolveTauriRuntimeFetch').mockResolvedValue(homes.request);
+    restoreDesktopFetch = () => transport.mockRestore();
+  }
+  const declarations = manifest.contributes.actions.filter(action =>
+    action.id === 'workers-domain-zones-read' || action.id === 'cloudflare-named/selections-read');
+  const connectedAccountDescriptors = manifest.contributes.connectedAccountDescriptors.map(descriptor => {
+    const { account: _accountRuntime, ...authentication } = descriptor.authentication;
+    return { ...descriptor, authentication };
+  });
+  const resources = manifest.contributes.resources.filter(resource => resource.kind === 'asset');
+  installedCloudflare = await installPortableAccountPluginReleaseForTest({
+    manifest: { ...manifest, contributes: PluginContributesV2Schema.parse({
+      actions: declarations, connectedAccountDescriptors, resources,
+    }) },
+    accountLifetime: account.accountLifetime,
+    publishProjection: true,
+    activate(api) {
+      for (const { id: localId } of declarations) {
+        api.actions.register(localId, async (input, { signal, requestId }) => {
+          if (!isJsonObject(input)) throw new Error('Expected Cloudflare input');
+          const result = await inspect(formatQualifiedPluginActionId({ pluginId: manifest.id, localId }), input, { signal, actionRequestId: requestId });
+          if (!result.ok) {
+            throw new PluginError({ code: result.code, details: StrictJsonValueSchema.parse(result.details) });
+          }
+          return StrictJsonValueSchema.parse({
+            defaults: { connector: { imageRef: 'cloudflare/cloudflared', version: '2026.10.0' } },
+            connectorDiscovery: { kind: 'unavailable', reason: 'connector_discovery_unavailable' },
+            ...(result.value as Record<string, unknown>),
+          });
+        });
+      }
+    },
+  });
+}
+
 function domainActions(detail: Detail) {
   return {
-    addDomain: vi.fn(async (..._args: unknown[]) => ({
+    addDomain: vi.fn(async (raw: unknown) => {
+      const input = DeploymentActionInputSchemasV1['deployments.domains.add'].parse(raw);
+      return { ok: true as const, environmentId: detail.environment.id, revision: detail.environment.revision + 1,
+        domain: domain(input.domainId, 'docs.happier.dev').domain };
+    }),
+    setBindings: vi.fn(async (_raw: unknown) => ({
       ok: true as const,
       environmentId: detail.environment.id,
       revision: detail.environment.revision + 1,
-      domain: domain('new', 'docs.happier.dev').domain,
     })),
-    setBindings: vi.fn(async (..._args: unknown[]) => ({
-      ok: true as const,
-      environmentId: detail.environment.id,
-      revision: detail.environment.revision + 1,
-    })),
-    verifyDomain: vi.fn(),
-    removeDomain: vi.fn(),
+  } satisfies DomainBoundary;
+}
+
+async function connectDomainActions(environment: Detail['environment'], boundary: DomainBoundary): Promise<DeploymentDomainEditing['actions']> {
+  const { serverId } = scope;
+  const { addDomain, setBindings, previewDomainDns, createDomainDns, inspectPlatformTarget, offerDomainAddress } = boundary;
+  const common = { machineId: environment.controllerMachineId, installationId: 'installation-a', tokenEpoch: 0 };
+  await answerExternalActionAccountForHome(homes, serverId, { ...common, actionId: 'deployments.domains.add',
+    execute: input => addDomain(input),
+    failure: result => {
+      if (typeof result !== 'object' || result === null || !('ok' in result) || result.ok !== false
+        || !('error' in result) || typeof result.error !== 'string') return null;
+      return { errorCode: result.error, error: result.error,
+        ...('details' in result ? { details: result.details } : {}),
+        ...('failureCause' in result ? { failureCause: result.failureCause } : {}) };
+    },
+  });
+  if (setBindings) await answerExternalActionAccountForHome(homes, serverId, {
+    ...common, actionId: 'deployments.bindings.set', execute: input => setBindings(input),
+  });
+  if (previewDomainDns) await answerExternalActionAccountForHome(homes, serverId, {
+    ...common, actionId: 'deployments.domains.verify', execute: input => previewDomainDns(input),
+  });
+  if (offerDomainAddress) await answerExternalActionAccountForHome(homes, serverId, {
+    ...common, actionId: 'deployments.domains.verify', execute: async input => ({
+      ok: true, environmentId: environment.id, addressOffer: await offerDomainAddress(input),
+    }),
+  });
+  if (createDomainDns) await answerExternalActionAccountForHome(homes, serverId, {
+    ...common, actionId: DEPLOYMENT_DOMAIN_DNS_CREATE_ACTION_ID_V1, execute: input => createDomainDns(input),
+  });
+  if (inspectPlatformTarget) await installCloudflareInspection(inspectPlatformTarget);
+  const actions = createDeploymentActions(account.accountLifetime, environment.projectSourceId);
+  return {
+    addDomain: actions.addDomain, removeDomain: actions.removeDomain, verifyDomain: actions.verifyDomain,
+    ...(setBindings ? { setBindings: actions.setBindings } : {}),
+    ...(previewDomainDns ? { previewDomainDns: actions.previewDomainDns } : {}),
+    ...(offerDomainAddress ? { offerDomainAddress: actions.offerDomainAddress } : {}),
+    ...(createDomainDns ? { createDomainDns: actions.createDomainDns } : {}),
+    ...(inspectPlatformTarget ? { inspectPlatformTarget: actions.inspectPlatformTarget } : {}),
   };
 }
 
@@ -221,7 +388,7 @@ it.each([false, true])('keeps retained Domains visible as unattached after runti
   const known = domain('current-domain', 'current.example.test');
   const current = { ...known, domain: { ...known.domain, targetLinkId: base.environment.runtimeTargetLinkId! } };
   const predecessor = { ...domain('predecessor-domain', 'old.example.test'),
-    domain: { ...known.domain, id: 'predecessor-domain', targetLinkId: 'previous-target-link' } };
+    domain: { ...known.domain, id: 'predecessor-domain', contentArtifactId: 'content-predecessor-domain', targetLinkId: 'previous-target-link' } };
   const { screen, controller, settle } = await renderDomains(detail, [predecessor, current], domainActions(detail));
   try {
     await settle('project-deployments.environment.domains.current-domain');
@@ -250,7 +417,7 @@ it('keeps a failed retained Domain recovery available', async () => {
   } finally { await screen.unmount(); controller.retire(); }
 });
 
-function platformDetail(targetKind = 'vercel', content: Record<string, unknown> = {}) {
+function platformDetail(targetKind = 'vercel', content: Detail['targetLinks'][number]['content'] = {}) {
   return createDeploymentEnvironmentDetailV1({ targetLinks: [{ content,
     targetLink: createDeploymentTargetLinkHeaderV1({ source: { kind: 'plugin',
       contribution: { pluginId: `happier.deploy.${targetKind === 'workers' ? 'cloudflare' : 'vercel'}`, localId: 'runtime' } },
@@ -313,9 +480,9 @@ describe('Environment → Domains: add form (P6)', () => {
       expect(screen.findByTestId(`${id}.port`)).toBeNull();
       await act(async () => { screen.changeTextByTestId(`${id}.host`, 'app.example.test'); });
       await screen.pressByTestIdAsync(`${id}.save`);
-      expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      await vi.waitFor(() => expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
         content: { hostname: 'app.example.test', target: { kind: 'provider' } },
-      }));
+      })));
     } finally { await screen.unmount(); controller.retire(); }
   });
 
@@ -338,17 +505,20 @@ describe('Environment → Domains: add form (P6)', () => {
       expect(actions.addDomain).not.toHaveBeenCalled();
       expect(screen.findByTestId(`${id}.ingress.account`)).toBeNull();
       await screen.pressByTestIdAsync(`${id}.ingress.zones.read`);
-      expect(inspectPlatformTarget).toHaveBeenCalledExactlyOnceWith('happier.deploy.cloudflare/actions/workers-domain-zones-read',
-        { credentialRef: account, accountId: 'cloudflare-account', hostname: 'app.example.test' }, { signal: expect.any(AbortSignal) });
+      await vi.waitFor(() => expect(inspectPlatformTarget).toHaveBeenCalledExactlyOnceWith('happier.deploy.cloudflare/actions/workers-domain-zones-read',
+        { credentialRef: account, accountId: 'cloudflare-account', hostname: 'app.example.test' }, expect.objectContaining({ signal: expect.any(AbortSignal) })));
       const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
-      const choice = screen.findAllByType(DropdownMenu).find(node => node.props.testID === `${id}.ingress.zone`);
-      expect(choice).toBeDefined();
+      const choice = await vi.waitFor(() => {
+        const menu = screen.findAllByType(DropdownMenu).find(node => node.props.testID === `${id}.ingress.zone`);
+        expect(menu).toBeDefined();
+        return menu;
+      });
       await act(async () => { choice!.props.onSelect('zone-exact'); });
       expect(screen.findByTestId(`${id}.ingress.read`)).toBeNull();
       await screen.pressByTestIdAsync(`${id}.save`);
-      expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ content: {
+      await vi.waitFor(() => expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ content: {
         hostname: 'app.example.test', target: { kind: 'provider', zone: { zoneId: 'zone-exact', name: 'example.test' } },
-      } }));
+      } })));
     } finally { await screen.unmount(); controller.retire(); }
   });
 
@@ -432,7 +602,7 @@ describe('Environment → Domains: add form (P6)', () => {
       });
       await screen.pressByTestIdAsync(`${id}.certificate:custom`);
       await screen.pressByTestIdAsync(`${id}.save`);
-      expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(
+      await vi.waitFor(() => expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({
           content: {
             hostname,
@@ -445,7 +615,7 @@ describe('Environment → Domains: add form (P6)', () => {
             basicAuth: { username: 'preview' },
           },
         }),
-      );
+      ));
     } finally {
       await screen.unmount();
       controller.retire();
@@ -475,9 +645,9 @@ describe('Environment → Domains: add form (P6)', () => {
         screen.changeTextByTestId(`${id}.checkStatus`, '');
       });
       await screen.pressByTestIdAsync(`${id}.save`);
-      expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      await vi.waitFor(() => expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
         content: expect.objectContaining({ healthCheck: { path: '/ready' } }),
-      }));
+      })));
     } finally {
       await screen.unmount();
       controller.retire();
@@ -595,13 +765,13 @@ describe('Environment → Domains: add form (P6)', () => {
         select(`${id}.service`)!.props.onSelect('web');
       });
       await screen.pressByTestIdAsync(`${id}.save`);
-      expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(
+      await vi.waitFor(() => expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({
           content: expect.objectContaining({
             target: { service: 'web', containerPort: 8080 },
           }),
         }),
-      );
+      ));
     } finally {
       await screen.unmount();
       controller.retire();
@@ -684,13 +854,15 @@ describe('Environment → Domains: Service defaults for saved Compose and apps (
     const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
     const detail = withDatabase({ kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}`,
       document: 'services:\n  app:\n    image: nginx:alpine\n    expose:\n      - "80"\n', profiles: [], services: [] });
+    detail.targetLinks[0]!.targetLink.activeDeploymentId = undefined;
     const { screen, controller, settle } = await renderDomains(detail, [], domainActions(detail));
     try {
       expect(await settle(id)).not.toBeNull();
       await screen.pressByTestIdAsync(id);
       const select = (testID: string) => screen.findAllByType(DropdownMenu).find(node => node.props.testID === testID);
-      await act(async () => {
-        await vi.waitFor(() => expect(select(`${id}.service`)?.props.selectedId).toBe('app'));
+      await waitForHomeGovernance(async () => {
+        await act(async () => {});
+        expect(select(`${id}.service`)?.props.selectedId).toBe('app');
       });
       expect(screen.findByTestId(`${id}.port`)?.props.value).toBe('80');
     } finally { await screen.unmount(); controller.retire(); }
@@ -707,8 +879,9 @@ describe('Environment → Domains: Service defaults for saved Compose and apps (
       await screen.pressByTestIdAsync(id);
       expect(screen.findAllByType(ValueFieldSelect).find(node => node.props.testID === `${id}.service`)?.props.selectedId)
         .toBe('database');
-      await act(async () => {
-        await vi.waitFor(() => expect(screen.findByTestId(`${id}.port`)?.props.value).toBe('5432'));
+      await waitForHomeGovernance(async () => {
+        await act(async () => {});
+        expect(screen.findByTestId(`${id}.port`)?.props.value).toBe('5432');
       });
     } finally { await screen.unmount(); controller.retire(); }
   });
@@ -725,8 +898,9 @@ describe('Environment → Domains: Service defaults for saved Compose and apps (
       const select = (testID: string) => screen.findAllByType(DropdownMenu).find(node => node.props.testID === testID);
       expect(select(`${id}.service`)?.props.selectedId).toBe('worker');
       await act(async () => { select(`${id}.service`)!.props.onSelect('database'); });
-      await act(async () => {
-        await vi.waitFor(() => expect(screen.findByTestId(`${id}.port`)?.props.value).toBe('5432'));
+      await waitForHomeGovernance(async () => {
+        await act(async () => {});
+        expect(screen.findByTestId(`${id}.port`)?.props.value).toBe('5432');
       });
       expect(select(`${id}.port`)).toBeUndefined();
       expect(select(`${id}.service`)?.props.selectedId).toBe('database');
@@ -769,6 +943,7 @@ describe('Environment → Domains: credentials an address needs', () => {
         expect(actions.setBindings).toHaveBeenCalledTimes(1),
       );
       expect(actions.setBindings).toHaveBeenCalledWith({
+        serverId: scope.serverId,
         environmentId: detail.environment.id,
         expectedRevision: detail.environment.revision,
         remove: [],
@@ -858,18 +1033,21 @@ describe('Environment → Domains: add form reads as a place, once (PAGE-ACCEPT-
 
 describe('Environment → Domains: Find zones can be stopped (O-DEPLOY F2)', () => {
   function pendingInspect() {
-    const signals: AbortSignal[] = [];
-    // The provider read never answers by itself; only its caller's cancellation settles it.
-    const inspectPlatformTarget = vi.fn<DomainIngressInspection>((_action, _input, operation) => {
-      const signal = operation?.signal;
-      if (signal) signals.push(signal);
-      return new Promise<never>((_resolve, reject) => {
-        signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
-      });
+    type Result = Awaited<ReturnType<DomainIngressInspection>>;
+    const requests: ReturnType<typeof createDeferred<Result>>[] = [];
+    const inspectPlatformTarget = vi.fn<DomainIngressInspection>(() => {
+      const response = createDeferred<Result>();
+      requests.push(response);
+      return response.promise;
     });
-    return { signals, inspectPlatformTarget };
+    // An admitted Account read can finish after the form has stopped waiting.
+    const finish = () => act(async () => {
+      for (const response of requests) response.resolve({ ok: false, code: 'denied', details: {} });
+      await Promise.all(requests.map(response => response.promise));
+    });
+    return { requests, finish, inspectPlatformTarget };
   }
-  async function openAndFind(detail: Detail, inspectPlatformTarget: unknown) {
+  async function openAndFind(detail: Detail, inspectPlatformTarget: DomainIngressInspection) {
     const rendered = await renderDomains(detail, [], { ...domainActions(detail), inspectPlatformTarget });
     expect(await rendered.settle(id)).not.toBeNull();
     await rendered.screen.pressByTestIdAsync(id);
@@ -887,24 +1065,26 @@ describe('Environment → Domains: Find zones can be stopped (O-DEPLOY F2)', () 
     return { ...base, content: { ...base.content, ingress: { kind: 'cloudflareTunnel' as const } } };
   };
 
-  it('Cancel stops the read through its signal and offers Retry', async () => {
-    const { signals, inspectPlatformTarget } = pendingInspect();
+  it('Cancel stops waiting, ignores the late reply and offers Retry', async () => {
+    const { requests, finish, inspectPlatformTarget } = pendingInspect();
     const { screen, controller } = await openAndFind(tunnelDetail(), inspectPlatformTarget);
     try {
-      expect(signals).toHaveLength(1);
+      await vi.waitFor(() => expect(requests).toHaveLength(1));
       expect(screen.findByTestId(`${id}.ingress.zones.cancel`)).not.toBeNull();
       // One indicator while a read runs: the loading line with Cancel, not a disabled Find beside it (R7 nit).
       expect(screen.findByTestId(`${id}.ingress.zones.read`)).toBeNull();
       await screen.pressByTestIdAsync(`${id}.ingress.zones.cancel`);
-      expect(signals[0]!.aborted).toBe(true);
-      await vi.waitFor(() => expect(screen.findByTestId(`${id}.ingress.zones.retry`)).not.toBeNull());
+      await finish();
+      expect(screen.findByTestId(`${id}.ingress.zones.stopped`)).not.toBeNull();
+      expect(screen.findByTestId(`${id}.ingress.zones.error`)).toBeNull();
+      expect(screen.findByTestId(`${id}.ingress.zones.retry`)).not.toBeNull();
       await screen.pressByTestIdAsync(`${id}.ingress.zones.retry`);
-      expect(inspectPlatformTarget).toHaveBeenCalledTimes(2);
-    } finally { await screen.unmount(); controller.retire(); }
+      await vi.waitFor(() => expect(inspectPlatformTarget).toHaveBeenCalledTimes(2));
+    } finally { await finish(); await screen.unmount(); controller.retire(); }
   });
 
   it.each(['zones', 'tunnels'] as const)('clears the old %s error when Retry is cancelled and retains the form choice', async kind => {
-    const { signals, inspectPlatformTarget } = pendingInspect();
+    const { requests, finish, inspectPlatformTarget } = pendingInspect();
     const failure = { ok: false as const, code: 'denied',
       details: { requiredFact: 'cloudflarePermissions', remedy: 'Reconnect the selected Cloudflare account.' } };
     inspectPlatformTarget.mockResolvedValueOnce(kind === 'zones' ? failure : { ok: true,
@@ -915,22 +1095,26 @@ describe('Environment → Domains: Find zones can be stopped (O-DEPLOY F2)', () 
     try {
       await vi.waitFor(() => expect(screen.findByTestId(`${id}.ingress.${kind}.error`)).not.toBeNull());
       await screen.pressByTestIdAsync(`${id}.ingress.${kind}.retry`);
+      await vi.waitFor(() => expect(requests).toHaveLength(1));
       await screen.pressByTestIdAsync(`${id}.ingress.${kind}.cancel`);
-      expect(signals[0]?.aborted).toBe(true);
+      await finish();
       expect(screen.findByTestId(`${id}.ingress.${kind}.stopped`)).not.toBeNull();
       expect(screen.findByTestId(`${id}.ingress.${kind}.error`)).toBeNull();
       expect(screen.findByTestId(`${id}.host`)?.props.value).toBe('docs.happier.dev');
       if (kind === 'tunnels') expect(screen.findByTestId(`${id}.ingress.zone`)).not.toBeNull();
-    } finally { await screen.unmount(); controller.retire(); }
+    } finally { await finish(); await screen.unmount(); controller.retire(); }
   });
 
   it('closing the form cancels a read still in flight', async () => {
-    const { signals, inspectPlatformTarget } = pendingInspect();
+    const { requests, finish, inspectPlatformTarget } = pendingInspect();
     const { screen, controller } = await openAndFind(tunnelDetail(), inspectPlatformTarget);
     try {
+      await vi.waitFor(() => expect(requests).toHaveLength(1));
       await screen.pressByTestIdAsync(`${id}.cancel`);
-      expect(signals[0]!.aborted).toBe(true);
-    } finally { await screen.unmount(); controller.retire(); }
+      await finish();
+      expect(screen.findByTestId(`${id}.host`)).toBeNull();
+      expect(screen.findByTestId(`${id}.ingress.zones.error`)).toBeNull();
+    } finally { await finish(); await screen.unmount(); controller.retire(); }
   });
 });
 
@@ -941,9 +1125,9 @@ describe('Environment → Domains: a Find zones refusal names its own cause (PAG
     const detail = { ...base, content: { ...base.content, ingress: { kind: 'cloudflareTunnel' as const } } };
     const reason = 'denied';
     const details = { requiredFact: 'cloudflarePermissions', remedy: 'Ask the Cloudflare account owner to restore zone access.' };
-    const inspectPlatformTarget = vi.fn(async () => source === 'provider-output'
+    const inspectPlatformTarget = vi.fn<DomainIngressInspection>(async () => source === 'provider-output'
       ? { ok: true as const, value: { kind: 'unavailable', options: [], reason, ...details } }
-      : { ok: false as const, code: reason, details, requestId: 'find-zones-request-1' });
+      : { ok: false as const, code: reason, details });
     const { screen, controller, settle } = await renderDomains(detail, [], { ...domainActions(detail), inspectPlatformTarget });
     try {
       expect(await settle(id)).not.toBeNull();
@@ -955,13 +1139,18 @@ describe('Environment → Domains: a Find zones refusal names its own cause (PAG
           account: { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'work' } }, null);
       });
       await screen.pressByTestIdAsync(`${id}.ingress.zones.read`);
+      await vi.waitFor(() => expect(screen.findByTestId(`${id}.ingress.zones.error`)).not.toBeNull());
       const card = screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === `${id}.ingress.zones.error`);
       expect(card?.props.diagnosticCode).toBe(reason);
-      if (source === 'action-failure') expect(card?.props.diagnosticDetail).toContain('find-zones-request-1');
+      if (source === 'action-failure') {
+        const requestId = inspectPlatformTarget.mock.calls[0]?.[2]?.actionRequestId;
+        expect(requestId).toEqual(expect.any(String));
+        expect(card?.props.diagnosticDetail).toContain(requestId);
+      }
       expect(card?.props.title).toBe(details.remedy);
       expect(screen.findByTestId(`${id}.ingress.zones.retry`)).not.toBeNull();
       await screen.pressByTestIdAsync(`${id}.ingress.zones.retry`);
-      expect(inspectPlatformTarget).toHaveBeenCalledTimes(2);
+      await vi.waitFor(() => expect(inspectPlatformTarget).toHaveBeenCalledTimes(2));
     } finally { await screen.unmount(); controller.retire(); }
   });
 });
@@ -1005,7 +1194,7 @@ describe('Environment → Domains: Add domain never looks dead (UI-DOMAIN-VIEWER
         screen.changeTextByTestId(`${id}.port`, '3000');
       });
       await screen.pressByTestIdAsync(`${id}.save`);
-      expect(actions.addDomain).toHaveBeenCalledOnce();
+      await vi.waitFor(() => expect(actions.addDomain).toHaveBeenCalledOnce());
       const atForm = await settle(`${id}.outcome`);
       expect(atForm, 'the refusal renders inside the open form, beside Add domain').not.toBeNull();
       const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
@@ -1068,7 +1257,7 @@ describe('Environment → Domains: Add domain never looks dead (UI-DOMAIN-VIEWER
       } } : {}),
       details: {
         step: 'native_execution', machineId: 'origin-machine',
-        operation: { serverId: 'home', machineId: 'controller-machine', operationId: 'domain-operation' },
+        operation: { serverId: scope.serverId, machineId: 'controller-machine', operationId: 'domain-operation' },
         ...(code === 'admin_access_unavailable' ? {
           remedy: 'The machine needs administrator access for this change. Review its administrator connection before retrying.',
         } : {}),
@@ -1167,21 +1356,21 @@ describe('Environment → Domains: whether the address reaches this Machine (#2)
       // Typing asks nothing of the Machine.
       expect(previewDomainDns).not.toHaveBeenCalled();
       await screen.pressByTestIdAsync(`${id}.dns.action`);
-      expect(previewDomainDns).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
-        environmentId: detail.environment.id, content: expect.objectContaining({ hostname: 'app.example.test' }),
-      }));
+      await vi.waitFor(() => expect(previewDomainDns).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        environmentId: detail.environment.id, mode: 'preview', content: expect.objectContaining({ hostname: 'app.example.test' }),
+      })));
       expect(await settle(`${id}.dns.missing`)).not.toBeNull();
       await screen.pressByTestIdAsync(`${id}.dns.action`);
-      expect(previewDomainDns).toHaveBeenCalledTimes(2);
+      await vi.waitFor(() => expect(previewDomainDns).toHaveBeenCalledTimes(2));
       expect(await settle(`${id}.dns.ready`)).not.toBeNull();
       // A different address is a different question: the old answer is not shown for it.
       await act(async () => screen.changeTextByTestId(`${id}.host`, 'www.example.test'));
       expect(screen.findByTestId(`${id}.dns.ready`)).toBeNull();
       expect(screen.findByTestId(`${id}.dns.unchecked`)).not.toBeNull();
-      expect(previewDomainDns).toHaveBeenCalledTimes(2);
+      await vi.waitFor(() => expect(previewDomainDns).toHaveBeenCalledTimes(2));
       // Advisory: Add domain does not wait on DNS.
       await screen.pressByTestIdAsync(`${id}.save`);
-      expect(actions.addDomain).toHaveBeenCalledOnce();
+      await vi.waitFor(() => expect(actions.addDomain).toHaveBeenCalledOnce());
     } finally { await screen.unmount(); controller.retire(); }
   });
 
@@ -1217,9 +1406,13 @@ describe('Environment → Domains: whether the address reaches this Machine (#2)
       observedAt: 1, vantage: 'outside' as const, certificate: { state: 'valid' as const, expiresAt }, needsYou: null } };
     const waiting = { ...domain('waiting', 'pay.example.com'), domain: { ...domain('waiting', 'pay.example.com').domain,
       dnsHealth: dnsHealth('down', 'dns_missing') } };
+    const { installHostResourceWatchSocket } = await import('./resourceWatchSocket.testFixture');
+    const socket = installHostResourceWatchSocket(answerDomainHealth(detail.environment, [serving, waiting]));
     const { screen, controller, settle } = await renderDomains(detail, [serving, waiting], domainActions(detail));
     try {
       await settle('project-deployments.environment.domains.waiting');
+      await vi.waitFor(() => expect(screen.getTextContent()).toContain(
+        `Automatic · expires ${new Date(expiresAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`));
       const text = screen.getTextContent();
       expect(text).toContain('2 domains');
       expect(text).toContain('web:3000 /');
@@ -1232,7 +1425,7 @@ describe('Environment → Domains: whether the address reaches this Machine (#2)
       expect(text).toContain('Add an A or AAAA record');
       expect(screen.findByTestId('project-deployments.environment.domains.waiting.checkAgain')).not.toBeNull();
       expect(screen.findByTestId('project-deployments.environment.domains.serving.checkAgain')).toBeNull();
-    } finally { await screen.unmount(); controller.retire(); }
+    } finally { await screen.unmount(); controller.retire(); socket.mockRestore(); }
   });
 });
 
@@ -1250,11 +1443,10 @@ describe('Environment → Domains: where an address leads (DEPLOY-REACCEPT-1113 
 
 describe('Environment → Domains: the platform\'s built-in address', () => {
   // A Vercel or Workers Environment keeps its stable *.vercel.app / *.workers.dev address: it leads the list, read-only.
-  async function renderPanel(items: readonly unknown[], builtInUrls: readonly string[]) {
+  async function renderPanel(items: readonly DeploymentDomainReadItemV1[], builtInUrls: readonly string[]) {
     const { DeploymentDomainsPanel } = await import('./DeploymentDomainsPanel');
-    const controller = createDeploymentReadControllerV1({ scope, transport: {
-      listDomains: async () => ({ ok: true, value: { items: items as never, nextCursor: null } }),
-    } as Partial<DeploymentReadTransportV1> as DeploymentReadTransportV1 });
+    await seedDomains('environment-staging', items);
+    const controller = createController();
     const screen = await renderScreen(
       <DeploymentDomainsPanel controller={controller} environmentId="environment-staging"
         environment={{ runtimeTargetLinkId: 'target-link' }} demand={shown} builtInUrls={builtInUrls} />,
@@ -1384,9 +1576,9 @@ describe('Environment → Domains: one Find, then a tunnel Happier can create (r
       await screen.pressByTestIdAsync(`${id}.advanced.header`);
       expect(screen.findByTestId(`${id}.ingress.imageRef`)).not.toBeNull();
       await screen.pressByTestIdAsync(`${id}.save`);
-      expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      await vi.waitFor(() => expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
         content: expect.objectContaining({ ingress: created }),
-      }));
+      })));
     } finally { await screen.unmount(); controller.retire(); }
   });
 
@@ -1394,14 +1586,14 @@ describe('Environment → Domains: one Find, then a tunnel Happier can create (r
     const openRecovery = vi.fn();
     const addDomain = vi.fn(async () => ({ ok: false, error: 'admin_access_unavailable', details: {
       step: 'native_execution', machineId: 'tunnel-origin',
-      operation: { serverId: 'home', machineId: 'controller-machine', operationId: 'domain-operation' },
+      operation: { serverId: scope.serverId, machineId: 'controller-machine', operationId: 'domain-operation' },
     } }));
     const { screen, controller, settle } = await findChoices([], undefined, false, { addDomain, openRecovery });
     try {
       await screen.pressByTestIdAsync(`${id}.save`);
-      expect(addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      await vi.waitFor(() => expect(addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
         content: expect.objectContaining({ ingress: created }),
-      }));
+      })));
       expect(await settle(`${id}.outcome`)).not.toBeNull();
       const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
       const banner = screen.findAllByType(AttentionBanner)
@@ -1419,9 +1611,9 @@ describe('Environment → Domains: one Find, then a tunnel Happier can create (r
       expect(select?.props.selectedId).toBe(select?.props.items[0].id);
       expect(select?.props.items[1].title).toBe('office');
       await screen.pressByTestIdAsync(`${id}.save`);
-      expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      await vi.waitFor(() => expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
         content: expect.objectContaining({ ingress: created }),
-      }));
+      })));
     } finally { await screen.unmount(); controller.retire(); }
   });
 
