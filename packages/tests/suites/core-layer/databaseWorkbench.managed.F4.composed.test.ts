@@ -574,19 +574,20 @@ async function exerciseManagedDatabase(provider: (typeof providers)[number], mod
             const begin = BigInt(Date.now()) * 1_000_000n;
             const timing = { startTimeUnixNano: String(begin), endTimeUnixNano: String(begin + 1_000_000n) };
             const attr = (key: string, stringValue: string) => ({ key, value: { stringValue } });
-            return JSON.stringify({ resourceSpans: [{ scopeSpans: [{ spans: [{ ...timing, traceId, spanId, kind: 2,
+            return [{ ...timing, traceId, spanId, kind: 2,
               name: 'GET /plan85', attributes: [attr('http.request.method', 'GET'), attr('http.route', '/plan85')] },
             ...[1, 2, 3].map(parameter => ({ ...timing, traceId, spanId: randomBytes(8).toString('hex'), parentSpanId: spanId, kind: 3,
               name: 'SELECT', attributes: [attr('db.system.name', 'postgresql'), attr('server.address', direct.hostname),
                 { key: 'server.port', value: { intValue: direct.port } }, ...(databaseName ? [attr('db.namespace', databaseName)] : []),
                 attr('db.query.text', sql),
-                { key: 'db.query.parameter.1', value: { intValue: String(parameter) } }] }))] }] }] });
+                { key: 'db.query.parameter.1', value: { intValue: String(parameter) } }] }))];
           }
-          async function emit(token: string, body: string) {
+          async function emit(token: string, ...requests: ReturnType<typeof trace>[]) {
+            const body = JSON.stringify({ resourceSpans: [{ scopeSpans: [{ spans: requests.flat() }] }] });
             const response = await fetch(`http://127.0.0.1:${collectorPort}/v1/traces`, { method: 'POST', body,
               headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } });
             expect(response.status).toBe(200);
-            await response.arrayBuffer();
+            expect(await response.json()).not.toHaveProperty('partialSuccess');
           }
           const first = trace(database);
           await emit(selectedToken, first);
@@ -597,8 +598,12 @@ async function exerciseManagedDatabase(provider: (typeof providers)[number], mod
           await emit(selectedToken, trace(`${database}_neighbor`));
           await emit(selectedToken, trace());
           await emit(refusedToken, trace(database));
-          for (let request = 1; request < 1_000; request++) {
-            await emit(selectedToken, trace(database));
+          // Export distinct application requests in the same batches the OTLP receiver accepts in production.
+          const remaining = 999;
+          const requestsPerExport = 50;
+          for (let sent = 0; sent < remaining; sent += requestsPerExport) {
+            const requests = Array.from({ length: Math.min(requestsPerExport, remaining - sent) }, () => trace(database));
+            await emit(selectedToken, ...requests);
           }
           expect(admittedFindings).toHaveLength(1);
           expect(await runs(armed.set.automationId)).toHaveLength(1);
