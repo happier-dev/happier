@@ -1,9 +1,12 @@
-import { expect, test, type Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import { join } from 'node:path';
 
+import { playwrightRunnerTestApi } from '../../scripts/playwrightRunnerTestApi.mjs';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startDatabaseWorkbenchBrowser } from '../../src/testkit/uiE2e/databaseWorkbenchBrowser';
 import { focusMonacoEditor } from '../../src/testkit/uiE2e/focusMonacoEditor';
+
+const { expect, test } = playwrightRunnerTestApi();
 
 const run = createRunDirs({ runLabel: 'dbw-desktop' });
 

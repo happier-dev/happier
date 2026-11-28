@@ -1,5 +1,5 @@
 // @ts-check
-import { defineConfig } from '@playwright/test';
+import { playwrightRunnerTestApi } from './scripts/playwrightRunnerTestApi.mjs';
 import {
   resolvePlaywrightUiHtmlReportDir,
   resolvePlaywrightUiTestResultsDir,
@@ -7,6 +7,7 @@ import {
 import { fileURLToPath } from 'node:url';
 
 const outputDir = resolvePlaywrightUiTestResultsDir(process.env);
+const { defineConfig } = playwrightRunnerTestApi();
 const htmlReportDir = resolvePlaywrightUiHtmlReportDir(process.env);
 const packedNovelHandoffEnabled = Boolean(
   process.env.HAPPIER_E2E_PACKED_NOVEL_QA_HANDOFF_MANIFEST?.trim(),
