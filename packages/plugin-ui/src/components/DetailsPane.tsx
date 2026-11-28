@@ -352,14 +352,24 @@ export function PushedDetailHeader(props: Readonly<Pick<DetailsPaneProps, 'title
     return () => publishBack(null);
   }, [backLabel, publishBack]);
   const backTestID = props.testID === undefined ? {} : { testID: `${props.testID}:back` };
-  const back = (style?: HappierStyleProp, trailing?: ReactNode, textEdge: 'start' | null = null) => <View style={style}><HappierTextActionEdgeContext.Provider value={textEdge}>{backLabel === undefined ? <IconButton
+  const backInBand = hostBack || publishBack !== undefined;
+  // A phone's local Back row takes the actions from the same host that lends them to the list toolbar.
+  // When the route draws Back instead, the route already has the actions.
+  const localBackActions = !backInBand && placement !== 'story' && chrome?.largeTitle === true
+    ? chrome.renderNavigationActions?.(null, 'page') : null;
+  const back = (style?: HappierStyleProp, textEdge: 'start' | null = null) => <View style={[style, localBackActions == null ? null : {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexGrow: 1,
+  }]}><HappierTextActionEdgeContext.Provider value={textEdge}>{backLabel === undefined ? <IconButton
     icon={<Icon name="back" tone="secondary" />}
     accessibilityLabel={translate('happier.plugin-ui.detailsPane.back', 'Back')}
     onPress={props.onClose}
     {...backTestID}
   /> : <Button variant="plain" size="small" singleLine icon={<Icon name="back" tone="secondary" />} title={backLabel}
-    onPress={props.onClose} {...backTestID} />}</HappierTextActionEdgeContext.Provider>{trailing}</View>;
-  const backInBand = hostBack || publishBack !== undefined;
+    onPress={props.onClose} {...backTestID} />}</HappierTextActionEdgeContext.Provider>
+    {localBackActions == null ? null : <View style={{ flexDirection: 'row', alignItems: 'center', gap: HAPPIER_PAGE_METRICS.rowLeadingGapPx }}>
+      {localBackActions}
+    </View>}
+  </View>;
   // While the story carries the title the band is the way back alone: the title is said once, in the story that
   // scrolls (lab merged-detail-pr phone, "‹ PRs & Issues" above the large title; DESIGN-LIVE-225).
   if (props.title === undefined || placement === 'backOnly') {
@@ -372,7 +382,7 @@ export function PushedDetailHeader(props: Readonly<Pick<DetailsPaneProps, 'title
       // and the plain label sits on that edge rather than its own padding (review P1, ~30 px in on 390).
       paddingHorizontal: Math.max(0, HAPPIER_PAGE_METRICS.pageTextInsetPx - HAPPIER_PAGE_METRICS.headingOpticalInsetPx - columnEdgePx),
       paddingTop: HAPPIER_PAGE_METRICS.pageHeaderUnderChromePaddingTopPx,
-    }, undefined, 'start');
+    }, 'start');
   }
   return (
     <HappierPageHeadingBindingContext.Provider value={headingRef}>

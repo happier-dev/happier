@@ -5,7 +5,7 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { View } from 'react-native';
 import { expect, it, vi } from 'vitest';
-import { Collection, CollectionToolbar, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
+import { Button, Collection, CollectionToolbar, Item as PluginItem, ItemGroup as PluginItemGroup, RowStatusLine, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 import { installWebLayoutBridge, measureWebLayout } from '@/dev/testkit/render/measureWebLayout';
@@ -27,6 +27,48 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 
 installWebLayoutBridge();
+
+it.each([390, 1440])('keeps a source status together and aligns wrapped actions at %i px', async (width) => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const title = 'Example Workspace';
+    const status = 'Not read · Trying again won’t fix this. Details has what support needs.';
+    try {
+        await act(async () => root.render(<View style={{ width }}><CoreCollectionScope renderPageScroller={renderPageScroller}>
+            <PluginItemGroup title="Configured sources">
+                <PluginItem title={title} subtitle="Bitbucket Cloud · example workspace"
+                    icon={<View style={{ width: 16, height: 16 }} />}
+                    accessory={<Button variant="plain" title="Fix" testID="source-fix" onPress={() => {}} />}
+                    secondaryActions={[{ id: 'details', label: 'Details' }]} onSecondaryAction={() => {}}>
+                    <RowStatusLine tone="warn" numberOfLines={3} text={status} testID="source-status" />
+                </PluginItem>
+            </PluginItemGroup>
+        </CoreCollectionScope></View>));
+        const statusLine = host.querySelector('[data-testid="source-status"]')!;
+        statusLine.firstElementChild!.setAttribute('data-testid', 'source-status-dot');
+        const layout = await measureWebLayout(host, { viewport: { width, height: 900 }, texts: [title, status, 'Fix'], settle: replay => act(replay) });
+        const dot = layout.rect('source-status-dot');
+        const words = layout.textRects(status)[0]!;
+        const firstLine = words.textFragments?.[0] ?? words;
+        const titleBox = layout.textRects(title)[0]!;
+        const fix = layout.textRects('Fix')[0]!;
+        expect.soft(dot.top + dot.height / 2).toBeGreaterThan(firstLine.top);
+        expect.soft(dot.top + dot.height / 2).toBeLessThan(firstLine.bottom);
+        expect.soft(dot.right).toBeLessThanOrEqual(firstLine.left);
+        expect.soft(layout.rect('source-status').left).toBeCloseTo(titleBox.left, 0);
+        if (width === 390) {
+            expect.soft(fix.left).toBeCloseTo(titleBox.left, 0);
+            expect.soft(fix.top).toBeGreaterThanOrEqual(words.bottom);
+        } else {
+            expect.soft(fix.left).toBeGreaterThan(titleBox.left);
+            expect.soft(fix.top).toBeLessThan(words.bottom);
+        }
+    } finally {
+        await act(async () => root.unmount());
+        host.remove();
+    }
+});
 
 const items = [{ key: 'a', group: 'first', title: 'First item' }, { key: 'b', group: 'second', title: 'Second item' }];
 type Entry = typeof items[number];

@@ -8300,12 +8300,58 @@ describe('the Collection toolbar', () => {
   it('never hides a freshness that is warning the reader to keep the one row', () => {
     const view = mount({ search, header: toolbarHeader([], { tone: 'warning', label: 'Stale since 09:00' }), renderPopover: openPopover });
     view.measure(1120);
+    reportToolbarLayout(view, 'toolbar:views', 0, 146, 32);
     reportToolbarLayout(view, 'toolbar:lead', 0, 650, 36);
     reportToolbarLayout(view, 'toolbar', 0, 1000, 36);
     reportToolbarLayout(view, 'toolbar:trail', 0, 450, 32);
     expect(view.query('refine:toolbar')).toBeNull();
     expect(view.query('toolbar')!.textContent).toContain('Stale since 09:00');
     view.unmount();
+  });
+
+  it.each([
+    { trailingWidth: 320, folds: false },
+    { trailingWidth: 430, folds: true },
+  ])('gives up the view labels before folding a wide row with source attention (folds=$folds)', async ({ trailingWidth, folds }) => {
+    const calls: string[] = [];
+    const view = mount({ search, header: toolbarHeader(calls), renderPopover: openPopover });
+    try {
+      view.measure(1120);
+      const row = view.query('toolbar')!;
+      const lead = view.query('toolbar:lead')!;
+      const trail = view.query('toolbar:trail')!;
+      const choices = trail.querySelector('[role="radiogroup"]')!;
+      expect(choices.textContent).toContain('Board');
+      const box = (node: Element, width: number) => {
+        node.getBoundingClientRect = () => DOMRect.fromRect({ width, height: 36 });
+        Object.assign(node, { measureInWindow: (read: (...values: number[]) => void) => read(0, 0, width, 36) });
+      };
+      // Supply the platform boxes the first warning layout gets. The button track can save enough in the first case only.
+      box(row, 1000);
+      box(lead, 710);
+      box(trail, trailingWidth);
+      const viewControls = view.query('toolbar:views');
+      if (viewControls !== null) box(viewControls, 146);
+      await view.update({ header: toolbarHeader(calls, {
+        tone: 'muted', label: '7 sources need attention', indicator: true, action: <Text>Manage</Text>, foldedItemId: 'manage-sources',
+      }) });
+      const didFitBeforeLayoutEvent = view.query('toolbar:trail')?.textContent?.includes('Board') === false;
+      if (!didFitBeforeLayoutEvent && view.query('toolbar:trail') !== null) {
+        reportToolbarLayout(view, 'toolbar', 0, 1000, 36);
+      }
+      const wide = view.query('toolbar:trail');
+      expect(wide === null).toBe(folds);
+      const board = view.container.querySelector('[role="radio"][aria-label="Board"]');
+      expect(board).not.toBeNull();
+      expect(board!.textContent).toBe('');
+      if (wide !== null) {
+        expect(didFitBeforeLayoutEvent).toBe(true);
+        expect(wide.textContent).toContain('7 sources need attention');
+        expect(view.query('toolbar:lead')!.parentElement).toBe(wide.parentElement);
+      }
+    } finally {
+      view.unmount();
+    }
   });
 
   it('keeps the host\'s page actions on one line in the folded toolbar, not stacked under each other', () => {
@@ -8409,6 +8455,7 @@ describe('the Collection toolbar', () => {
     const layout = (testID: string, y: number, height: number) => {
       reportToolbarLayout(view, testID, y, 400, height);
     };
+    reportToolbarLayout(view, 'toolbar:views', 44, 146, 32);
     layout('toolbar:lead', 0, 36);
     layout('toolbar:trail', 44, 32);
     layout('toolbar', 0, 76);

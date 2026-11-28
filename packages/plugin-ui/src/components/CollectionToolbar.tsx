@@ -13,6 +13,7 @@ import {
 import { View } from 'react-native';
 
 import { useHappierUiAccessibility } from '../environment/context.js';
+import { HAPPIER_SEGMENTED_METRICS } from '../presentation/form/SegmentedChoice.js';
 import { useHappierPageChromeInternal } from '../presentation/layout/pageChrome.js';
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
 import type { HappierPortableStyle } from '../presentation/portableTypes.js';
@@ -281,11 +282,18 @@ function useWideToolbar(props: CollectionToolbarProps, active: boolean): (search
   const hostActions = slots?.pageActions != null && chrome?.renderNavigationActions !== undefined;
   const fit = useContext(CollectionToolbarOverflowContext);
   const { spacing } = usePluginTheme();
+  const { textScale } = useHappierUiAccessibility();
   // A healthy freshness ("Updated just now") or a read in flight ("Refreshing") is the first thing the one row gives up:
   // its words go (Refresh still says them, and spins while it reads) before the toolbar folds, at the row width that needed it and
   // anything narrower, never cut to "R…". Words that warn are never given up.
   const quietable = freshness != null && freshness.action == null
     && (freshness.tone === 'muted' || freshness.pulsing === true);
+  const viewOptions = props.views?.options;
+  const canDropViewLabels = freshness != null && !quietable && viewOptions !== undefined
+    && viewOptions.length > 0 && viewOptions.every((option) => option.icon !== undefined);
+  const viewsKey = canDropViewLabels ? JSON.stringify([textScale, props.views?.value, viewOptions.map(({ label, icon }) => [label, icon])]) : null;
+  const [viewLabelFit, setViewLabelFit] = useState<{ key: string; savings: number } | null>(null);
+  const viewLabelSavings = viewsKey !== null && viewLabelFit?.key === viewsKey ? viewLabelFit.savings : 0;
   const [quietBelowPx, setQuietBelowPx] = useState<number | null>(null);
   // Folded, the wide row is not drawn: what it learned about its width starts over when it is drawn again.
   useEffect(() => {
@@ -295,58 +303,90 @@ function useWideToolbar(props: CollectionToolbarProps, active: boolean): (search
   const rowRef = useRef<ComponentRef<typeof View>>(null);
   const leadRef = useRef<ComponentRef<typeof View>>(null);
   const trailRef = useRef<ComponentRef<typeof View>>(null);
+  const viewsRef = useRef<ComponentRef<typeof View>>(null);
   // A delivered layout event can describe a box before its siblings settled. Read all three current widths
   // together, including every control in both clusters, rather than mixing independently cached heights.
   // The leading cluster grows into its line's free room: when the trailing cluster wraps, the lead fills that
   // line and their widths plus the shared gap exceed the row. Controls may still wrap inside either cluster.
-  const measure = () => {
+  const measure = (beforePaint = false) => {
     const row = rowRef.current;
     const lead = leadRef.current;
     const trail = trailRef.current;
     if (row === null || lead === null || trail === null) return;
-    const widths: Partial<Record<'row' | 'lead' | 'trail', number>> = {};
+    const views = viewsKey !== null && viewLabelSavings === 0 ? viewsRef.current : null;
+    const widths: Partial<Record<'row' | 'lead' | 'trail' | 'views', number>> = {};
     const heights: Partial<Record<'lead' | 'trail', number>> = {};
     // In-window measurement preserves fractional web widths; `measure` rounds each box independently.
-    const read = (name: keyof typeof widths, box: ComponentRef<typeof View>) => box.measureInWindow((_x, _y, width, height) => {
+    const record = (name: keyof typeof widths, width: number, height: number) => {
       widths[name] = width;
-      if (name !== 'row') heights[name] = height;
-      const { row: rowWidth, lead: leadWidth, trail: trailWidth } = widths;
+      if (name === 'lead' || name === 'trail') heights[name] = height;
+      const { row: rowWidth, lead: leadWidth, trail: trailWidth, views: viewsWidth } = widths;
       const { lead: leadHeight, trail: trailHeight } = heights;
       if (rowWidth === undefined || leadWidth === undefined || trailWidth === undefined || rowWidth <= 0
-        || leadHeight === undefined || trailHeight === undefined) return;
+        || leadHeight === undefined || trailHeight === undefined || (views !== null && viewsWidth === undefined)) return;
       // A cluster can fit its share of the row by breaking onto a second line (a pane-narrowed page): twice the height
       // of the other cluster is a wrapped row just as a trailing group below the lead is, and it folds the same way.
       const wrapped = Math.min(leadHeight, trailHeight) > 0 && Math.max(leadHeight, trailHeight) >= Math.min(leadHeight, trailHeight) * 1.5;
-      if (wrapped || leadWidth + trailWidth + spacing.small > rowWidth) {
+      const need = leadWidth + trailWidth + spacing.small;
+      if (viewsKey !== null && viewOptions !== undefined) {
+        // Refresh already draws only a glyph. Use the segmented owner's icon geometry to try the remaining step
+        // against the same layout. There is no trial compact render before deciding whether to fold.
+        const { trackPaddingPx, segmentMinWidthPx, labelSlotPx, segmentPaddingHorizontalPx } = HAPPIER_SEGMENTED_METRICS;
+        const iconTrackWidth = 2 * trackPaddingPx + viewOptions.length
+          * Math.max(segmentMinWidthPx, labelSlotPx.default + 2 * segmentPaddingHorizontalPx);
+        const savings = viewsWidth === undefined ? viewLabelSavings : Math.max(0, viewsWidth - iconTrackWidth);
+        if (need - (viewsWidth === undefined ? 0 : savings) > rowWidth) {
+          fit?.overflow(rowWidth);
+        } else {
+          if (need > rowWidth && viewsWidth !== undefined) setViewLabelFit({ key: viewsKey, savings });
+          if (viewLabelSavings > 0 && need + viewLabelSavings <= rowWidth) setViewLabelFit(null);
+          fit?.width(rowWidth);
+        }
+      } else if (wrapped || need > rowWidth) {
         if (quietable && !quiet) setQuietBelowPx(rowWidth);
         else fit?.overflow(rowWidth);
       } else {
         if (quiet && rowWidth > quietBelowPx!) setQuietBelowPx(null);
         fit?.width(rowWidth);
       }
-    });
+    };
+    const read = (name: keyof typeof widths, box: ComponentRef<typeof View>) => {
+      if (beforePaint && 'getBoundingClientRect' in box && typeof box.getBoundingClientRect === 'function') {
+        const { width, height } = box.getBoundingClientRect();
+        record(name, width, height);
+      } else {
+        box.measureInWindow((_x, _y, width, height) => record(name, width, height));
+      }
+    };
     read('row', row);
     read('lead', lead);
     read('trail', trail);
+    if (views !== null) read('views', views);
   };
   // Giving up the words can leave every box its size (a row wrapped over several lines still fills them), so no
   // layout event follows: the row measures itself again once they are gone, and folds if it still does not fit.
   const measureRef = useRef(measure);
   measureRef.current = measure;
+  const attentionLabel = viewsKey === null ? null : freshness?.label ?? null;
+  useLayoutEffect(() => {
+    if (active && attentionLabel !== null) measureRef.current(true);
+  }, [active, attentionLabel, viewsKey]);
   useEffect(() => {
     if (quiet) measureRef.current();
   }, [quiet]);
   // It leads with the add glyph the folded toolbar's round "+" shows, so the one primary reads the same at every width.
   const primary = props.primary === undefined ? null : <PrimaryControl primary={props.primary} folded={false} />;
+  const onLayout = () => measure();
+  const clusterStyle = canDropViewLabels ? naturalClusterStyle : wideRowStyle;
   return (search) => (
     <View
       ref={rowRef}
-      style={[wideRowStyle, { gap: spacing.small, justifyContent: 'space-between' }]}
-      onLayout={measure}
+      style={[wideRowStyle, canDropViewLabels ? { flexWrap: 'nowrap' } : null, { gap: spacing.small, justifyContent: 'space-between' }]}
+      onLayout={onLayout}
       testID={props.testID}
     >
-      <View key="lead" ref={leadRef} style={[wideRowStyle, leadStyle, { gap: spacing.small }]}
-        onLayout={measure}
+      <View key="lead" ref={leadRef} style={[clusterStyle, leadStyle, viewLabelSavings > 0 ? { flexGrow: 0 } : null, { gap: spacing.small }]}
+        onLayout={onLayout}
         {...(props.testID === undefined ? {} : { testID: `${props.testID}:lead` })}>
         {slots?.title ?? null}
         {search}
@@ -358,8 +398,8 @@ function useWideToolbar(props: CollectionToolbarProps, active: boolean): (search
       </View>
       {/* It wraps too: a narrow window would otherwise push the arrangement switch off the right edge. Bounded by
           the toolbar's width, or a wrapping row sized to its content never has a reason to wrap. */}
-      <View key="trail" ref={trailRef} style={[wideRowStyle, trailStyle, { gap: spacing.xsmall }]}
-        onLayout={measure}
+      <View key="trail" ref={trailRef} style={[clusterStyle, trailStyle, { gap: spacing.xsmall }]}
+        onLayout={onLayout}
         {...(props.testID === undefined ? {} : { testID: `${props.testID}:trail` })}>
         {freshness == null || quiet ? null : (
           <Status
@@ -380,7 +420,11 @@ function useWideToolbar(props: CollectionToolbarProps, active: boolean): (search
           />
         )}
         {hostActions ? null : <MoreMenu {...props} folded={false} />}
-        <Views views={props.views} compact={false} />
+        {props.views === undefined ? null : (
+          <View ref={viewsRef} testID={props.testID === undefined ? undefined : `${props.testID}:views`}>
+            <Views views={props.views} compact={viewLabelSavings > 0} />
+          </View>
+        )}
         {/* The host's page actions take the primary in their place, as a page header's actions do (route
             controls, then the page's own, then the column's Hide last). */}
         {hostActions
@@ -628,13 +672,14 @@ const wideRowStyle: HappierPortableStyle = {
 // one line (a narrow window), the trailing controls wrap below and the search keeps the row.
 const leadStyle: HappierPortableStyle = {
   flexGrow: 1,
-  flexShrink: 1,
   flexBasis: 'auto',
-  minWidth: 0,
 };
 // It keeps the toolbar's trailing edge when it wraps below the leading controls (a list narrowed beside a detail
 // pane): freshness, Refresh, the switch and Run on stay where the eye finds them, never stranded on the left.
-const trailStyle: HappierPortableStyle = { maxWidth: '100%', minWidth: 0, marginLeft: 'auto', justifyContent: 'flex-end' };
+const trailStyle: HappierPortableStyle = { marginLeft: 'auto', justifyContent: 'flex-end' };
+// The warning fit compares the clusters' one-line widths against the row; wrapping or stretching a cluster
+// first would lose the amount the layout is short by.
+const naturalClusterStyle: HappierPortableStyle = { flexDirection: 'row', flexWrap: 'nowrap', alignItems: 'center', flexShrink: 0 };
 /** The folded toolbar's two lines, as a vertical stack (a View, so the search keeps one place at every width). */
 const compactStackStyle: HappierPortableStyle = { minWidth: 0, flexDirection: 'column', flexWrap: 'nowrap' };
 /** The folded toolbar's search line, as a centred horizontal stack. */

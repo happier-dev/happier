@@ -43,7 +43,7 @@ export function HappierRowStatusLine(props: HappierRowStatusLineProps): ReactEle
   const label = [lead, context, props.text].filter(Boolean).join(' · ');
   const quiet = props.host.colors.quiet;
   const line = (
-    <View testID={props.action ? undefined : props.testID} style={LINE_STYLE}
+    <View testID={props.action ? undefined : props.testID} style={lead || context ? LINE_STYLE : OUTCOME_STYLE}
       accessible={!props.action} accessibilityLabel={props.action ? undefined : label}>
       {props.busy ? props.host.renderBusy({ size: 12 }) : null}
       {props.tone !== 'quiet' && !props.marked ? props.host.renderIndicator({ size: 6, color }) : null}
@@ -71,3 +71,5 @@ export function HappierRowStatusLine(props: HappierRowStatusLineProps): ReactEle
 // A narrow row wraps whole parts onto the next line instead of collapsing the command and its context to a
 // glyph to keep the outcome on one line (design review 2026-11-17, L6 at 390): every part stays readable.
 const LINE_STYLE = { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 6, rowGap: 2, minWidth: 0, flexShrink: 1 } as const;
+// A single outcome wraps its words within the text box. Its indicator belongs to the first line.
+const OUTCOME_STYLE = { ...LINE_STYLE, flexWrap: 'nowrap', alignItems: 'baseline' } as const;

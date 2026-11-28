@@ -214,6 +214,28 @@ describe('DetailsPane (host details pane binding)', () => {
     view.unmount();
   });
 
+  it('puts the host controls beside the local Back on a pushed phone page', async () => {
+    const onClose = vi.fn();
+    const view = mountWithPane(
+      <PushedDetailHeader backLabel="Tasks" onClose={onClose} testID="draft" placement="backOnly" />,
+      null,
+      { host: { pageChrome: {
+        largeTitle: true,
+        renderNavigationActions: (_actions, placement) => placement === 'page'
+          ? <button data-testid="execution-origin">Workstation</button> : null,
+      } } },
+    );
+    await flush();
+    const back = view.container.querySelector<HTMLElement>('[data-testid="draft:back"]')!;
+    const origin = view.container.querySelector('[data-testid="execution-origin"]');
+    expect(back.textContent).toBe('Tasks');
+    expect(origin).not.toBeNull();
+    expect(back.parentElement?.contains(origin)).toBe(true);
+    act(() => back.click());
+    expect(onClose).toHaveBeenCalledOnce();
+    view.unmount();
+  });
+
   it('keeps the identity mark beside the title and the mark leading the line when the detail is pushed', async () => {
     const view = mountWithPane(
       <DetailsPane

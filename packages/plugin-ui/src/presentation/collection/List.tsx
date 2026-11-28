@@ -761,10 +761,12 @@ export function HappierListItem({
   const [detailWidthPx, setDetailWidthPx] = useState<number | null>(null);
   const [titleNaturalWidthPx, setTitleNaturalWidthPx] = useState<number | null>(null);
   const [leadingWidthPx, setLeadingWidthPx] = useState<number | null>(null);
+  const pageLeadingWidth = icon ? leadingWidthPx ?? HAPPIER_PAGE_METRICS.rowLeadingColumnPx : 0;
+  const pageTextInset = icon ? pageLeadingWidth + HAPPIER_PAGE_METRICS.rowLeadingGapPx : 0;
   // The hairline under a page row starts at its text: past the measured leading glyph column and its gap.
   const pageRowDividerInset = pageSection === null ? null : happierPageRowDividerInset({
     rowInsetPx: pageSection.rowInsetPx,
-    leadingPx: icon ? (leadingWidthPx ?? HAPPIER_PAGE_METRICS.rowLeadingColumnPx) + HAPPIER_PAGE_METRICS.rowLeadingGapPx : 0,
+    leadingPx: pageTextInset,
     framed: pageSection.framed,
   });
   const measuresDetail = pageSection !== null && Boolean(detail) && isHappierPageRowNarrow(pageRowWidthPx);
@@ -821,7 +823,7 @@ export function HappierListItem({
     detailWidthPx,
     titleNaturalWidthPx,
     rowInsetPx: pageRowInsetPx ?? HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx,
-    leadingColumnWidthPx: icon ? leadingWidthPx ?? HAPPIER_PAGE_METRICS.rowLeadingColumnPx : 0,
+    leadingColumnWidthPx: pageLeadingWidth,
     trailingWidthPx: resolvedTheme ? resolvedTheme.spacing.small + (hasAccessory ? pageAccessoryWidthPx ?? 0 : 0) : 0,
     detailGapPx: resolvedTheme?.spacing.small ?? 0,
     described,
@@ -977,7 +979,7 @@ export function HappierListItem({
       >
         {icon ? (
           <View
-            onLayout={pageSection !== null && detail ? handleLeadingLayout : undefined}
+            onLayout={pageSection !== null && (detail || stackPageAccessory) ? handleLeadingLayout : undefined}
             accessible={false}
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
@@ -1095,7 +1097,7 @@ export function HappierListItem({
                   alignSelf: 'stretch',
                   alignItems: stackedOperation ? 'flex-start' : 'stretch',
                   // Beneath the text, on its edge: past the glyph column and the gap after it.
-                  ...(icon ? { flexBasis: '100%', paddingLeft: HAPPIER_PAGE_METRICS.rowLeadingColumnPx + HAPPIER_PAGE_METRICS.rowLeadingGapPx } : {}),
+                  ...(icon ? { flexBasis: '100%', paddingStart: pageTextInset } : {}),
                 }
                 : null}
             >{pageAccessory}</View>
@@ -1297,8 +1299,8 @@ export function HappierListItem({
               alignSelf: 'stretch',
               // Like core's stacked page controls: a field spans the row; a bounded control keeps its own width.
               alignItems: stackedOperation ? 'flex-start' : 'stretch',
-              paddingLeft: pageSection.rowInsetPx,
-              paddingRight: pageSection.rowInsetPx,
+              paddingStart: pageSection.rowInsetPx + pageTextInset,
+              paddingEnd: pageSection.rowInsetPx,
               paddingBottom: HAPPIER_PAGE_METRICS.rowPaddingVerticalPx,
               marginTop: -4,
             }
