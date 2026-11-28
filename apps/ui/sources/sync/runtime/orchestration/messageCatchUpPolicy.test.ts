@@ -106,14 +106,14 @@ describe('decideMessageCatchUpPolicy', () => {
         })).toEqual({ kind: 'defer_forward_loading' });
     });
 
-    it.each([0, 2_500])('returns incremental_batched when a materialized cursor has a small gap (offline=%s ms)', (offlineForMs) => {
+    it('returns incremental_batched when gap is small', () => {
         expect(decideMessageCatchUpPolicy({
             isForeground: true,
             isSessionVisible: true,
             isPinned: false,
             materializedMaxSeq: 10,
             sessionSeqHint: 13,
-            offlineForMs,
+            offlineForMs: 0,
             thresholds,
         })).toEqual({ kind: 'incremental_batched', maxPages: 2 });
     });

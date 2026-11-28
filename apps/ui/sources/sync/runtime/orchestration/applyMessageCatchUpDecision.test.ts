@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import { SESSION_MESSAGES_PAGE_SIZE } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { applyMessageCatchUpDecision } from '@/sync/runtime/orchestration/applyMessageCatchUpDecision';
 import { decideMessageCatchUpPolicy } from '@/sync/runtime/orchestration/messageCatchUpPolicy';
+import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 
 // C6/D2b: the catch-up executor is non-destructive. `tail_reset_latest_page` (and the
 // incremental-exhausted fallback) now FETCH-then-MERGE the latest page on top of existing
@@ -9,6 +11,41 @@ import { decideMessageCatchUpPolicy } from '@/sync/runtime/orchestration/message
 // callers (truncated tail / server purge-rewrite) outside this module.
 
 describe('applyMessageCatchUpDecision', () => {
+    it('uses one latest page when a long disconnect leaves a pinned session with a stale hint', async () => {
+        const tuning = loadSyncTuning();
+        const cursor = 2_000;
+        const requests: Array<{ afterSeq?: number }> = [];
+        const decision = decideMessageCatchUpPolicy({
+            isForeground: true,
+            isSessionVisible: true,
+            isPinned: true,
+            materializedMaxSeq: cursor,
+            sessionSeqHint: cursor + 1,
+            offlineForMs: tuning.messageForceSnapshotOfflineMs + 1,
+            thresholds: {
+                largeGapSeq: tuning.messageLargeGapSeq,
+                maxIncrementalPagesOnResume: tuning.messageMaxIncrementalPagesOnResume,
+                forceSnapshotOfflineMs: tuning.messageForceSnapshotOfflineMs,
+            },
+        });
+
+        await applyMessageCatchUpDecision({
+            decision,
+            afterSeq: cursor,
+            onIncrementalExhausted: () => 'tail_reset_latest_page',
+            fetchNewerPage: async (afterSeq) => {
+                requests.push({ afterSeq });
+                // The durable gap extends beyond the forward budget despite the small hint.
+                return { messagesCount: SESSION_MESSAGES_PAGE_SIZE, nextAfterSeq: afterSeq + SESSION_MESSAGES_PAGE_SIZE };
+            },
+            fetchSnapshotLatestPage: async () => { requests.push({}); },
+            markLoaded: () => {},
+            setDeferredForwardLoading: () => {},
+        });
+
+        expect(requests).toEqual([{}]);
+    });
+
     it.each(['snapshot', 'incremental'] as const)('retains failed %s catch-up demand when the session hint is stale', async (kind) => {
         let deferred = true;
         let loaded = false;
