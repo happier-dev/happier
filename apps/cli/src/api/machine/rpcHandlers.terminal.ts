@@ -45,7 +45,7 @@ import {
 } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { readDaemonTerminalPtyConfig } from '@/terminal/pty/config';
 import { openServiceShellTerminal } from './serviceShellTerminal';
-import { selectHostRequesterExecutionIdentity, resolveHostRequesterAgentExecutionIdentity, resolveHostRequesterTerminalPlacementForHost, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { selectHostRequesterExecutionIdentity, resolveHostRequesterAgentExecutionIdentity, resolveHostRequesterTerminalIdentityForHost, resolveHostRequesterTerminalPlacementForHost, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { createTerminalPtySessionManager, type TerminalPtySessionManager, type TerminalPtyCustody } from '@/terminal/pty/sessions';
 import { byteStreamHoldEndsAtMs, readByteStreamHeld } from '@/terminal/pty/byteStreamHold';
 import { createNodePtyProvider } from '@/terminal/pty/provider';
@@ -263,9 +263,12 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     });
 
   // The placement owner refuses an unread isolation policy with Session launch's typed cause.
-  const placeTerminal = (identity: HostRequesterExecutionIdentity, context?: RpcHandlerContext) => {
-    try { return { ok: true as const, placement: resolveTerminalPlacement(identity, context) }; }
-    catch (error) { if (!isPluginError(error)) throw error; return { ok: false as const, error }; }
+  // The terminal then runs as the identity its placement selects.
+  const placeTerminal = (identity: Exclude<HostRequesterExecutionIdentity, { kind: 'unknown' }>, context?: RpcHandlerContext) => {
+    try {
+      const placement = resolveTerminalPlacement(identity, context);
+      return { ok: true as const, placement, identity: resolveHostRequesterTerminalIdentityForHost(identity, placement) };
+    } catch (error) { if (!isPluginError(error)) throw error; return { ok: false as const, error }; }
   };
 
   const resolveMachineShellAvailability = async (context?: RpcHandlerContext,
@@ -275,10 +278,10 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     const resolvedRequester = selectedIdentity ? { identity: selectedIdentity } : await resolveRequesterIdentity(context);
     const identity = resolvedRequester.identity;
     if (identity.kind === 'unknown') return unavailableIdentityTransport(resolvedRequester.cause);
-    const memberRequester = resolveHostRequesterAgentExecutionIdentity(identity);
     const placed = placeTerminal(identity, context);
     if (!placed.ok) return unavailableIdentityTransport(placed.error);
     const { placement } = placed;
+    const memberRequester = resolveHostRequesterAgentExecutionIdentity(placed.identity);
     if (admission.role !== 'manage') {
       if (identity.kind !== 'isolated' || placement !== 'member') {
         return { ok: false, errorCode: 'machine_manage_required', error: 'machine_manage_required' };
@@ -874,20 +877,20 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     ) return err('terminal_invalid_request');
 
     const resolvedRequester = await resolveRequesterIdentity(context);
-    const { identity: requesterIdentity, homeServerIdentityId } = resolvedRequester;
-    if (requesterIdentity.kind === 'unknown') return unavailableIdentityTransport(resolvedRequester.cause);
+    const { identity: admittedIdentity, homeServerIdentityId } = resolvedRequester;
+    if (admittedIdentity.kind === 'unknown') return unavailableIdentityTransport(resolvedRequester.cause);
     // A package script runs as the same placed requester: it needs the identity this check admits.
     if (parsed.data.launch?.kind === 'package_script') {
       const cwd = resolveCwd(parsed.data.cwd);
-      return cwd.ok ? await runPackageScript(cwd.cwd, { ...parsed.data, launch: parsed.data.launch }, requesterIdentity, context) : cwd;
+      return cwd.ok ? await runPackageScript(cwd.cwd, { ...parsed.data, launch: parsed.data.launch }, admittedIdentity, context) : cwd;
     }
-    const placed = placeTerminal(requesterIdentity, context);
+    const placed = placeTerminal(admittedIdentity, context);
     if (!placed.ok) return { ok: false as const, ...normalizeActionExecutorThrownError(placed.error) };
-    const { placement } = placed;
+    const { placement, identity: requesterIdentity } = placed;
     if (parsed.data.launch?.kind === 'service_shell') {
       // Service-native admission owns the shell's execution identity. A Session
       // acting for another Account cannot borrow that identity for separation.
-      if (requesterIdentity.kind === 'isolated' && requesterIdentity.separationRequired) return unavailableIdentityTransport();
+      if (admittedIdentity.kind === 'isolated' && admittedIdentity.separationRequired) return unavailableIdentityTransport();
       return await runServiceShell({ ...parsed.data, launch: parsed.data.launch }, context, 'machines.terminal.open', homeServerIdentityId);
     }
     if (placement !== 'person'
@@ -1075,18 +1078,18 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     ) return err('terminal_invalid_request');
 
     const resolvedRequester = await resolveRequesterIdentity(context);
-    const { identity: requesterIdentity, homeServerIdentityId } = resolvedRequester;
-    if (requesterIdentity.kind === 'unknown') return unavailableIdentityTransport(resolvedRequester.cause);
+    const { identity: admittedIdentity, homeServerIdentityId } = resolvedRequester;
+    if (admittedIdentity.kind === 'unknown') return unavailableIdentityTransport(resolvedRequester.cause);
     // A package script runs as the same placed requester: it needs the identity this check admits.
     if (parsed.data.launch?.kind === 'package_script') {
       const cwd = resolveCwd(parsed.data.cwd);
-      return cwd.ok ? await runPackageScript(cwd.cwd, { ...parsed.data, launch: parsed.data.launch }, requesterIdentity, context) : cwd;
+      return cwd.ok ? await runPackageScript(cwd.cwd, { ...parsed.data, launch: parsed.data.launch }, admittedIdentity, context) : cwd;
     }
-    const placed = placeTerminal(requesterIdentity, context);
+    const placed = placeTerminal(admittedIdentity, context);
     if (!placed.ok) return { ok: false as const, ...normalizeActionExecutorThrownError(placed.error) };
-    const { placement } = placed;
+    const { placement, identity: requesterIdentity } = placed;
     if (parsed.data.launch?.kind === 'service_shell') {
-      if (requesterIdentity.kind === 'isolated' && requesterIdentity.separationRequired) return unavailableIdentityTransport();
+      if (admittedIdentity.kind === 'isolated' && admittedIdentity.separationRequired) return unavailableIdentityTransport();
       return await runServiceShell({ ...parsed.data, launch: parsed.data.launch }, context, 'machines.terminal.restart', homeServerIdentityId);
     }
     if (placement !== 'person'

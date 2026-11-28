@@ -128,7 +128,11 @@ Machine ownership means the Account enrolled as that Machine's custodian on its
 Home. A Team owner or admin is not automatically that owner. Only the present
 Machine owner may use its custodian terminal recovery path. **Can manage**
 includes trusted administration that can defeat host isolation; share it only
-with people you trust to administer the Machine.
+with people you trust to administer the Machine. In unreleased 0.3 development,
+when separate users are on, a **Can manage** person's own terminal opens as
+their own operating-system user, like a **Can use** guest's; their other
+administration of the Machine is unchanged. With separate users off, their
+terminal runs as the daemon's operating-system user, as before.
 
 The development Machine work summary is a separate, content-free view for the
 owner or someone with current Manage access. It shows people and active-work

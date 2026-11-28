@@ -2527,7 +2527,15 @@ not proof of complete registered-ingress enforcement or native readiness.
 The shared `selectHostRequesterExecutionIdentity` selector qualifies the custodian
 and admitted Manage grantees on the physical Machine for unrestricted execution. A present person consumes
 the existing `owner_person` classification; no native isolation provisioning is
-required for their own terminal or other Machine execution. Use retains its
+required for their other Machine execution. The 2026-11-27 owner ruling amends
+this for interactive terminals only: `resolveHostRequesterTerminalPlacementForHost`
+places a present Manage grantee who is not the custodian (`machineManager`) as
+their own member user wherever the Machine policy selects `member` placement,
+and `resolveHostRequesterTerminalIdentityForHost` runs that terminal, its Machine
+shell root and its native sign-in scope as the same separated member identity a
+Use guest has. An unread policy refuses with `agent_isolation_unavailable`. The
+custodian, isolation-off or shared-Agent placement, service shells, package
+scripts and Manage's other host operations keep the person placement. Use retains its
 requester custody and consumes the Machine placement policy; unknown requesters
 still refuse. Non-Session Account
 automation retains its existing filesystem, SCM and Machine MCP operations; it does

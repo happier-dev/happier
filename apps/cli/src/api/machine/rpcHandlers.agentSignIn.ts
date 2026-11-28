@@ -11,7 +11,7 @@ import type { AgentSignInScope } from '@happier-dev/protocol/daemon/agentSignIn'
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '../rpc/types';
 import { prepareAgentSignIn, probeAgentSignInStatus } from '@/capabilities/cliAuth/agentSignIn';
 import { projectIdentityFreeSignIn } from '@/capabilities/cliAuth/identityFreeSignIn';
-import { isHostAgentIsolationPolicyUnread, resolveHostRequesterTerminalPlacementForHost, selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { isHostAgentIsolationPolicyUnread, resolveHostRequesterTerminalIdentityForHost, resolveHostRequesterTerminalPlacementForHost, selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type { MachineTerminalRpcHandlerDeps } from './rpcHandlers.terminal';
 
 type AgentSignInRpcDeps = Pick<MachineTerminalRpcHandlerDeps, 'agentIsolation' | 'nativeOperationRuntime' | 'resolveHostHomeServerIdentityId'> & Readonly<{
@@ -27,9 +27,12 @@ async function resolveUseSignInPlacement(
   if (deps?.agentIsolation && !snapshot) return undefined;
   const home = await deps?.resolveHostHomeServerIdentityId?.(context.signal).catch(() => null) ?? null;
   const identity = selectHostRequesterExecutionIdentity({ rpcContext: context, hostHomeServerIdentityId: home });
+  if (identity.kind === 'unknown') return undefined;
   try {
     const placement = resolveHostRequesterTerminalPlacementForHost({ identity, readPolicy: () => snapshot });
-    if (placement) return { identity, placement };
+    // The sign-in terminal runs as the identity its placement selects.
+    if (placement) return { identity: resolveHostRequesterTerminalIdentityForHost(identity, placement), placement,
+      memberManager: identity.kind === 'owner_person' && identity.machineManager === true && placement === 'member' };
   } catch {
     // The sign-in projection leaves scope absent while the Machine policy is unread.
   }
@@ -56,8 +59,10 @@ async function resolveNativeSignInScope(
       : context.callerInputAuthorization?.binding.serverIdentityId ?? null;
     const identity = selectHostRequesterExecutionIdentity({ rpcContext: context, hostHomeServerIdentityId: home });
     try {
-      if (resolveHostRequesterTerminalPlacementForHost({ identity, readPolicy: () => deps?.agentIsolation?.read() }) !== 'person')
-        return undefined;
+      const placement = resolveHostRequesterTerminalPlacementForHost({ identity, readPolicy: () => deps?.agentIsolation?.read() });
+      // A Manage grantee placed as their member user signs in there (owner ruling 2026-11-27).
+      if (placement === 'member' && identity.kind === 'owner_person') return 'member';
+      if (placement !== 'person') return undefined;
     } catch { return undefined; /* An unread isolation policy reports no scope. */ }
     const admission = context.machineAdmission;
     if (phase !== 'prepare' || !admission || admission.actorAccountId !== admission.custodianAccountId)
@@ -94,12 +99,15 @@ export function registerMachineAgentSignInRpcHandlers(params: Readonly<{
       const selection = await params.deps.readSignInConnectedDefaultSelection(request.agentId, context);
       return { ...status, credentialSource: selection === 'native' ? status.credentialSource : selection };
     };
-    if (context?.machineAdmission?.role !== 'use') {
+    const admission = context?.machineAdmission;
+    // A Manage grantee placed as their member user reads that member's sign-in (owner ruling 2026-11-27).
+    const placed = context && (admission?.role === 'use' || admission?.role === 'manage' && admission.actorAccountId !== admission.custodianAccountId)
+      ? await resolveUseSignInPlacement(context, params.deps).catch(() => undefined) : undefined;
+    if (!context || admission?.role !== 'use' && !placed?.memberManager) {
       const status = await readCredentialSource(await probeAgentSignInStatus(request.agentId));
       const signInScope = await resolveNativeSignInScope(context, params.deps, 'status');
       return signInScope ? { ...status, signInScope } : status;
     }
-    const placed = await resolveUseSignInPlacement(context, params.deps).catch(() => undefined);
     const readNativeStatus = async () => {
       if (!placed) return await probeAgentSignInStatus(request.agentId, null);
       if (placed.placement === 'daemon' || placed.placement === 'person') return await probeAgentSignInStatus(request.agentId);

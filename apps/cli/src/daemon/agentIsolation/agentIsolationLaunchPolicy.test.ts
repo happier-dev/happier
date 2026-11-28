@@ -3,7 +3,7 @@ import { logger } from '@/ui/logger';
 
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createAgentIsolationOperationContext, createAgentIsolationSessionContext } from './agentIsolationSessionContext';
-import { admitAgentIsolationLaunchForHost, resolveHostRequesterAgentPlacementForHost, resolveHostRequesterTerminalPlacementForHost, isHostRequesterUnrestrictedOwner, retainVerifiedExternalActionRequester, selectHostRequesterExecutionIdentity, type HostAgentIsolationLaunchSnapshot } from './agentIsolationLaunchPolicy';
+import { admitAgentIsolationLaunchForHost, resolveHostRequesterAgentPlacementForHost, resolveHostRequesterTerminalIdentityForHost, resolveHostRequesterTerminalPlacementForHost, isHostRequesterUnrestrictedOwner, retainVerifiedExternalActionRequester, selectHostRequesterExecutionIdentity, type HostAgentIsolationLaunchSnapshot } from './agentIsolationLaunchPolicy';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { createActionExecutor } from '@happier-dev/protocol';
@@ -33,6 +33,19 @@ describe('held Agent isolation launch admission', () => {
             resolveHostRequesterTerminalPlacementForHost({ identity, readPolicy, platform: 'linux' });
         expect(placement({ kind: 'owner_person', requester })).toBe('person');
         expect(placement({ kind: 'isolated', requester, separationRequired: true })).toBe('member');
+    });
+    it('places a Manage grantee terminal as their member user only where the policy provisions member users', () => {
+        const requester = { serverId: 'home', accountId: 'manager', machineId: 'machine', installationId: 'installation' };
+        const manager = { kind: 'owner_person' as const, requester, machineManager: true as const };
+        const place = (policy: { enabled: boolean; memberProvisioning?: 'linuxUsersV1' }, platform: NodeJS.Platform = 'linux') =>
+            resolveHostRequesterTerminalPlacementForHost({ identity: manager, readPolicy: () => policy, platform });
+        expect(place({ enabled: true, memberProvisioning: 'linuxUsersV1' })).toBe('member');
+        expect(place({ enabled: false })).toBe('person');
+        expect(place({ enabled: true })).toBe('person');
+        expect(place({ enabled: true, memberProvisioning: 'linuxUsersV1' }, 'darwin')).toBe('person');
+        expect(resolveHostRequesterTerminalIdentityForHost(manager, 'member'))
+            .toEqual({ kind: 'isolated', requester, separationRequired: true, presentPerson: true });
+        expect(resolveHostRequesterTerminalIdentityForHost(manager, 'person')).toBe(manager);
     });
     it.each(['owner', 'member'] as const)('uses verified receiving custody for the signed %s Session Action without relabeling its authority', accountId => {
         const origin = { v: 1 as const, caller: { kind: 'session' as const, sessionId: 'source-session', starterDepth: 0, turnDepth: 0 },
@@ -738,7 +751,7 @@ describe('held Agent isolation launch admission', () => {
             .toEqual({ kind: 'owner_person', requester });
         expect(selectHostRequesterExecutionIdentity({ rpcContext: { ...rpcContext,
             machineAdmission: { ...rpcContext.machineAdmission, actorAccountId: 'member' } }, hostHomeServerIdentityId: 'home' }))
-            .toEqual({ kind: 'owner_person', requester: { ...requester, accountId: 'member' } });
+            .toEqual({ kind: 'owner_person', requester: { ...requester, accountId: 'member' }, machineManager: true });
         const member = { ...rpcContext, machineAdmission: { ...rpcContext.machineAdmission, actorAccountId: 'member' } };
         const memberInput = { rpcContext: member, hostHomeServerIdentityId: 'home' };
         expect(isHostRequesterUnrestrictedOwner(selectHostRequesterExecutionIdentity({ ...memberInput,

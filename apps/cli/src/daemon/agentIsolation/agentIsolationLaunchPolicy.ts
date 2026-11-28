@@ -36,8 +36,9 @@ export type VerifiedReceivingChild = Readonly<{
 }>;
 
 export type HostRequesterExecutionIdentity =
-    /** Legacy tag for a present custodian or admitted Machine Manage grantee. */
-    | Readonly<{ kind: 'owner_person'; requester: RequesterWorkAttributionV1 }>
+    /** Legacy tag for a present custodian or admitted Machine Manage grantee.
+     * `machineManager` marks a Manage grantee who is not the custodian. */
+    | Readonly<{ kind: 'owner_person'; requester: RequesterWorkAttributionV1; machineManager?: true }>
     | Readonly<{ kind: 'isolated'; requester: RequesterWorkAttributionV1;
         /** Legacy requester-authority marker; Machine policy decides native placement. */
         separationRequired: boolean;
@@ -299,7 +300,7 @@ export function selectHostRequesterExecutionIdentity(input: HostRequesterExecuti
         && custody.machineId === target.machineId && custody.installationId === target.installationId
         && custody.custodianAccountId === (input.hostCustodianAccountId ?? custody.custodianAccountId);
     const unrestricted = owner || manager;
-    if (presentPerson && unrestricted) return { kind: 'owner_person', requester };
+    if (presentPerson && unrestricted) return { kind: 'owner_person', requester, ...(owner ? {} : { machineManager: true as const }) };
     return { kind: 'isolated', requester, separationRequired: !unrestricted,
         ...(presentPerson ? { presentPerson: true as const } : {}),
         ...(!agentSource && authority === 'account_automation' ? { accountAutomation: true as const } : {}) };
@@ -340,23 +341,38 @@ export function isUnqualifiedSharedAgentIsolationStatus(status: HostAgentIsolati
         && !status.setup && !status.prerequisite && !status.probeFailure;
 }
 
-/** A terminal opened by a person with full Machine control uses their person placement.
- * Anyone else's terminal is placed only by a read policy: an unread one throws
- * the same retryable refusal Session launch returns, never a guessed placement. */
+/** The present custodian's terminal uses their person placement. Anyone else's
+ * terminal is placed only by a read policy: an unread one throws the same
+ * retryable refusal Session launch returns, never a guessed placement.
+ * Owner ruling 2026-11-27: a Manage grantee who is not the custodian gets their
+ * own terminal as their member user where the policy places Agents as member
+ * users, and keeps the person placement otherwise. */
 export function resolveHostRequesterTerminalPlacementForHost(input: Readonly<{
     identity: HostRequesterExecutionIdentity;
     readPolicy: () => (Pick<HostAgentIsolationLaunchSnapshot, 'enabled' | 'memberProvisioning'>
         & Partial<Pick<HostAgentIsolationLaunchSnapshot, 'status'>>) | undefined;
     platform?: NodeJS.Platform;
 }>): 'person' | 'daemon' | 'sharedAgent' | 'member' | undefined {
-    if (input.identity.kind === 'owner_person') return 'person';
+    if (input.identity.kind === 'owner_person' && !input.identity.machineManager) return 'person';
     if (input.identity.kind === 'unknown') return undefined;
     const snapshot = input.readPolicy();
     if (snapshot?.status && isHostAgentIsolationPolicyUnread({ status: snapshot.status }))
         refuseIsolationNotReady(snapshot.status, 'agent_isolation_unavailable', 'terminal');
-    return resolveHostRequesterAgentPlacementForHost({
-        identity: input.identity, snapshot, platform: input.platform,
-    });
+    const placement = resolveMachineAgentExecutionPlacementV1({ policy: snapshot ?? { enabled: false },
+        platform: input.platform ?? process.platform });
+    if (input.identity.kind === 'owner_person') return placement === 'member' ? 'member' : 'person';
+    return placement;
+}
+
+/** The identity a terminal runs as at its placement: a Manage grantee placed as
+ * their member user runs as that separated member, exactly like a Use guest. */
+export function resolveHostRequesterTerminalIdentityForHost(
+    identity: Exclude<HostRequesterExecutionIdentity, { kind: 'unknown' }>,
+    placement: ReturnType<typeof resolveHostRequesterTerminalPlacementForHost>,
+): Exclude<HostRequesterExecutionIdentity, { kind: 'unknown' }> {
+    return identity.kind === 'owner_person' && placement === 'member'
+        ? { kind: 'isolated', requester: identity.requester, separationRequired: true, presentPerson: true }
+        : identity;
 }
 
 /**

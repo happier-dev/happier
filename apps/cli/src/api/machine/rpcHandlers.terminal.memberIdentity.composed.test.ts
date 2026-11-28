@@ -599,14 +599,15 @@ describe.skipIf(process.platform !== 'linux')('installed host-composed member te
     expect(await f.invokeInstalledTerminal(RPC_METHODS.DAEMON_TERMINAL_LIST, { machineShell: true })).toMatchObject({ ok: true, machineShell: { ok: true, cwd: f.member.workspaceRoot } });
   });
 
-  it.each(['corrupt', 'foreign'] as const)('refuses a %s member binding through Shell availability and Open', async kind => {
+  it.each((['corrupt', 'foreign'] as const).flatMap(kind => (['use', 'manage'] as const).map(role => [kind, role] as const)))(
+    'refuses a %s member binding through Shell availability and Open for a %s grantee', async (kind, role) => {
     const f = await fixture();
     const path = join(configuration.activeServerDir, 'agent-isolation', 'members', `${f.member.digest}.json`);
     const binding = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
     await writeFile(path, kind === 'corrupt' ? '{' : JSON.stringify({ ...binding, accountId: 'foreign-account' }));
-    expect(await f.invokeInstalledTerminal(RPC_METHODS.DAEMON_TERMINAL_LIST, { machineShell: true }))
+    expect(await f.invokeInstalledTerminal(RPC_METHODS.DAEMON_TERMINAL_LIST, { machineShell: true }, f.accountId, role))
       .toMatchObject({ ok: true, machineShell: { ok: false } });
-    expect(await f.invokeInstalledTerminal(RPC_METHODS.DAEMON_TERMINAL_ENSURE, { terminalKey: 'invalid-binding' }))
+    expect(await f.invokeInstalledTerminal(RPC_METHODS.DAEMON_TERMINAL_ENSURE, { terminalKey: 'invalid-binding' }, f.accountId, role))
       .toMatchObject({ ok: false });
     expect(f.processes).toEqual([]);
   });
@@ -654,47 +655,67 @@ describe.skipIf(process.platform !== 'linux')('installed host-composed member te
     expect(f.processes[1]!.writes).toEqual(['use-project\n']);
   });
 
-  it.each([RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_RESTART])(
-    'opens an admitted Manage member machine shell without an accepted Project through %s', async method => {
-      const f = await fixture({ acceptedWorkspace: false });
-      const input = { terminalKey: 'member-machine-shell' };
-      const daemonHome = homedir();
-      expect(await f.invokeTerminal(RPC_METHODS.DAEMON_TERMINAL_LIST, { machineShell: true }, f.accountId, false, undefined, 'manage'))
-        .toMatchObject({ ok: true, machineShell: { ok: true, cwd: daemonHome } });
-      const projectReads = () => vi.mocked(axios.post).mock.calls.filter(([url]) =>
-        /\/project-rows\/(?:list|read)$/u.test(new URL(String(url)).pathname)).length;
-      const beforeProjectReads = projectReads();
-      const opened = await f.invokeTerminal(method, input, f.accountId, false, undefined, 'manage');
-      const refusal = { errorCode: closedFailureReason(opened, 'errorCode'), code: closedFailureReason(opened, 'code'),
-        error: closedFailureReason(opened, 'error'), processes: f.processes.length };
-      expect(opened, JSON.stringify(refusal)).toMatchObject({ ok: true, reused: false, terminalId: expect.any(String) });
-      if (!opened || typeof opened !== 'object' || !('terminalId' in opened) || typeof opened.terminalId !== 'string') {
-        throw new Error('Admitted Manage member machine shell refused');
-      }
-      const terminalId = opened.terminalId;
-      const manager = f.machine.getFiniteTerminalSessions();
-      expect(manager?.getCustody(terminalId)).toMatchObject({ kind: 'machine', requesterAccountId: f.accountId,
-        machineId: f.machineId, installationId: f.installation.installationId, rootPath: daemonHome });
+  // Owner ruling 2026-11-27: on a Machine that places Agents as separate member
+  // users, a Manage grantee's own terminal runs as their member user. The
+  // custodian and an isolation-off Machine keep the daemon user.
+  it.each([RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_RESTART].flatMap(method => ([
+    { name: 'Manage grantee, isolation on', accountId: 'member-a', isolationEnabled: true, member: true },
+    { name: 'Manage grantee, isolation off', accountId: 'member-a', isolationEnabled: false, member: false },
+    { name: 'Machine owner, isolation on', accountId: 'requester', isolationEnabled: true, member: false },
+  ] as const).map(c => ({ ...c, method }))))('places an admitted Manage machine shell without an accepted Project: $name through $method', async c => {
+    const method = c.method;
+    const f = await fixture({ accountId: c.accountId, isolationEnabled: c.isolationEnabled, acceptedWorkspace: false });
+    const input = { terminalKey: 'manage-machine-shell' };
+    const daemonHome = homedir();
+    const cwd = c.member ? f.member.workspaceRoot : daemonHome;
+    expect(await f.invokeTerminal(RPC_METHODS.DAEMON_TERMINAL_LIST, { machineShell: true }, f.accountId, false, undefined, 'manage'))
+      .toMatchObject({ ok: true, machineShell: { ok: true, cwd } });
+    const projectReads = () => vi.mocked(axios.post).mock.calls.filter(([url]) =>
+      /\/project-rows\/(?:list|read)$/u.test(new URL(String(url)).pathname)).length;
+    const beforeProjectReads = projectReads();
+    const opened = await f.invokeTerminal(method, input, f.accountId, false, undefined, 'manage');
+    const refusal = { errorCode: closedFailureReason(opened, 'errorCode'), code: closedFailureReason(opened, 'code'),
+      error: closedFailureReason(opened, 'error'), processes: f.processes.length };
+    expect(opened, JSON.stringify(refusal)).toMatchObject({ ok: true, reused: false, terminalId: expect.any(String) });
+    if (!opened || typeof opened !== 'object' || !('terminalId' in opened) || typeof opened.terminalId !== 'string') {
+      throw new Error('Admitted Manage machine shell refused');
+    }
+    const terminalId = opened.terminalId;
+    const manager = f.machine.getFiniteTerminalSessions();
+    expect(manager?.getCustody(terminalId)).toMatchObject({ kind: 'machine', requesterAccountId: f.accountId,
+      machineId: f.machineId, installationId: f.installation.installationId, rootPath: cwd });
+    const native = f.processes.find(pty => pty.params.file === 'sudo');
+    if (c.member) {
+      expect(manager?.getNativeExecutionIdentity?.(terminalId)).toMatchObject({ digest: f.member.digest, agentUid: 2401 });
+      expect(native?.params.args).toEqual(['-n', '-u', f.member.username, '--', '/opt/happier/cli/current/happier', 'agent-launch']);
+      expect(native?.frames[0]?.nativeIdentity).toEqual({ username: f.member.username, agentUid: 2401, agentGid: 2401, home: f.member.home });
+      expect(native?.frames[0]?.cwd).toBe(f.member.workspaceRoot);
+    } else {
       expect(manager?.getNativeExecutionIdentity?.(terminalId)).toBeNull();
-      expect(f.processes[0]?.params.options.cwd).toBe(daemonHome);
-      expect(await f.invokeTerminal(RPC_METHODS.DAEMON_TERMINAL_INPUT, { terminalId, data: 'use-machine-denied\n' },
-        'member-a', false, undefined, 'use')).toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
-      await expect(f.invokeTerminal(RPC_METHODS.DAEMON_TERMINAL_INPUT, { terminalId, data: 'manage-machine-work\n' }, f.accountId, false, undefined, 'manage'))
-        .resolves.toMatchObject({ ok: true });
-      const output = TerminalStreamReadResponseSchema.parse(await f.invokeTerminal(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES,
-        { terminalId, byteOffset: 0 }, f.accountId, false, undefined, 'manage'));
-      if (!output.ok) throw new Error('Manage member machine shell output refused');
-      expect(Buffer.concat(output.frames.filter((frame): frame is TerminalStreamBytesFrame => frame.t === 'bytes')
-        .map(frame => Buffer.from(decodeTerminalStreamBytesFrame(frame)))).toString()).toContain('ran:manage-machine-work');
-      const native = f.processes.find(pty => pty.params.file === 'sudo');
       expect(native).toBeUndefined();
+      expect(f.processes[0]?.params.options.cwd).toBe(daemonHome);
       expect(f.preparation.launches).toEqual([]);
-      expect(projectReads()).toBe(beforeProjectReads);
-      const processCount = f.processes.length;
-      await expect(f.invokeTerminal(method, { ...input, terminalKey: 'use-machine-shell', cwd: f.directory }, f.accountId, false, undefined, 'use'))
-        .resolves.not.toMatchObject({ ok: true });
-      expect(f.processes).toHaveLength(processCount);
-    });
+    }
+    await expect(f.invokeTerminal(RPC_METHODS.DAEMON_TERMINAL_INPUT, { terminalId, data: 'manage-machine-work\n' }, f.accountId, false, undefined, 'manage'))
+      .resolves.toMatchObject({ ok: true });
+    const output = TerminalStreamReadResponseSchema.parse(await f.invokeTerminal(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES,
+      { terminalId, byteOffset: 0 }, f.accountId, false, undefined, 'manage'));
+    if (!output.ok) throw new Error('Manage machine shell output refused');
+    expect(Buffer.concat(output.frames.filter((frame): frame is TerminalStreamBytesFrame => frame.t === 'bytes')
+      .map(frame => Buffer.from(decodeTerminalStreamBytesFrame(frame)))).toString()).toContain('ran:manage-machine-work');
+    expect(projectReads()).toBe(beforeProjectReads);
+    const other = c.accountId === 'requester' ? 'member-a' : 'member-b';
+    expect(await f.invokeTerminal(RPC_METHODS.DAEMON_TERMINAL_INPUT, { terminalId, data: 'foreign\n' }, other, false, undefined, 'manage'))
+      .toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+  });
+
+  it('refuses a Manage grantee terminal while the isolation policy is unread and starts nothing', async () => {
+    const f = await fixture({ policyUnread: true, acceptedWorkspace: false });
+    const refused = await f.invokeTerminal(RPC_METHODS.DAEMON_TERMINAL_ENSURE, { terminalKey: 'manage-unread' },
+      f.accountId, false, undefined, 'manage');
+    expect(refused).toMatchObject({ ok: false, errorCode: 'agent_isolation_unavailable' });
+    expect(f.processes).toEqual([]);
+  });
 
   it.each(['off', 'legacy', 'linuxUsersV1'] as const)('opens the approved signed owner-Agent terminal and retains control with %s placement', async mode => {
     const f = await fixture({ ownerAgent: true, accountId: 'requester', isolationEnabled: mode !== 'off', ...(mode === 'legacy' ? { legacy: true } : {}) });

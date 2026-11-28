@@ -193,7 +193,8 @@ async function fixture() {
     expect(await invoke()).toMatchObject({ status: 'unknown', signInScope: 'member' });
     expect(observed).toHaveLength(2);
     expect(f.memberSetupLaunches()).toBe(setupLaunches);
-    expect(await invoke('manage')).toMatchObject({ signInScope: 'machineOwner' });
+    // Owner ruling 2026-11-27: a Manage grantee's own sign-in terminal runs as their member user.
+    expect(await invoke('manage')).toMatchObject({ status: 'unknown', signInScope: 'member' });
     expect(observed).toHaveLength(2);
     f.makePolicyUnread();
     const unread = await invoke();
