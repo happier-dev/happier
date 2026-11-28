@@ -723,9 +723,23 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
                     : isTerminalWorkflowRunState(refreshedSummary.state);
                 const needsExactDetail = !isBackgroundRefresh
                     || (summaryTerminal && loadedDetail?.terminal === false);
-                let detail: Awaited<ReturnType<typeof workflowRunDetailActions.getRun>> | null = null;
-                if (needsExactDetail) {
-                    detail = await workflowRunDetailActions.getRun(runId, controller.signal);
+                const exactRead = needsExactDetail ? workflowRunDetailActions.getRun(runId, controller.signal) : null;
+                const readHistory = () => workflowRunDetailActions.listInvocations({ runId, includeContent: true }, controller.signal);
+                const readAttention = () => workflowRunDetailActions.listInvocations({
+                    runId, lifecycles: WORKFLOW_ATTENTION_LIFECYCLES, includeContent: true,
+                }, controller.signal);
+                const startPage = (read: typeof readHistory) => {
+                    const pending = read();
+                    // Observe early rejections while the exact read still owns error presentation.
+                    void pending.catch(() => undefined);
+                    return pending;
+                };
+                const coldPages = isBackgroundRefresh ? null : {
+                    history: startPage(readHistory),
+                    attention: startPage(readAttention),
+                };
+                const detail = exactRead === null ? null : await exactRead;
+                if (detail !== null) {
                     if (cancelled || !lifetime.isCurrent() || !isContentIdentityCurrent(requestScopeKey)) return;
                     // The body lands in the one shared owner; this screen keeps no copy.
                     //
@@ -747,7 +761,15 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
                     ? { revision: refreshedSummary?.revision ?? observedRevision, terminal: summaryTerminal }
                     : { revision: detail.run.revision, terminal: isTerminalWorkflowRunState(detail.run.state) };
 
-                const historyPromise = workflowRunDetailActions.listInvocations({ runId, includeContent: true }, controller.signal);
+                const resolvePage = async (pending: ReturnType<typeof readHistory> | undefined, read: typeof readHistory) => {
+                    if (pending === undefined) return read();
+                    const page = await pending;
+                    // A first page that raced a newer Run revision needs a fresh cursor and rows.
+                    if (detail !== null && page.parentRevision < detail.run.revision
+                        && !cancelled && lifetime.isCurrent() && isContentIdentityCurrent(requestScopeKey)) return read();
+                    return page;
+                };
+                const historyPromise = resolvePage(coldPages?.history, readHistory);
                 // A parked interrupted Run is read the same way: its failed step is why it stopped.
                 const observedRunState = detail?.run.state ?? refreshedSummary?.state;
                 const failedPromise = observedState.terminal || observedRunState === 'interrupted'
@@ -830,7 +852,7 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
                 // R12) without also waiting on the separate first-failure lookup, which settles after.
                 const [page, attentionPage] = await Promise.all([
                     historyPromise,
-                    workflowRunDetailActions.listInvocations({ runId, lifecycles: WORKFLOW_ATTENTION_LIFECYCLES, includeContent: true }, controller.signal),
+                    resolvePage(coldPages?.attention, readAttention),
                 ]);
                 if (cancelled || !lifetime.isCurrent() || !isContentIdentityCurrent(requestScopeKey)) return;
                 const store = getStorage().getState();

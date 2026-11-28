@@ -2351,6 +2351,11 @@ describe('WorkflowRunScreen', () => {
         expect(screen.findByTestId('workflow-run-header')).not.toBeNull();
         expect(readContentProps()?.title).toBe('Review changes');
         expect(completedReads).toBe(0);
+        expect(detailActions.listInvocations.mock.calls.map(([input]) => input)).toEqual([
+            { runId: run.id, includeContent: true },
+            { runId: run.id, includeContent: true, lifecycles: expect.arrayContaining(['waiting_for_approval']) },
+        ]);
+        expect(detailActions.getInvocation).not.toHaveBeenCalled();
         expect(readContentProps()?.definition).toBeNull();
         expect(screen.findByTestId('workflow-run-invocations-loading')).not.toBeNull();
         expect(detailActions.listRuns).not.toHaveBeenCalled();
@@ -2366,6 +2371,51 @@ describe('WorkflowRunScreen', () => {
         await vi.waitFor(() => expect(readContentProps()?.invocationsLoaded).toBe(true));
         expect(readContentProps()?.invocations).toEqual(expect.arrayContaining([expect.objectContaining(held)]));
         expect(screen.findByTestId('workflow-run-invocations-loading')).toBeNull();
+    });
+
+    it('rereads only the cold page older than the exact Run before exposing its continuation', async () => {
+        const run = createWorkflowRunSummaryFixture({ state: 'running', revision: 2 });
+        const olderRow = createWorkflowInvocationIndexFixture({ lifecycle: 'waiting_for_approval' });
+        const exactRead = createDeferred<WorkflowRunGetResultV1>();
+        const freshAttention = createDeferred<unknown>();
+        let firstAttentionRead = true;
+        await renderRunScreen({ run, wrap: element => {
+            detailActions.getRun.mockReturnValue(exactRead.promise);
+            detailActions.listInvocations.mockImplementation(async (input: Readonly<{ cursor?: string; lifecycles?: readonly string[] }>) => {
+                if (input.cursor !== undefined) return { invocations: [], parentRevision: run.revision };
+                if (input.lifecycles === undefined) return { invocations: [], parentRevision: run.revision, nextCursor: 'history-next' };
+                if (!firstAttentionRead) return freshAttention.promise;
+                firstAttentionRead = false;
+                return { ...invocationPage([olderRow]), nextCursor: 'stale-attention-next' };
+            });
+            return element;
+        } });
+
+        const firstPages = () => detailActions.listInvocations.mock.calls
+            .filter(([input]) => input.cursor === undefined).map(([input]) => input.lifecycles === undefined ? 'history' : 'attention');
+        expect(firstPages()).toEqual(['history', 'attention']);
+        await act(async () => {
+            exactRead.resolve({ run, definition: DEFINITION, authoredDefinition: DEFINITION,
+                acceptedContext: ACCEPTED_CONTEXT, checkpoint: null, callerAccess: { canEdit: true } });
+        });
+        // Exact detail reads one unfiltered usage window through the same storage operation.
+        await vi.waitFor(() => expect(firstPages()).toEqual(['history', 'attention', 'history', 'attention']));
+        expect(readContentProps()?.invocationsLoaded).toBe(false);
+        expect(readContentProps()?.onLoadMoreAttention).toBeUndefined();
+
+        await act(async () => {
+            freshAttention.resolve({ invocations: [], parentRevision: run.revision, nextCursor: 'attention-next' });
+        });
+        await vi.waitFor(() => expect(readContentProps()?.invocationsLoaded).toBe(true));
+        detailActions.listInvocations.mockClear();
+        await act(async () => {
+            readContentProps()?.onLoadMoreInvocations?.();
+            readContentProps()?.onLoadMoreAttention?.();
+        });
+        expect(detailActions.listInvocations.mock.calls.map(([input]) => input.cursor)).toEqual([
+            'history-next', 'attention-next',
+        ]);
+        expect(detailActions.getInvocation).not.toHaveBeenCalled();
     });
 
     it('keeps the accepted header and recovery visible when its first private read fails', async () => {
