@@ -5482,7 +5482,8 @@ describe('SessionView (direct sessions)', () => {
     expect(findAgentInput(screen).props.armedRouteContinuation).toBeTruthy();
   });
 
-  it('offers a same-model native favorite as a source switch and reselects the saved brokered favorite', async () => {
+  it('keeps same-model native and brokered favorites distinct through the mounted palette', async () => {
+    const { buildCommandPaletteCommands } = await import('@/components/appShell/commandPalette/buildCommandPaletteCommands');
     const { readSessionComposerModelFavorites } = await import('@/components/sessions/presentation/sessionComposerPresentationTargets');
     const agentTargetKey = 'agent:happier.agent.muse/muse';
     const modelId = 'meta/muse-spark-1.3-contributor';
@@ -5526,20 +5527,22 @@ describe('SessionView (direct sessions)', () => {
       expect(request.selection).toEqual(connected);
       return { ok: true, status: 'already_active', activeSelection: native };
     };
-    const savedFavorite = readSavedFavorite();
-    if (!savedFavorite) throw new Error('Expected the saved connected-account favorite');
-    await act(async () => {
-      await expect(savedFavorite.apply()).resolves.toBe(true);
+    const commands = buildCommandPaletteCommands({
+      sessionsById: {}, activeSessionId: address.sessionId, activeSessionServerId: address.serverId,
+      isDev: false, features: { executionRunsEnabled: false, voiceEnabled: false },
+      nav: { push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
+      actions: { execute: async () => ({ ok: true, result: {} }) }, alert: async () => {},
+      sessionModelFavorites: readSessionComposerModelFavorites(address),
     });
+    const favoriteCommands = commands.filter(entry => entry.id.startsWith('session.model.favorite:'));
+    expect(new Set(favoriteCommands.map(entry => entry.id)).size).toBe(2);
+    const command = favoriteCommands.find(entry => entry.id === `session.model.favorite:${brokeredKey}`);
+    if (!command) throw new Error('Expected a palette command for the saved connected-account favorite');
+    await act(async () => { await command.action(); });
     expect(externalRpcRequests).toContainEqual(expect.objectContaining({
       method: SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION, targetId: 's1',
       payload: expect.objectContaining({ selection: connected, applyTiming: 'next_prompt' }),
     }));
-    const executeOrdinaryChildAction = vi.fn(async () => ({ ok: true as const, result: {} }));
-    await expect(savedFavorite.invokeAction?.({ surface: 'agent', serverId: 'server-route-1', executeOrdinaryChildAction }))
-      .resolves.toMatchObject({ ok: true });
-    expect(executeOrdinaryChildAction).toHaveBeenCalledWith('session.model.set',
-      { sessionId: 's1', modelSelection: connected, applyTiming: 'next_prompt' });
   });
 
   it('applies the ordinary mounted Sonnet 5 / High App command', async () => {

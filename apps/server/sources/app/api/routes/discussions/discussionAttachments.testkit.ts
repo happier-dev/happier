@@ -15,6 +15,7 @@ import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/enc
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { buildDiscussionMutationRequestBodyV1, DISCUSSION_EXACT_MESSAGE_KEY_CONTEXT_ACCEPT_V1, DISCUSSION_HTTP_PATHS_V1 } from '@happier-dev/protocol/discussions/api';
 import { deriveDiscussionMutationEqualityTagV1, serializeDiscussionMutationEqualityIntentV1 } from '@happier-dev/protocol/discussions/equality';
+import { DiscussionAttachmentReadResponseV1Schema } from '@happier-dev/protocol/discussions/attachments';
 import { DiscussionMessageContentV1Schema } from '@happier-dev/protocol/discussions/content';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { APPROVAL_ARTIFACT_KINDS_V1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
@@ -186,7 +187,8 @@ export function discussionAttachmentContracts(): void {
             const expectItem = async (path: string, viewerMayRemove: boolean) => {
                 const response = await app.inject({ url: path });
                 expect(response.statusCode, response.body).toBe(200);
-                expect(response.json().page.items).toEqual([expect.objectContaining({ ...expectedItem, viewerMayRemove })]);
+                expect(StorageInventoryV1Schema.parse(response.json()).page?.items)
+                    .toEqual([expect.objectContaining({ ...expectedItem, viewerMayRemove })]);
                 expect(response.body).not.toContain('keep-message.txt');
             };
             await expectItem(scopedPath, true);
@@ -212,6 +214,25 @@ export function discussionAttachmentContracts(): void {
             await expectItem(scopedPath, false);
             expect((await app.inject({ method: 'GET', url })).statusCode).toBe(200);
             expect((await app.inject({ method: 'DELETE', url })).statusCode).toBe(403);
+            actorAccountId = owner.id;
+            const revoked = await app.inject({
+                method: 'DELETE', url: DISCUSSION_HTTP_PATHS_V1.participant.replace(':discussionId', discussionId),
+                payload: { participant: { kind: 'account', accountId: participant.id } },
+            });
+            expect(revoked.statusCode, revoked.body).toBe(200);
+            expect(revoked.json()).toMatchObject({ changed: true });
+            actorAccountId = participant.id;
+            expect((await app.inject({ url: scopedPath })).statusCode).toBe(404);
+            expect((await app.inject({ method: 'GET', url })).statusCode).toBe(404);
+            expect((await app.inject({ method: 'DELETE', url })).statusCode).toBe(403);
+            actorAccountId = owner.id;
+            await expectItem(scopedPath, true);
+            const ownerRead = await app.inject({ method: 'GET', url });
+            expect(ownerRead.statusCode, ownerRead.body).toBe(200);
+            expect(DiscussionAttachmentReadResponseV1Schema.parse(ownerRead.json())).toEqual({
+                blobId, content: { t: 'plain', v: bytes.toString('base64') },
+            });
+
             actorAccountId = unrelated.id;
             expect((await app.inject({ url: scopedPath })).statusCode).toBe(404);
             expect((await app.inject({ method: 'DELETE', url })).statusCode).toBe(403);
@@ -227,7 +248,7 @@ export function discussionAttachmentContracts(): void {
             expect(effect.statusCode, effect.body).toBe(200);
             expect(effect.json()).toEqual(removed);
             expect((await app.inject({ method: 'DELETE', url })).json()).toEqual(removed);
-            actorAccountId = participant.id;
+            actorAccountId = teamReader.id;
             expect((await app.inject({ method: 'GET', url })).json()).toEqual(removed);
             const page = await app.inject({ method: 'GET', url: `/v1/discussions/${discussionId}/messages?messageId=${messageId}` });
             expect(page.statusCode, page.body).toBe(200);
