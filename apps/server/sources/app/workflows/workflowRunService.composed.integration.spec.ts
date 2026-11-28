@@ -2053,6 +2053,27 @@ describe("workflowRunService (integration)", () => {
         }
     });
 
+    it.each(["live", "clear"] as const)("settles terminal custody when clear in the transition itself (%s sibling)", async sibling => {
+        const seeded = await seedPendingAdmission();
+        await commitWorkflowInvocationFact(seeded.fact);
+        await commitWorkflowInvocationFact({ ...seeded.fact, expectedLifecycle: "admitting", lifecycle: "running" });
+        if (sibling === "clear") await commitWorkflowInvocationFact({ ...seeded.fact, expectedLifecycle: "running", lifecycle: "completed" });
+        const before = (await getWorkflowRun(seeded)).run;
+        const settle = {
+            ...seeded, parentAttempt: 1, expectedRevision: before.revision, state: "failed" as const,
+            checkpointEnvelope: checkpointEnvelope(seeded.accountId, seeded.runId, seeded.rootId, 2n),
+            invocationTransitions: [{ id: seeded.rootId, expectedLifecycle: "pending" as const, lifecycle: "failed" as const }],
+        };
+        await expect(transitionWorkflowRun({ ...settle, custodyState: "settled", settleCustodyWhenClear: true }))
+            .rejects.toMatchObject({ code: "invalid_input" });
+        // A live accepted sibling keeps custody for terminal recovery; the Run still ends.
+        await expect(transitionWorkflowRun({ ...settle, settleCustodyWhenClear: true })).resolves.toMatchObject({
+            state: "failed", workflowCustodyState: sibling === "live" ? "pending" : "settled",
+        });
+        expect(await db.workflowRunInvocation.findUniqueOrThrow({ where: { id: seeded.rootId }, select: { lifecycle: true } }))
+            .toEqual({ lifecycle: "failed" });
+    });
+
     it("hints the origin owner only when a row enters admitting, attention changes, or the Run ends", async () => {
         const seeded = await seedPendingAdmission();
         await db.automationRun.update({ where: { id: seeded.runId }, data: {

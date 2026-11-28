@@ -2440,7 +2440,7 @@ export async function recordWorkflowRunOriginInputWithdrawn(params: Readonly<{
     });
 }
 
-export async function transitionWorkflowRun(params: Readonly<{ accountId: string; runId: string; machineId: string; parentAttempt: number; expectedRevision: number; state: WorkflowRunState; errorCode?: string | null; checkpointEnvelope: string; resultEnvelope?: string | null; custodyState?: WorkflowCustodyState; discussionRound?: WorkflowDiscussionRoundProgressV1; invocationTransitions?: readonly Readonly<{ id: string; expectedLifecycle: WorkflowInvocationLifecycleV1; lifecycle: WorkflowInvocationLifecycleV1; expectedContentRevision: bigint }>[]; accountCurrentness: AutomationAccountCurrentnessWitnessV1 }>) {
+export async function transitionWorkflowRun(params: Readonly<{ accountId: string; runId: string; machineId: string; parentAttempt: number; expectedRevision: number; state: WorkflowRunState; errorCode?: string | null; checkpointEnvelope: string; resultEnvelope?: string | null; custodyState?: WorkflowCustodyState; settleCustodyWhenClear?: true; discussionRound?: WorkflowDiscussionRoundProgressV1; invocationTransitions?: readonly Readonly<{ id: string; expectedLifecycle: WorkflowInvocationLifecycleV1; lifecycle: WorkflowInvocationLifecycleV1; expectedContentRevision: bigint }>[]; accountCurrentness: AutomationAccountCurrentnessWitnessV1 }>) {
     return await inTx(async (tx) => {
         if (!Number.isSafeInteger(params.parentAttempt) || params.parentAttempt < 0) throw new WorkflowRunServiceError("invalid_input");
         const mode = await loadCurrentWorkflowAccountModeTx(tx, params.accountId, params.accountCurrentness, params.runId, params.discussionRound?.discussionId);
@@ -2484,6 +2484,15 @@ export async function transitionWorkflowRun(params: Readonly<{ accountId: string
         const transitionsToTerminal = AUTOMATION_RUN_TERMINAL_STATES.some(
             (candidate) => candidate === params.state,
         );
+        if (params.settleCustodyWhenClear && (params.custodyState !== undefined || !transitionsToTerminal)) {
+            throw new WorkflowRunServiceError("invalid_input");
+        }
+        // A terminal worker may ask this owner to settle custody when nothing
+        // remains unsettled. Live accepted inputs or review holds keep custody
+        // pending for the terminal recovery owner, in this same transaction.
+        const custodyState: WorkflowCustodyState | undefined = params.settleCustodyWhenClear
+            ? (await findUnsettledWorkflowInvocationInTx(tx, params.runId, reconciledTerminalInvocationIds) ? undefined : "settled")
+            : params.custodyState;
         if (params.custodyState === "settled") {
             if (!transitionsToTerminal) {
                 throw new WorkflowRunServiceError("currentness_conflict");
@@ -2520,7 +2529,7 @@ export async function transitionWorkflowRun(params: Readonly<{ accountId: string
             && previous.state === params.state
             && AUTOMATION_RUN_TERMINAL_STATES.some((candidate) => candidate === previous.state)
             && previous.workflowCustodyState === "pending"
-            && params.custodyState === "settled"
+            && custodyState === "settled"
             && decodeStoredText(previous.workflowCheckpointEnvelope, previous.workflowCheckpointEnvelopeBytes) === params.checkpointEnvelope
             && (params.resultEnvelope === undefined || decodeStoredText(previous.resultEnvelope, previous.resultEnvelopeBytes) === params.resultEnvelope)
             && allInvocationTransitionsTerminalIdempotent;
@@ -2558,7 +2567,7 @@ export async function transitionWorkflowRun(params: Readonly<{ accountId: string
                     workflowCheckpointEnvelope: storedCheckpoint.value,
                     workflowCheckpointEnvelopeBytes: storedCheckpoint.bytes,
                     ...(storedResult !== undefined ? { resultEnvelope: storedResult.value, resultEnvelopeBytes: storedResult.bytes } : {}),
-                    ...(params.custodyState ? { workflowCustodyState: params.custodyState } : {}),
+                    ...(custodyState ? { workflowCustodyState: custodyState } : {}),
                     revision: { increment: 1 },
                     ...(parksForReview ? { workflowCustodyState: "pending", claimedByMachineId: null, claimedAt: null, leaseExpiresAt: null } : {}),
                     ...(transitionsToTerminal ? { finishedAt: now } : {}),

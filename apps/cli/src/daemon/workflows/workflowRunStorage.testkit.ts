@@ -1,5 +1,5 @@
 import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
-import { isTerminalWorkflowInvocationLifecycleV1, WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1, WorkflowRunInvocationIndexV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { isTerminalWorkflowInvocationLifecycleV1, WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1, WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1, WorkflowRunInvocationIndexV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { canObserveLostWorkflowActionOperationV1 } from '@happier-dev/protocol/workflows';
 import type { WorkflowInvocationLifecycleV1, WorkflowRunInvocationIndexV1, WorkflowRunOriginV1, WorkflowRunStateV1, WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
@@ -459,6 +459,15 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
         checkpointEnvelope = String(operation.checkpointEnvelope);
         if (typeof operation.resultEnvelope === 'string') resultEnvelope = operation.resultEnvelope;
         if (operation.custodyState === 'settled') custodyState = 'settled';
+        if (operation.settleCustodyWhenClear === true) {
+          // Mirrors Home: rows closing terminal in this transition are reconciled.
+          const closing = new Set(((operation.invocationTransitions ?? []) as ReadonlyArray<Readonly<Record<string, unknown>>>)
+            .filter(item => isTerminalWorkflowInvocationLifecycleV1(String(item.lifecycle))
+              || isTerminalWorkflowInvocationLifecycleV1(String(item.expectedLifecycle)))
+            .map(item => String(item.id)));
+          const unsettled = new Set<string>(WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1);
+          if (![...rows.values()].some(row => unsettled.has(row.index.lifecycle) && !closing.has(row.index.id))) custodyState = 'settled';
+        }
         for (const item of (operation.invocationTransitions ?? []) as ReadonlyArray<Readonly<Record<string, unknown>>>) {
           const row = rows.get(String(item.id))!;
           if (row.index.lifecycle === item.lifecycle) continue;

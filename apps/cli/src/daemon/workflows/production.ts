@@ -2477,15 +2477,11 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
           finalResult: result.finalResult,
         }))
         : undefined;
-      let custodyState = discussionPublicationPending
-        ? undefined : projectWorkflowTerminalCustodySettlement(result.state);
-      if (custodyState === 'settled') {
-        const unsettled = await durableStore.listByLifecycle({ runId: claim.runId,
-          lifecycles: WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1 });
-        // The root closes in this transition. Independent accepted inputs and
-        // review holds remain owned by the existing terminal recovery path.
-        if (unsettled.some(row => row.recordId !== rootBeforeSettlement.id)) custodyState = undefined;
-      }
+      // Home's terminal transition owns the unsettled-custody check: the root
+      // closes in it, and independent accepted inputs or review holds keep
+      // custody pending for the existing terminal recovery path.
+      const settleCustodyWhenClear = !discussionPublicationPending
+        && projectWorkflowTerminalCustodySettlement(result.state) === 'settled';
       if (result.state === 'failed' || result.state === 'cancelled'
         || result.state === 'interrupted' || result.state === 'outcome_uncertain') {
         const originalRound = ReviewRoundBindingV1Schema.safeParse(accepted.inputs.reviewRound);
@@ -2539,7 +2535,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         ...((terminalState === 'failed' || terminalState === 'interrupted') && result.reason ? { errorCode: result.reason } : {}),
         discussionRound: await durableStore.readDiscussionRoundProgress(),
         ...(resultEnvelope ? { resultEnvelope } : {}),
-        ...(custodyState ? { custodyState } : {}),
+        ...(settleCustodyWhenClear ? { settleCustodyWhenClear: true } : {}),
         ...(rootTerminal === rootBeforeSettlement.lifecycle ? {} : {
           invocationTransitions: [{ id: rootBeforeSettlement.id, expectedLifecycle: rootBeforeSettlement.lifecycle, expectedContentRevision: rootBeforeSettlement.contentRevision, lifecycle: rootTerminal }],
         }),
@@ -2556,7 +2552,8 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
           committed = snapshot.run;
         } else {
           const persistedRoot = await durableStore.refreshRootIndex();
-          const custodyMatches = snapshot.run.workflowCustodyState === (custodyState ?? 'pending');
+          // A conditional settlement commits either custody state Home chose.
+          const custodyMatches = settleCustodyWhenClear || snapshot.run.workflowCustodyState === 'pending';
           const exactCommittedSettlement = snapshot.run.state === terminalState
             && snapshot.checkpointEnvelope === checkpointEnvelope
             && snapshot.resultEnvelope === (resultEnvelope ?? null)

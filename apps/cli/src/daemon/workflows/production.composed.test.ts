@@ -2099,6 +2099,15 @@ describe('production workflow coordinator', () => {
       // every future authored slot during startup.
       expect(operationsBeforeNextInput.filter(operation => operation === 'invocations.current')).toHaveLength(1);
       expect(operationsBeforeNextInput.filter(operation => operation !== 'invocations.current')).toHaveLength(11);
+      // Home's transition owns the unsettled-custody check: settlement sends
+      // no separate unsettled-invocation read and asks Home to settle when clear.
+      const transitionAt = boundary.calls.findIndex(call => call.operation === 'transition' && call.state === 'succeeded');
+      const lastFactAt = boundary.calls.map(call => call.operation).lastIndexOf('invocations.fact', transitionAt);
+      expect(boundary.calls.slice(lastFactAt + 1, transitionAt).filter(call => call.operation === 'invocations.list'
+        && Array.isArray(call.lifecycles) && call.lifecycles.includes('waiting_for_review'))).toEqual([]);
+      expect(boundary.calls[transitionAt]).toMatchObject({ settleCustodyWhenClear: true });
+      expect(boundary.calls[transitionAt]).not.toHaveProperty('custodyState');
+      expect(boundary.run().workflowCustodyState).toBe('settled');
       console.info('FIN-HANDOFF-COST', JSON.stringify({ timerFires, intervalInstalls: interval.mock.calls.length, invocationsStarted: admitted.length,
         deadlineDelaysMs: timeout.mock.calls.map(([, delay]) => delay),
         storageOperations: boundary.calls.length, operationsFromFirstResultToNextInput: operationsBeforeNextInput }));
@@ -4805,6 +4814,14 @@ describe('production workflow coordinator', () => {
           checkpointEnvelope = operation.checkpointEnvelope as string;
           if (typeof operation.resultEnvelope === 'string') persistedResultEnvelope = operation.resultEnvelope;
           if (operation.custodyState === 'settled') durableCustody = 'settled';
+          if (operation.settleCustodyWhenClear === true) {
+            // Mirrors Home: rows closing terminal in this transition are reconciled.
+            const closing = new Set(((operation.invocationTransitions ?? []) as Array<Record<string, unknown>>)
+              .filter(item => isTerminalWorkflowInvocationLifecycleV1(String(item.lifecycle)))
+              .map(item => String(item.id)));
+            const unsettled = new Set<string>(WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1);
+            if (![...rows.values()].some(row => unsettled.has(row.index.lifecycle) && !closing.has(row.index.id))) durableCustody = 'settled';
+          }
           for (const item of (operation.invocationTransitions ?? []) as Array<Record<string, unknown>>) {
             const row = rows.get(item.id as string)!;
             expect(item.expectedContentRevision).toBe(row.index.contentRevision);
