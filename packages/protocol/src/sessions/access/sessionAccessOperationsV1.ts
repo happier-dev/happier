@@ -13,7 +13,7 @@ import {
   SessionEffectiveAccessV1Schema,
   type SessionAccessGrantCapabilityValueV1,
 } from './sessionEffectiveAccessV1.js';
-import { SessionAccessErrorCodeV1Schema } from './sessionAccessErrorCodeV1.js';
+import { SessionAccessErrorCodeV1Schema, type SessionAccessErrorCodeV1 } from './sessionAccessErrorCodeV1.js';
 export { SessionAccessErrorCodeV1Schema, type SessionAccessErrorCodeV1 } from './sessionAccessErrorCodeV1.js';
 
 /** A Team that can satisfy this member's refused grant inspection. */
