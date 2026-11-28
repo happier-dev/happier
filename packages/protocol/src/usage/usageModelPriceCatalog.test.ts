@@ -2,10 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { bundledUsageModelPriceCatalog, BUNDLED_USAGE_MODEL_PRICE_REVISION, canonicalUsageModelPriceId, parseLiteLlmModelPriceCatalog, resolveUsageModelPrice, UsageModelPriceOverridesV1Schema } from './usageModelPriceCatalog.js';
 import { estimateUsageModelCost, repriceUsageAnalyticsResponse } from './usageCost.js';
 import { UsageAnalyticsQueryResponseSchema } from './usageAnalyticsContracts.js';
+import { UsageModelPriceCatalogSchema } from './usageModelPriceSchemas.js';
+import { LITELLM_BUNDLED_SNAPSHOT } from './usageModelPriceSnapshot.js';
 
 describe('canonical model price catalog', () => {
   it('publishes the vendored revision without loading catalog data in projection consumers', () => {
     expect(BUNDLED_USAGE_MODEL_PRICE_REVISION).toBe(bundledUsageModelPriceCatalog.provenance.revision);
+  });
+  it('publishes the vendored snapshot as a valid catalog without re-parsing it on every load', () => {
+    expect(UsageModelPriceCatalogSchema.parse(LITELLM_BUNDLED_SNAPSHOT)).toEqual(LITELLM_BUNDLED_SNAPSHOT);
+    expect(bundledUsageModelPriceCatalog.models).toBe(LITELLM_BUNDLED_SNAPSHOT.models);
   });
   it('treats synthetic transcript sentinels as no model while preserving exact real model ids', () => {
     expect(canonicalUsageModelPriceId(' <synthetic> ')).toBeNull();

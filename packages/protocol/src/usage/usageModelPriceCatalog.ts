@@ -3,7 +3,9 @@ import { LITELLM_BUNDLED_SNAPSHOT } from './usageModelPriceSnapshot.js';
 import { UsageModelPriceCatalogSchema, UsageModelPriceEntrySchema, type UsageModelPriceCatalog, type UsageModelPriceProvenance } from './usageModelPriceSchemas.js';
 
 export { LITELLM_MODEL_PRICE_URL } from './usageModelPriceSchemas.js';
-export const bundledUsageModelPriceCatalog: UsageModelPriceCatalog = UsageModelPriceCatalogSchema.parse(LITELLM_BUNDLED_SNAPSHOT);
+// The vendored snapshot is immutable source that its test proves parses to itself. Parsing its
+// ~2.8k entries again on every module load cost tens of milliseconds in every app, CLI and server realm.
+export const bundledUsageModelPriceCatalog: UsageModelPriceCatalog = LITELLM_BUNDLED_SNAPSHOT;
 
 /** LiteLLM is an external, heterogeneous file. Only standard text-token tariffs enter this catalog. */
 export function parseLiteLlmModelPriceCatalog(value: unknown, provenance: UsageModelPriceProvenance): UsageModelPriceCatalog {

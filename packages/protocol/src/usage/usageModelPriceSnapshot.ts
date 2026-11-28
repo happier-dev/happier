@@ -36,5 +36,5 @@ type BundledUsageModelPriceSnapshot = Readonly<{
   provenance: Readonly<UsageModelPriceCatalog['provenance']>;
 }>;
 
-// JSON widens literal discriminants; the trusted vendored data is validated by the catalog owner.
+// JSON widens literal discriminants; the catalog owner's test validates this trusted vendored data.
 export const LITELLM_BUNDLED_SNAPSHOT: BundledUsageModelPriceSnapshot = bundledSnapshot as BundledUsageModelPriceSnapshot;
