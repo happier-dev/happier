@@ -202,7 +202,7 @@ it('groups armed production findings and consumes a recurrence after Clear befor
     } as unknown as BackgroundServiceContext;
     const running = telemetryCollectorRunner(context);
     let sequence = 0;
-    async function sendTrace(exporter: string, serviceName = 'web', parameters?: readonly number[]) {
+    async function sendTrace(exporter: string, serviceName = 'web', parameters?: readonly number[], sql = 'SELECT $1::integer AS id') {
         const spanId = (++sequence).toString(16).padStart(16, '0');
         const traceId = spanId.padStart(32, '0');
         const startTimeUnixNano = BigInt(Date.now()) * 1_000_000n;
@@ -225,7 +225,7 @@ it('groups armed production findings and consumes a recurrence after Clear befor
                             { key: 'server.address', value: { stringValue: 'orders-db.test' } },
                             { key: 'server.port', value: { intValue: '5432' } },
                             { key: 'db.namespace', value: { stringValue: 'orders' } },
-                            { key: 'db.query.text', value: { stringValue: 'SELECT $1::integer AS id' } },
+                            { key: 'db.query.text', value: { stringValue: sql } },
                             { key: 'db.query.parameter.1', value: { intValue: String(parameter) } },
                         ],
                     }))] }],
@@ -261,7 +261,7 @@ it('groups armed production findings and consumes a recurrence after Clear befor
         await sendTrace(token);
         await sendTrace(token, 'billing');
         await vi.waitFor(() => expect(admissions).toHaveLength(2));
-        await sendTrace(token, 'web', [5, 5]);
+        await sendTrace(token, 'web', [5, 5], 'SELECT $1::integer AS repeated_id');
         const traceId = await sendTrace(token, 'web', [5, 6, 7]);
         await sendTrace(neighborToken, 'web', [5, 6, 7]);
         await sendTrace(token, 'search');
@@ -296,8 +296,20 @@ it('groups armed production findings and consumes a recurrence after Clear befor
         await sendTrace(token, 'web', [5, 6, 7]);
         selectedBindings = [binding];
         notifyBindingsChanged?.();
-        await sendTrace(token, 'web', [5, 6, 7]);
-        await vi.waitFor(() => expect(databaseFindings).toHaveLength(3));
+        for (let occurrence = 1; occurrence < 1_000; occurrence++) {
+            await sendTrace(token, 'web', [8, 9, 10]);
+        }
+        await sendTrace(token, 'web', [5, 6, 7, 8], 'SELECT $1::integer AS distinct_id');
+        await vi.waitFor(() => expect(databaseFindings.at(-1)).toMatchObject({
+            observation: { summary: { calls: '4' } },
+        }));
+        expect(databaseFindings).toHaveLength(3);
+        await vi.waitFor(async () => {
+            expect(await fixture.db.query(`SELECT COUNT(*) AS occurrences FROM captureDatabaseFindingOccurrences
+                WHERE worktree = ? GROUP BY findingId ORDER BY occurrences DESC`, [partition])).toEqual([
+                { occurrences: 1_000 }, { occurrences: 1 }, { occurrences: 1 },
+            ]);
+        });
         expect(selectedBindingReads).toBe(3);
         await vi.waitFor(async () => expect(await store.pendingProductionFinding(partition)).toBeUndefined());
         await store.clear(partition);
@@ -314,4 +326,4 @@ it('groups armed production findings and consumes a recurrence after Clear befor
         try { await running; }
         finally { fixture.close(); }
     }
-});
+}, 60_000);

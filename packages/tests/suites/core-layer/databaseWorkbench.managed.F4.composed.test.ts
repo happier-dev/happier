@@ -569,7 +569,7 @@ async function exerciseManagedDatabase(provider: (typeof providers)[number], mod
           };
           const armed = await arm(target.targetLinkId);
           const neighboring = await arm(randomUUID());
-          function trace(databaseName?: string) {
+          function trace(databaseName?: string, sql = 'SELECT $1::integer AS plan85_id') {
             const traceId = randomBytes(16).toString('hex');
             const spanId = randomBytes(8).toString('hex');
             const begin = BigInt(Date.now()) * 1_000_000n;
@@ -580,7 +580,7 @@ async function exerciseManagedDatabase(provider: (typeof providers)[number], mod
             ...[1, 2, 3].map(parameter => ({ ...timing, traceId, spanId: randomBytes(8).toString('hex'), parentSpanId: spanId, kind: 3,
               name: 'SELECT', attributes: [attr('db.system.name', 'postgresql'), attr('server.address', direct.hostname),
                 { key: 'server.port', value: { intValue: direct.port } }, ...(databaseName ? [attr('db.namespace', databaseName)] : []),
-                attr('db.query.text', 'SELECT $1::integer AS plan85_id'),
+                attr('db.query.text', sql),
                 { key: 'db.query.parameter.1', value: { intValue: String(parameter) } }] }))] }] }] });
           }
           async function emit(token: string, body: string) {
@@ -598,9 +598,14 @@ async function exerciseManagedDatabase(provider: (typeof providers)[number], mod
           await emit(selectedToken, trace(`${database}_neighbor`));
           await emit(selectedToken, trace());
           await emit(refusedToken, trace(database));
-          await emit(selectedToken, trace(database));
+          for (let request = 1; request < 1_000; request++) {
+            await emit(selectedToken, trace(database));
+          }
+          expect(admittedFindings).toHaveLength(1);
+          expect(await runs(armed.set.automationId)).toHaveLength(1);
+          await emit(selectedToken, trace(database, 'SELECT $1::integer AS plan85_control_id'));
           await waitFor(async () => (await runs(armed.set.automationId)).filter(run => run.state === 'succeeded').length === 2,
-            { timeoutMs: 90_000, context: 'A second distinct finding completes after excluded observations and replay' });
+            { timeoutMs: 90_000, context: 'A distinct SQL shape on the same binding completes one more Run' });
           expect(await runs(neighboring.set.automationId)).toEqual([]);
           expect(admittedFindings.length).toBe(2);
           const privateValues = [direct.href, JSON.stringify(direct.password), 'plan85_id', JSON.stringify(database)];
@@ -610,7 +615,7 @@ async function exerciseManagedDatabase(provider: (typeof providers)[number], mod
             automationId: armed.set.automationId,
             expectedRevision: armed.set.revision, patch: { enabled: false } }));
           expect(disabled.set.enabled).toBe(false);
-          await emit(selectedToken, trace(database));
+          await emit(selectedToken, trace(database, 'SELECT $1::integer AS plan85_disabled_id'));
           await waitFor(() => databaseSourceReads > readsBefore, { context: 'Installed Workbench reloads the source catalog after disable' });
           expect(admittedFindings.length).toBe(2);
           expect(await runs(armed.set.automationId)).toHaveLength(2);

@@ -1,7 +1,7 @@
-import { createCanonicalJsonSigningInput, type DeploymentTelemetryServiceV1 } from '@happier-dev/plugin-sdk';
+import { computeCanonicalDomainSeparatedDigest, createCanonicalJsonSigningInput, type DeploymentTelemetryServiceV1 } from '@happier-dev/plugin-sdk';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import type { RepeatedQueryEvidence } from '../analysis/requests.js';
-import type { AutomationDatabaseFindingSubjectV1 } from '@happier-dev/plugin-sdk/events';
+import { automationSubjectKeyV1, type AutomationDatabaseFindingSubjectV1 } from '@happier-dev/plugin-sdk/events';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
 import { CAPTURED_DATABASE_FINDING_EVENT_REF_V1, type CapturedDatabaseFindingV1,
     type DatabaseCaptureSourceV1 } from '@happier-dev/database-protocol';
@@ -47,7 +47,10 @@ export function createDatabaseFindingPublisher(runtime: CaptureRuntime, context:
                 trace.summaries, [...selected.keys()], (finding, repetition) => {
                     const subject = selected.get(repetition);
                     if (!subject) return;
-                    const { v, sourceRef, evidenceIdentity, observedWindow, coverage, summary } = finding;
+                    const { v, sourceRef, observedWindow, coverage, summary } = finding;
+                    const evidenceIdentity = computeCanonicalDomainSeparatedDigest('happier.database.capture-binding-shape.v1', [
+                        automationSubjectKeyV1(subject), repetition.shape,
+                    ]);
                     result.push({ evidenceIds: repetition.observationIds,
                         finding: { subject, observationReceivedAt, observedDelta: 1,
                             observation: { v, sourceRef, sourceScope, evidenceIdentity, kind: repetition.kind, observedWindow, coverage, summary } } });
@@ -67,7 +70,13 @@ export function createDatabaseFindingPublisher(runtime: CaptureRuntime, context:
                 if (!stillActive()) return;
                 for (const { finding, evidenceIds } of projected) {
                     if (retained && !evidenceIds.every(id => retained.has(id))) continue;
-                    await context.services.events.plugin.emit(CAPTURED_DATABASE_FINDING_EVENT_REF_V1.localId, finding);
+                    const { evidenceIdentity, observedWindow } = finding.observation;
+                    // The ingest writer serializes first observation with both replay and Clear.
+                    // Workbench forwards the stable identity to Home for Event and Run dedupe.
+                    if (!await runtime.store.hasDatabaseFinding(partition, evidenceIdentity)) {
+                        await context.services.events.plugin.emit(CAPTURED_DATABASE_FINDING_EVENT_REF_V1.localId, finding);
+                    }
+                    await runtime.store.retainDatabaseFindingOccurrence(partition, evidenceIdentity, traceId, observedWindow.toMs);
                 }
             });
         }

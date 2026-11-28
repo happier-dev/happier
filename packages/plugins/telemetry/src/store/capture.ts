@@ -3,7 +3,7 @@ import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import type { DatabaseWorktreeTargetV1 } from '@happier-dev/plugin-sdk/database';
 import type { DatabaseCaptureQueryGetResultV1, DatabaseCaptureTracesListInputV1 } from '@happier-dev/database-protocol';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 as limits } from '@happier-dev/plugin-sdk/storage';
-import { createProductionFindingStore, productionFindingMigration, productionFindingRetention } from './productionFindingStore.js';
+import { createProductionFindingStore, databaseFindingMigration, databaseFindingRetention, productionFindingMigration, productionFindingRetention } from './productionFindingStore.js';
 import { createMetricStore, metricMigration, metricRetention, writeMetricPoint } from './metrics.js';
 import { costMigration, createCostStore } from './costs.js';
 import { worktreeMigration, createCaptureWorktrees, writeCaptureWorktree } from './worktrees.js';
@@ -40,7 +40,7 @@ export const captureMigrations: readonly DaemonDatabaseMigration[] = [{ version:
  // The open status reads the latest exception across fingerprints and the latest cost across models.
  await tx.execute('CREATE INDEX captureExceptionTime ON captureExceptions(worktree,at)');
  await tx.execute('CREATE INDEX captureAppLlmTime ON captureSummaries(worktree,at) WHERE genAi IS NOT NULL');
-} }];
+} }, databaseFindingMigration];
 const summaryFields = ['id','worktree','kind','source','at','shape','traceId','spanId','durationMs','outcome','parentSpanId','spanKind','serviceName','endpointMethod','endpointRoute','httpStatusCode','statementKind','parameterIdentity','executionIdentity','callsite','transactionId','retryOf','connectionId','severityNumber'] as const;
 const summaryWriteFields = [...summaryFields, 'serviceVersion', 'genAi', 'databaseMemberKey'] as const;
 const changingFields = summaryWriteFields.filter(field => field !== 'id' && field !== 'worktree');
@@ -421,7 +421,7 @@ ORDER BY selected.at DESC,selected.id DESC`, [input.worktree, ...params], Math.m
   async clear(worktree: string) {
    let changed = 0;
    await db.transaction(async tx => {
-    for (const table of [...metricRetention.map(({ table }) => table), 'captureDetails', 'captureSummaries', 'captureExceptions', productionFindingRetention.table]) {
+    for (const table of [...metricRetention.map(({ table }) => table), 'captureDetails', 'captureSummaries', 'captureExceptions', productionFindingRetention.table, databaseFindingRetention.table]) {
      let count: number;
      do { const result = await tx.execute(`DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE worktree = ? LIMIT ?)`, [worktree, limits.maximumAffectedRows]); count = result.changes; changed += count; } while (count === limits.maximumAffectedRows);
     }
@@ -476,6 +476,6 @@ export const captureDatabaseDefinition = {
   await tx.query('SELECT id,worktree,at FROM metricPoints LIMIT 1');
   await tx.query('SELECT pointId,worktree,at FROM metricBuckets LIMIT 1');
  } },
- retention: [...metricRetention, productionFindingRetention, { table: 'captureSummaries', timeColumn: 'at', changeKeyColumn: 'worktree' }, { table: 'captureDetails', timeColumn: 'at', changeKeyColumn: 'worktree' },
+ retention: [...metricRetention, productionFindingRetention, databaseFindingRetention, { table: 'captureSummaries', timeColumn: 'at', changeKeyColumn: 'worktree' }, { table: 'captureDetails', timeColumn: 'at', changeKeyColumn: 'worktree' },
   { table: 'captureExceptions', timeColumn: 'at', changeKeyColumn: 'worktree' }],
 } as const;

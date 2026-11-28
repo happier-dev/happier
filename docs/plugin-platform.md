@@ -127,7 +127,10 @@ evidence as well. Selected database access still uses the database target's
 ordinary admission. At Start, the daemon's own Account can admit the selected
 database for Worktree finding Events through that same read admission. Capture
 keeps the eligible binding for the service's lifetime and offers committed
-findings to the existing Machine publisher. A guest's findings stay in the
+findings to the existing Machine publisher. For both Worktree and Environment
+database capture, the finding identity is the normalized SQL shape on the
+admitted binding. Capture counts distinct retained traces for that identity and
+uses the stable identity for Workflow Event and Run deduplication. A guest's findings stay in the
 guest's Workbench capture. A change to agent access takes effect for Event
 publication at the next Start.
 

@@ -318,8 +318,10 @@ collector can deliver distinct findings from that group.
 
 For suspected N+1 and other repeated-query findings, configure a database
 finding trigger in Database Workbench. The collector delivers findings when its
-Machine Account can resolve one matching database binding. Other findings stay
-in **Telemetry**.
+Machine Account can resolve one matching database binding. Repeated requests with
+the same normalized SQL shape on that binding count toward one finding. Each
+shape on that binding can start the armed Workflow once. Other findings stay in
+**Telemetry**.
 
 If the collector no longer retains the exact trace cited in a finding brief,
 verification reports that the trace is unavailable.
