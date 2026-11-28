@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol';
+import { ApprovalExecutionOriginV1Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createTargetActionCurrentIntentAdapter } from './targetActionCurrentIntent';
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { admitTargetActionApprovalTransition, settleTargetActionApprovalReplayInputs } from '@happier-dev/protocol/approvals/targetActionApprovalRequestTransition';
@@ -18,6 +20,54 @@ function deliverApproved(artifactId: string, request: TargetActionApprovalReques
 }
 
 describe('target action current-intent adapter', () => {
+  it.each([true, false])('retains the signed proof but only retains durable invocation operands (live custody %s)', async liveOnly => {
+    const artifactId = `signed-target-approval-${liveOnly}`;
+    const marker = 'synthetic-bound-value';
+    const input = { query: 'SELECT $1', parameter: marker };
+    const action = { pluginId: 'acme.alpha', localId: 'run' };
+    const caller = { kind: 'session' as const, sessionId: 'agent-session', starterDepth: 0, turnDepth: 0 };
+    const target = { kind: 'machine' as const, machineId: 'worker' };
+    const actionId = 'action.invoke';
+    const envelope = { v: 1 as const, requestId: 'agent-request', target, input: { action, input } };
+    const executionOrigin = ApprovalExecutionOriginV1Schema.parse({
+      v: 1, authority: 'account_automation', surface: 'agent', caller, callerPermissionMode: 'default',
+      sessionInputSource: { sourceSessionId: caller.sessionId, sourceTurnId: 'agent-turn', via: 'action' },
+      accountId: 'requester', serverId: 'home', serverIdentityId: 'srv_home', machineId: target.machineId,
+      target, actionId, requestId: envelope.requestId, originalActionEnvelope: envelope,
+      externalActionInputSignature: 'a'.repeat(86),
+      externalActionExecutionAuthorization: { v: 1, token: 'fixture-root', binding: {
+        accountId: 'requester', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+        accountEncryptionMode: 'plain', serverIdentityId: 'srv_home', machineId: target.machineId,
+        installationId: 'owner-installation', actionId, requestId: envelope.requestId,
+        target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+        sessionActionSource: { machineId: target.machineId, installationId: 'owner-installation' },
+        sessionActionOrigin: { v: 1, caller, sourceTurnId: 'agent-turn', callerPermissionMode: 'default',
+          requestId: envelope.requestId },
+      } },
+    });
+    const create = vi.fn(async (request: TargetActionApprovalRequestV1) => {
+      if (liveOnly) deliverApproved(artifactId, request);
+      return { artifactId };
+    });
+    const adapter = createTargetActionCurrentIntentAdapter({ create, read: async () => null, update: async () => ({ ok: true }) });
+    await expect(adapter({
+      action: { ...action, qualifiedId: 'acme.alpha/actions/run', occurrenceId: '7', sourceCustody: developmentCustody,
+        dangerLevel: 'writesRemote', scopes: ['global'], surfaces: ['agent'], hostAccess: [], input,
+        secretInputPaths: liveOnly ? ['parameter'] : [], policyFingerprint: 'b'.repeat(64), confirmation: { title: 'Run query' },
+      },
+      fingerprint: 'a'.repeat(64), surface: 'agent', executionOriginV1: executionOrigin,
+    })).resolves.toMatchObject({ status: liveOnly ? 'approved' : 'deferred', artifactId });
+    const request = create.mock.calls[0]![0];
+    expect(request.input).toEqual({ query: input.query, parameter: liveOnly ? '[REDACTED]' : marker });
+    expect(request.executionOriginV1).toMatchObject({
+      requestId: executionOrigin.requestId,
+      externalActionExecutionAuthorization: executionOrigin.externalActionExecutionAuthorization,
+      externalActionInputSignature: executionOrigin.externalActionInputSignature,
+    });
+    expect(request.executionOriginV1?.originalActionEnvelope).toEqual(liveOnly ? undefined : envelope);
+    expect(JSON.stringify(request).includes(marker)).toBe(!liveOnly);
+  });
+
   it.each(['1', '0'])('correlates the awaited Artifact and observed status without its body (QA tracing %s)', async tracing => {
     vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', tracing);
     const sink = vi.spyOn(logger, 'debugLocalFile').mockImplementation(() => {});

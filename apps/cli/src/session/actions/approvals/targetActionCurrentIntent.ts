@@ -36,6 +36,15 @@ function createTargetActionApprovalRequestCandidate(
     currentIntent.reportUnavailable?.('approval_input_unrepresentable');
     return null;
   }
+  const liveOnly = currentIntent.approvalInputCustody === 'live_only' || projected.confidentialPaths.length > 0
+    || (requesterConfirmation !== undefined && requestedSurface === 'plugin');
+  let retainedOrigin = executionOriginV1;
+  if (liveOnly && executionOriginV1) {
+    // The held invocation already owns the original operands. Persisting its
+    // envelope would bypass the confidential-input projection above.
+    const { originalActionEnvelope: _privateEnvelope, ...proof } = executionOriginV1;
+    retainedOrigin = proof;
+  }
   const confirmation = resolveTargetActionConfirmationPresentation(action.confirmation, projected);
   const candidate = {
     v: 1,
@@ -56,15 +65,14 @@ function createTargetActionApprovalRequestCandidate(
     secretInputPaths: action.secretInputPaths ?? [],
     ...(action.secretInputLabels === undefined ? {} : { secretInputLabels: action.secretInputLabels }),
     ...(confirmation?.inputFields === undefined ? {} : { inputFields: confirmation.inputFields }),
-    ...(currentIntent.approvalInputCustody === 'live_only' || projected.confidentialPaths.length || requesterConfirmation && requestedSurface === 'plugin'
-      ? { approvalInputCustody: 'live_only' } : {}),
+    ...(liveOnly ? { approvalInputCustody: 'live_only' } : {}),
     ...(action.accountId ? { accountId: action.accountId } : {}),
     ...(action.resourceId ? { resourceId: action.resourceId } : {}),
     sourceCustody: action.sourceCustody,
     policyFingerprint: action.policyFingerprint,
     subjectFingerprint: fingerprint,
     ...(replayPlacement === undefined ? {} : { replayPlacement }),
-    ...(executionOriginV1 === undefined ? {} : { executionOriginV1 }),
+    ...(retainedOrigin === undefined ? {} : { executionOriginV1: retainedOrigin }),
     ...(requesterConfirmation === undefined ? {} : { requesterConfirmation }),
     ...(currentIntent.automaticChecks ? { automaticChecks: currentIntent.automaticChecks } : {}),
     summary: confirmation
