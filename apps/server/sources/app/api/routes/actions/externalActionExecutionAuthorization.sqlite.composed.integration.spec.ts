@@ -4,7 +4,7 @@ import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protoc
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import Fastify from "fastify";
 import axios from 'axios';
-import { SessionArchiveHttpBodyV1Schema } from '@happier-dev/protocol/sessions/control/contract';
+import { SessionArchiveHttpBodyV1Schema, V2SessionByIdNotFoundSchema, V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { z } from 'zod/mini';
 import { createCipheriv, createHash, randomBytes } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -2394,12 +2394,14 @@ describe("external Action execution authorization", () => {
             } finally { await app.close(); }
         });
 
-    it('admits Review start for a Team member with Machine Use and refuses an ungranted Account', async () => {
+    it('admits Review start for a Machine Use guest without exposing another guest’s Session', async () => {
         const { ReviewStartInputSchema } = await import('@happier-dev/protocol/reviews/reviewStart');
         const fixture = await createFixture({ qualifiedPat: false });
         const member = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const otherMember = await db.account.create({ data: { encryptionMode: 'plain' } });
         const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
         await db.teamMembership.create({ data: { teamId: fixture.team.id, accountId: member.id, role: 'member' } });
+        await db.teamMembership.create({ data: { teamId: fixture.team.id, accountId: otherMember.id, role: 'member' } });
         await db.machine.update({ where: { id: fixture.machine.id }, data: {
             active: true, operationProtocolCapabilitiesRevision: 1,
             operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } },
@@ -2410,6 +2412,10 @@ describe("external Action execution authorization", () => {
         }))).toMatchObject({ kind: 'saved' });
 
         const { app } = await createApp(fixture.team.id);
+        const createSession = (accountId: string) => db.session.create({ data: {
+            accountId, tag: crypto.randomUUID(), encryptionMode: 'plain', active: true,
+            metadata: JSON.stringify({ machineId: fixture.machine.id }),
+        } });
         const post = async (accountId: string, actionId: string, input: ExternalActionRequestEnvelopeV1['input']) => {
             const token = await auth.createToken(accountId, undefined, { kind: 'account', authority: 'present_user' });
             return app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
@@ -2436,12 +2442,27 @@ describe("external Action execution authorization", () => {
             expect(denied.statusCode, denied.body).toBe(409);
             expect(denied.json()).toMatchObject({ code: 'target_unavailable' });
 
-            const admitted = await post(member.id, 'review.start', review);
-            expect(admitted.statusCode, admitted.body).toBe(200);
-            expect(ExternalActionExecutionAuthorizationV1Schema.parse(admitted.json()).binding).toMatchObject({
+            const memberToken = await auth.createToken(member.id, undefined, { kind: 'account', authority: 'present_user' });
+            const root = await mint(app, fixture, 'review.start', { ...fixture.envelope, input: review }, memberToken);
+            expect(root.binding).toMatchObject({
                 actionId: 'review.start', accountId: member.id, custodianAccountId: fixture.account.id,
                 machineId: fixture.machine.id, installationId: fixture.machine.installationId,
             });
+            const ownSession = await createSession(member.id);
+            const otherSession = await createSession(otherMember.id);
+            const read = (sessionId: string) => {
+                const path = `/v2/sessions/${sessionId}`;
+                return app.inject({ method: 'GET', url: path, headers: machineHeaders({
+                    authorizationToken: root.token, effectActionId: 'review.start', target: root.binding.target,
+                    method: 'GET', path, body: undefined, privateKey: fixture.keyPair.secretKey,
+                }) });
+            };
+            const own = await read(ownSession.id);
+            expect(own.statusCode).toBe(200);
+            expect(V2SessionByIdResponseSchema.parse(own.json()).session.id).toBe(ownSession.id);
+            const other = await read(otherSession.id);
+            expect(other.statusCode).toBe(404);
+            V2SessionByIdNotFoundSchema.parse(other.json());
         } finally { await app.close(); }
     });
 

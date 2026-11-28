@@ -6,7 +6,9 @@ import { MachineAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/m
 import { UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { resolveUsageMeasuredTokens } from '@happier-dev/protocol/usage/usageAggregation';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
+import { ExecutionRunListResponseSchema, ExecutionRunStartResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { dispatchOriginalAccountAction } from '../../../../apps/cli/src/api/externalActionExecutionAuthorization';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { createIsolatedFakeClaudeControlShim, readFakeClaudeLogEvents, waitForFakeClaudeUserText } from '../../src/testkit/fakeClaude';
 import { createTempDirHandle, type TempDirHandle } from '../../src/testkit/fs/tempDir';
@@ -130,4 +132,68 @@ it('MACH.J5 keeps a Can-use member Session acting as its member and refuses the 
     && isSignedPrompt(event.userText ?? event.userTextPreview ?? ''));
   expect(nativeSends).toHaveLength(1);
   console.info(JSON.stringify({ journey: 'MACH.J5', runtimeMs: Math.round(performance.now() - startedAt), testDir }));
+}, 0);
+
+it('refuses signed Run starts by a Machine Use guest on other people’s Sessions', async () => {
+  const testDir = createRunDirs({ runLabel: 'core' }).testDir('machine-use-run-session-access');
+  database = await startDatabaseWorkbenchPostgres({ preloadStatistics: false });
+  const bed = await startTeamSetupFFixture({ testDir, dbProvider: 'postgres',
+    serverEnv: { DATABASE_URL: database.homeDatabaseUrl } });
+  fixture = bed;
+  const owner = await bed.createAccount('custodian');
+  const requester = await bed.createAccount('requester');
+  const otherGuest = await bed.createAccount('other-guest');
+  await bed.claimHomeOwner(owner);
+  const teamResult = await owner.executeAsPerson('teams.create', { v: 1, name: 'Run Session access',
+    initialOwnerAccountId: readAccountIdFromToken(owner.credentials.token), requestKey: randomUUID() });
+  if (!teamResult.ok) throw new Error(`Team fixture creation refused (${teamResult.errorCode})`);
+  const team = TeamSummaryV1Schema.parse(teamResult.result);
+  for (const guest of [requester, otherGuest]) {
+    expect(await owner.executeAsPerson('teams.members.add', { v: 1, teamId: team.id,
+      accountId: readAccountIdFromToken(guest.credentials.token), role: 'member', historyAccess: 'all_existing' })).toMatchObject({ ok: true });
+  }
+  const machine = await bed.enrollDaemon(owner);
+  expect(await owner.executeAsPerson('machines.access.grant.set', { ...machine.target,
+    principal: { kind: 'team', teamId: team.id }, level: 'view' })).toMatchObject({ ok: true, result: { kind: 'saved' } });
+  expect(await owner.executeAsPerson('machines.access.prepareKeys', machine.target)).toMatchObject({ ok: true });
+
+  const spawn = async (person: typeof owner) => {
+    const result = await person.executeAsPerson('session.spawn_new', {
+      executionTarget: machine.target, directory: { kind: 'path', path: machine.workspaceDir },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+      permissionMode: 'read-only', approvalProfileId: null, terminal: { mode: 'plain' },
+    });
+    if (!result.ok) throw new Error(`Session fixture creation refused (${result.errorCode})`);
+    const session = SessionSpawnNewActionResultV1Schema.parse(result.result);
+    if (session.type !== 'success') throw new Error(`Session fixture did not start (${session.type})`);
+    expect(await person.readSessionMetadata(session.sessionId)).toMatchObject({ machineId: machine.target.machineId });
+    return session.sessionId;
+  };
+  const ownSessionId = await spawn(requester);
+  const foreignSessions = [[owner, await spawn(owner)], [otherGuest, await spawn(otherGuest)]] as const;
+  const start = (sessionId: string) => dispatchOriginalAccountAction({
+    actionId: 'execution.run.start', requestId: randomUUID(), target: { kind: 'machine', machineId: machine.target.machineId },
+    input: { sessionId, intent: 'agent', instructions: 'Reply ready.', permissionMode: 'read_only',
+      backendTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+      // The fixture Sessions have yet to observe an applied model.
+      modelSelection: null,
+      retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'request_response' },
+    credentials: requester.credentials, serverHttpBaseUrl: bed.actionServerApiUrl, serverIdentityId: bed.serverId,
+  });
+  const control = await start(ownSessionId);
+  if (!control.ok) throw new Error(`Signed own-Session Run start refused (${control.errorCode})`);
+  const { runId } = ExecutionRunStartResponseSchema.parse(control.result);
+  expect(await requester.executeAsPerson('execution.run.stop', { sessionId: ownSessionId, runId })).toMatchObject({ ok: true });
+
+  const readRuns = async (person: typeof owner, sessionId: string) => {
+    const result = await person.executeAsPerson('execution.run.list', { sessionId });
+    if (!result.ok) throw new Error(`Session Run observation refused (${result.errorCode})`);
+    return ExecutionRunListResponseSchema.parse(result.result).runs;
+  };
+  for (const [person, sessionId] of foreignSessions) {
+    expect(await readRuns(person, sessionId)).toEqual([]);
+    expect(await start(sessionId)).toMatchObject({ ok: false, errorCode: 'target_not_local',
+      details: { phase: 'target_session_locality' } });
+    expect(await readRuns(person, sessionId)).toEqual([]);
+  }
 }, 0);
