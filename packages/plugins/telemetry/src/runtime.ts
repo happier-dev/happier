@@ -135,20 +135,20 @@ export function createCaptureRuntime(input: {
      const events = normalizeBatch(batch, context, options.admit !== undefined);
      if (batch.rejectedRecords) ingest.recordLoss(context.partition, 'invalid_telemetry', batch.rejectedRecords, context.physicalRootIdentity);
      const result = await ingest.write(events);
-     if (options.admit) {
-      if (result.accepted) {
+     if (result.accepted) {
+      if (options.admit) {
        const fingerprints = [...new Set(events.flatMap(event => event.kind === 'exception' ? [event.fingerprint] : []))];
        if (fingerprints.length) options.onExceptionsCommitted?.(context, fingerprints);
-       if (result.changedTraceIds.length) options.onTraceBatchCommitted?.(context, result.changedTraceIds);
-       return { accepted: true as const };
       }
+      if (result.changedTraceIds.length) options.onTraceBatchCommitted?.(context, result.changedTraceIds);
+      return { accepted: true as const };
+     }
+     if (options.admit) {
       const full = result.code === 'daemon_database_quota_exceeded';
       return { accepted: false as const, retryable: !full, ...(full ? { status: 507 as const } : {}),
        message: full ? 'collector storage full' : 'OTLP store write failed' };
      }
-     return result.accepted
-      ? { accepted: true as const }
-      : { accepted: true as const, rejectedRecords: events.length, message: 'Capture coverage lost while storage was unavailable' };
+     return { accepted: true as const, rejectedRecords: events.length, message: 'Capture coverage lost while storage was unavailable' };
     },
    });
    return { endpoint: receiver.url, release: receiver.close };

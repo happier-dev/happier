@@ -173,6 +173,12 @@ database on the same service appear only in Worktree capture. Open a statement
 for its masked detail. If it belongs to a captured request, choose **Inspect
 request** to see any likely N+1 findings for that request.
 
+In 0.3 development builds, a finding can trigger an automation when the Machine's
+own Account starts the service and the selected database allows agent reads at
+Start. If you start a service as a guest on someone else's Machine, you can still
+inspect your findings in Workbench. If you change the database's agent access,
+restart the service for the change to apply to finding automations.
+
 An agent reading Worktree capture must select a database. The database's agent
 access level determines whether the agent can read its captured queries.
 

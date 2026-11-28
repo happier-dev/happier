@@ -1,5 +1,6 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
-import type { BackgroundServiceRunner } from '@happier-dev/plugin-sdk/background-services';
+import type { BackgroundServiceContext, BackgroundServiceRunner } from '@happier-dev/plugin-sdk/background-services';
+import type { DatabaseCaptureSourceV1 } from '@happier-dev/database-protocol';
 import { MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1, type HostEvents } from '@happier-dev/plugin-sdk/events';
 import type { DaemonDatabase, DaemonDatabaseService, DaemonDatabaseRetentionChange, PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
 import { createPostgresqlObservationNormalizer } from '@happier-dev/databases/postgresql';
@@ -7,9 +8,11 @@ import { bindLocalCapture } from './launch.js';
 import { createCaptureRuntime, type CaptureRuntime } from './runtime.js';
 import { captureDatabaseDefinition } from './store/capture.js';
 import { readCapturePreference, type CaptureProjectScope } from './configuration.js';
+import { createDatabaseFindingPublisher, selectWorktreeFindingSubjects } from './telemetry/databaseFindings.js';
 
-export type LocalCaptureInput = Omit<Parameters<typeof bindLocalCapture>[0], 'runtime' | 'onBindingStart'> & Readonly<{
+export type LocalCaptureInput = Omit<Parameters<typeof bindLocalCapture>[0], 'runtime' | 'onBindingStart' | 'onWorktreeTracesCommitted'> & Readonly<{
  projectScope: CaptureProjectScope; ownerAccountId: string;
+ worktreeSource?: Extract<DatabaseCaptureSourceV1, { kind: 'worktree' }>;
 }>;
 type LocalCaptureLease = Awaited<ReturnType<typeof bindLocalCapture>>;
 type LocalCaptureProject = CaptureProjectScope & { ownerAccountId: string };
@@ -23,6 +26,7 @@ type RunningCapture = {
  runtime: CaptureRuntime;
  signal: AbortSignal;
  accountStorage: PluginAccountStorageScope | undefined;
+ publishWorktreeFindings?: (input: Parameters<ReturnType<typeof createDatabaseFindingPublisher>>[0]) => void;
  leases: Map<LocalCaptureLease, LocalCaptureBinding>;
  pending: Map<Promise<LocalCaptureLease>, LocalCaptureProject & Pick<LocalCaptureInput, 'partition' | 'signal'>>;
 };
@@ -68,10 +72,23 @@ export function createCaptureBackgroundOwner() {
    return released;
   } };
  }
- const run = async (context: CaptureRuntimeContext & { services: { events: { host: HostEvents } } }): Promise<void> => {
+ const run = async (context: CaptureRuntimeContext & { services: {
+  events: { host: HostEvents; plugin?: BackgroundServiceContext['services']['events']['plugin'] };
+  logger?: BackgroundServiceContext['services']['logger'];
+ } }): Promise<void> => {
   const runtimeLease = await acquireRuntime(context);
   if (context.signal.aborted) { await runtimeLease.release(); return; }
+  const { plugin } = context.services.events;
+  const { logger } = context.services;
+  const publisher = plugin && createDatabaseFindingPublisher(runtimeLease.runtime, {
+   signal: context.signal, services: { events: { plugin } },
+  });
   const state: RunningCapture = {
+   ...(publisher && logger && { publishWorktreeFindings(input) {
+    void publisher(input).catch(() => {
+     if (!context.signal.aborted) logger.warn('Database Capture finding delivery is unavailable');
+    });
+   } }),
    runtime: runtimeLease.runtime,
    signal: context.signal, accountStorage: context.services.storage.account, leases: new Map(), pending: new Map(),
   };
@@ -151,8 +168,16 @@ export function createCaptureBackgroundOwner() {
    const state = running;
    if (!state || state.signal.aborted) throw new PluginError({ code: 'plugin_service_unavailable', message: 'Local database capture is not running' });
    let bindingStarted = false;
+   const { worktreeSource, partition } = input;
+   const publishFindings = state.publishWorktreeFindings;
    const acquisition = bindLocalCapture({ ...input, runtime: state.runtime,
     onBindingStart() { bindingStarted = true; },
+    ...(publishFindings && worktreeSource && { onWorktreeTracesCommitted(traceIds, subjects) {
+     const { serverId, machineId } = worktreeSource;
+     publishFindings({ source: worktreeSource, sourceScope: { serverId, machineId }, partition, traceIds,
+      selectSubjects: trace => selectWorktreeFindingSubjects(trace, subjects),
+     });
+    } }),
    }).then(bound => {
     const binding: LocalCaptureBinding = { ...input.projectScope, ownerAccountId: input.ownerAccountId, partition: input.partition };
     const lease: LocalCaptureLease = { ...bound, async release() {

@@ -35,6 +35,8 @@ export type PluginServiceLaunchEnvironmentInputV1 = Readonly<{
     readDeclaredEnvironment?(): Promise<PluginServiceLaunchEnvironmentProjectionV1>;
     /** References supplied by discovery for this exact admitted launch. They contain no connection values. */
     readWorktreeDatabaseMembers?(): Promise<readonly PluginWorktreeDatabaseMemberV1[]>;
+    /** Available during preparation only for the daemon Account's own Start. */
+    admitWorktreeDatabaseAutomation?(target: PluginWorktreeDatabaseMemberV1): Promise<boolean>;
 }>;
 type UnavailableServiceLaunchEnvironmentV1 = Readonly<{
     kind: 'unavailable';

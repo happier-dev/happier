@@ -1,5 +1,6 @@
-import type { DeploymentTelemetryServiceV1 } from '@happier-dev/plugin-sdk';
+import { createCanonicalJsonSigningInput, type DeploymentTelemetryServiceV1 } from '@happier-dev/plugin-sdk';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
+import type { RepeatedQueryEvidence } from '../analysis/requests.js';
 import type { AutomationDatabaseFindingSubjectV1 } from '@happier-dev/plugin-sdk/events';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
 import { CAPTURED_DATABASE_FINDING_EVENT_REF_V1, type CapturedDatabaseFindingV1,
@@ -15,6 +16,60 @@ type BindingSnapshot = {
     matches?: ReadonlyMap<string, AutomationDatabaseFindingSubjectV1 | null>;
 };
 
+type FindingTrace = Awaited<ReturnType<ReturnType<typeof createCaptureReader>['trace']>>;
+export type WorktreeFindingSubjects = ReadonlyMap<string, AutomationDatabaseFindingSubjectV1>;
+
+export function createDatabaseFindingPublisher(runtime: CaptureRuntime, context: Pick<BackgroundServiceContext, 'signal'> & {
+    services: { events: Pick<BackgroundServiceContext['services']['events'], 'plugin'> };
+}) {
+    const reader = createCaptureReader(runtime.store);
+    return async (input: Readonly<{
+        source: DatabaseCaptureSourceV1;
+        sourceScope: CapturedDatabaseFindingV1['observation']['sourceScope'];
+        partition: string;
+        traceIds: readonly string[];
+        isCurrent?: () => boolean;
+        selectSubjects(trace: FindingTrace): ReadonlyMap<RepeatedQueryEvidence, AutomationDatabaseFindingSubjectV1>
+            | Promise<ReadonlyMap<RepeatedQueryEvidence, AutomationDatabaseFindingSubjectV1>>;
+    }>): Promise<void> => {
+        const { source, sourceScope, partition, isCurrent } = input;
+        const observationReceivedAt = Date.now();
+        for (const traceId of input.traceIds) {
+            await runtime.ingest.exclusive(async () => {
+                if (context.signal.aborted || isCurrent?.() === false) return;
+                const pageSize = PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1.maximumResultRows;
+                const trace = await reader.trace({ worktree: partition, traceId, pageSize,
+                    includeWorktreeRepetitions: source.kind === 'worktree' });
+                const selected = await input.selectSubjects(trace);
+                if (!selected.size) return;
+                const result: CapturedDatabaseFindingV1[] = [];
+                projectCaptureFindings({ source, sourceScope, pageSize, coverage: runtime.ingest.coverage(partition) },
+                    trace.summaries, [...selected.keys()], (finding, repetition) => {
+                        const subject = selected.get(repetition);
+                        if (!subject) return;
+                        const { v, sourceRef, evidenceIdentity, observedWindow, coverage, summary } = finding;
+                        result.push({ subject, observationReceivedAt, observedDelta: 1,
+                            observation: { v, sourceRef, sourceScope, evidenceIdentity, kind: repetition.kind, observedWindow, coverage, summary } });
+                    });
+                if (context.signal.aborted || isCurrent?.() === false) return;
+                // Local broker admission is ordered with Capture Clear. The broker delivers to its subscribers independently.
+                for (const observation of result) {
+                    await context.services.events.plugin.emit(CAPTURED_DATABASE_FINDING_EVENT_REF_V1.localId, observation);
+                }
+            });
+        }
+    };
+}
+
+export function selectWorktreeFindingSubjects(trace: FindingTrace, members: WorktreeFindingSubjects) {
+    const selected = new Map<RepeatedQueryEvidence, AutomationDatabaseFindingSubjectV1>();
+    for (const repetition of trace.worktreeRepetitions ?? []) {
+        const subject = members.get(createCanonicalJsonSigningInput(repetition.databaseTarget));
+        if (subject) selected.set(repetition, subject);
+    }
+    return selected;
+}
+
 export function startDatabaseFindingProjection(input: Readonly<{
     context: BackgroundServiceContext;
     runtime: CaptureRuntime;
@@ -23,7 +78,7 @@ export function startDatabaseFindingProjection(input: Readonly<{
     machineId: string;
 }>) {
     const { context, runtime, source, serverId, machineId } = input;
-    const reader = createCaptureReader(runtime.store);
+    const publish = createDatabaseFindingPublisher(runtime, context);
     const bindings = new Map<string, BindingSnapshot>();
     const pending = new Set<Promise<void>>();
     const report = () => {
@@ -63,41 +118,22 @@ export function startDatabaseFindingProjection(input: Readonly<{
             const snapshot = bindings.get(environmentId);
             if (!snapshot?.matches?.size || partition !== telemetryPartition(environmentId)) return;
             const matches = snapshot.matches;
-            const captureSource: DatabaseCaptureSourceV1 = { kind: 'environment', environmentId, serverId };
-            const sourceScope = { serverId, machineId };
-            const receivedAt = Date.now();
-            retain((async () => {
-                for (const traceId of traceIds) {
-                    if (context.signal.aborted || bindings.get(environmentId) !== snapshot) return;
-                    const observations = await runtime.ingest.exclusive(async () => {
-                        const pageSize = PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1.maximumResultRows;
-                        const trace = await reader.trace({ worktree: partition, traceId, pageSize });
-                        if (!trace.repeatedQueries.length) return [];
-                        const endpointKeys = await runtime.store.traceDatabaseEndpointKeys(partition, traceId);
-                        const exactRepetitions = trace.repeatedQueries.filter(repetition => {
-                            const key = endpointKeys.get(repetition.observationIds[0]);
-                            return key !== undefined && matches.get(key)
-                                && repetition.observationIds.every(id => endpointKeys.get(id) === key);
-                        });
-                        const result: CapturedDatabaseFindingV1[] = [];
-                        projectCaptureFindings({
-                            source: captureSource, sourceScope, pageSize, coverage: runtime.ingest.coverage(partition),
-                        }, trace.summaries, exactRepetitions, (finding, repetition) => {
-                            const key = endpointKeys.get(repetition.observationIds[0]);
-                            const subject = key === undefined ? undefined : matches.get(key);
-                            if (!subject) return;
-                            const { v, sourceRef, evidenceIdentity, observedWindow, coverage, summary } = finding;
-                            result.push({ subject, observationReceivedAt: receivedAt, observedDelta: 1,
-                                observation: { v, sourceRef, sourceScope, evidenceIdentity, kind: repetition.kind, observedWindow, coverage, summary } });
-                        });
-                        return result;
-                    });
-                    if (context.signal.aborted || bindings.get(environmentId) !== snapshot) return;
-                    for (const observation of observations) {
-                        await context.services.events.plugin.emit(CAPTURED_DATABASE_FINDING_EVENT_REF_V1.localId, observation);
+            retain(publish({ source: { kind: 'environment', environmentId, serverId }, sourceScope: { serverId, machineId },
+                partition, traceIds, isCurrent: () => bindings.get(environmentId) === snapshot,
+                async selectSubjects(trace) {
+                    const selected = new Map<RepeatedQueryEvidence, AutomationDatabaseFindingSubjectV1>();
+                    if (!trace.repeatedQueries.length) return selected;
+                    const endpointKeys = await runtime.store.traceDatabaseEndpointKeys(partition, trace.traceId);
+                    for (const repetition of trace.repeatedQueries) {
+                        const key = endpointKeys.get(repetition.observationIds[0]);
+                        const subject = key === undefined ? undefined : matches.get(key);
+                        if (subject && repetition.observationIds.every(id => endpointKeys.get(id) === key)) {
+                            selected.set(repetition, subject);
+                        }
                     }
-                }
-            })());
+                    return selected;
+                },
+            }));
         },
         async stop() {
             unsubscribe();

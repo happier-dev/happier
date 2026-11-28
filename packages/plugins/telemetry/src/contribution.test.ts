@@ -6,6 +6,7 @@ import { createPostgresqlObservationNormalizer } from '@happier-dev/databases/po
 import { createLocalCaptureContribution } from './contribution.js';
 import { bindLocalCapture } from './launch.js';
 import { createCaptureRuntime } from './runtime.js';
+import { captureMigrations } from './store/capture.js';
 import { createCaptureSqliteFixture } from './testing/sqlite.js';
 
 function input(environment: Record<string, string>): PluginServiceLaunchEnvironmentInputV1 {
@@ -120,6 +121,56 @@ describe('local capture SDK launch contribution', () => {
    expect(result.defaults).toEqual({ OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${slot.port}`, OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf', ...(nameSource === 'declared' ? { OTEL_SERVICE_NAME: 'web' } : {}) });
    expect((await fetch(`${result.defaults!.OTEL_EXPORTER_OTLP_ENDPOINT}/v1/traces`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(200);
   } finally { if (result.kind === 'replace') await result.release(); f.close(); }
+ });
+ it.each([true, false])('retains the Worktree trace when the host admits database findings = %s', async admitted => {
+  const f = createCaptureSqliteFixture();
+  const upstream = await listener(), postgres = await listener(), otlp = await listener();
+  await postgres.close();
+  await otlp.close();
+  const published: string[] = [];
+  let release: (() => Promise<void>) | undefined;
+  try {
+   for (const migration of captureMigrations) await migration.up(f.db);
+   const runtime = createCaptureRuntime({ database: f.db, normalizeStatement: createPostgresqlObservationNormalizer(), publish: () => {} });
+   const contribution = createLocalCaptureContribution({ environmentNames: ['DATABASE_URL'], readEnabled: () => true,
+    acquireLocalCapture: options => bindLocalCapture({ ...options, runtime, onWorktreeTracesCommitted(traceIds) {
+     published.push(...traceIds);
+    } }) });
+   const result = await contribution.prepare({
+    ...input({ DATABASE_URL: `postgres://127.0.0.1:${upstream.port}/db` }),
+    async requestListenerPorts(keys) {
+     return { kind: 'ready', assignment: { ports: [], listenerPorts: Object.fromEntries(keys.map(key =>
+      [key, key === 'otlp' ? otlp.port : postgres.port])) } };
+    },
+    async readWorktreeDatabaseMembers() {
+     return [{ kind: 'worktree', accountId: 'account', installationId: 'install', projectKey: 'project',
+      workspace: { serverId: 'server', machineId: 'machine', workspaceId: 'worktree', rootPath: '/project' },
+      source: { kind: 'service', serviceId: 'api', variable: 'DATABASE_URL' } }];
+    },
+    async admitWorktreeDatabaseAutomation() { return admitted; },
+   });
+   if (result.kind !== 'replace') throw new Error('Expected working Worktree listeners');
+   release = result.release;
+   expect(result.replacements.DATABASE_URL).toBe(`postgres://127.0.0.1:${postgres.port}/db`);
+   const traceId = '0123456789abcdef0123456789abcdef';
+   const at = BigInt(Date.now()) * 1_000_000n;
+   const response = await fetch(`${result.defaults?.OTEL_EXPORTER_OTLP_ENDPOINT}/v1/traces`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ resourceSpans: [{ scopeSpans: [{ spans: [{
+     traceId, spanId: '0123456789abcdef', kind: 2, name: 'GET /orders',
+     startTimeUnixNano: at.toString(), endTimeUnixNano: (at + 1_000_000n).toString(),
+    }] }] }] }),
+   });
+   expect(response.status).toBe(200);
+   const observations = await runtime.store.list({ worktree: JSON.stringify(['account', 'server', 'machine', 'project', 'worktree']),
+    traceId, limit: 10 });
+   expect(observations).toEqual([expect.objectContaining({ kind: 'span', traceId })]);
+   expect(published).toEqual(admitted ? [traceId] : []);
+  } finally {
+   await release?.();
+   await upstream.close();
+   f.close();
+  }
  });
  it('leaves explicit non-HTTP OTLP transport unchanged before requesting or binding a local listener', async () => {
   const unexpected = () => { throw new Error('Unsupported transport requested local capture'); };

@@ -1,4 +1,6 @@
-import type { PluginServiceLaunchEnvironmentRuntimeV1 } from '@happier-dev/plugin-sdk';
+import { createCanonicalJsonSigningInput, type PluginServiceLaunchEnvironmentRuntimeV1 } from '@happier-dev/plugin-sdk';
+import { projectAutomationDatabaseFindingSubjectV1 } from '@happier-dev/plugin-sdk/events';
+import type { DatabaseCaptureSourceV1 } from '@happier-dev/database-protocol';
 import { postgresqlCaptureUrl } from '@happier-dev/databases/postgresql';
 import type { bindLocalCapture, CaptureUrlOffer } from './launch.js';
 import type { CaptureProjectScope } from './configuration.js';
@@ -65,14 +67,24 @@ export function createLocalCaptureContribution(options: LocalCaptureContribution
   }
   for (const key of keys) if (ports[key] === undefined) return unavailable('project_worktree_ports_unavailable');
   const members = selected.length ? await input.readWorktreeDatabaseMembers?.() : undefined;
+  const worktreeSource = { kind: 'worktree', ...scope, workspaceId: input.workspace.id } as const satisfies DatabaseCaptureSourceV1;
+  const admitFinding = input.admitWorktreeDatabaseAutomation;
+  const databaseMembers = new Map(members?.map(member => [member.source.variable, member]));
+  const urls = selected.map(({ slot, offer }) => ({ ...offer, assignedPort: ports[slot]!,
+   databaseMember: databaseMembers.get(offer.name) }));
+  const eligibleMembers = localOtlp && admitFinding ? (await Promise.all(urls.map(async ({ databaseMember }) => {
+   if (!databaseMember || !await admitFinding(databaseMember).catch(() => false)) return [];
+   return [[createCanonicalJsonSigningInput(databaseMember), projectAutomationDatabaseFindingSubjectV1(scope.serverId, databaseMember)] as const];
+  }))).flat() : undefined;
   const controller = new AbortController();
   let lease: Awaited<ReturnType<typeof bindLocalCapture>>;
   try {
    lease = await options.acquireLocalCapture({ enabled: true,
     projectScope: scope, ownerAccountId, physicalRootIdentity: input.physicalRootIdentity,
-    partition: captureSourcePartition({ kind: 'worktree', ...scope, workspaceId: input.workspace.id }, ownerAccountId),
-    urls: selected.map(({ slot, offer }) => ({ ...offer, assignedPort: ports[slot]!,
-     databaseMember: members?.find(member => member.source.variable === offer.name) })),
+    partition: captureSourcePartition(worktreeSource, ownerAccountId),
+    ...(admitFinding && { worktreeSource }),
+    ...(eligibleMembers?.length && { findingSubjects: new Map(eligibleMembers) }),
+    urls,
     ...(localOtlp ? { otlpPort: ports.otlp! } : {}), signal: options.signal ?? controller.signal });
   } catch (error) {
    controller.abort();

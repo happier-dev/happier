@@ -4756,6 +4756,21 @@ export async function resolveExecutablePluginRuntimeRegistry(
         beginDiagnosticScope: invocationServiceOwners.beginDiagnosticScope,
         completeDiagnosticScope: invocationServiceOwners.completeDiagnosticScope,
     });
+    const readMachineLocalDatabaseAgentLevel: Parameters<typeof buildTargetActionInvocationRegistry>[0]['readMachineLocalDatabaseAgentLevel'] =
+        async (target, context) => {
+            // Read the Machine's database level through the owner's read-only Action as the same requester.
+            const action = { pluginId: DATABASE_ACCESS_READ_REF.pluginId, localId: DATABASE_ACCESS_READ_REF.localId };
+            const occurrenceId = readCurrentPluginOccurrenceId(action.pluginId);
+            const sourceCustody = readCurrentPluginSourceCustody(action.pluginId);
+            if (!occurrenceId || !sourceCustody) return undefined;
+            const result = await invokeContributedAction({ action, input: { target }, surface: 'plugin', requiredReadOnly: true,
+                caller: Object.freeze({ kind: 'plugin' as const, pluginId: action.pluginId, occurrenceId, sourceCustody,
+                    contribution: Object.freeze({ id: action.localId, qualifiedId: DATABASE_ACCESS_READ_ACTION_ID_V1 }) }),
+                approvalContext: context, signal: context.signal ?? new AbortController().signal });
+            if (result.status !== 'executed') return { ok: false, errorCode: result.code, error: result.code };
+            const read = DatabaseAccessReadResultV1Schema.safeParse(result.value);
+            return read.success && read.data.setBy === 'machine' ? read.data.agentAccess : undefined;
+        };
     targetActionInvocations = buildTargetActionInvocationRegistry({
         ...(params?.resolveSessionResourceAccess ? {
             resourceSessionHomeServerId: sessionCredentialsHomeServerIdentityId ?? sessionCredentialsServerId,
@@ -4779,20 +4794,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 ?? deploymentUnavailableDiagnostic({ ok: false as const, errorCode: 'deployment_unavailable', error: 'deployment_unavailable' },
                     'deployment.target_role.approval_scope.host', 'client_required');
         },
-        async readMachineLocalDatabaseAgentLevel(target, context) {
-            // Read the Machine's database level through the owner's read-only Action as the same requester.
-            const action = { pluginId: DATABASE_ACCESS_READ_REF.pluginId, localId: DATABASE_ACCESS_READ_REF.localId };
-            const occurrenceId = readCurrentPluginOccurrenceId(action.pluginId);
-            const sourceCustody = readCurrentPluginSourceCustody(action.pluginId);
-            if (!occurrenceId || !sourceCustody) return undefined;
-            const result = await invokeContributedAction({ action, input: { target }, surface: 'plugin', requiredReadOnly: true,
-                caller: Object.freeze({ kind: 'plugin' as const, pluginId: action.pluginId, occurrenceId, sourceCustody,
-                    contribution: Object.freeze({ id: action.localId, qualifiedId: DATABASE_ACCESS_READ_ACTION_ID_V1 }) }),
-                approvalContext: context, signal: context.signal ?? new AbortController().signal });
-            if (result.status !== 'executed') return { ok: false, errorCode: result.code, error: result.code };
-            const read = DatabaseAccessReadResultV1Schema.safeParse(result.value);
-            return read.success && read.data.setBy === 'machine' ? read.data.agentAccess : undefined;
-        },
+        readMachineLocalDatabaseAgentLevel,
         async readAccountScope(signal) {
             const authority = params?.accountExecution;
             const serverId = authority?.serverIdentityId ?? authority?.serverId;
@@ -6980,7 +6982,19 @@ export async function resolveExecutablePluginRuntimeRegistry(
         },
         activateContributionsOnDemand,
         acquireAgentCatalogEntry,
-        prepareServiceLaunchEnvironments: input => prepareServiceLaunchEnvironments({ targets: authoritativeContributes.activationTargets, registry: activatedRegistry, input }),
+        prepareServiceLaunchEnvironments(input, startContext) {
+            const admission = startContext?.machineAdmission;
+            // Later observations use the Machine publisher. Only Start can bind an eligible member to it.
+            const ownStart = admission && admission.actorAccountId === admission.custodianAccountId;
+            return prepareServiceLaunchEnvironments({ targets: authoritativeContributes.activationTargets, registry: activatedRegistry,
+                input: { ...input, ...(ownStart ? {
+                    async admitWorktreeDatabaseAutomation(target) {
+                        const access = await readMachineLocalDatabaseAgentLevel(target, { ...startContext, authority: 'account_automation' });
+                        return typeof access === 'string';
+                    },
+                } : {}) },
+            });
+        },
         secretSources: createTargetSecretSources({
             targets: authoritativeContributes.activationTargets,
             registry: {

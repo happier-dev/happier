@@ -969,7 +969,8 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                             requestListenerPorts: listenerKeys => getHostWorktreePortsOwner().assign({
                                 rootPath: listenerRootPath, listenerKeys, signal }),
                             prepareServiceLaunchEnvironments: environmentInput => registry.prepareServiceLaunchEnvironments!({
-                                ...environmentInput, workspace: current.plan.workspace }),
+                                ...environmentInput, workspace: current.plan.workspace },
+                                { machineAdmission: ingress.machineAdmission, signal }),
                         } } : {}),
                     });
                     if (preparedEnvironment.kind !== 'prepared') throw new ServiceStartRefusal(preparedEnvironment.code);

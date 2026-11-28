@@ -124,7 +124,12 @@ wire query whose listener has carried a single known member. A listener that
 serves indistinguishable launches keeps their queries as Worktree evidence.
 Retained queries from before attribution and unmatched OTLP are Worktree
 evidence as well. Selected database access still uses the database target's
-ordinary admission.
+ordinary admission. At Start, the daemon's own Account can admit the selected
+database for Worktree finding Events through that same read admission. Capture
+keeps the eligible binding for the service's lifetime and offers committed
+findings to the existing Machine publisher. A guest's findings stay in the
+guest's Workbench capture. A change to agent access takes effect for Event
+publication at the next Start.
 
 Target listing can also discover network database URLs before any service starts.
 The daemon resolves the requesting Account's accepted checkout, reads its
