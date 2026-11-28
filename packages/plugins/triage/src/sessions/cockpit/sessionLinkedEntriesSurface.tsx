@@ -92,11 +92,10 @@ function entryOf(row: LinkedRow): LinkedEntry | null {
 
 function rowKind(row: LinkedRow, sources: SurfaceContext['targetedContributions']): 'pullRequest' | 'issue' | 'other' {
     if (row.presentation.kind === 'nativePullRequest') return 'pullRequest';
-    const entry = entryOf(row);
-    if (entry !== null) return entry.kind === 'pullRequest' || entry.kind === 'issue' ? entry.kind : 'other';
     if (row.presentation.kind !== 'linked') return 'other';
-    const subject = resolveTriageSourceWorkflowSubjectV1(sources, row.presentation.entryRef);
-    return subject === 'pullRequest' || subject === 'issue' ? subject : 'other';
+    const subject = row.presentation.entry?.kind ?? resolveTriageSourceWorkflowSubjectV1(sources, row.presentation.entryRef);
+    if (subject === 'issue' || subject === 'errorIssue') return 'issue';
+    return subject === 'pullRequest' ? 'pullRequest' : 'other';
 }
 
 function rowTitle(row: LinkedRow, text: Translate): string {

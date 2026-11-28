@@ -324,6 +324,7 @@ async function mountCockpit(
                             { id: 'merge-request', workflowSubject: 'pullRequest', displayName: 'Merge request' },
                             { id: 'dependency-finding', workflowSubject: 'errorIssue', displayName: 'Dependency finding' },
                             { id: 'scan-finding', workflowSubject: 'errorIssue', displayName: 'Scanning finding' },
+                            { id: 'error-issue', workflowSubject: 'errorIssue', displayName: 'Error issue' },
                             { id: 'issue', workflowSubject: 'issue', displayName: 'Issue' }] },
                     operations: sourceLinks === undefined ? [] : ['readSessionLinks', 'linkSession'].map((role) => ({
                         point: { pointId: 'sources', protocol: { id: 'happier.triage/sources', version: 1 } },
@@ -1282,6 +1283,22 @@ describe('the mounted Session cockpit', () => {
         expect(actionCalls.filter(call => call.action === 'sessions/read-source-links-v1')).toHaveLength(2);
         expect(harness.opened).toHaveLength(0);
         expect(harness.gets).toHaveLength(0);
+    });
+
+    it('groups a cold linked error issue by its admitted source subject', async () => {
+        const entryRef = { ...linkRow().entryRef, kindId: 'error-issue', entryId: '5501001' };
+        const displayPath = 'example-project · EXAMPLE-PROJECT-3F';
+        const harness = createDataHarness({ snapshot: { status: 'ready', rows: [], hasMore: false } });
+        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID },
+            null, true, null, undefined, true, undefined, async () => ({
+                kind: 'partial',
+                links: [{ entryRef, sessionId: SESSION_ID, linkedAtMs: 10, displayPath }],
+                lanes: [{ source: entryRef.source, sourceInstanceId: '11111111-1111-4111-8111-111111111111',
+                    displayLabel: 'Example source', kindIds: ['error-issue'], health: { kind: 'complete' } }],
+            }));
+        await expect(fixture.getByText(displayPath)).resolves.toBeDefined();
+        await expect(fixture.getByText('Issues')).resolves.toBeDefined();
+        await expect(fixture.queryByText('Other links')).resolves.toBeUndefined();
     });
 
     it('uses only the composed relation read and never revives a stale raw PR beside healthy co-links', async () => {
