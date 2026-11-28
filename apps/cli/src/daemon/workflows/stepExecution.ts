@@ -1,8 +1,10 @@
 import type { SessionInputAttention } from '@/session/services/sessionInputAttention';
 import type { StoredCredentials } from '@/persistence';
 import type { ActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { sanitizeSessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { SessionTeamCredentialBindingMutationRejectionV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingRejectionV1';
 export { readProjectSetupConsentHoldV1 as readWorkflowProjectSetupConsentHold } from '@happier-dev/protocol/actions/projectActionFamily';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import {
@@ -98,7 +100,7 @@ export function classifyWorkflowSessionInputResult(
 export type WorkflowDetachedExecutionRunObservation =
   | Readonly<{ kind: 'pending' }>
   | Readonly<{ kind: 'completed'; result: string | import('@happier-dev/protocol').JsonValue }>
-  | Readonly<{ kind: 'failed'; code: string; message?: string; runtimeIssueV1?: SessionRuntimeIssueV1 }>
+  | Readonly<{ kind: 'failed'; code: string; message?: string; failureCause?: ActionFailureCauseV1; runtimeIssueV1?: SessionRuntimeIssueV1 }>
   | Readonly<{ kind: 'needs_attention'; code: string; message?: string; runtimeIssueV1?: SessionRuntimeIssueV1 }>
   | Readonly<{ kind: 'cancelled'; code?: string }>
   | Readonly<{ kind: 'outcome_uncertain'; code: string }>;
@@ -208,11 +210,18 @@ export async function observeWorkflowDetachedExecutionRunInput(params: Readonly<
   if (turn.state === 'cancelled') return { kind: 'cancelled', code: 'execution_run_input_cancelled' };
   if (turn.state === 'failed') {
     const error = turn.error ?? response.run.error;
+    const teamRefusal = error?.details && SessionTeamCredentialBindingMutationRejectionV1Schema.safeParse({
+      code: error.code, reason: error.details.reason,
+    });
     return {
       kind: workflowRuntimeFailureKind(error?.runtimeIssueV1),
       code: error?.code ?? 'execution_run_input_failed',
       ...(error?.message ? { message: error.message } : {}),
       ...(error?.runtimeIssueV1 ? { runtimeIssueV1: error.runtimeIssueV1 } : {}),
+      ...(teamRefusal?.success ? { failureCause: {
+        phase: 'execution.run.start', errorClass: 'Error', errorCode: teamRefusal.data.code,
+        nativeErrorReason: teamRefusal.data.reason, httpStatus: null,
+      } satisfies ActionFailureCauseV1 } : {}),
     };
   }
   if (!turn.result) {

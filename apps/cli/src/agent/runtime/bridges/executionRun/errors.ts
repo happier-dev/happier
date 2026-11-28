@@ -2,6 +2,7 @@ import { redactTranscriptSecrets } from '@/api/session/client/transport/transcri
 import { logger } from '@/ui/logger';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
 import type { ConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/types';
+import { SessionTeamCredentialBindingMutationRejectionV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingRejectionV1';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { AgentIdV1Schema } from '@happier-dev/protocol/agents/agentIdV1';
 import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
@@ -123,12 +124,23 @@ export function readExecutionRunRuntimeIssue(error: unknown): NonNullable<Execut
     occurredAt: event.emittedAtMs, agentTurnId: event.turnId }) : undefined;
 }
 
+function readTeamCredentialRefusal(error: unknown) {
+  if (!error || typeof error !== 'object' || !('reason' in error)) return undefined;
+  const parsed = SessionTeamCredentialBindingMutationRejectionV1Schema.safeParse({
+    code: readExecutionRunErrorCode(error),
+    reason: error.reason,
+  });
+  return parsed.success ? parsed.data : undefined;
+}
+
 export function projectExecutionRunError(error: unknown, context?: Readonly<{ runId: string }>): NonNullable<ExecutionRunState['error']> & Readonly<{ message: string }> {
   recordExecutionRunHttpFailure(error, value => value, context);
   const runtimeIssueV1 = readExecutionRunRuntimeIssue(error);
   const uxDiagnostic = readConnectedServiceUxDiagnosticFromError(error);
+  const teamRefusal = readTeamCredentialRefusal(error);
   return { code: readExecutionRunErrorCode(error) ?? 'execution_run_failed', message: readExecutionRunErrorMessage(error),
     ...(uxDiagnostic ? { uxDiagnostic } : {}),
+    ...(teamRefusal ? { details: { reason: teamRefusal.reason } } : {}),
     ...(runtimeIssueV1 ? { runtimeIssueV1 } : {}) };
 }
 
@@ -176,6 +188,7 @@ export function sanitizeExecutionRunError(
   const code = readExecutionRunErrorCode(error);
   const runtimeIssueV1 = readExecutionRunRuntimeIssue(error);
   const details = readAgentStartupFailureDetails(error);
+  const teamRefusal = readTeamCredentialRefusal(error);
   const uxDiagnostic = readConnectedServiceUxDiagnosticFromError(error);
   // Redaction can invalidate a typed identifier or enum. Omit that projection
   // rather than retaining the original private diagnostic as a fallback.
@@ -184,6 +197,7 @@ export function sanitizeExecutionRunError(
   const safeUxDiagnostic = uxDiagnostic
     ? normalizeConnectedServiceUxDiagnosticV1(redactPluginInvocationResultData(uxDiagnostic, sanitize)) : null;
   return Object.assign(sanitized, code ? { code: sanitize(code) } : {}, details ? { details } : {},
+    teamRefusal ? { reason: sanitize(teamRefusal.reason) } : {},
     safeRuntimeIssue ? { runtimeIssueV1: safeRuntimeIssue } : {},
     safeUxDiagnostic ? { uxDiagnostic: safeUxDiagnostic, details: { ...details, uxDiagnostic: safeUxDiagnostic } } : {});
 }

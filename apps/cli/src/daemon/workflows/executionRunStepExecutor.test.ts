@@ -1,8 +1,10 @@
 import { createTestWorkflowCoordinator as createWorkflowCoordinator } from './workflowCoordinator.testkit';
 import { describe, expect, it, vi } from 'vitest';
 import { ActionsSettingsV1Schema, buildBackendTargetKeyV2, createActionExecutor, DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { projectExecutionRunError } from '@/agent/runtime/bridges/executionRun/errors';
 import { readExecutionRunWorkflowObservationSink, type ExecutionRunWorkflowObservationSink } from '@/agent/runtime/bridges/executionRun/executionRunWorkflowObservation';
 import { deriveExecutionRunIdFromActionRequestId } from '@/agent/runtime/bridges/executionRun/startExecutionRun';
+import { SessionTeamCredentialBindingRejectedError } from '@/api/session/sessionCreationInitialAccess';
 import { ProjectSessionDefaultsContextSelectionV1Schema } from '@happier-dev/protocol/projects/projectSessionDefaultsSelectionV1';
 import { ExecutionRunStartActionRequestSchema } from '@happier-dev/protocol/actions/specs/executionRuns';
 import * as permissionPrivilege from '@happier-dev/protocol/actions/permissionPrivilege';
@@ -483,6 +485,43 @@ describe('workflow detached Execution Run step executor', () => {
     expect(store.list().find(row => row.blockId === params.step.id))
       .toMatchObject({ lifecycle: 'failed', reason: 'target_unavailable', failureCause });
     expect(executionRunGet).not.toHaveBeenCalled();
+  });
+
+  it('stores the exact Team offer refusal on a failed detached Workflow invocation', async () => {
+    const store = createInMemoryWorkflowCoordinatorStore();
+    const params = baseParams({ execution: { agentTarget: CLAUDE_TARGET, permissionMode: 'default',
+      conversation: { kind: 'fresh' } } });
+    const refusal = new SessionTeamCredentialBindingRejectedError('access_removed');
+    let localInputId = '';
+    const actionExecutor = createActionExecutor({
+      executionRunCheckProtocolV2: async () => ({ ok: true, exactMachineId: 'machine-1' }),
+      executionRunStart: async (_sessionId, request) => {
+        localInputId = String(request.localInputId);
+        return { runId: 'team-refusal-child', callId: 'call', sidechainId: 'sidechain' };
+      },
+      executionRunGet: async () => {
+        const { run } = completedRun('team-refusal-child', localInputId, 'unused');
+        return { run: { ...run, status: 'failed', error: projectExecutionRunError(refusal),
+          inputTurns: { occurrenceId: run.inputTurns.occurrenceId, last: {
+            turnId: `turn-${localInputId}`, inputIds: [localInputId], state: 'failed',
+          } },
+        } };
+      },
+    });
+    const executeStep = createWorkflowDetachedExecutionRunStepExecutor({ actionExecutor, workDepth: 0,
+      buildActionContext, resolveSharedRunConversation: async () => null,
+      resolveProducerConversation: async () => null });
+    const coordinator = createWorkflowCoordinator({ store, executeStep,
+      resolveWorkspace: async () => ({ ok: true, workspace: params.workspace }) });
+
+    await expect(coordinator.run({ runId: params.runId,
+      definition: { version: 1, inputs: [], defaults: params.execution, blocks: [params.step] },
+      inputs: {}, executionTarget: { kind: 'detached_run' }, authorization: params.authorization,
+    })).resolves.toEqual({ state: 'interrupted', reason: refusal.code });
+    expect(store.list().find(row => row.blockId === params.step.id)).toMatchObject({
+      lifecycle: 'failed', reason: refusal.code,
+      failureCause: { errorCode: refusal.code, nativeErrorReason: refusal.reason },
+    });
   });
 
   it.each([1_794_340_800_000, null])('settles a detached refusal with quota attention and its reported reset (%s)', async resetAtMs => {

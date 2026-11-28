@@ -52,6 +52,7 @@ import { ProviderErrorV1Schema } from '../../providers/errors.js';
 import { ReviewFindingsV2Schema } from '../../messages/structured/reviewFindingsV2.js';
 import { readSessionRuntimeIssueCode, SessionRuntimeIssueV1Schema } from '../../sessions/control/runtimeIssueV1.js';
 import { projectSessionRuntimeIssueMetadataV1 } from '../../sessions/control/runtimeIssueMetadataV1.js';
+import { SessionTeamCredentialBindingMutationRejectionV1Schema } from '../../teams/credentials/sessionBindingRejectionV1.js';
 import { ActionInputIssueSchema } from '../../actions/executor/actionInputValidation.js';
 import { ActionErrorClassV1Schema, type ActionErrorClassV1 } from '../../actions/actionErrorClassV1.js';
 import { WorkflowTargetUnavailableReasonV1Schema } from '../../workflows/workflowTargetUnavailableReasonV1.js';
@@ -167,6 +168,7 @@ export const ExecutionRunErrorSchema = lazyZodSchema(() => z.looseObject({
   message: z.optional(z.string()),
   /** Present only when the Run owner knows it never dispatched the initial input. */
   inputDispatch: z.optional(z.literal('not_attempted')),
+  details: z.optional(z.strictObject({ reason: SessionTeamCredentialBindingMutationRejectionV1Schema.shape.reason })),
   runtimeIssueV1: z.optional(SessionRuntimeIssueV1Schema),
   uxDiagnostic: z.optional(ConnectedServiceUxDiagnosticV1Schema),
 }));

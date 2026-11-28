@@ -11,6 +11,19 @@ import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { ExecutionRunErrorSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 
 describe('Run startup failure redaction', () => {
+    it('preserves a closed Team credential refusal in the terminal Run without copying private details', () => {
+        const code = 'session_team_credential_binding_rejected';
+        const privateText = 'private source evidence';
+        const failure = (reason: string) => Object.assign(new Error('Team credential binding refused'), {
+            code, reason, details: { privateText },
+        });
+        const project = (reason: string) => projectExecutionRunError(sanitizeExecutionRunError(failure(reason), value => value));
+        expect(project('team_context_required')).toEqual({
+            code, message: 'Team credential binding refused', details: { reason: 'team_context_required' },
+        });
+        expect(project(privateText)).toEqual({ code, message: 'Team credential binding refused' });
+    });
+
     it('redacts private evidence from a thrown structured native cause before public Run projection', () => {
         const privateText = 'private source transcript echoed by a thrown native error';
         const failure = Object.assign(new Error(privateText), { code: 'provider_failed',

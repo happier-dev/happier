@@ -2657,6 +2657,8 @@ broker, or acquire Direct material from its Home. A guest Session uses its own
 admitted Account and Home for the same requests.
 If the recipient catalog returns no row for an exact Team Provider offer, the
 Session or Run reports `access_removed` before opening credential material.
+A detached Workflow's failed invocation carries that same reason in
+`progress.reason.failureCause.nativeErrorReason`.
 A detached reviewer using a Team credential also inherits
 the credential-policy context of its Workflow’s admitted source Session for
 both Brokered and Direct delivery. Home resolves that Session using the
