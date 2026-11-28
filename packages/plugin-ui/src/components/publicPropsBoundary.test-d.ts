@@ -103,7 +103,7 @@ type _AuthorPageTabsAddOnlyTheirPresentationFact = Assert<IsEqual<
   Exclude<keyof Extract<TabsProps, { presentation: 'page' }>, keyof TabsProps>, 'phonePresented'
 >>;
 type _AuthorTabsItemKeysAreCurated = Assert<IsEqual<keyof TabsItemProps,
-  'value' | 'title' | 'icon' | 'glyph' | 'phonePlacement' | 'badge' | 'badgeTone' | 'marker' | 'disabled' | 'retention' | 'children' | 'kind' | 'companion'
+  'value' | 'title' | 'icon' | 'glyph' | 'phonePlacement' | 'badge' | 'reserveBadge' | 'badgeTone' | 'marker' | 'disabled' | 'retention' | 'children' | 'kind' | 'companion'
 >>;
 
 type _AuthorFormFieldDoesNotExposeHostOptionSources = Assert<
