@@ -1,3 +1,4 @@
+import { createFavoriteModelSelection } from '@happier-dev/protocol/providers/modelFavoritesV1';
 import * as React from 'react';
 
 import { backendTargetKeysMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
@@ -544,22 +545,23 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
                 });
             }}
             experimentalConfirmation={props.experimentalConfirmation}
-            onToggleFavorite={props.onToggleFavoriteModel ? (ref, reasoningEffort) => {
+            onToggleFavorite={props.onToggleFavoriteModel ? (ref, reasoningEffort, savedModelLabel) => {
+                const key = sessionModelSelectionKey(sessionModelPickerValueFromRef(ref));
                 const group = providerGroups.find((candidate) => candidate.rows.some((row) => (
-                    sessionModelSelectionKey(row.ref) === sessionModelSelectionKey(ref)
+                    sessionModelSelectionKey(row.ref) === key
                 )));
                 const row = group?.rows.find((candidate) => (
-                    sessionModelSelectionKey(candidate.ref) === sessionModelSelectionKey(ref)
+                    sessionModelSelectionKey(candidate.ref) === key
                 ));
                 props.onToggleFavoriteModel?.({
                     modelId: ref.modelId,
                     ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
-                    modelLabel: row?.descriptor.name ?? (!isSessionModelRefSourceBound(ref)
+                    modelLabel: savedModelLabel ?? row?.descriptor.name ?? (!isSessionModelRefSourceBound(ref)
                         ? modelProbe.retainedModelName?.(ref.modelId)
                             ?? findModelOptionForEffectiveModelId(modelOptions, ref.modelId)?.label
                             ?? ref.modelId
                         : ref.modelId),
-                    modelSelection: createPersonalSessionModelSelection(ref, Date.now()),
+                    modelSelection: createFavoriteModelSelection(ref, Date.now()),
                     ...(group ? {
                         providerDisplaySnapshot: {
                             providerName: group.providerName,

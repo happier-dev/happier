@@ -5545,6 +5545,44 @@ describe('SessionView (direct sessions)', () => {
     }));
   });
 
+  it('marks only the applied Team share current and keeps a withdrawn Team favorite in Search', async () => {
+    const { readSessionComposerModelFavorites } = await import('@/components/sessions/presentation/sessionComposerPresentationTargets');
+    const agentTargetKey = 'agent:happier.agent.muse/muse';
+    const modelId = 'meta/muse-spark-1.3-contributor';
+    const native = { agentTargetKey, providerConnectionId: null, modelId };
+    const ref = { source: 'team_resource' as const, teamId: 'team', resourceId: 'share',
+      expectedResourceRevision: 1, deliveryMode: 'brokered' as const, agentTargetKey, modelId };
+    const { source: _source, ...team } = ref;
+    const runtimeState = buildSessionRunnerRuntimeStatus({ sessionId: 's1', machineId: 'machine-1', versionState: 'current' });
+    const runner = { pid: runtimeState.runner.pid!, processStartTimeMs: 2_000 };
+    getSessionRunnerRuntimeStatusSpy.mockResolvedValue({ state: runtimeState, runnerProcessIdentity: runner });
+    settingsState.current = { ...settingsState.current, favoriteModelSelectionsV1: [
+      { selection: { v: 1, updatedAt: 1, ref: native }, modelLabel: 'Native favorite' },
+      { selection: { v: 2, updatedAt: 2, ref }, modelLabel: 'Applied Team favorite' },
+      { selection: { v: 2, updatedAt: 3, ref: { ...ref, resourceId: 'withdrawn-share' } }, modelLabel: 'Withdrawn Team favorite' },
+    ] };
+    const { directSessionV1: _direct, ...metadata } = storageState.sessions.s1.metadata;
+    storageState.sessions.s1 = { ...storageState.sessions.s1, accessLevel: 'owner', access: createSessionAccessFixture('owner'), metadata: {
+      ...metadata, flavor: 'muse',
+      modelSelectionIntentV1: { v: 1, updatedAt: 10, selection: native },
+      sessionModelsV1: { v: 1, agentId: 'muse', updatedAt: 11, currentModelId: modelId,
+        availableModels: [{ id: modelId, name: 'Muse Spark' }],
+        activeSelectionV1: { v: 2, source: 'runtime_apply', runner,
+          selection: native, teamCredentialModel: { kind: 'team_credential_provider_model', ...team } },
+      },
+    } };
+
+    await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
+    const favorites = readSessionComposerModelFavorites({ sessionId: 's1', serverId: 'server-route-1' });
+    expect(favorites.find(entry => entry.label === 'Native favorite')).toMatchObject({ current: false, requiresRestart: true });
+    expect(favorites.find(entry => entry.label === 'Applied Team favorite')).toMatchObject({ current: true, requiresRestart: false });
+    const withdrawn = favorites.find(entry => entry.label === 'Withdrawn Team favorite');
+    expect(withdrawn).toMatchObject({ current: false, unavailableReason: expect.any(String) });
+    const executeOrdinaryChildAction = vi.fn();
+    expect(await withdrawn?.invokeAction?.({ executeOrdinaryChildAction })).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+    expect(executeOrdinaryChildAction).not.toHaveBeenCalled();
+  });
+
   it('applies the ordinary mounted Sonnet 5 / High App command', async () => {
     const { buildCommandPaletteCommands } = await import('@/components/appShell/commandPalette/buildCommandPaletteCommands');
     const { readSessionComposerModelFavorites } = await import('@/components/sessions/presentation/sessionComposerPresentationTargets');

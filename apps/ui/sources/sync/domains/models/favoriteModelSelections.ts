@@ -1,8 +1,8 @@
 import { z } from 'zod/mini';
 import { ProviderConnectionDisplaySnapshotV1Schema, type ProviderConnectionDisplaySnapshotV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import type { ProviderBoundModelRef, SessionModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
-import { createPersonalSessionModelSelection, isSessionModelRefSourceBound, PersonalSessionModelRefSchema, type PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
-import { favoriteModelRefIdentityKey, FavoriteModelSelectionV1Schema, isFavoriteModelRefSelectable } from '@happier-dev/protocol/providers/modelFavoritesV1';
+import { isSessionModelRefSourceBound } from '@happier-dev/protocol/providers/selection/v2';
+import { createFavoriteModelSelection, favoriteModelRefIdentityKey, FavoriteModelRefSchema, FavoriteModelSelectionV1Schema, isFavoriteModelRefSelectable, type FavoriteModelRef } from '@happier-dev/protocol/providers/modelFavoritesV1';
 
 import type { ModelOption, PreflightModelList } from '@/sync/domains/models/modelOptions';
 
@@ -11,7 +11,7 @@ export { isFavoriteModelRefSelectable, FavoriteModelSelectionV1Schema, StoredFav
 export type FavoriteModelSelectionV1 = z.infer<typeof FavoriteModelSelectionV1Schema>;
 export type FavoriteProviderDisplaySnapshot = ProviderConnectionDisplaySnapshotV1;
 
-export function getFavoriteModelRef(selection: FavoriteModelSelectionV1): PersonalSessionModelRef {
+export function getFavoriteModelRef(selection: FavoriteModelSelectionV1): FavoriteModelRef {
     return selection.selection.ref;
 }
 
@@ -178,7 +178,7 @@ export function resolveAvailableFavoriteModelsForBackend(params: Readonly<{
 
 export function rememberFavoriteModelReasoningEffort(
     favorites: readonly FavoriteModelSelectionV1[],
-    ref: PersonalSessionModelRef,
+    ref: FavoriteModelRef,
     reasoningEffort: string,
 ): FavoriteModelSelectionV1[] | null {
     const identity = favoriteModelRefIdentityKey(ref);
@@ -190,14 +190,14 @@ export function rememberFavoriteModelReasoningEffort(
 export function toggleFavoriteModelSelection(params: Readonly<{
     favorites: readonly FavoriteModelSelectionV1[];
     backend: FavoriteModelBackendIdentity;
-    modelRef: PersonalSessionModelRef;
+    modelRef: FavoriteModelRef;
     modelLabel?: string | null;
     backendLabel?: string | null;
     providerDisplaySnapshot?: FavoriteProviderDisplaySnapshot | null;
     reasoningEffort?: FavoriteModelSelectionV1['reasoningEffort'];
     addedAtMs?: number;
 }>): FavoriteModelSelectionV1[] {
-    const modelRef = PersonalSessionModelRefSchema.parse(params.modelRef);
+    const modelRef = FavoriteModelRefSchema.parse(params.modelRef);
     if (modelRef.agentTargetKey !== params.backend.backendTargetKey) {
         throw new Error('Favorite model selection target mismatch');
     }
@@ -225,7 +225,7 @@ export function toggleFavoriteModelSelection(params: Readonly<{
     return [
         ...params.favorites,
         {
-            selection: createPersonalSessionModelSelection(modelRef,
+            selection: createFavoriteModelSelection(modelRef,
                 typeof params.addedAtMs === 'number' && Number.isFinite(params.addedAtMs)
                     ? Math.max(0, Math.trunc(params.addedAtMs))
                     : Date.now()),

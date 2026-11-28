@@ -3,12 +3,28 @@ import { AgentModelOptionValueIdSchema } from '../models/descriptor.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 import { ProviderConnectionDisplaySnapshotV1Schema } from './sessions/bindingMetadataV1.js';
 import { isNativeAutomaticModelSelectionInputV1, SessionModelSelectionV1Schema } from './selection/v1.js';
-import { ConnectedAccountSessionModelSelectionV2Schema } from './selection/schemas.js';
-import { connectedAccountSessionModelRefKey, type PersonalSessionModelRef } from './selection/v2.js';
+import { ConnectedAccountSessionModelSelectionV2Schema, PersonalSessionModelRefSchema, TeamResourceSessionModelRefV2Schema, TeamResourceSessionModelSelectionV2Schema } from './selection/schemas.js';
+import { connectedAccountSessionModelRefKey, createPersonalSessionModelSelection } from './selection/v2.js';
 import { ACCOUNT_SETTING_DEFINITIONS, type AccountSettingsDefaults } from '../account/settings/accountSettings.js';
 
+// A favorite can name a brokered share without retaining any delivery material.
+const { nativeDelivery: _nativeDelivery, ...teamResourceRefShape } = TeamResourceSessionModelRefV2Schema.shape;
+const TeamBrokeredFavoriteModelRefSchema = z.strictObject({
+    ...teamResourceRefShape,
+    deliveryMode: z.literal('brokered'),
+});
+
+export const FavoriteModelRefSchema = z.union([
+    PersonalSessionModelRefSchema, TeamBrokeredFavoriteModelRefSchema,
+]);
+export type FavoriteModelRef = z.infer<typeof FavoriteModelRefSchema>;
+
+const TeamBrokeredFavoriteModelSelectionSchema = z.extend(TeamResourceSessionModelSelectionV2Schema, {
+    ref: TeamBrokeredFavoriteModelRefSchema,
+});
+
 const CanonicalFavoriteModelSelectionV1Schema = z.strictObject({
-    selection: z.union([SessionModelSelectionV1Schema, ConnectedAccountSessionModelSelectionV2Schema]),
+    selection: z.union([SessionModelSelectionV1Schema, ConnectedAccountSessionModelSelectionV2Schema, TeamBrokeredFavoriteModelSelectionSchema]),
     catalogAgentId: z.optional(z.string()),
     builtInAgentId: z.optional(z.nullable(z.string())),
     configuredBackendId: z.optional(z.nullable(z.string())),
@@ -28,7 +44,13 @@ const CanonicalFavoriteModelSelectionV1Schema = z.strictObject({
     }
 }));
 
-export function isFavoriteModelRefSelectable(ref: PersonalSessionModelRef): boolean {
+export function createFavoriteModelSelection(ref: FavoriteModelRef, updatedAt: number): FavoriteModelSelectionV1['selection'] {
+    return 'source' in ref && ref.source === 'team_resource'
+        ? { v: 2, ref, updatedAt }
+        : createPersonalSessionModelSelection(ref, updatedAt);
+}
+
+export function isFavoriteModelRefSelectable(ref: FavoriteModelRef): boolean {
     return 'source' in ref || !isNativeAutomaticModelSelectionInputV1({
         providerConnectionId: ref.providerConnectionId,
         modelId: ref.modelId.trim(),
@@ -153,8 +175,12 @@ function favoriteSelectionKey(value: FavoriteModelSelectionV1): string {
     return JSON.stringify(value);
 }
 
-export function favoriteModelRefIdentityKey(ref: PersonalSessionModelRef): string {
-    if ('source' in ref) return connectedAccountSessionModelRefKey(ref);
+export function favoriteModelRefIdentityKey(ref: FavoriteModelRef): string {
+    if ('source' in ref) {
+        return ref.source === 'team_resource'
+            ? JSON.stringify([ref.source, ref.teamId, ref.resourceId, ref.agentTargetKey, ref.modelId])
+            : connectedAccountSessionModelRefKey(ref);
+    }
     return JSON.stringify([
         ref.agentTargetKey,
         ref.providerConnectionId,

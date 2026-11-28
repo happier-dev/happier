@@ -1,3 +1,4 @@
+import { buildTeamCredentialModelPickerSections, retainedTeamModelUnavailableReason } from "@/components/sessions/modelPicker/buildTeamCredentialModelPickerSections";
 import { buildExistingSessionModeActionInput, buildExistingSessionConfigOptionActionInput, buildExistingSessionModelActionInput } from '@happier-dev/protocol/sessions/authoring/existingSessionActionInputs';
 import { isSessionModelRefSourceBound, projectSessionModelSelectionV2ToV1, type PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import { followSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
@@ -308,7 +309,7 @@ import { readSessionConnectedServiceBindings } from '@/sync/domains/connectedSer
 import { SessionModelNativeSourceLabelContext } from "@/components/sessions/modelPicker/SessionModelSourceBrowseHandoff";
 import { hiddenModelVisibilityKeys, type SessionModelProjectionGroup } from "@/components/sessions/modelPicker/buildSessionModelPickerSections";
 import { isTeamCredentialProviderModelPickerValue, sessionModelPickerValueFromRef, sessionModelSelectionKey, type SessionModelPickerOptionValue } from "@/components/sessions/modelPicker/sessionModelSelectionKey";
-import { projectFavoriteModelEntries } from "@/components/sessions/modelPicker/favoriteModelEntries";
+import { favoriteModelPickerKey, projectFavoriteModelEntries } from "@/components/sessions/modelPicker/favoriteModelEntries";
 import { hapticsLight } from "@/components/ui/theme/haptics";
 import { useSessionViewBootstrap } from "@/components/sessions/shell/view/useSessionViewBootstrap";
 import { type SessionPresentationIntentApplier } from "@/components/sessions/companion/presentation/SessionCompanionPresentationBridge";
@@ -4342,7 +4343,7 @@ export function useSessionComposerController({
                         }}
                         onSelectTeamCredentialModel={(selection) => {
                             hapticsLight();
-                            void publishTeamCredentialModelSelection(selection);
+                            return publishTeamCredentialModelSelection(selection);
                         }}
                         onRecoverTeamCredentialResource={(resource) => {
                             router.push(admitInternalRouteHref(teamCredentialDetailPath({
@@ -4765,20 +4766,62 @@ export function useSessionComposerController({
         if (!canSelectModel || !modelPickerAgentTargetKey) return [];
         const { settings, settingsScope } = storage.getState();
         if (!areServerAccountScopesEqual(settingsScope, sessionAccountScope)) return [];
-        const appliedConnectedAccount = appliedRoute && 'source' in appliedRoute && appliedRoute.source === 'connected_account';
-        const selected = session.active === true && (appliedConnectedAccount || selectedConnectedAccount)
-            ? sessionModelPickerValueFromRef(appliedRoute)
-            : pickerTeamCredentialModel ?? selectedConnectedAccount
-                ?? resolveCanonicalNativeModelSelectionRef(existingSessionNativeModels, existingSessionSelectedModelRef);
-        const selectedKey = sessionModelSelectionKey(selected);
-        return projectFavoriteModelEntries(
-            settings.currentFavoriteModelSelectionsV1 ?? [],
-            { backendTargetKey: modelPickerAgentTargetKey },
-        ).map((entry): SessionComposerModelFavorite => {
+        const requested = pickerTeamCredentialModel ?? selectedConnectedAccount
+            ?? resolveCanonicalNativeModelSelectionRef(existingSessionNativeModels, existingSessionSelectedModelRef);
+        const applied = sessionModelPickerValueFromRef(appliedRoute);
+        const sourceBound = [applied, requested].some(ref => isTeamCredentialProviderModelPickerValue(ref)
+            || (ref !== null && isSessionModelRefSourceBound(ref)));
+        const currentModel = session.active === true && sourceBound
+            ? sessionModelPickerValueFromRef(modelSelectionDisposition?.activeRouteSelection)
+            : requested;
+        const selectedKey = favoriteModelPickerKey(currentModel);
+        const entries = projectFavoriteModelEntries(settings.currentFavoriteModelSelectionsV1 ?? [],
+            { backendTargetKey: modelPickerAgentTargetKey });
+        const teamInput = { agentTargetKey: modelPickerAgentTargetKey, declarationContext,
+            teamCredentialResources: teamCredentialCatalog.resources,
+            teamCredentialDisplayNames: teamCredentialCatalog.displayNames,
+            teamCredentialResourceStatusByKey: teamCredentialCatalog.resourceStatusByKey,
+            teamNameById: teamCredentialCatalog.teamNameById, homeNameByTeamId: teamCredentialCatalog.homeNameByTeamId };
+        const teamRows = entries.some(({ ref }) => 'source' in ref && ref.source === 'team_resource')
+            ? new Map(buildTeamCredentialModelPickerSections(teamInput).flatMap(section => section.options.map(row => [favoriteModelPickerKey(row.value), row] as const)))
+            : null;
+        return entries.map((entry): SessionComposerModelFavorite => {
+            if ('source' in entry.ref && entry.ref.source === 'team_resource') {
+                const row = teamRows?.get(entry.key);
+                const ref = row?.value;
+                const available = ref && isTeamCredentialProviderModelPickerValue(ref) && row?.availability === 'available'
+                    ? ref : null;
+                const unavailableReason = available ? undefined : row?.unavailableReason ?? retainedTeamModelUnavailableReason(entry.ref, teamInput);
+                const current = entry.key === selectedKey;
+                return {
+                    key: entry.key,
+                    label: entry.label,
+                    sourceLabel: row?.source?.label ?? t('teams.credentials.title'),
+                    current,
+                    requiresRestart: session.active === true && !current && Boolean(available),
+                    unavailableReason,
+                    apply: async () => {
+                        if (unavailableReason) {
+                            Modal.alert(t('common.unavailable'), unavailableReason);
+                            return false;
+                        }
+                        return available ? publishTeamCredentialModelSelection(available) : false;
+                    },
+                    invokeAction: async ({ executeOrdinaryChildAction, serverId }) => {
+                        if (!executeOrdinaryChildAction || (serverId && serverId !== sessionRouteServerId)) {
+                            return { ok: false, errorCode: 'unsupported_action', error: 'command_palette_entry_unavailable' };
+                        }
+                        if (!available) return { ok: false, errorCode: 'target_unavailable', error: unavailableReason ?? 'model_selection_unavailable' };
+                        return executeOrdinaryChildAction('session.model.set', buildExistingSessionModelActionInput({
+                            sessionId, teamCredentialModel: available,
+                        }));
+                    },
+                };
+            }
             const ref = resolveCanonicalNativeModelSelectionRef(existingSessionNativeModels, entry.ref);
             const effort = entry.reasoningEffort;
             const current = sessionModelSelectionKey(ref) === selectedKey;
-            const requiresRestart = session.active === true && !current && (appliedConnectedAccount || 'source' in ref);
+            const requiresRestart = session.active === true && !current && (isTeamCredentialProviderModelPickerValue(applied) || (applied !== null && 'source' in applied) || 'source' in ref);
             return {
                 key: entry.key,
                 label: entry.label,

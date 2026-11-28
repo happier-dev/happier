@@ -17,6 +17,7 @@ import { describeDirectDeliveryVisibility, readDirectDeliveryVisibility } from '
 import { formatLimitResetUtc, limitMetricLabel, sourceKindLabel, teamCredentialRecoveryLabel, teamCredentialRecoveryPresentation } from '@/components/settings/teams/credentials/teamCredentialPresentation';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import type { buildSessionModelPickerSections, SessionModelPickerOption, SessionModelPickerSection } from './buildSessionModelPickerSections';
+import type { FavoriteModelRef } from '@happier-dev/protocol/providers/modelFavoritesV1';
 import { sessionModelSelectionKey } from './sessionModelSelectionKey';
 import { sessionModelProtocolEligible } from './sessionModelProtocolEligibility';
 
@@ -51,6 +52,18 @@ export function teamCredentialUnavailableReason(
         case 'resource_corrupt': return resourceStateLabel(readiness);
         case 'resource_unavailable': return t('teams.credentials.detail.notFound');
     }
+}
+
+/** A saved share can outlive its catalog row or the person's membership. */
+export function retainedTeamModelUnavailableReason(
+    ref: Extract<FavoriteModelRef, { source: 'team_resource' }>,
+    input: Pick<Parameters<typeof buildSessionModelPickerSections>[0], 'teamCredentialResources' | 'teamCredentialResourceStatusByKey'>,
+): string {
+    const status = input.teamCredentialResourceStatusByKey?.get(`${ref.teamId}:${ref.resourceId}`);
+    const resource = input.teamCredentialResources?.find(candidate => candidate.teamId === ref.teamId && candidate.id === ref.resourceId);
+    return (status && teamCredentialCatalogStatusLabel(status))
+        ?? (resource ? teamCredentialUnavailableReason(resource, ref.deliveryMode) : null)
+        ?? t(resource ? 'settingsProviders.models.connectionUnavailable' : 'teams.credentials.detail.notFound');
 }
 
 function teamCredentialModelUnavailableReason(
@@ -101,7 +114,10 @@ export function presentTeamCredentialPickerName(
 }
 
 export function buildTeamCredentialModelPickerSections(
-    input: Parameters<typeof buildSessionModelPickerSections>[0],
+    input: Pick<Parameters<typeof buildSessionModelPickerSections>[0],
+        'agentTargetKey' | 'declarationContext' | 'providerProtocols' | 'teamCredentialResources'
+        | 'teamCredentialDisplayNames' | 'teamNameById' | 'homeNameByTeamId'
+        | 'teamCredentialResourceStatusByKey' | 'onRecoverTeamCredentialResource'>,
     modelEligible = createTeamCredentialModelEligibility(input),
 ): SessionModelPickerSection[] {
     if (!input.teamCredentialResources?.length) return [];

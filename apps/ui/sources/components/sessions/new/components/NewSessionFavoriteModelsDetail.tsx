@@ -1,3 +1,6 @@
+import { buildTeamCredentialModelPickerSections, retainedTeamModelUnavailableReason } from '@/components/sessions/modelPicker/buildTeamCredentialModelPickerSections';
+import type { NewSessionEngineOptionDetailProps } from './NewSessionEngineOptionDetail';
+import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 import { providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import * as React from 'react';
 import { View } from 'react-native';
@@ -12,7 +15,7 @@ import {
     type OptionPickerFavoriteOptions,
     type OptionPickerProbeState,
 } from '@/components/sessions/pickers/OptionPickerOverlay';
-import { assignFavoriteModelSlots } from '@/components/sessions/modelPicker/favoriteModelEntries';
+import { assignFavoriteModelSlots, favoriteModelPickerKey } from '@/components/sessions/modelPicker/favoriteModelEntries';
 import { mergeOptionPickerProbes } from '@/components/sessions/pickers/mergeOptionPickerProbes';
 import { PROVIDER_REASONING_EFFORT_OPTION_ID, formatReasoningEffortTierLabel } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import type { FavoriteModelTogglePayload } from '@/components/sessions/new/hooks/screenModel/newSessionFavoriteModelsPickerOption';
@@ -86,6 +89,7 @@ type FavoriteModelSnapshot = Readonly<{
     favoriteValues: readonly string[];
     availableValues: readonly string[];
     staleFavoriteByValue: ReadonlyMap<string, FavoriteModelSelectionV1>;
+    teamModelsByValue: ReadonlyMap<string, TeamCredentialProviderModelSelectionV1>;
     modelByValue: ReadonlyMap<string, FavoriteModelTogglePayload & {
         modelId: string;
         modelSelection: SessionModelSelectionV1;
@@ -113,6 +117,7 @@ export type NewSessionFavoriteModelsDetailProps = Readonly<{
     cwd?: string | null;
     settings: Readonly<Record<string, unknown>>;
     refreshProbe?: OptionPickerProbeState | null;
+    teamModels?: NewSessionEngineOptionDetailProps['teamModels'];
     onSelectFavoriteModel: (
         entry: ResolvedBackendCatalogEntry,
         modelSelection: SessionModelSelectionV1,
@@ -130,7 +135,7 @@ export type NewSessionFavoriteModelsDetailProps = Readonly<{
 }>;
 
 function buildFavoriteOptionValue(modelSelection: SessionModelSelection): string {
-    return sessionModelSelectionKey(sessionModelPickerValueFromRef(modelSelection.ref));
+    return favoriteModelPickerKey(sessionModelPickerValueFromRef(modelSelection.ref));
 }
 
 function areStringArraysEqual(a: readonly string[], b: readonly string[]): boolean {
@@ -166,6 +171,11 @@ function areFavoriteModelSnapshotsEqual(a: FavoriteModelSnapshot, b: FavoriteMod
     if (!areStringArraysEqual(a.favoriteValues, b.favoriteValues)) return false;
     if (!areStringArraysEqual(a.availableValues, b.availableValues)) return false;
     if (!areFavoriteModelMapsEqual(a.modelByValue, b.modelByValue)) return false;
+    if (a.teamModelsByValue.size !== b.teamModelsByValue.size) return false;
+    for (const [value, model] of a.teamModelsByValue) {
+        const other = b.teamModelsByValue.get(value);
+        if (!other || sessionModelSelectionKey(model) !== sessionModelSelectionKey(other)) return false;
+    }
     if ((a.selectedOptionControls?.length ?? 0) !== (b.selectedOptionControls?.length ?? 0)) return false;
     for (let index = 0; index < (a.selectedOptionControls?.length ?? 0); index += 1) {
         const left = a.selectedOptionControls?.[index];
@@ -186,6 +196,7 @@ function areFavoriteModelSnapshotsEqual(a: FavoriteModelSnapshot, b: FavoriteMod
             left.value !== right.value
             || left.label !== right.label
             || left.description !== right.description
+            || left.disabled !== right.disabled
             || left.accessibilityLabel !== right.accessibilityLabel
         ) {
             return false;
@@ -218,6 +229,7 @@ function FavoriteBackendModelsCollector(props: Readonly<{
     selectedBackendTargetKey: string;
     selectedModelId: string;
     selectedModelSelection?: SessionModelSelection | null;
+    teamModels?: NewSessionEngineOptionDetailProps['teamModels'];
     selectedConfigOverrides?: Readonly<Record<string, string>>;
     selectedMachineId: string | null;
     capabilityServerId: string;
@@ -411,6 +423,42 @@ function FavoriteBackendModelsCollector(props: Readonly<{
         provisionalFavorites.length > 0 ? [...availableFavorites, ...provisionalFavorites] : availableFavorites
     ), [availableFavorites, provisionalFavorites]);
 
+    const teamFavorites = React.useMemo(() => {
+        const options = new Map<string, FavoriteModelOption>();
+        const choices = new Map<string, TeamCredentialProviderModelSelectionV1>();
+        const teamInput = {
+            ...props.teamModels,
+            agentTargetKey: props.entry.backendTargetKey,
+            declarationContext: providerDeclarationContext(props.selectedMachineId, props.declarationProjection),
+        };
+        const sections = props.teamModels?.onSelectTeamCredentialModel && props.selectedBackendTargetKey === props.entry.backendTargetKey
+            ? buildTeamCredentialModelPickerSections(teamInput)
+            : [];
+        const rows = new Map(sections.flatMap(section => section.options.map(row => [favoriteModelPickerKey(row.value), row] as const)));
+        for (const favorite of matchingFavorites) {
+            const ref = favorite.selection.ref;
+            if (!('source' in ref) || ref.source !== 'team_resource') continue;
+            const value = buildFavoriteOptionValue(favorite.selection);
+            const row = rows.get(value);
+            const label = row?.label ?? favorite.modelLabel ?? ref.modelId;
+            const model = row?.value;
+            if (model && isTeamCredentialProviderModelPickerValue(model) && row?.availability === 'available') {
+                choices.set(value, model);
+            }
+            const reason = choices.has(value) ? undefined : row?.unavailableReason
+                ?? (props.selectedBackendTargetKey === props.entry.backendTargetKey
+                    ? retainedTeamModelUnavailableReason(ref, teamInput)
+                    : t('newSession.chooseAgentFirst'));
+            options.set(value, {
+                value, label,
+                description: row?.description ?? reason ?? props.entry.title,
+                accessibilityLabel: row?.accessibilityLabel ?? [label, reason].filter(Boolean).join(', '),
+                disabled: !choices.has(value),
+            });
+        }
+        return { options, choices };
+    }, [matchingFavorites, props.declarationProjection, props.entry, props.selectedBackendTargetKey, props.selectedMachineId, props.teamModels]);
+
     const staleFavorites = React.useMemo(() => {
         const availableIds = new Set(selectableFavorites.map((model) => buildFavoriteOptionValue(model.modelSelection)));
         const seen = new Set<string>();
@@ -446,6 +494,8 @@ function FavoriteBackendModelsCollector(props: Readonly<{
             ),
         })),
         ...staleFavorites.map((favorite) => {
+            const team = teamFavorites.options.get(buildFavoriteOptionValue(favorite.selection));
+            if (team) return team;
             const modelId = normalizeFavoriteModelId(getFavoriteModelRef(favorite).modelId);
             const refused = refusedPresentationByValue.get(buildFavoriteOptionValue(favorite.selection));
             if (refused) {
@@ -487,12 +537,14 @@ function FavoriteBackendModelsCollector(props: Readonly<{
         refusedPresentationByValue,
         selectableFavorites,
         staleFavorites,
+        teamFavorites,
     ]);
 
     const favoriteValues = React.useMemo(() => options.map((option) => option.value), [options]);
-    const availableValues = React.useMemo(() => selectableFavorites.map((model) => (
-        buildFavoriteOptionValue(model.modelSelection)
-    )), [props.entry, selectableFavorites]);
+    const availableValues = React.useMemo(() => [
+        ...selectableFavorites.map(model => buildFavoriteOptionValue(model.modelSelection)),
+        ...teamFavorites.choices.keys(),
+    ], [selectableFavorites, teamFavorites]);
     const staleFavoriteByValue = React.useMemo(() => new Map(staleFavorites.map((favorite) => {
         const modelId = normalizeFavoriteModelId(getFavoriteModelRef(favorite).modelId);
         return [buildFavoriteOptionValue(favorite.selection), favorite] as const;
@@ -531,10 +583,11 @@ function FavoriteBackendModelsCollector(props: Readonly<{
                 },
             }
             : null);
-    const selectedValue = props.selectedBackendTargetKey === props.entry.backendTargetKey
-        && selectedModelSelection?.ref.agentTargetKey === props.entry.backendTargetKey
-        ? buildFavoriteOptionValue(selectedModelSelection)
-        : '';
+    const selectedTeam = props.teamModels?.selectedTeamCredentialModel;
+    const selectedValue = props.selectedBackendTargetKey !== props.entry.backendTargetKey ? ''
+        : selectedTeam ? favoriteModelPickerKey(selectedTeam)
+        : selectedModelSelection?.ref.agentTargetKey === props.entry.backendTargetKey
+            ? buildFavoriteOptionValue(selectedModelSelection) : '';
     const selectedOption = options.find((option) => option.value === selectedValue) ?? null;
     const selectedModelOption = modelOptionByValue.get(selectedValue) ?? null;
     const selectedProviderConnectionId = selectedModelSelection
@@ -571,7 +624,8 @@ function FavoriteBackendModelsCollector(props: Readonly<{
         selectedProviderConnectionId,
         selectedValue,
     ]);
-    const favoritesReady = matchingFavorites.length > 0 && staleFavorites.length === 0;
+    const favoritesReady = matchingFavorites.length > 0
+        && staleFavorites.every(favorite => teamFavorites.choices.has(buildFavoriteOptionValue(favorite.selection)));
     const unifiedProbe = React.useMemo(() => mergeOptionPickerProbes([
         favoritesReady && modelProbe.phase === 'loading' ? { ...modelProbe, phase: 'idle' } : modelProbe,
         providerProjection.loading && !favoritesReady
@@ -587,6 +641,7 @@ function FavoriteBackendModelsCollector(props: Readonly<{
             favoriteValues,
             availableValues,
             staleFavoriteByValue,
+            teamModelsByValue: teamFavorites.choices,
             modelByValue,
             selectedOptionControls,
             selectedValue,
@@ -607,6 +662,7 @@ function FavoriteBackendModelsCollector(props: Readonly<{
         selectedOption?.label,
         selectedValue,
         staleFavoriteByValue,
+        teamFavorites,
         unifiedProbe,
         providerProjection.refreshFailures,
         providerProjection.refresh,
@@ -688,6 +744,11 @@ export function NewSessionFavoriteModelsDetail(props: NewSessionFavoriteModelsDe
     }, [orderedSnapshots]);
     const selectFavorite = React.useCallback((value: string) => {
         const snapshot = snapshotByOptionValue.get(value);
+        const teamModel = snapshot?.teamModelsByValue.get(value);
+        if (teamModel) {
+            void props.teamModels?.onSelectTeamCredentialModel?.(teamModel);
+            return;
+        }
         const model = snapshot?.modelByValue.get(value);
         if (!snapshot || !model || !availableValues.has(value)) return;
         const providerId = resolveNewSessionOperationalProviderId({
@@ -712,7 +773,7 @@ export function NewSessionFavoriteModelsDetail(props: NewSessionFavoriteModelsDe
                     },
             }),
         );
-    }, [availableValues, props.onSelectFavoriteModel, props.selectedConfigOverrides, snapshotByOptionValue]);
+    }, [availableValues, props.onSelectFavoriteModel, props.selectedConfigOverrides, props.teamModels, snapshotByOptionValue]);
     const shortcutSlotByKey = React.useMemo(() => new Map(
         [...assignFavoriteModelSlots(props.favoriteModelSelections.map(({ selection }) => buildFavoriteOptionValue(selection)))]
             .filter(([key]) => availableValues.has(key)),
@@ -757,6 +818,7 @@ export function NewSessionFavoriteModelsDetail(props: NewSessionFavoriteModelsDe
                     selectedBackendTargetKey={props.selectedBackendTargetKey}
                     selectedModelId={props.selectedModelId}
                     selectedModelSelection={props.selectedModelSelection}
+                    teamModels={props.teamModels}
                     selectedConfigOverrides={props.selectedConfigOverrides}
                     selectedMachineId={props.selectedMachineId}
                     capabilityServerId={props.capabilityServerId}

@@ -54,6 +54,7 @@ export function buildNewSessionFavoriteModelsPickerOption(params: Readonly<{
     selectedBackendTargetKey: string;
     selectedModelId: string;
     selectedModelSelection?: NewSessionFavoriteModelsDetailProps['selectedModelSelection'];
+    teamModels?: NewSessionFavoriteModelsDetailProps['teamModels'];
     selectedConfigOverrides?: Readonly<Record<string, string>>;
     selectedMachineId: string | null;
     capabilityServerId: string;
@@ -117,6 +118,11 @@ export function buildNewSessionFavoriteModelsPickerOption(params: Readonly<{
                 selectedBackendTargetKey={params.selectedBackendTargetKey}
                 selectedModelId={params.selectedModelId}
                 selectedModelSelection={params.selectedModelSelection}
+                teamModels={params.teamModels ? { ...params.teamModels, onSelectTeamCredentialModel: async (selection) => {
+                    const result = await params.teamModels?.onSelectTeamCredentialModel?.(selection);
+                    if (result !== false) deferAgentInputPopoverClose(onRequestClose);
+                    return result;
+                } } : undefined}
                 selectedConfigOverrides={params.selectedConfigOverrides}
                 selectedMachineId={params.selectedMachineId}
                 capabilityServerId={params.capabilityServerId}

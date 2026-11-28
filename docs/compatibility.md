@@ -12534,8 +12534,11 @@ the additive fields in the strict catalog response.
 
 The optional `reasoningEffort` field in Account favorite rows uses the existing
 favorite selection format and mutation. Retained rows omit the field and retain
-their selection. In 0.3 development, a Connected Account favorite carries the
-existing qualified model reference in the V2 selection envelope. Native and
+their selection. In 0.3 development, Connected Account and Team-brokered
+favorites carry their qualified model references in the V2 selection envelope.
+The Team arm stores the Team, share, Agent, model and observed share revision.
+Its identity survives a share revision change. Selection uses the current
+catalog and the ordinary Team-model admission path. Native and
 Account Provider favorites keep V1 selections, including legacy flat entries
 projected on read. Older 0.3 readers preserve unfamiliar favorite rows as
 opaque settings entries. Qualified selection and replay require current readers.

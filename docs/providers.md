@@ -3646,9 +3646,12 @@ not establish equivalence to another catalog's pinned model.
 The New Session and existing Session Agent pickers share the Account preference.
 Starring a concrete model saves its current Thinking level through
 `models.favorite.set`. Changing Thinking changes the Session. Updating the
-favorite saves the new level to the Account. A favorite from a brokered
-Connected Account row keeps its qualified model reference. The composer uses
-the source-qualified identity for Current in Search and in the Agent palette.
+favorite saves the new level to the Account. Brokered Connected Account and
+Team model favorites keep their qualified model references. A Team favorite
+identifies the Agent, Team, share and model. The current Team catalog supplies
+the selection and its availability. Withdrawal or lost membership leaves the
+favorite visible with the unavailable reason. Search and the Agent palette
+compare the favorite with the applied source when marking it Current.
 A favorite targeting the native source from a running brokered Session shows
 the native source and the existing restart label.
 

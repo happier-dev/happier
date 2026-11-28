@@ -14,7 +14,7 @@ import { SELECTION_LIST_CARD_CONTENT_INSET_PX } from '@/components/ui/selectionL
 import { providerDeclarationContext, readAccountAgentCatalogConnectedServices, type ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { providerCatalogPermitsUnlistedModelIdV1 } from '@happier-dev/protocol/providers/catalog/merge';
-import { isFavoriteModelRefSelectable } from '@happier-dev/protocol/providers/modelFavoritesV1';
+import { isFavoriteModelRefSelectable, type FavoriteModelRef } from '@happier-dev/protocol/providers/modelFavoritesV1';
 import { isNativeAutomaticModelSelectionInputV1 } from '@happier-dev/protocol/providers/selection/v1';
 import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type {
@@ -71,7 +71,8 @@ import { selectSessionModelPickerSourceGroups } from './selectSessionModelPicker
 import { SessionModelFavoriteEffortNote, SessionModelRunsThrough, type SessionModelPickerSource } from './SessionModelRunsThrough';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { PROVIDER_REASONING_EFFORT_OPTION_ID, formatReasoningEffortTierLabel } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
-import { assignFavoriteModelSlots } from './favoriteModelEntries';
+import { assignFavoriteModelSlots, favoriteModelPickerKey, favoriteModelRefFromPickerValue } from './favoriteModelEntries';
+import { retainedTeamModelUnavailableReason } from './buildTeamCredentialModelPickerSections';
 import { AgentInputChipPickerCloseContext } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 import type { SelectionListKeyboardHint, SelectionListQuickActionShortcut } from '@/components/ui/selectionList';
 import { resolveModModifier } from '@/keyboard/bindings';
@@ -90,6 +91,7 @@ import {
 } from './SessionModelSourceBrowseHandoff';
 import {
     isTeamCredentialProviderModelPickerValue,
+    sessionModelPickerValueFromRef,
     sessionModelSelectionKey,
     type SessionModelPickerOptionValue,
     type SessionModelPickerValue,
@@ -137,7 +139,7 @@ export type SessionModelPickerExperimentalConfirmationController = Readonly<{
 }>;
 
 export type SessionModelPickerFavoriteEntry = Readonly<{
-    ref: PersonalSessionModelRef;
+    ref: FavoriteModelRef;
     label?: string;
     description?: string;
     accessibilityLabel?: string;
@@ -246,7 +248,7 @@ export type SessionModelPickerProps = Readonly<{
     favoriteEntries?: readonly SessionModelPickerFavoriteEntry[];
     favoriteKeys?: ReadonlySet<string>;
     favoriteReasoningEffortByKey?: ReadonlyMap<string, string | undefined>;
-    onToggleFavorite?: (ref: PersonalSessionModelRef, reasoningEffort?: string) => void;
+    onToggleFavorite?: (ref: FavoriteModelRef, reasoningEffort?: string, modelLabel?: string) => void;
     onSelectFavoriteModel?: (ref: PersonalSessionModelRef, reasoningEffort?: string, binding?: QualifiedConnectedAccountPurposeBindingV1) => boolean | Promise<boolean>;
     onUpdateFavoriteModelReasoningEffort?: (ref: PersonalSessionModelRef, reasoningEffort: string) => void;
     selectedOptionControls?: ReadonlyArray<SessionConfigOptionControl>;
@@ -268,7 +270,7 @@ export type SessionModelPickerProps = Readonly<{
      * accepted; a card's option value is written only after that, so a refused model drops it.
      */
     onSelect: (ref: SessionModelPickerValue, connectedAccountBinding?: QualifiedConnectedAccountPurposeBindingV1) => void;
-    onSelectTeamCredentialModel?: (selection: TeamCredentialProviderModelSelectionV1) => void;
+    onSelectTeamCredentialModel?: (selection: TeamCredentialProviderModelSelectionV1) => boolean | void | Promise<boolean | void>;
     onRecoverTeamCredentialResource?: (resource: TeamCredentialResourceCatalogEntryV1) => void;
     /** Heading and "via" name for the Agent's own models: its signed-in account or pool. */
     nativeSourceLabel?: string | null;
@@ -294,7 +296,7 @@ export function SessionModelPicker(input: SessionModelPickerProps) {
     const selectedTeam = isTeamCredentialProviderModelPickerValue(input.selected) ? input.selected : null;
     const favoriteReasoningEffortByKey = React.useMemo(
         () => input.favoriteReasoningEffortByKey ?? (input.favoriteEntries
-            ? new Map(input.favoriteEntries.map(entry => [sessionModelSelectionKey(entry.ref), entry.reasoningEffort]))
+            ? new Map(input.favoriteEntries.map(entry => [favoriteModelPickerKey(sessionModelPickerValueFromRef(entry.ref)), entry.reasoningEffort]))
             : undefined),
         [input.favoriteEntries, input.favoriteReasoningEffortByKey],
     );
@@ -605,24 +607,29 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
         if (favoriteEntries.length === 0) return reportedModelPresentation.sections;
 
         const optionByKey = new Map(reportedModelPresentation.sections.flatMap((section) => (
-            section.options.map((option) => [sessionModelSelectionKey(option.value), option] as const)
+            section.options.flatMap(option => section.id === 'current-selection-recovery' && isTeamCredentialProviderModelPickerValue(option.value)
+                ? [] : [[favoriteModelPickerKey(option.value), option] as const])
         )));
         const favoriteKeys = new Set<string>();
         const favoriteOptions = favoriteEntries.flatMap((entry) => {
-            const key = sessionModelSelectionKey(entry.ref);
+            const value = sessionModelPickerValueFromRef(entry.ref);
+            const key = favoriteModelPickerKey(value);
             if (favoriteKeys.has(key)) return [];
             favoriteKeys.add(key);
             // A favourite names the Thinking it was saved with after its name ("Opus 5.5 High", lab r4).
             const effort = entry.reasoningEffort ? formatReasoningEffortTierLabel(entry.reasoningEffort) : undefined;
             const projected = optionByKey.get(key);
             if (projected) return [effort ? { ...projected, labelSuffix: effort } : projected];
+            const unavailableReason = 'source' in entry.ref && entry.ref.source === 'team_resource'
+                ? retainedTeamModelUnavailableReason(entry.ref, props)
+                : undefined;
             return [{
                 ...(effort ? { labelSuffix: effort } : {}),
-                value: entry.ref,
+                value,
                 label: entry.label ?? entry.ref.modelId,
                 searchText: entry.ref.modelId,
-                description: entry.description,
-                accessibilityLabel: entry.accessibilityLabel,
+                description: unavailableReason ?? entry.description,
+                accessibilityLabel: joinHappierFacts(entry.accessibilityLabel ?? entry.label ?? entry.ref.modelId, unavailableReason),
                 disabled: true,
             }];
         });
@@ -634,12 +641,12 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
             },
             ...reportedModelPresentation.sections.flatMap((section) => {
                 const options = section.options.filter((option) => (
-                    !favoriteKeys.has(sessionModelSelectionKey(option.value))
+                    !favoriteKeys.has(favoriteModelPickerKey(option.value))
                 ));
                 return options.length > 0 ? [{ ...section, options }] : [];
             }),
         ];
-    }, [props.favoriteEntries, reportedModelPresentation.sections]);
+    }, [props.favoriteEntries, props.teamCredentialResources, props.teamCredentialResourceStatusByKey, reportedModelPresentation.sections]);
     // "Built-in" only tells the agent's own models apart from provider and team groups; over the
     // only group it is noise (0.2 had none). A selected account/pool is identity and stays visible.
     // Browsing one source, the scope bar already names it, so
@@ -701,20 +708,28 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
     const favoriteSlots = React.useMemo(() => assignFavoriteModelSlots(props.favoriteKeys ?? []), [props.favoriteKeys]);
     const favoriteOptions = React.useMemo<OptionPickerFavoriteOptions<SessionModelPickerOptionValue> | undefined>(() => {
         if (!props.favoriteKeys || !props.onToggleFavorite) return undefined;
+        const favorites = props.favoriteKeys;
         return {
-            values: props.favoriteKeys,
-            isFavoritable: (option) => option.value !== null && !isTeamCredentialProviderModelPickerValue(option.value)
-                && isFavoriteModelRefSelectable(option.value),
+            values: new Set(presentedSections.flatMap(section => section.options.flatMap(option =>
+                favorites.has(favoriteModelPickerKey(option.value)) ? [sessionModelSelectionKey(option.value)] : [],
+            ))),
+            isFavoritable: (option) => {
+                const ref = favoriteModelRefFromPickerValue(option.value);
+                return ref !== null && isFavoriteModelRefSelectable(ref);
+            },
             onToggle: (option) => {
-                if (!option.value || isTeamCredentialProviderModelPickerValue(option.value)) return;
+                const ref = favoriteModelRefFromPickerValue(option.value);
+                if (!ref) return;
                 const effort = sessionModelSelectionKey(option.value) === selectedKey
                     ? selectedOptionControls?.find(control => control.option.id === PROVIDER_REASONING_EFFORT_OPTION_ID)?.effectiveValue
                     : undefined;
-                if (typeof effort === 'string') props.onToggleFavorite?.(option.value, effort);
-                else props.onToggleFavorite?.(option.value);
+                if ('source' in ref && ref.source === 'team_resource') {
+                    props.onToggleFavorite?.(ref, undefined, option.label);
+                } else if (typeof effort === 'string') props.onToggleFavorite?.(ref, effort);
+                else props.onToggleFavorite?.(ref);
             },
         };
-    }, [props.favoriteKeys, props.onToggleFavorite, selectedKey, selectedOptionControls]);
+    }, [presentedSections, props.favoriteKeys, props.onToggleFavorite, selectedKey, selectedOptionControls]);
     const customTarget = React.useMemo(() => {
         if (props.canEnterCustomValue === false || (props.selected && 'source' in props.selected)) return null;
         const selectedConnectionId = props.selected?.providerConnectionId ?? null;
@@ -803,7 +818,11 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
     const close = props.onRequestClose ?? hostClose;
     const selectFavoriteModel = props.onSelectFavoriteModel;
     const favoriteEfforts = props.favoriteReasoningEffortByKey;
-    const chooseFavorite = useEventCallback((ref: PersonalSessionModelRef, effort: string | undefined) => {
+    const chooseFavorite = useEventCallback((ref: NonNullable<SessionModelPickerOptionValue>, effort: string | undefined) => {
+        if (isTeamCredentialProviderModelPickerValue(ref)) {
+            void Promise.resolve(commitSelection(ref)).then(selected => { if (selected !== false) close?.(); });
+            return;
+        }
         selectModel(ref, () => {
             props.experimentalConfirmation?.clear();
             const binding = 'source' in ref ? readConnectedAccountBinding(ref) : undefined;
@@ -816,21 +835,22 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
         });
     });
     const favoriteBindings = React.useMemo(() => {
-        if (!selectFavoriteModel || !close || favoriteSlots.size === 0) return undefined;
+        if (!close || favoriteSlots.size === 0) return undefined;
         const options = presentedSections.flatMap(section => section.options);
         const seen = new Set<string>();
         return options.flatMap(option => {
             const ref = option.value;
-            if (!ref || isTeamCredentialProviderModelPickerValue(ref) || option.disabled || option.availability === 'unavailable') return [];
-            const key = sessionModelSelectionKey(ref);
+            if (!ref || option.disabled || option.availability === 'unavailable') return [];
+            if (isTeamCredentialProviderModelPickerValue(ref) ? !props.onSelectTeamCredentialModel : !selectFavoriteModel) return [];
+            const key = favoriteModelPickerKey(ref);
             const digit = favoriteSlots.get(key);
             if (digit === undefined || seen.has(key)) return [];
             seen.add(key);
             return [{ key, ref, digit }];
         });
-    }, [close, favoriteSlots, presentedSections, selectFavoriteModel]);
+    }, [close, favoriteSlots, presentedSections, props.onSelectTeamCredentialModel, selectFavoriteModel]);
     const favoriteSlotByKey = React.useMemo(
-        () => favoriteBindings && new Map(favoriteBindings.map(({ key, digit }) => [key, digit])),
+        () => favoriteBindings && new Map(favoriteBindings.map(({ ref, digit }) => [sessionModelSelectionKey(ref), digit])),
         [favoriteBindings],
     );
     const quickActionShortcuts = React.useMemo<readonly SelectionListQuickActionShortcut[] | undefined>(

@@ -1,3 +1,4 @@
+import type { FavoriteModelRef } from '@happier-dev/protocol/providers/modelFavoritesV1';
 import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import * as React from 'react';
 import { useRouter } from 'expo-router';
@@ -24,13 +25,11 @@ import {
 import {
     SessionModelPicker,
     type SessionModelPickerExperimentalConfirmationController,
-    type SessionModelPickerFavoriteEntry,
 } from '@/components/sessions/modelPicker/SessionModelPicker';
 import {
     sessionModelSelectionKey,
     sessionModelPickerValueFromRef,
     isTeamCredentialProviderModelPickerValue,
-    type SessionModelPickerValue,
     type SessionModelPickerOptionValue,
 } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import { Item } from '@/components/ui/lists/Item';
@@ -44,7 +43,7 @@ import {
     toggleFavoriteModelSelection,
     type FavoriteModelSelectionV1,
 } from '@/sync/domains/models/favoriteModelSelections';
-import { projectFavoriteModelEntries } from '@/components/sessions/modelPicker/favoriteModelEntries';
+import { favoriteModelPickerKey, projectFavoriteModelEntries } from '@/components/sessions/modelPicker/favoriteModelEntries';
 import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import { t } from '@/text';
 import { teamCredentialDetailPath } from '@/components/settings/teams/teamsRoutes';
@@ -129,13 +128,13 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
         && props.onFavoriteModelSelectionsChange,
     );
 
-    const favoriteEntries = React.useMemo<readonly SessionModelPickerFavoriteEntry[]>(() => (
+    const favoriteEntries = React.useMemo(() => (
         props.selectedBackendEntry
             ? projectFavoriteModelEntries(props.favoriteModelSelections ?? [], buildFavoriteBackendIdentity(props.selectedBackendEntry))
             : []
     ), [props.favoriteModelSelections, props.selectedBackendEntry]);
     const favoriteKeys = React.useMemo(
-        () => new Set(favoriteEntries.map((entry) => sessionModelSelectionKey(entry.ref))),
+        () => new Set(favoriteEntries.map((entry) => entry.key)),
         [favoriteEntries],
     );
     const modelFieldLabel = t('newSession.selectModelTitle');
@@ -144,7 +143,7 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
             return props.modelOptions.find((option) => option.value === 'default')?.label
                 ?? t('newSession.selectModelDescription');
         }
-        return favoriteEntries.find((entry) => sessionModelSelectionKey(entry.ref) === sessionModelSelectionKey(selected))?.label
+        return favoriteEntries.find((entry) => entry.key === favoriteModelPickerKey(selected))?.label
             || selected.modelId;
     }, [favoriteEntries, props.modelOptions, selected]);
     const selectedPresentation = React.useMemo(() => (
@@ -205,21 +204,21 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
         }
         props.onSelectModel((canonicalRef?.modelId ?? 'default') as ModelMode);
     }, [props.modelOptions, props.onSelectModel, props.onSelectSelection]);
-    const toggleFavorite = React.useCallback((ref: NonNullable<SessionModelPickerValue>) => {
+    const toggleFavorite = React.useCallback((ref: FavoriteModelRef, _reasoningEffort?: string, savedModelLabel?: string) => {
         if (!props.selectedBackendEntry || !props.onFavoriteModelSelectionsChange) return;
-        const key = sessionModelSelectionKey(ref);
+        const key = favoriteModelPickerKey(sessionModelPickerValueFromRef(ref));
         const providerGroup = providerGroups.find(group => group.rows.some(row => sessionModelSelectionKey(row.ref) === key));
         const providerRow = providerGroup?.rows.find((row) => (
-            sessionModelSelectionKey(row.ref) === sessionModelSelectionKey(ref)
+            sessionModelSelectionKey(row.ref) === key
         ));
         const storedFavorite = favoriteEntries.find((entry) => (
-            sessionModelSelectionKey(entry.ref) === sessionModelSelectionKey(ref)
+            entry.key === key
         ));
         props.onFavoriteModelSelectionsChange(toggleFavoriteModelSelection({
             favorites: props.favoriteModelSelections ?? [],
             backend: buildFavoriteBackendIdentity(props.selectedBackendEntry),
             modelRef: ref,
-            modelLabel: providerRow?.descriptor.name
+            modelLabel: savedModelLabel || providerRow?.descriptor.name
                 || props.modelOptions.find((option) => option.value === ref.modelId)?.label
                 || storedFavorite?.label
                 || ref.modelId,

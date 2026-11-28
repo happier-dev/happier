@@ -1,4 +1,4 @@
-import type { PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
+import { favoriteModelRefIdentityKey, type FavoriteModelRef } from '@happier-dev/protocol/providers/modelFavoritesV1';
 
 import { t } from '@/text';
 import {
@@ -9,12 +9,12 @@ import {
   type FavoriteModelSelectionV1,
 } from '@/sync/domains/models/favoriteModelSelections';
 
-import { sessionModelSelectionKey } from './sessionModelSelectionKey';
+import { isTeamCredentialProviderModelPickerValue, sessionModelPickerValueFromRef, sessionModelSelectionKey, type SessionModelPickerOptionValue } from './sessionModelSelectionKey';
 
 /** One saved favourite model for a backend, as the pickers and Search name it. */
 export type FavoriteModelEntry = Readonly<{
   key: string;
-  ref: PersonalSessionModelRef;
+  ref: FavoriteModelRef;
   label: string;
   description: string;
   accessibilityLabel: string;
@@ -22,6 +22,22 @@ export type FavoriteModelEntry = Readonly<{
   /** The Provider connection a favourite saved ("OpenRouter — Work"); null for the Agent's own models. */
   sourceLabel: string | null;
 }>;
+
+export function favoriteModelRefFromPickerValue(value: SessionModelPickerOptionValue): FavoriteModelRef | null {
+  if (!isTeamCredentialProviderModelPickerValue(value)) return value;
+  if (value.deliveryMode !== 'brokered') return null;
+  const { teamId, resourceId, agentTargetKey, modelId, expectedResourceRevision, deliveryMode } = value;
+  return { source: 'team_resource', teamId, resourceId, agentTargetKey, modelId, expectedResourceRevision, deliveryMode };
+}
+
+/** Match the saved share across catalog revisions without changing the picker row's exact selection key. */
+export function favoriteModelPickerKey(value: SessionModelPickerOptionValue): string {
+  if (isTeamCredentialProviderModelPickerValue(value)) {
+    const ref = favoriteModelRefFromPickerValue(value);
+    if (ref) return favoriteModelRefIdentityKey(ref);
+  }
+  return sessionModelSelectionKey(value);
+}
 
 /** Assign the first nine saved identities their stable keyboard slots. */
 export function assignFavoriteModelSlots(keys: Iterable<string>) {
@@ -47,7 +63,7 @@ export function projectFavoriteModelEntries(
   return favorites.flatMap((favorite) => {
     if (!favoriteModelSelectionMatchesBackend(favorite, backend)) return [];
     const ref = getFavoriteModelRef(favorite);
-    const key = sessionModelSelectionKey(ref);
+    const key = favoriteModelPickerKey(sessionModelPickerValueFromRef(ref));
     if (!isFavoriteModelRefSelectable(ref) || seen.has(key)) return [];
     seen.add(key);
     const provider = favorite.providerDisplaySnapshot;

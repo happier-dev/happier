@@ -190,6 +190,7 @@ export function buildNewSessionAgentPickerOptions(
             selectedBackendTargetKey: params.selectedBackendTargetKey,
             selectedModelId: params.selectedModelId,
             selectedModelSelection: params.selectedModelSelection,
+            teamModels: params.teamModels,
             selectedConfigOverrides: params.selectedConfigOverrides,
             selectedMachineId: params.selectedMachineId,
             capabilityServerId: params.capabilityServerId,

@@ -29,6 +29,23 @@ describe('model favorite Action', () => {
       permissionMode: 'default', runClass: 'bounded', ioMode: 'request_response', retentionPolicy: 'ephemeral' }, { surface: 'rpc' }))
       .toMatchObject({ ok: false, errorCode: 'execution_run_child_choice_required', details: { childChoice } });
   });
+  it('admits a Team-brokered favorite through the Agent Action schema and preserves the native favorite', async () => {
+    const native = { selection: { v: 1 as const, updatedAt: 5,
+      ref: { agentTargetKey: 'agent:codex', providerConnectionId: null, modelId: 'same-model' } } };
+    const team = { selection: { v: 2 as const, updatedAt: 6,
+      ref: { source: 'team_resource' as const, teamId: 'team', resourceId: 'share', expectedResourceRevision: 1,
+        deliveryMode: 'brokered' as const, agentTargetKey: 'agent:codex', modelId: 'same-model' } } };
+    const input = { selection: team, favorite: true };
+    const schema = getActionSpec('models.favorite.set').inputSchema;
+    expect(schema.safeParse(input).success).toBe(true);
+    const raw = { favoriteModelSelectionsV1: [native] };
+    const added = setModelFavoriteV1(raw, input);
+    expect(added.favoriteModelSelectionsV1).toEqual([native, team]);
+    const refreshed = { ...team, selection: { ...team.selection, ref: { ...team.selection.ref, expectedResourceRevision: 2 } } };
+    expect(setModelFavoriteV1(added, { selection: refreshed, favorite: false })).toEqual(raw);
+    expect(schema.safeParse({ ...input, selection: { selection: { ...team.selection,
+      ref: { ...team.selection.ref, nativeDelivery: {} } } } }).success).toBe(false);
+  });
   it('exposes one exact-tuple intent and preserves unrelated and opaque Account favorites', async () => {
     expect(ActionIdSchema.parse('models.favorite.set')).toBe('models.favorite.set');
     const favorite = { selection: { v: 1 as const, updatedAt: 5,

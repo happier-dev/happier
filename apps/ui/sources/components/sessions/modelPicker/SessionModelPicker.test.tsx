@@ -26,6 +26,8 @@ import { MetadataSchema } from '@happier-dev/session-core/state';
 import { createSessionActiveModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
 import { resolveSessionModelSelectionDisposition } from '@/sync/domains/models/resolveSessionModelSelectionDisposition';
+import { projectFavoriteModelEntries } from './favoriteModelEntries';
+import { toggleFavoriteModelSelection, type FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
 import { sessionModelSelectionKey } from './sessionModelSelectionKey';
 
 /**
@@ -85,6 +87,27 @@ function experimentalProviderGroup(id: string) {
         }],
     }];
     return { connectionId, selected, providerGroups };
+}
+
+function brokeredTeamModelFixture() {
+    const selection = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-5.6-luna' };
+    const active = createSessionActiveModelSelection({ selection, source: 'runtime_apply', runner: { pid: 42, processStartTimeMs: 10 },
+        teamCredentialModel: { kind: 'team_credential_provider_model', teamId: 'team', resourceId: 'resource',
+            expectedResourceRevision: 0, deliveryMode: 'brokered', agentTargetKey: selection.agentTargetKey, modelId: selection.modelId } });
+    if (active?.v !== 2) throw new Error('Expected canonical Team runtime fact');
+    const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'resource', teamId: 'team', displayName: { content: { t: 'plain', v: 'QA43 Leeroy brokered' }, recipientEnvelope: null, legacyPlaintext: true }, resourceRevision: 0,
+        readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
+        directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', providerModels: [{
+            selection: active.teamCredentialModel, descriptor: { id: selection.modelId, name: 'Luna' },
+            application: { agentTargetKey: selection.agentTargetKey, implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+                endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses' },
+            compatibility: { result: { status: 'experimental', selectedProtocol: 'openai-responses',
+                reasons: ['compatibility_evidence_missing'], confirmationScope: { kind: 'model', modelId: selection.modelId } },
+                compatibilityFingerprint: 'compatibility:v1:experimental', confirmed: false },
+            confidence: 'account_unverified', sources: { manual: false, static: true, probe: false },
+            sourceRevision: 'source-v1', availability: 'available',
+        }], sourcePresentation: { kind: 'provider', provider: { identity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' }, definitionRevision: 1 } } });
+    return { selection, active, resource };
 }
 
 describe('SessionModelPicker', () => {
@@ -147,28 +170,54 @@ describe('SessionModelPicker', () => {
         expect(confirm).not.toHaveBeenCalled();
         expect(resolveSessionModelPickerSelection({ groups: providerGroups, ref: selected }).kind).toBe('confirm-experimental');
     });
+    it('stars and selects a brokered Team model and retains its withdrawal reason', async () => {
+        const { selection, active, resource } = brokeredTeamModelFixture();
+        const backend = { backendTargetKey: selection.agentTargetKey };
+        const onSelectFavorite = vi.fn();
+        const teamModel = active.teamCredentialModel;
+        let favorites: FavoriteModelSelectionV1[] = [];
+        const favoritePicker = (resources: readonly typeof resource[], selected: typeof teamModel | typeof selection = selection) => (
+            <SessionModelPicker agentTargetKey={selection.agentTargetKey} declarationContext={{ kind: 'account' }}
+                nativeModels={[{ value: selection.modelId, label: 'Native Luna' }]} providerGroups={[]}
+                teamCredentialResources={resources} selected={selected}
+                favoriteEntries={projectFavoriteModelEntries(favorites, backend)}
+                onToggleFavorite={(modelRef) => {
+                    favorites = toggleFavoriteModelSelection({ favorites, backend, modelRef, modelLabel: 'Luna' });
+                }}
+                onSelectTeamCredentialModel={onSelectFavorite} onSelect={() => {}} />
+        );
+        const favoriteScreen = await renderScreen(favoritePicker([resource], teamModel));
+        const teamKey = sessionModelSelectionKey(teamModel);
+        await favoriteScreen.pressByTestIdAsync(`model-picker-overlay-option-favorite:${teamKey}`);
+        expect(favorites).toHaveLength(1);
+        expect(favorites[0]?.selection.ref).toMatchObject({ source: 'team_resource', teamId: 'team', resourceId: 'resource', modelId: selection.modelId });
+        const revisedTeamModel = { ...teamModel, expectedResourceRevision: 1 };
+        const revisedResource = {
+            ...resource, resourceRevision: 1,
+            providerModels: resource.providerModels.map(row => ({ ...row, selection: revisedTeamModel })),
+        };
+        await favoriteScreen.update(favoritePicker([revisedResource]));
+        const revisedKey = sessionModelSelectionKey(revisedTeamModel);
+        expect(favoriteScreen.findByTestId(`model-picker-overlay-option-selected-indicator:${revisedKey}`)).toBeNull();
+        await favoriteScreen.pressByTestIdAsync(`model-picker-overlay-option:${revisedKey}`);
+        expect(onSelectFavorite).toHaveBeenCalledWith(revisedTeamModel);
+        onSelectFavorite.mockClear();
+        await favoriteScreen.update(favoritePicker([resource]));
+        expect(favoriteScreen.findByTestId(`model-picker-overlay-option-selected-indicator:${teamKey}`)).toBeNull();
+        await favoriteScreen.pressByTestIdAsync(`model-picker-overlay-option:${teamKey}`);
+        expect(onSelectFavorite).toHaveBeenCalledWith(teamModel);
+        await favoriteScreen.update(favoritePicker([]));
+        const withdrawn = favoriteScreen.findByTestId(`model-picker-overlay-option:${teamKey}`);
+        expect(withdrawn?.props.disabled).toBe(true);
+        expect(withdrawn?.props.accessibilityLabel).toContain(t('teams.credentials.detail.notFound'));
+        await favoriteScreen.unmount();
+    });
     it('selects the runtime-applied Team row rather than a same-model Built-in row after a V1 launch', async () => {
-        const selection = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-5.6-luna' };
-        const active = createSessionActiveModelSelection({ selection, source: 'runtime_apply', runner: { pid: 42, processStartTimeMs: 10 },
-            teamCredentialModel: { kind: 'team_credential_provider_model', teamId: 'team', resourceId: 'resource',
-                expectedResourceRevision: 0, deliveryMode: 'brokered', agentTargetKey: selection.agentTargetKey, modelId: selection.modelId } });
-        if (active?.v !== 2) throw new Error('Expected canonical Team runtime fact');
+        const { selection, active, resource } = brokeredTeamModelFixture();
         const metadata = MetadataSchema.parse({ path: '/workspace', host: 'test',
             modelSelectionIntentV1: { v: 1, updatedAt: 11, selection },
             sessionModelsV1: { v: 1, agentId: 'codex', updatedAt: 0, currentModelId: selection.modelId,
                 availableModels: [{ id: selection.modelId, name: 'Luna' }], activeSelectionV1: active } });
-        const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'resource', teamId: 'team', displayName: { content: { t: 'plain', v: 'QA43 Leeroy brokered' }, recipientEnvelope: null, legacyPlaintext: true }, resourceRevision: 0,
-            readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
-            directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', providerModels: [{
-                selection: active.teamCredentialModel, descriptor: { id: selection.modelId, name: 'Luna' },
-                application: { agentTargetKey: selection.agentTargetKey, implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
-                    endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses' },
-                compatibility: { result: { status: 'experimental', selectedProtocol: 'openai-responses',
-                    reasons: ['compatibility_evidence_missing'], confirmationScope: { kind: 'model', modelId: selection.modelId } },
-                    compatibilityFingerprint: 'compatibility:v1:experimental', confirmed: false },
-                confidence: 'account_unverified', sources: { manual: false, static: true, probe: false },
-                sourceRevision: 'source-v1', availability: 'available',
-            }], sourcePresentation: { kind: 'provider', provider: { identity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' }, definitionRevision: 1 } } });
         for (const sessionActive of [true, false]) {
             const onSelectTeamCredentialModel = vi.fn();
             const disposition = resolveSessionModelSelectionDisposition({ metadata, agentId: 'codex', agentTargetKey: selection.agentTargetKey,
