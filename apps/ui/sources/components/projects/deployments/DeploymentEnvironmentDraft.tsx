@@ -624,15 +624,17 @@ export const DeploymentEnvironmentDraft = React.memo(
       setConfigureVisited(true);
       setFormStep('configure');
     });
+    const exitUnconfirmedDraft = props.steps?.onExit ?? props.onDiscard;
     const backStep = useEventCallback(() => {
       if (draftStep === 'configure') { setFormStep('where'); return; }
       if (draftStep === 'where') { props.steps?.onExit(); return; }
-      if (partial || createOutcomeUnknown) props.onDiscard();
+      if (createOutcomeUnknown) exitUnconfirmedDraft();
+      else if (partial) props.onDiscard();
       else if (stepReview) answerStepConfirmation(false);
       else setPrepared(null);
     });
     const toWhere = useEventCallback(() => {
-      if (createOutcomeUnknown) { props.onDiscard(); return; }
+      if (createOutcomeUnknown) { exitUnconfirmedDraft(); return; }
       if (stepReview) answerStepConfirmation(false);
       setPrepared(null);
       setFormStep('where');

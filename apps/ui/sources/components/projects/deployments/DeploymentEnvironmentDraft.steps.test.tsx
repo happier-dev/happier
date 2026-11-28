@@ -62,7 +62,7 @@ const { createRegistryHostV1 } = await import('@happier-dev/protocol/registries'
 await import('@/sync/ops/actions/defaultActionExecutor');
 
 describe('Environment draft hosted as steps (journey-deploy D3: Where → Configure → Review in the Deploy an app dialog)', () => {
-  it('one draft instance walks the steps, keeps what was typed across them, and the host only frames it', async () => {
+  it.each(['created', 'outcome unknown'] as const)('preserves the draft across steps and handles Create ending as %s', async result => {
     const serverId = await homes.addHome({
       name: 'Deploy',
       serverUrl: 'https://draft-steps.test',
@@ -85,11 +85,13 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
           coverage: { complete: true, nextCursor: null },
         },
       });
+      const unconfirmed = Symbol();
       await answerExternalActionAccountForHome(homes, serverId, {
         machineId: 'runtime',
         installationId: 'runtime-installation',
         actionId: 'deployments.environments.create',
         tokenEpoch: 0,
+        failure: value => value === unconfirmed ? { errorCode: 'outcome_unknown', error: 'outcome_unknown' } : undefined,
         execute: (input) => {
           if (typeof input === 'object' && input !== null && 'mode' in input) {
             const intent =
@@ -129,6 +131,7 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
             });
           }
           committed.push(DeploymentEnvironmentCreateInputV1Schema.parse(input));
+          if (result === 'outcome unknown') return unconfirmed;
           return {
             ok: true,
             environmentId: 'created-environment',
@@ -243,6 +246,14 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
       expect(committed).toEqual([]);
 
       await act(async () => frame().press());
+      if (result === 'outcome unknown') {
+        await settle(() => expect(screen.findByTestId('project-deployments.draft.outcome-unknown')).not.toBeNull());
+        await act(async () => frame().back());
+        expect(onExit).toHaveBeenCalledOnce();
+        expect(saved).toEqual([]);
+        await screen.unmount();
+        return;
+      }
       await settle(() => expect(saved).toHaveLength(1));
       expect(committed).toHaveLength(1);
       expect(saved).toEqual([
