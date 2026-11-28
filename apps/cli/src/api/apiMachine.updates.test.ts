@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { z } from 'zod/mini';
 import tweetnacl from 'tweetnacl';
@@ -9,6 +9,7 @@ import { computeMachineOwnerEnvelopeFingerprintV1 } from '@happier-dev/protocol/
 import { buildProviderAccountUsageRefreshChangeV1, type ChangeEntry } from '@happier-dev/protocol/changes';
 import { buildProviderAccountUsageMaterialChangesV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import { buildProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/accountUsage';
+import { MachineReadBatchRequestV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
 import { MachineRecipientKeyEnvelopeCommitInputV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { createSessionOwnerMetadataV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
@@ -55,7 +56,18 @@ async function seedActiveAccountSnapshot(token: string): Promise<void> {
 
 type ServedSessionRow = Readonly<{ transferredKey: Uint8Array; metadata: string; metadataLayoutVersion: number }>;
 
+function noPublishedMachines(body: unknown) {
+  const { machineIds } = MachineReadBatchRequestV1Schema.parse(body);
+  return { status: 200, data: { results: machineIds.map(machineId => ({ machineId, status: 'not_found' })) } };
+}
+
 describe('ApiMachineClient updates', () => {
+  beforeEach(() => {
+    const post = axios.post.bind(axios);
+    vi.spyOn(axios, 'post').mockImplementation(async (url: string, body: unknown, config?: Parameters<typeof axios.post>[2]) =>
+      url.endsWith('/v1/machines/read-batch') ? noPublishedMachines(body) : post(url, body, config));
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -231,6 +243,7 @@ describe('ApiMachineClient updates', () => {
     const fingerprint = computeContentPublicKeyFingerprint(recipient.publicKey);
     let delivered: Uint8Array | null = null;
     let teamJoined = false;
+    const quietMachineIds = ['bob-desktop', 'bob-laptop', 'bob-workstation'];
     vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json({
       features: {}, capabilities: { serverIdentity: { serverIdentityId: 'fixture-home' } },
     })));
@@ -247,28 +260,43 @@ describe('ApiMachineClient updates', () => {
       if (cursor === 1) initialCommitted.resolve();
       if (cursor === 2) refreshCommitted.resolve();
       if (cursor === 4) observationCommitted.resolve();
-      if (cursor === 5) joinCommitted.resolve();
+      if (cursor === 8) joinCommitted.resolve();
     });
     const publishedContent = {
       metadata: encodeBase64(encrypt(key, 'dataKey', { host: 'alice', platform: 'linux', happyCliVersion: '0.3', homeDir: '/home/alice', happyHomeDir: '/home/alice/.happier' })),
       metadataVersion: 3, daemonState: null, daemonStateVersion: 4,
     };
+    const quietMachine = (id: string) => ({
+      id, ...publishedContent, managedMachineRef: null, dataEncryptionKey: caller, recipientWorkPending: false,
+      keyBasis: { dataEncryptionKey: caller, metadataVersion: 3, daemonStateVersion: 4 },
+      access: { custodian: { accountId: 'bob', displayName: 'Bob' }, role: 'manage',
+        resourceMode: 'e2ee', accessState: 'ready' },
+    });
+    const foreignMachine = () => ({
+      id: 'alice-machine', ...publishedContent, managedMachineRef: null, dataEncryptionKey: caller, recipientWorkPending: teamJoined,
+      access: { custodian: { accountId: 'offline-alice', displayName: 'Alice' }, role: 'manage',
+        resourceMode: 'e2ee', accessState: 'ready' },
+    });
     vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
       if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'bob' } };
+      if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
       if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
         mode: 'e2ee', version: 1, settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
       if (url.includes('/v2/changes?')) {
         // The Home selects by exact kind, so an unsubscribed producer never reaches this page.
         const query = new URL(url).searchParams;
         const subscribed = query.get('kinds')?.split(',').includes(changeKind);
-        const cursor = teamJoined ? 5 : 1;
+        const cursor = teamJoined ? 8 : 1;
         return { status: 200, data: { changes: subscribed && Number(query.get('after')) < cursor
           ? [{ cursor, kind: changeKind, entityId: 'alice-machine', changedAt: cursor }] : [], nextCursor: cursor } };
       }
-      if (url.endsWith('/v1/machines/alice-machine')) return { status: 200, data: { machine: {
-        id: 'alice-machine', ...publishedContent, dataEncryptionKey: caller,
-        access: { custodian: { accountId: 'offline-alice', displayName: 'Alice' }, role: 'manage', resourceMode: 'e2ee', accessState: 'ready' },
-      } } };
+      if (url.endsWith('/v1/machines/alice-machine')) return { status: 200, data: { machine: foreignMachine() } };
+      const quietId = quietMachineIds.find(id => new URL(url).pathname.startsWith(`/v1/machines/${id}`));
+      if (quietId) return { status: 200, data: url.includes('/data-key-envelopes') ? {
+        machineId: quietId, custodianAccountId: 'bob', encryptionMode: 'e2ee',
+        machineOwnerEnvelopeFingerprint: computeMachineOwnerEnvelopeFingerprintV1(decodeBase64(caller)),
+        callerDataEncryptionKey: caller, content: publishedContent, nextCursor: null, recipients: [],
+      } : { machine: quietMachine(quietId) } };
       if (url.includes('/v1/machines/alice-machine/data-key-envelopes')) return { status: 200, data: {
         machineId: 'alice-machine', custodianAccountId: 'offline-alice', encryptionMode: 'e2ee',
         machineOwnerEnvelopeFingerprint: computeMachineOwnerEnvelopeFingerprintV1(decodeBase64(caller)), callerDataEncryptionKey: caller, nextCursor: null,
@@ -287,7 +315,15 @@ describe('ApiMachineClient updates', () => {
       return { status: 200, data: { appliedRecipientAccountIds: ['later-team-member'], skippedRecipientAccountIds: [] } };
     });
     const policyPath = 'https://holder-home.test/v1/machines/managed/controller/policies';
-    const post = vi.spyOn(axios, 'post').mockImplementation(async (url: string) => {
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (url: string, body: unknown) => {
+      if (url.endsWith('/v1/machines/read-batch')) {
+        const { machineIds } = MachineReadBatchRequestV1Schema.parse(body);
+        return { status: 200, data: { results: machineIds.map(machineId => {
+          const machine = machineId === 'alice-machine' ? foreignMachine()
+            : quietMachineIds.includes(machineId) ? quietMachine(machineId) : null;
+          return machine ? { machineId, status: 'found', machine } : { machineId, status: 'not_found' };
+        }) } };
+      }
       expect(url).toBe(policyPath);
       return { status: 200, data: { machines: [], targets: [] } };
     });
@@ -323,7 +359,7 @@ describe('ApiMachineClient updates', () => {
         }));
       runWithServerHttpBaseUrl(home, () => client.connect());
       await initialCommitted.promise;
-      expect(worklistReads()).toBe(1);
+      const initialWorklistReads = worklistReads();
       expect(delivered).toBeNull();
       expect(axios.patch).not.toHaveBeenCalled();
 
@@ -333,14 +369,16 @@ describe('ApiMachineClient updates', () => {
       const allWorklistReads = () => vi.mocked(axios.get).mock.calls.filter(([url]) =>
         /^\/v1\/machines\/[^/]+\/data-key-envelopes$/.test(new URL(url).pathname),
       ).length;
+      const batchReads = () => post.mock.calls.filter(([url]) => url.endsWith('/v1/machines/read-batch')).length;
       const snapshots = snapshotReads();
       const worklists = allWorklistReads();
+      const initialBatchReads = batchReads();
       await policy.notifyChanged();
       const policyReads = () => post.mock.calls.filter(([url]) => url === policyPath).length;
       const initialPolicyReads = policyReads();
       expect(initialPolicyReads).toBeGreaterThan(0);
       await vi.advanceTimersByTimeAsync(600_000);
-      expect(worklistReads()).toBe(1);
+      expect(worklistReads()).toBe(initialWorklistReads);
       expect(snapshotReads()).toBe(snapshots);
       expect(socket.emit.mock.calls.filter(([event]) => event === 'machine-alive')).toHaveLength(10);
 
@@ -355,16 +393,23 @@ describe('ApiMachineClient updates', () => {
       expect(snapshotReads()).toBe(snapshots);
       expect(allWorklistReads()).toBe(worklists);
       expect(policyReads()).toBe(initialPolicyReads);
+      expect(batchReads()).toBe(initialBatchReads);
 
       teamJoined = true;
-      publish('team-member-joined', 4, 5, [{ cursor: 5, kind: changeKind, entityId: 'alice-machine', changedAt: 5 }]);
+      publish('team-member-joined', 4, 8, [
+        ...quietMachineIds.map((entityId, index): ChangeEntry => ({ cursor: 5 + index, kind: 'machine', entityId, changedAt: 5 + index })),
+        { cursor: 8, kind: changeKind, entityId: 'alice-machine', changedAt: 8 },
+      ]);
       await joinCommitted.promise;
-      expect(snapshotReads()).toBe(snapshots + 1);
-      expect(worklistReads()).toBe(3); // The new grant uses one page and one confirmation after its write.
-      expect(allWorklistReads()).toBe(worklists + 2);
-      expect(policyReads()).toBe(initialPolicyReads);
-      expect(axios.patch).toHaveBeenCalledTimes(1);
       expect(delivered).toEqual(key);
+      expect({
+        snapshots: snapshotReads() - snapshots,
+        batches: batchReads() - initialBatchReads,
+        worklists: allWorklistReads() - worklists,
+        foreignWorklists: worklistReads() - initialWorklistReads,
+        policies: policyReads() - initialPolicyReads,
+        patches: vi.mocked(axios.patch).mock.calls.length,
+      }).toEqual({ snapshots: 0, batches: 1, worklists: 2, foreignWorklists: 2, policies: 0, patches: 1 });
     } finally {
       await policy.stop();
       await client.shutdown();
@@ -520,8 +565,10 @@ describe('ApiMachineClient updates', () => {
     await seedActiveAccountSnapshot(token);
     try {
       runWithServerHttpBaseUrl('https://holder-home.test', () => client.connect());
-      // Connect recovery prepares the own Machine once.
-      await vi.waitFor(() => expect(ownEnvelopeReads.length).toBeGreaterThan(0));
+      const batchReads = () => vi.mocked(axios.post).mock.calls.filter(([url]) => url.endsWith('/v1/machines/read-batch'));
+      await vi.waitFor(() => expect(batchReads()).toHaveLength(1));
+      expect(batchReads()[0]?.[1]).toEqual({ machineIds: ['bob-executor'] });
+      await vi.waitFor(() => expect(Reflect.get(client, 'pendingChangesSyncDemand')).toBeNull());
       const connectReads = ownEnvelopeReads.length;
       // The daemon's own content write: its echo carries only fields applied live, then a later
       // wake reads a page whose own Machine row is that held write.
@@ -531,6 +578,7 @@ describe('ApiMachineClient updates', () => {
       socket.trigger('update', { id: 'session-wake', seq: 1, createdAt: 1, body: { t: 'account-change' } });
       await feedCommitted;
       expect(ownEnvelopeReads.length - connectReads).toBe(0);
+      expect(batchReads()).toHaveLength(1);
     } finally { await client.shutdown(); }
   });
 
@@ -726,7 +774,8 @@ describe('ApiMachineClient updates', () => {
       return { status: 404, data: {} };
     });
     // The key holder's statement is the whole proof; the pass reads no Home audience.
-    vi.spyOn(axios, 'post').mockResolvedValue({ status: 500, data: {} });
+    vi.spyOn(axios, 'post').mockImplementation(async (url: string, body: unknown) =>
+      url.endsWith('/v1/machines/read-batch') ? noPublishedMachines(body) : { status: 500, data: {} });
     const patch = vi.spyOn(axios, 'patch').mockImplementation(async (url: string, body: unknown) => {
       expect(url).toBe('https://owner-home.test/v2/sessions/owed-session/data-key/envelopes');
       // The Home only ever sees sealed bytes for the census's own recipient.
@@ -764,7 +813,8 @@ describe('ApiMachineClient updates', () => {
     }));
     expect(delivered).toEqual(key);
     expect(patch).toHaveBeenCalledTimes(1);
-    expect(axios.post).not.toHaveBeenCalled();
+    const sessionPosts = vi.mocked(axios.post).mock.calls.filter(([url]) => !url.endsWith('/v1/machines/read-batch'));
+    expect(sessionPosts).toEqual([]);
     // Nothing owed, nothing opened: the key is read only for real work.
     expect(axios.get).not.toHaveBeenCalledWith('https://owner-home.test/v2/sessions/settled-session', expect.anything());
   });

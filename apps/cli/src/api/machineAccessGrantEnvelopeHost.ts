@@ -10,6 +10,7 @@ import { resolvePublishedMachineEncryptionContext } from '@/api/machine/machineD
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { computeMachineOwnerEnvelopeFingerprintV1 } from '@happier-dev/protocol/machines/machineOwnerEnvelopeFingerprintV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { MachinePublishedRowV1Schema, type MachinePublishedRowV1 } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import type { Machine } from '@/api/types';
 
 export type PrepareMachineAccessKeyEnvelopesParams = Readonly<{
@@ -21,6 +22,8 @@ export type PrepareMachineAccessKeyEnvelopesParams = Readonly<{
   signal?: AbortSignal;
   isCredentialCurrent?: () => boolean | Promise<boolean>;
   settleOnEmptyFirstPage?: true;
+  /** A current row read by this pass using the same Home and holder credential. */
+  initialMachineRow?: MachinePublishedRowV1;
   requestHeaders?: (request: Readonly<{ method: 'GET' | 'POST' | 'PATCH'; path: string; body?: unknown }>) => Readonly<Record<string, string>> | Promise<Readonly<Record<string, string>>>;
   /** The canonical Machine lifecycle supplies proven transferable material; never an Action input. */
   resolveTransferableMachineDataKey?: (page: MachineAccessRecipientCensusResponseV1) => Promise<Uint8Array | null>;
@@ -33,6 +36,7 @@ export async function prepareMachineAccessKeyEnvelopes(
   const accountId = credentials ? readAccountIdFromToken(credentials.token) : null;
   let current = true;
   let custodianKey: Machine | null = null;
+  let observedMachine = params.initialMachineRow;
   const assertCurrent = async () => {
     current = !params.signal?.aborted && (await params.isCredentialCurrent?.()) !== false;
     if (!current) throw new MachineDataKeyPreparationErrorV1('machine_key_changed');
@@ -63,10 +67,13 @@ export async function prepareMachineAccessKeyEnvelopes(
       ownerPreparation: {
         accountId,
         observeMachine: async () => {
+          await assertCurrent();
+          if (observedMachine) return observedMachine;
           const machinePath = `/v1/machines/${encodeURIComponent(params.machineId)}`;
           const payload = await readResponse(await axios.get<unknown>(`${params.serverHttpBaseUrl}${machinePath}`, await options({ method: 'GET', path: machinePath })));
           if (!payload || typeof payload !== 'object' || !('machine' in payload)) throw new MachineDataKeyPreparationErrorV1('machine_unavailable');
-          return payload.machine;
+          observedMachine = MachinePublishedRowV1Schema.parse(payload.machine);
+          return observedMachine;
         },
         prepareContentKey: async () => {
           const { ApiClient } = await import('@/api/api');
@@ -74,6 +81,7 @@ export async function prepareMachineAccessKeyEnvelopes(
           const client = await ApiClient.create(credentials);
           custodianKey = await client.prepareMachineContentKey(params.machineId, {
             serverHttpBaseUrl: params.serverHttpBaseUrl,
+            initialMachineRow: observedMachine,
             signal: params.signal, isCurrent: async () => { await assertCurrent(); return current; },
             request: async request => {
               const requestOptions = { ...await options(request), signal: request.signal };

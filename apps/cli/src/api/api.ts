@@ -1136,6 +1136,8 @@ export class ApiClient {
     /** A captured Home/Account transport, including private Action continuation authority. */
     request?: (request: Readonly<{ method: 'GET' | 'POST'; path: string; body?: unknown; signal?: AbortSignal }>) => Promise<Readonly<{ status: number; data: unknown }>>;
     serverHttpBaseUrl?: string;
+    /** The first authenticated observation from this same preparation pass. */
+    initialMachineRow?: PublishedMachineRow;
     isCurrent?: () => boolean | Promise<boolean>;
   }>): Promise<Machine> {
     const assertCurrent = async () => {
@@ -1187,7 +1189,11 @@ export class ApiClient {
       ? boundAccountMode.kind === 'resolved' ? boundAccountMode.mode : 'unknown'
       : await this.getAccountEncryptionMode({ signal: options?.signal });
     if (accountMode === 'unknown') throw new MachineContentKeyUnavailableError(machineId);
+    let initialMachineRow = options?.initialMachineRow;
     const observe = async (signal?: AbortSignal): Promise<PublishedMachineRow> => {
+      const firstObservation = initialMachineRow;
+      initialMachineRow = undefined;
+      if (firstObservation && accountMode === 'e2ee') return firstObservation;
       // Ordinary plain readers lock historical ciphertext. Only its custodian
       // recovery snapshot may open it with genuinely retained predecessor material.
       const path = `/v1/machines/${encodeURIComponent(machineId)}`

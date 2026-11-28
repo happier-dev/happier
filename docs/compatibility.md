@@ -10098,6 +10098,10 @@ are custodian-only and malformed present envelopes never become legacy or Plain.
 Shared recipient preparation observes the authenticated custodian Machine and
 runs that existing conversion before the strict current-holder census. Foreign
 Manage holders retain their delivered key tuple, not historical custodian reads.
+The development daemon batches exact Machine reads for Account-feed recipient
+repair. It uses the Home's projected work and effective Manage access before
+opening a worklist. A fresh Machine observation supplies the first custodian
+read. The worklist and conditional commit still use the authenticated holder.
 The development grant projection carries member-level compatibility and key
 recoverability separately from grant-edit authority; both initial continuation
 and Retry consume its canonical `canPrepareKeys` result.

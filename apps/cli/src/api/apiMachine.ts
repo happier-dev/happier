@@ -364,6 +364,7 @@ import { resolveSystemToolLaunchPurposeDeclarations } from '@/daemon/connectedSe
 import type { AgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
 
 import type { DaemonToServerEvents, ServerToDaemonEvents } from './machine/socketTypes';
+import { MachineReadBatchRequestV1Schema, MachineReadBatchResponseV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
 import { isMachineProjectionChangeKindV1, readAuthoritativeSessionDeletionChangeV1, readSessionTranscriptChangeHintV1, readSessionTranscriptRevisedV1, readSessionFollowSourceChangedV1, readSessionFollowReceiverAvailabilityChangedV1, readSessionMemoryInputsChangedV1, readSessionMemoryPushedFactsV1, TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import {
     registerMachineRpcHandlers,
@@ -1739,15 +1740,30 @@ export class ApiMachineClient {
             // Without encryption material this daemon cannot deliver a recipient key.
             if (!authority?.credential.encryption) return;
             const { credential, accountId, isCurrent } = authority;
+            const serverHttpBaseUrl = readMachineRuntimeServerHttpBaseUrl();
+            const response = await axios.post<unknown>(`${serverHttpBaseUrl}/v1/machines/read-batch`,
+                MachineReadBatchRequestV1Schema.parse({ machineIds: [...new Set(machineIds)] }), {
+                    headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${credential.token}` },
+                    timeout: configuration.sessionControlHttpTimeoutMs, signal,
+                });
+            if (!await isCurrent()) return;
+            const { results } = MachineReadBatchResponseV1Schema.parse(response.data);
             const [{ prepareMachineAccessKeyEnvelopes }, { runSessionDataKeyPreparationDetached }] = await Promise.all([
                 import('./machineAccessGrantEnvelopeHost'),
                 import('@happier-dev/protocol/sessions/encryption/sessionDataKeyPreparationPass'),
             ]);
-            for (const machineId of new Set(machineIds)) {
+            for (const result of results) {
+                if (result.status !== 'found') continue;
+                const { machineId, machine } = result;
+                const access = machine.access;
+                // The Home owns recipient-work projection and inherited Manage access.
+                // Keep custodian recovery eligible when the normal projection has no work fact.
+                if (machine.recipientWorkPending === false || access?.role !== 'manage'
+                    || (access.custodian.accountId !== accountId && (access.accessState !== 'ready' || access.resourceMode !== 'e2ee'))) continue;
                 if (!await isCurrent()) return;
                 await runSessionDataKeyPreparationDetached(JSON.stringify([machineRuntimeServerId, accountId, 'machine-data-key-envelopes', machineId]),
                     () => prepareMachineAccessKeyEnvelopes({ credentials: credential, serverId: machineRuntimeServerId,
-                        serverHttpBaseUrl: readMachineRuntimeServerHttpBaseUrl(), machineId, signal,
+                        serverHttpBaseUrl, machineId, signal, initialMachineRow: machine,
                         isCredentialCurrent: isCurrent, settleOnEmptyFirstPage: true }));
             }
         };
@@ -7586,8 +7602,8 @@ export class ApiMachineClient {
                     await this.refreshMachineFromServer(signal);
                     signal.throwIfAborted();
                 }
-                // The existing grant/Team Account-change producer wakes current Manage holders. The
-                // worklist reauthorizes these exact resources; a wake never grants key or access authority.
+                // Grant and Team changes wake current Manage holders. Content changes can also
+                // make pending keys deliverable. The batch projects current recipient work for both.
                 // An own `machine` row this daemon already holds is its own content write (the same
                 // proof that skips the refresh above): it changed no recipient.
                 await this.prepareMachineRecipientEnvelopes([
