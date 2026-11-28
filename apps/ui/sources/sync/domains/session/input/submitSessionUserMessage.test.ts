@@ -806,6 +806,31 @@ describe('submitSessionUserMessage Pending action ownership', () => {
         expect(onOutboundHandoff).not.toHaveBeenCalled();
     });
 
+    it.each(['exact', 'absent'] as const)('uses the %s activation from an enqueue ACK without fetching the Session', async (result) => {
+        const localId = 'exact-pending-input';
+        const priorAuthorization = { requestId: 'older-input', requestedAt: 10, status: 'waiting' as const };
+        const authorization = { requestId: localId, requestedAt: 20, status: 'waiting' as const };
+        const session = createSession({ active: false, presence: 0, pendingActivationAuthorization: priorAuthorization });
+        const harness = createPort();
+        const refreshSessionForSubmit = vi.fn(async () => session);
+        harness.port.refreshSessionForSubmit = refreshSessionForSubmit;
+        const enqueuePendingMessage: SessionSubmitPort['enqueuePendingMessage'] = async () => ({
+            localId, accepted: true, pendingActivationAuthorization: result === 'exact' ? authorization : null,
+        });
+
+        await submitSessionUserMessage({ ...harness.port, enqueuePendingMessage }, {
+            ...submitOptions(session),
+            localId,
+            requestedAction: { v: 1, kind: 'send_now' },
+            resumeTargetOverride: { machineId: 'm1', directory: '/tmp/project' },
+        });
+
+        expect(harness.ensureSessionRuntimeForPendingInput).toHaveBeenCalledWith(expect.objectContaining({
+            pendingActivationAuthorization: result === 'exact' ? authorization : undefined,
+        }));
+        expect(refreshSessionForSubmit).not.toHaveBeenCalled();
+    });
+
     it('carries exact Account authority through pending wake and remote-control admission', async () => {
         const session = createSession({ active: false, presence: 0 });
         const harness = createPort();

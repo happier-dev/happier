@@ -753,6 +753,7 @@ import {
     dismissPendingDeliveryV2,
     discardPendingMessageV2,
     enqueuePendingMessageV2,
+    type PendingMessageEnqueueResultV2,
     fetchAndApplyPendingMessagesV2,
     markPendingDeliveryHandledV2,
     reorderPendingMessagesV2,
@@ -6751,6 +6752,7 @@ class Sync {
         didWrite?: boolean;
         cancelled?: true;
         terminal?: true;
+        pendingActivationAuthorization?: PendingMessageEnqueueResultV2['pendingActivationAuthorization'];
         externalHandoffClaimed?: true;
     }>> {
         return await this.withPendingQueueOwnerContext(sessionId, async ({ outboxScope, request, isCurrent, serverWireMode, encryption }) => {

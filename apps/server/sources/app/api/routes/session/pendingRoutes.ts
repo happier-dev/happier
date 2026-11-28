@@ -445,6 +445,7 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
                 return reply.send({
                     didWrite: false,
                     suppressed: true,
+                    ...(!request.params.runId ? { pendingActivationAuthorization: null } : {}),
                     ...toPendingStateJson(res, request.params.runId),
                 });
             }
@@ -469,6 +470,9 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
 
             return reply.send({
                 didWrite: res.didWrite,
+                ...(!request.params.runId ? {
+                    pendingActivationAuthorization: res.terminal === true ? null : res.pendingActivationAuthorization ?? null,
+                } : {}),
                 ...(res.terminal === true
                     ? {
                         terminal: true as const,

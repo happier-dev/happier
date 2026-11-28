@@ -7967,13 +7967,21 @@ describe("pendingMessageService (shared sessions)", () => {
                 expect(result.statusCode, result.body).toBe(200);
                 return result.json();
             };
-            expect(await send(localId)).toMatchObject({ didWrite: true, managedActivationLocalId: localId });
+            const accepted = await send(localId);
+            expect(accepted).toMatchObject({ didWrite: true, managedActivationLocalId: localId });
             const first = await db.session.findUniqueOrThrow({ where: { id: session.id } });
             expect(first).toMatchObject({ pendingActivationRequestId: localId, pendingActivationStatus: 'waiting' });
-            expect(await send(localId)).toMatchObject({ didWrite: false, managedActivationLocalId: localId });
+            const requestAuthorization = mapPendingActivationAuthorization(first);
+            expect(accepted.pendingActivationAuthorization).toEqual(requestAuthorization);
+            expect(requestAuthorization).toMatchObject({ requestId: localId, status: 'waiting',
+                managedWakeTargetV1: { origin: { pendingRequestId: localId, session: { sessionId: session.id } } } });
+            expect(await send(localId)).toMatchObject({ didWrite: false, managedActivationLocalId: localId,
+                pendingActivationAuthorization: requestAuthorization });
             const replayed = await db.session.findUniqueOrThrow({ where: { id: session.id } });
             expect(replayed.pendingActivationRequestedAt).toEqual(first.pendingActivationRequestedAt);
-            expect(await send('another-input', guest.id, { v: 1, kind: 'enqueue' })).not.toHaveProperty('managedActivationLocalId');
+            const ordinary = await send('another-input', guest.id, { v: 1, kind: 'enqueue' });
+            expect(ordinary).not.toHaveProperty('managedActivationLocalId');
+            expect(ordinary).toHaveProperty('pendingActivationAuthorization', null);
 
             const presence = createSessionPublisherPresence();
             const binding = { accountId: owner.id, machineId: guest.id, sessionId: session.id };
@@ -7985,11 +7993,12 @@ describe("pendingMessageService (shared sessions)", () => {
                 .toMatchObject({ ok: true, didMaterialize: true, message: { localId } });
             const providerOwned = await send(localId);
             expect(providerOwned).not.toHaveProperty('managedActivationLocalId');
+            expect(providerOwned).toHaveProperty('pendingActivationAuthorization', null);
             expect(await resolveAcceptedPendingDelivery({ actorUserId: owner.id, sessionId: session.id, localId,
                 publisherAuthority: { ...binding, committedFence: registered.committedFence } }))
                 .toMatchObject({ ok: true, didResolve: true });
             const terminal = await send(localId);
-            expect(terminal).toMatchObject({ didWrite: false, terminal: true });
+            expect(terminal).toMatchObject({ didWrite: false, terminal: true, pendingActivationAuthorization: null });
             expect(terminal).not.toHaveProperty('managedActivationLocalId');
 
             await db.machine.update({ where: { id: controller.id }, data: {

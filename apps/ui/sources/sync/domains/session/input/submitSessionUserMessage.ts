@@ -733,16 +733,20 @@ async function enqueuePending(
     };
 
     try {
-        // The enqueue ACK does not carry native enrollment authority. Read the
-        // current Session after acceptance, in the same captured Account/Home.
-        const currentSession = port.refreshSessionForSubmit ? await port.refreshSessionForSubmit(opts.sessionId, {
-            ...(opts.serverId ? { serverId: opts.serverId } : {}),
-            ...(opts.accountLifetime ? { accountLifetime: opts.accountLifetime } : {}),
-        }) : undefined;
+        const acknowledgedAuthorization = enqueueResult?.pendingActivationAuthorization;
+        // Released Homes may omit the projection. A current Home's explicit
+        // absence supersedes any activation cached from a different input.
+        const currentSession = acknowledgedAuthorization === undefined && port.refreshSessionForSubmit
+            ? await port.refreshSessionForSubmit(opts.sessionId, {
+                ...(opts.serverId ? { serverId: opts.serverId } : {}),
+                ...(opts.accountLifetime ? { accountLifetime: opts.accountLifetime } : {}),
+            }) : undefined;
         if (!isSubmitAccountLifetimeCurrent(opts)) return accountScopeRetiredResult('send_failed', 'pending', localId);
         const wakeResult = await port.ensureSessionRuntimeForPendingInput({
             ...resumeOptions,
-            ...(currentSession ? { pendingActivationAuthorization: currentSession.pendingActivationAuthorization ?? undefined } : {}),
+            ...(acknowledgedAuthorization !== undefined
+                ? { pendingActivationAuthorization: acknowledgedAuthorization ?? undefined }
+                : currentSession ? { pendingActivationAuthorization: currentSession.pendingActivationAuthorization ?? undefined } : {}),
         });
         if (!isSubmitAccountLifetimeCurrent(opts)) return accountScopeRetiredResult('send_failed', 'pending', localId);
         if (wakeResult.type === 'pending') {
