@@ -57,6 +57,28 @@ afterEach(async () => {
 });
 
 describe('plugin saved-secret choice', () => {
+    it('embeds database secret creation with a connection-string field and the enclosing form’s Cancel', async () => {
+        const screen = await renderScreen(
+            <PluginUiPresentationHostProviderInternal host={createPluginUiPrivatePresentationHost(undefined)}>
+                <SavedSecretChoiceList testIDPrefix="database-connect-secret" selectedRef={null} onSelect={vi.fn()}
+                    connectionStringLabel="Connection string" />
+            </PluginUiPresentationHostProviderInternal>,
+        );
+        await vi.waitFor(() => expect(screen.findByTestId('saved-secret-create-value')).not.toBeNull());
+        const value = screen.findAllByTestId('saved-secret-create-value').find(node => node.props.secureTextEntry);
+        expect(value?.props.accessibilityLabel).toBe('Connection string');
+        expect(value?.props.placeholder).toBeFalsy();
+        expect(screen.findAllByTestId('saved-secret-create-name').find(node => node.props.placeholder)).toBeUndefined();
+        expect(screen.findByTestId('saved-secret-create-submit')).not.toBeNull();
+        expect(screen.findByTestId('saved-secret-create-cancel')).toBeNull();
+        await act(async () => {
+            screen.changeTextByTestId('saved-secret-create-name', 'Billing database');
+            screen.changeTextByTestId('saved-secret-create-value', 'postgresql://fixture@localhost/billing');
+        });
+        await screen.pressByTestIdAsync('saved-secret-create-submit');
+        await vi.waitFor(() => expect(home!.creations).toMatchObject([{ displayName: 'Billing database', kind: 'other' }]));
+    });
+
     it('keeps an unavailable configured reference listed with its rendered refusal reason', async () => {
         const { entry } = await home!.addOwnerResource();
         home!.resources.length = 0;

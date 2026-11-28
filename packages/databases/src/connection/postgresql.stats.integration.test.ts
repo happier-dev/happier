@@ -140,7 +140,9 @@ it('preserves user statement counts and Activity while excluding Workbench metad
             '-o', `-c listen_addresses='' -c shared_preload_libraries=pg_stat_statements -k ${directory}`, '-w', 'start']);
         ownedPid = (await readFile(join(directory, 'data/postmaster.pid'), 'utf8')).split('\n')[0];
         await run(join(binaries, 'psql'), ['-X', '-qAt', '-v', 'ON_ERROR_STOP=1', '-h', directory, '-U', 'fixture', '-d', 'postgres',
-            '-c', 'CREATE EXTENSION pg_stat_statements; CREATE ROLE happier_ro LOGIN NOSUPERUSER; GRANT pg_read_all_data TO happier_ro;']);
+            '-c', `CREATE EXTENSION pg_stat_statements; CREATE ROLE happier_ro LOGIN NOSUPERUSER; GRANT pg_read_all_data TO happier_ro;
+                CREATE TABLE items(id int); CREATE VIEW item_view AS SELECT * FROM items;
+                CREATE MATERIALIZED VIEW item_snapshot AS SELECT * FROM items;`]);
         const requests = [
             { kind: 'stats.read', group: 'size', selection: {} },
             { kind: 'stats.read', group: 'statements', selection: { order: 'totalTime', page: { rows: 50, offset: 0 } } },
@@ -166,6 +168,14 @@ it('preserves user statement counts and Activity while excluding Workbench metad
         if (pid?.type !== 'integer') throw new Error('Current backend did not return an integer PID');
         const schemaList = await connection.execute({ operation: 'schemas.list', target, page: { rows: 20 } });
         expect(schemaList).toMatchObject({ ok: true, schemas: expect.arrayContaining([{ name: 'public' }]) });
+        const catalog = await connection.execute({ operation: 'relations.list', target, schema: 'public', page: { rows: 20 } });
+        expect(catalog).toMatchObject({ ok: true, relations: [
+            { relation: { name: 'item_snapshot' }, kind: 'materialized_view' },
+            { relation: { name: 'item_view' }, kind: 'view' },
+            { relation: { name: 'items' }, kind: 'table' },
+            { relation: { name: 'pg_stat_statements' }, kind: 'view' },
+            { relation: { name: 'pg_stat_statements_info' }, kind: 'view' },
+        ] });
         const manualSizeSql = 'SELECT pg_catalog.pg_database_size(current_database())::text AS size_bytes';
         for (let i = 0; i < 2; i++) expect(await read(manualSizeSql)).toMatchObject({ ok: true });
         const activity = await connection.execute({ operation: 'stats.read', target, request: {

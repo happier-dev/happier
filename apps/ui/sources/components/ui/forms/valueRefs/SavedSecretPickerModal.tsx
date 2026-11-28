@@ -64,6 +64,7 @@ export function SavedSecretReferenceChoice(props: Readonly<{
     scope: AccountSettingsScope | null;
     selectedRef: string | null;
     secretPurpose?: string;
+    connectionStringLabel?: string;
     onSelect: (selection: SharedSavedSecretReferenceSelectionV1) => void;
     /** Leaves the choice (the picker sheet closes); the create form's Cancel when there is no saved list to go back to. */
     onCancel?: () => void;
@@ -126,6 +127,8 @@ export function SavedSecretReferenceChoice(props: Readonly<{
             scope={scope}
             presentation="sheet"
             namePlaceholder={props.secretPurpose}
+            valueLabel={props.connectionStringLabel}
+            fixedKind={props.connectionStringLabel ? 'other' : undefined}
             onCreatePersonal={catalog.personalMutations.create}
             sharedAvailable={catalog.sharedEnabled}
             approvalPending={approval.approvalPending}
@@ -133,7 +136,7 @@ export function SavedSecretReferenceChoice(props: Readonly<{
             requestApproval={approval.requestApproval}
             onOpenApproval={approvalId && scope ? () => router.pushRetainingCurrent(
                 `/inbox/approvals/${encodeURIComponent(approvalId)}?serverId=${encodeURIComponent(scope.serverId)}`) : undefined}
-            onCancel={rows.length > 0 || stale ? () => setChosenMode('saved') : () => props.onCancel?.()}
+            onCancel={props.connectionStringLabel ? undefined : rows.length > 0 || stale ? () => setChosenMode('saved') : props.onCancel}
             onCreated={(ref) => {
                 setCreatedRef(ref);
                 retry();

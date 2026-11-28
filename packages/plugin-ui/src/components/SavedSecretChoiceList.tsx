@@ -17,9 +17,14 @@ export type SavedSecretChoiceListProps = Readonly<{
   /** Readable alternative on a host without the saved-secret choice presentation. */
   unavailableLabel?: string;
 }> & (
-  | Readonly<{ onSelect: (selection: SavedSecretChoiceSelection) => void; onConnect?: never }>
+  | Readonly<{
+      onSelect: (selection: SavedSecretChoiceSelection) => void;
+      onConnect?: never;
+      /** Label for creation of a connection string inside a form that already provides Cancel. */
+      connectionStringLabel?: string;
+    }>
   /** Offer the host's saved-or-new secret flow and return only its accepted reference. */
-  | Readonly<{ onConnect: (ref: string) => void; onSelect?: never }>
+  | Readonly<{ onConnect: (ref: string) => void; onSelect?: never; connectionStringLabel?: never }>
 );
 
 /** The incumbent saved-secret choice list, shared with Happier core; the host loads and draws it. */

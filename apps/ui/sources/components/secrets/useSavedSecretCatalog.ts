@@ -60,9 +60,10 @@ type SavedSecretCreateActionResult = ReturnType<
 >;
 
 /** A personal secret holds its value, or links to a field in a declared secret source (never both). */
-export type SavedSecretPersonalCreateInput =
-  | Readonly<{ name: string; value: string; storeIn?: SavedSecretVaultTargetV1 }>
-  | Readonly<{ name: string; source: SavedSecretExternalSourceV1 }>;
+export type SavedSecretPersonalCreateInput = Readonly<{ name: string; kind?: SavedSecret['kind'] }> & (
+  | Readonly<{ value: string; storeIn?: SavedSecretVaultTargetV1 }>
+  | Readonly<{ source: SavedSecretExternalSourceV1 }>
+);
 
 type VaultActionId = 'secrets.link' | 'secrets.export';
 type VaultInput<T extends VaultActionId> = ReturnType<(typeof PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1)[T]['parse']>;
@@ -465,6 +466,7 @@ export function useSavedSecretCatalog(
       approval?: SavedSecretPrivateCreationApprovalOptions,
     ) => {
       const name = input.name.trim();
+      const kind = input.kind ?? 'apiKey';
       if (!name || ('value' in input ? input.value.length === 0 : false)) return null;
       if (!scope || !scopeIsActive || !catalogEnabled) return null;
       const noteDeclinedApproval = (code: string | null | undefined) => {
@@ -482,8 +484,8 @@ export function useSavedSecretCatalog(
         const result = await runTeamAction<SavedSecretCreateActionResult>({
           scope,
           actionId: 'secrets.create',
-          input: 'value' in input ? { name, kind: 'apiKey', value: input.value,
-            ...(input.storeIn ? { storeIn: input.storeIn } : {}) } : { name, kind: 'apiKey', source: input.source },
+          input: 'value' in input ? { name, kind, value: input.value,
+            ...(input.storeIn ? { storeIn: input.storeIn } : {}) } : { name, kind, source: input.source },
           parse: (value) =>
             PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1[
               'secrets.create'

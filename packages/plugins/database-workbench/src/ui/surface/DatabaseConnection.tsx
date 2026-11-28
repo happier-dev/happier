@@ -71,6 +71,7 @@ function SavedSecretConnection({ scope, onConnected, onForgot, onCancel }: Reado
 
   return <>
     <SavedSecretChoiceList testIDPrefix="database-connect-secret" selectedRef={ref}
+      connectionStringLabel={t('plugins.database.connect.connectionString', 'Connection string')}
       onSelect={({ ref: next }) => { setExecution({ status: 'idle' }); setRef(next); }} />
     {ref ? <Form.Field label={connectionName}>
       <TextField label={connectionName} value={name} onChange={setName} />

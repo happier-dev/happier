@@ -429,7 +429,7 @@ function PluginUiPrivateSavedSecretChoice(input: SavedSecretChoiceListProps): Re
             }} /></View>;
     }
     return <SavedSecretReferenceChoice scope={scope} selectedRef={input.selectedRef} onSelect={input.onSelect}
-        testIDPrefix={input.testIDPrefix} />;
+        testIDPrefix={input.testIDPrefix} connectionStringLabel={input.connectionStringLabel} />;
 }
 
 /**

@@ -62,13 +62,15 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
     approvalId?: string | null;
     onOpenApproval?: () => void;
     requestApproval: (registration: ActionApprovalRegistration) => void;
-    onCancel: () => void;
+    onCancel?: () => void;
     onDirtyChange?: (dirty: boolean) => void;
     /** The newly created resource's canonical reference. */
     onCreated: (ref: string, storage: SecretStorage) => void | Promise<void>;
     /** The name a new secret gets unless the person types another (a Connect sheet's "DeepSeek key"). */
     initialName?: string;
     namePlaceholder?: string;
+    valueLabel?: string;
+    fixedKind?: SavedSecret['kind'];
     confirmTypedValueStorage?: () => Promise<boolean>;
     /** The primary's words where the sheet names what it saves ("Save key"); "Save secret" by default. */
     submitLabel?: string;
@@ -111,11 +113,12 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
         : linkedSource ? linkAccount.trim().length > 0 && linkReference.trim().length > 0 : value.length > 0;
     // Linked items take their names from the vault ("GitHub / token"); the other choices are named here.
     const named = vaultMode !== 'existing';
-    const [kind, setKind] = React.useState<SavedSecret['kind']>('apiKey');
+    const [chosenKind, setKind] = React.useState<SavedSecret['kind']>('apiKey');
+    const kind = props.fixedKind ?? chosenKind;
     const [grants, setGrants] = React.useState(createEmptySavedSecretGrantDraft);
     const [submitting, setSubmitting] = React.useState(false);
     const [failure, setFailure] = React.useState<string | null>(null);
-    const dirty = name.length > 0 || value.length > 0 || kind !== 'apiKey'
+    const dirty = name.length > 0 || value.length > 0 || chosenKind !== 'apiKey'
         || chosenStorage !== 'personal' || grants.length > 0
         || chosenOrigin !== VALUE_ORIGIN || linkAccount.length > 0 || linkReference.length > 0 || vaultChoice.dirty;
     React.useEffect(() => { props.onDirtyChange?.(dirty); }, [dirty, props.onDirtyChange]);
@@ -171,7 +174,7 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
                     account: linkAccount.trim(), reference: linkReference.trim() } }
                 : { name: trimmedName, value };
             let approvalDeclined = false;
-            const createdId = await create(input, {
+            const createdId = await create(props.fixedKind ? { ...input, kind: props.fixedKind } : input, {
                 onApprovalPending: props.requestApproval,
                 onApprovalDeclined: () => { approvalDeclined = true; },
             });
@@ -187,7 +190,7 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
         }
         operationInFlight.current = false;
         setSubmitting(false);
-    }, [finishCreated, linkAccount, linkReference, linkedSource, props.onCreatePersonal, props.requestApproval, scopeKey, value,
+    }, [finishCreated, linkAccount, linkReference, linkedSource, props.fixedKind, props.onCreatePersonal, props.requestApproval, scopeKey, value,
         vaultChoice.target, vaultMode]);
 
     const submitLink = React.useCallback(async () => {
@@ -303,6 +306,8 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
         scopeKey, storage, submitLink, submitPersonal, submitShared, vaultMode]);
 
     const busy = submitting || props.approvalPending;
+    const valueLabel = props.valueLabel ?? t('secrets.fields.value');
+    const valuePlaceholder = props.valueLabel ? undefined : t('secrets.placeholders.valueExample');
     const storageTabs = React.useMemo(() => [
         { id: 'personal' as const, label: t('secretsSettings.keepPersonal') },
         { id: 'shared' as const, label: t('secretsSettings.keepShared') },
@@ -355,13 +360,13 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
                             />
                         ) : null}
                         {vaultMode === 'new' ? (
-                            <FieldItem label={t('secrets.fields.value')}>
+                            <FieldItem label={valueLabel}>
                                 <FieldTextInput
                                     testID="saved-secret-create-value"
                                     value={value}
                                     onChangeText={setValue}
-                                    placeholder={t('secrets.placeholders.valueExample')}
-                                    accessibilityLabel={t('secrets.fields.value')}
+                                    placeholder={valuePlaceholder}
+                                    accessibilityLabel={valueLabel}
                                     editable={!busy}
                                     secureTextEntry
                                     monospace
@@ -394,13 +399,13 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
                         </FieldItem>
                     </>
                 ) : (
-                    <FieldItem label={t('secrets.fields.value')}>
+                    <FieldItem label={valueLabel}>
                         <FieldTextInput
                             testID="saved-secret-create-value"
                             value={value}
                             onChangeText={setValue}
-                            placeholder={t('secrets.placeholders.valueExample')}
-                            accessibilityLabel={t('secrets.fields.value')}
+                            placeholder={valuePlaceholder}
+                            accessibilityLabel={valueLabel}
                             editable={!busy}
                             secureTextEntry
                             monospace
@@ -415,7 +420,7 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
                         testID="saved-secret-create-name"
                         value={name}
                         onChangeText={setName}
-                        placeholder={suggestedName || props.namePlaceholder || t('secrets.placeholders.nameExample')}
+                        placeholder={suggestedName || props.namePlaceholder || (props.valueLabel ? undefined : t('secrets.placeholders.nameExample'))}
                         accessibilityLabel={t('secrets.fields.name')}
                         editable={!busy}
                     />
@@ -454,7 +459,7 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
                         />
                     </FieldItem>
                 ) : null}
-                {storage === 'shared' ? (
+                {storage === 'shared' && !props.fixedKind ? (
                     <FieldItem label={t('secrets.catalog.kindTitle')}>
                         <SegmentedTabBar
                             role="radiogroup"
@@ -488,13 +493,13 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
                     message={t('secrets.catalog.approvalPending')} onOpenApproval={props.onOpenApproval} />
             ) : null}
             <RoundButtonSizeScope size="normal" presentation="uniform"><View style={styles.actions}>
-                <RoundButton
+                {props.onCancel ? <RoundButton
                     testID="saved-secret-create-cancel"
                     display="secondary"
                     title={t('common.cancel')}
                     disabled={busy}
                     onPress={props.onCancel}
-                />
+                /> : null}
                 <RoundButton
                     testID="saved-secret-create-submit"
                     title={submitTitle}
