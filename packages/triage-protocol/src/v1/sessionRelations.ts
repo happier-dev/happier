@@ -2,20 +2,19 @@ import { defineProtocolArray, defineProtocolNumber, defineProtocolLiteral, defin
     defineProtocolString, defineProtocolUnion, defineProtocolUniqueArray,
     ProtocolCollectionOpaqueCursorV1Schema } from '@happier-dev/plugin-sdk/protocol';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/manifest';
-import { MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1, MAX_TRIAGE_TEXT_UTF8_BYTES_V1, TRIAGE_SINGLE_LINE_STRING_PATTERN_V1 } from './bounds.js';
+import { SessionIdSchema } from '@happier-dev/plugin-sdk/sessions';
+import { MAX_TRIAGE_TEXT_UTF8_BYTES_V1, TRIAGE_SINGLE_LINE_STRING_PATTERN_V1 } from './bounds.js';
 import { TriageEntryLocatorV1Schema, TriageEntryRefV1Schema, TriageSourceInstanceIdV1Schema, TriageIdentifierV1ProtocolSchema } from './identity.js';
 import { TriageSourceFailureV1Schema, TriageListInvocationErrorV1Schema } from './diagnostics.js';
 import { TriageConfigureSourceOfferV1Schema } from './sourceAdministration.js';
 
-const triageSessionId = defineProtocolString({ minLength: 1, maxLength: MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
-    pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1 });
 const triageText = defineProtocolString({ minLength: 1, maxLength: MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
     pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1 });
 
 /** Source-owned relationships supplement the existing external Collection pager. */
 export const TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1 = 'sessions/read-source-links-v1';
 export const TriageReadSourceSessionLinksInputV1Schema = defineProtocolUnion([
-    defineProtocolObject({ v: defineProtocolLiteral(1), sessionId: triageSessionId }, { policy: 'closed' }),
+    defineProtocolObject({ v: defineProtocolLiteral(1), sessionId: SessionIdSchema }, { policy: 'closed' }),
     defineProtocolObject({ v: defineProtocolLiteral(1), entryRef: TriageEntryRefV1Schema,
         sourceInstanceId: TriageSourceInstanceIdV1Schema.optional(),
     }, { policy: 'closed' }),
@@ -45,7 +44,7 @@ export type TriageSourceSessionLinksLaneV1 = ReturnType<typeof TriageSourceSessi
 export const TriageReadSourceSessionLinksResultV1Schema = defineProtocolObject({
     kind: defineProtocolUnion([defineProtocolLiteral('complete'), defineProtocolLiteral('partial'), defineProtocolLiteral('failed')]),
     links: defineProtocolArray(defineProtocolObject({
-        entryRef: TriageEntryRefV1Schema, sessionId: triageSessionId,
+        entryRef: TriageEntryRefV1Schema, sessionId: SessionIdSchema,
         sourceInstanceId: TriageSourceInstanceIdV1Schema.optional(),
         sourceInstanceRevision: defineProtocolNumber({ integer: true, minimum: 0 }).optional(),
         /** Exact private configuration lookup, carried by the admitted relation owner. */

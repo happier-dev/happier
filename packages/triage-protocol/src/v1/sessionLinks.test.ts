@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { createTriageSourceV1Fixture } from '../testing/v1/index.js';
 import {
     resolveTriageSourceSessionLinkSlicesV1,
+    TriageReadSourceSessionLinksInputV1Schema,
+    TriageReadSourceSessionLinksResultV1Schema,
     TriageSourceLinkSessionInputV1Schema,
     TriageSourceLinkSessionResultV1Schema,
     TriageSourceReadSessionLinksInputV1Schema,
@@ -14,6 +16,21 @@ const instance = { ...fixture.configuredInstance, binding: { purpose: 'example.a
 const localRef = fixture.getInput.localRef;
 
 describe('source-owned Session relationships', () => {
+    it('accepts canonical Session IDs in both directions of the aggregate relation', () => {
+        for (const sessionId of ['s'.repeat(129), 's'.repeat(191)]) {
+            const input = { v: 1, sessionId };
+            const result = { kind: 'complete', links: [{
+                entryRef: { ...localRef, source: fixture.configuredInstance.instance.source },
+                sessionId, linkedAtMs: 1234, displayPath: 'Task 17',
+            }] };
+            expect.soft(TriageReadSourceSessionLinksInputV1Schema.safeParse(input)).toMatchObject({ success: true, data: input });
+            expect.soft(TriageReadSourceSessionLinksResultV1Schema.safeParse(result)).toMatchObject({ success: true, data: result });
+        }
+        for (const sessionId of ['', ' leading-space', 's'.repeat(192)]) {
+            expect(TriageReadSourceSessionLinksInputV1Schema.safeParse({ v: 1, sessionId }).success).toBe(false);
+        }
+    });
+
     it('admits explicit link and unlink intent without caller-selected Account or Home authority', () => {
         for (const linked of [true, false]) {
             const input = { v: 1, instance, localRef, sessionId: 'session-1', linked };

@@ -7,6 +7,8 @@ import { promisify } from 'node:util';
 
 import { describe, expect, it } from 'vitest';
 
+import { copyBuiltSdkArtifact, linkBuiltRuntimeDependencyClosure } from '../../plugin-sdk/src/test-support/sdkArtifactFixture.js';
+
 const execFileAsync = promisify(execFile);
 
 const packageRoot = fileURLToPath(new URL('../', import.meta.url));
@@ -49,143 +51,14 @@ async function declarationSources(directory: string): Promise<readonly string[]>
         .map((entry) => readFile(join(directory, entry), 'utf8')));
 }
 
-/**
- * The declared external SDK boundary, deliberately limited to the public type
- * names Triage emits. Using the workspace SDK here would let its own private
- * Protocol dependency hide a leak.
- */
-async function installPublicSdkPublicBoundaryStub(consumerRoot: string): Promise<void> {
+/** Install the SDK's real public declarations with its private dependencies nested. */
+async function installPublicSdkBoundary(consumerRoot: string): Promise<void> {
     const sdkRoot = join(consumerRoot, 'node_modules', '@happier-dev', 'plugin-sdk');
     await mkdir(sdkRoot, { recursive: true });
-    const subpaths = ['protocol', 'contributions', 'manifest', 'connected-accounts', 'sessions', 'scm'];
+    await copyBuiltSdkArtifact(sdkRoot);
     await Promise.all([
-        writeFile(join(sdkRoot, 'package.json'), `${JSON.stringify({
-            name: '@happier-dev/plugin-sdk',
-            private: true,
-            type: 'module',
-            exports: Object.fromEntries(subpaths.map((subpath) => [`./${subpath}`, {
-                types: `./${subpath}.d.ts`,
-                default: `./${subpath}.js`,
-            }])),
-        }, null, 2)}\n`, 'utf8'),
-        ...subpaths.map((subpath) => writeFile(join(sdkRoot, `${subpath}.js`), 'export {};\n', 'utf8')),
-        writeFile(join(sdkRoot, 'protocol.d.ts'), `
-export type ProtocolJsonValue =
-    | null
-    | boolean
-    | number
-    | string
-    | readonly ProtocolJsonValue[]
-    | { readonly [key: string]: ProtocolJsonValue };
-export type FileDownloadDestinationV1 = Readonly<{ destinationId: string }>;
-// This boundary fixture names SDK's public transfer family. The transfer
-// owner's own vectors validate its nested prepared/entry-tree representation.
-export type FileDownloadResultV1 =
-    | Readonly<{ success: false; status: 'failed' | 'cancelled' | 'unknown'; error: string; errorCode?: string }>
-    | Readonly<{ success: true; status: 'accepted'; operationId: string; destinationId: string; prepared: ProtocolJsonValue; entryTree?: ProtocolJsonValue }>
-    | Readonly<{ success: true; status: 'completed'; transferId: string; destinationId: string; name: string; sizeBytes: number; sha256: string }>;
-export type PluginJsonSchema = Readonly<Record<string, ProtocolJsonValue>>;
-export type ProtocolValidationIssue = Readonly<{
-    path: readonly (string | number)[];
-    code: string;
-}>;
-export class ProtocolValidationError extends Error {
-    readonly issues: readonly ProtocolValidationIssue[];
-}
-export interface ProtocolComposableSchema<TInput = ProtocolJsonValue, TOutput = TInput> {
-    readonly jsonSchema: PluginJsonSchema;
-    parse(value: unknown): TOutput;
-    safeParse(value: unknown):
-        | Readonly<{ success: true; data: TOutput }>
-        | Readonly<{ success: false; error: ProtocolValidationError }>;
-    optional(): ProtocolComposableSchema<TInput | undefined, TOutput | undefined>;
-    nullable(): ProtocolComposableSchema<TInput | null, TOutput | null>;
-}
-// These are the external SDK declarations Triage now re-exports. No parser or
-// identity grammar is supplied by this isolated declaration-boundary fixture.
-export type TriageEntryRefV1 = Readonly<{
-    source: Readonly<{ pluginId: string; localId: string }>;
-    kindId: string;
-    collisionScope: string;
-    entryId: string;
-}>;
-export const TriageEntryRefV1Schema: ProtocolComposableSchema<TriageEntryRefV1>;
-export const TriageEntryRefV1JsonSchema: PluginJsonSchema;
-export const TriageIdentifierV1ProtocolSchema: ProtocolComposableSchema<string>;
-export const TriageCollisionScopeV1ProtocolSchema: ProtocolComposableSchema<string>;
-export const MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1: number;
-export const MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1: number;
-export const TRIAGE_SINGLE_LINE_STRING_PATTERN_V1: string;
-export const TRIAGE_COMPOSITE_IDENTIFIER_PATTERN_V1: string;
-export function defineTriageSingleLineStringV1(maxUtf8Bytes: number): ProtocolComposableSchema<string>;
-export function defineTriageCompositeIdentifierStringV1(maxUtf8Bytes: number): ProtocolComposableSchema<string>;
-`, 'utf8'),
-        writeFile(join(sdkRoot, 'contributions.d.ts'), `
-export type ContributionPointAuthorDefinition<TProtocols extends readonly unknown[]> = Readonly<{
-    readonly protocols: readonly unknown[];
-    readonly __protocols?: TProtocols;
-}>;
-export interface ContributionProtocol<
-    TOperations = unknown,
-    TSurfaces = unknown,
-    TDescriptorSchema = unknown,
-    TProtocolId extends string = string,
-    TProtocolVersion extends number = number,
-> {
-    readonly id: TProtocolId;
-    readonly version: TProtocolVersion;
-    readonly operations: TOperations;
-    readonly surfaces: TSurfaces;
-    readonly descriptor?: TDescriptorSchema;
-}
-export type ContributionActionSurface = 'cli' | 'mcp' | 'agent' | 'ui' | 'plugin' | 'voice';
-export type ContributionActionDangerLevel =
-    | 'safe'
-    | 'writesLocal'
-    | 'writesRemote'
-    | 'externalSideEffect'
-    | 'destructive';
-export type ContributionSurfacePresentation = 'content' | 'fill';
-`, 'utf8'),
-        writeFile(join(sdkRoot, 'manifest.d.ts'), `
-export type ParsedPluginManifest = Readonly<Record<string, unknown>>;
-export type PluginContributionIdentity = {
-    pluginId: string;
-    localId: string;
-};
-`, 'utf8'),
-        writeFile(join(sdkRoot, 'connected-accounts.d.ts'), `
-export type QualifiedConnectedAccountRef = Readonly<{
-    service: Readonly<{ pluginId: string; localId: string }>;
-    accountId: string;
-}>;
-`, 'utf8'),
-        writeFile(join(sdkRoot, 'sessions.d.ts'), `
-export type SessionId = string;
-`, 'utf8'),
-        writeFile(join(sdkRoot, 'scm.d.ts'), `
-import type { ProtocolComposableSchema, ProtocolJsonValue } from './protocol.js';
-export type ProtocolScmHostingProviderKind =
-    | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops' | 'custom' | 'unknown';
-export type ScmHostingRepositoryIdentityV1<TKind extends ProtocolScmHostingProviderKind = ProtocolScmHostingProviderKind> = Readonly<{
-    kind: TKind; deployment: string; repository: string;
-}>;
-export type ScmComparisonSource =
-    | Readonly<{ kind: 'workingTree' }>
-    | Readonly<{ kind: 'session'; sessionId: string }>
-    | Readonly<{ kind: 'branch'; head: string; base: string }>
-    | Readonly<{ kind: 'commit'; commit: string; parent?: string }>
-    | Readonly<{ kind: 'turnCheckpoint'; sessionId?: string; turnId?: string; checkpointReceiptId?: string; evidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' }>
-    | Readonly<{ kind: 'pullRequest'; locator: Readonly<{
-        providerId: string;
-        repository: string;
-        number: number;
-        baseOid?: string;
-        headOid?: string;
-        sourceAction?: Readonly<{ action: Readonly<{ pluginId: string; localId: string }>; input?: ProtocolJsonValue }>;
-    }> }>;
-export declare const ScmComparisonSourceSchema: ProtocolComposableSchema<ScmComparisonSource>;
-`, 'utf8'),
+        linkBuiltRuntimeDependencyClosure(consumerRoot, join(repositoryRoot, 'packages', 'plugin-sdk')),
+        linkBuiltRuntimeDependencyClosure(consumerRoot, packageRoot),
     ]);
 }
 
@@ -204,7 +77,7 @@ async function installIsolatedConsumer(
     await Promise.all([
         cp(join(packageRoot, 'package.json'), join(installedPackageRoot, 'package.json')),
         cp(declarationDirectory, join(installedPackageRoot, 'dist'), { recursive: true }),
-        installPublicSdkPublicBoundaryStub(consumerRoot),
+        installPublicSdkBoundary(consumerRoot),
         writeFile(join(consumerRoot, 'package.json'), `${JSON.stringify({
             name: 'triage-protocol-declaration-closure-consumer',
             private: true,
