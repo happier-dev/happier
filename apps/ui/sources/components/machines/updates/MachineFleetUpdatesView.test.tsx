@@ -42,8 +42,8 @@ afterEach(async () => {
   storage.setState(baseline, true);
 });
 
-it.each(['run now', 'save for later'] as const)('shows the owner refusal when choosing %s for a fleet rollout', async (choice) => {
-  const target = choice === 'run now' ? 'run' : 'save';
+it.each(['run now', 'run after an additional review', 'save for later'] as const)('settles a fleet rollout when choosing %s', async (choice) => {
+  const target = choice === 'save for later' ? 'save' : choice === 'run now' ? 'run' : 'review';
   const homeId = `srv_fleet_update_${target}`;
   const accountId = `fleet-${target}-owner`;
   const machineId = 'fleet-machine';
@@ -60,6 +60,7 @@ it.each(['run now', 'save for later'] as const)('shows the owner refusal when ch
     steps: [{ id: 'update', kind: 'package', manager: 'apt', packages: [{ name: 'openssl', version: '1.2' }] }],
     nativeFacts: [{ stepId: 'update', status: 'drifted', facts: {} }], planDigest: 'b'.repeat(64),
   });
+  const admittedRollout = vi.fn(async () => ({ operationId }));
   homes.answer(serverId, '/v1/actions/machines.setup.plan', { select: async body => {
     const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
     return { body: { v: 1, actionId: 'machines.setup.plan', requestId: envelope.requestId, execution: {
@@ -76,7 +77,7 @@ it.each(['run now', 'save for later'] as const)('shows the owner refusal when ch
         return { v: 1, rows: [] };
       },
     }),
-    machineSetupUpdatesRollout: async () => ({ operationId }),
+    machineSetupUpdatesRollout: admittedRollout,
   }));
   const boundary = await answerExternalActionAccountForHome(homes, serverId, {
     machineId, actionId, tokenEpoch: 0, requesterInvocation: 'optional',
@@ -91,7 +92,10 @@ it.each(['run now', 'save for later'] as const)('shows the owner refusal when ch
         surface: transport.invocation?.surface ?? 'ui', authority: transport.invocation?.authority ?? 'present_user',
         actionCaller: transport.invocation?.caller ?? { kind: 'host' },
         serverId, serverIdentityId: homeId, runtimeAccountId: accountId, actionRequestId: transport.requestId,
-        externalActionTarget: transport.target, presentUserConfirmation: transport.invocation?.presentUserConfirmation,
+        externalActionTarget: transport.target,
+        // Model a receiving Machine that requires its own review before admitting the update.
+        presentUserConfirmation: choice !== 'run after an additional review' || transport.invocation?.presentUserConfirmation?.reviewDigest
+          ? transport.invocation?.presentUserConfirmation : undefined,
         externalActionExecutionAuthorization: authorization, originalActionEnvelope: transport.envelope,
         signExternalActionApprovalInput: ({ actionId, input: reviewedInput, target, requesterConfirmation, sessionTargetsV1 }) =>
           boundary.signApprovalInput({ authorizationToken: authorization.token, actionId, input: reviewedInput, target,
@@ -104,9 +108,11 @@ it.each(['run now', 'save for later'] as const)('shows the owner refusal when ch
   if (choice === 'save for later') homes.answer(serverId, 'POST /v1/artifacts', { select: refuseSave });
   storage.getState().applyMachines([machine(machineId, true, observation)], true, { sourceServerId: serverId });
   const screen = await renderScreen(<MachineFleetUpdatesView />);
+  let rolloutPresses = 0;
   const press = async (testID: string) => {
     const button = screen.root.findAll(node => node.props.testID === testID && typeof node.props.onPress === 'function')[0]!;
     await act(async () => button.props.onPress());
+    if (testID === 'machines.updates.start') rolloutPresses += 1;
   };
   const progress = () => findTestInstanceByTypeWithProps(screen, SurfaceStateCard, { testID: 'machines.updates.progress' })?.props;
   const failed = () => findTestInstanceByTypeWithProps(screen, SurfaceStateCard, { testID: 'machines.updates.failed' })?.props;
@@ -127,6 +133,13 @@ it.each(['run now', 'save for later'] as const)('shows the owner refusal when ch
       return;
     }
     await press('machines.updates.start');
+    if (choice === 'run after an additional review') {
+      await vi.waitFor(() => expect(screen.findByTestId('machines.updates.confirmation')).toBeTruthy());
+      expect(admittedRollout).not.toHaveBeenCalled();
+      await press('machines.updates.start');
+    }
+    await vi.waitFor(() => expect(admittedRollout).toHaveBeenCalledTimes(1));
+    expect(rolloutPresses).toBe(choice === 'run now' ? 1 : 2);
     await vi.waitFor(() => expect(progress()).toMatchObject({ kind: 'loading' }));
     await act(async () => publishActionOperationObservation({ serverId: getActiveServerSnapshot().serverId, machineId, observation: 'available', snapshots: [
       ActionOperationSnapshotV1Schema.parse({ version: 1, operationId, revision: 2, actionId,
