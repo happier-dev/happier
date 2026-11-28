@@ -47,20 +47,24 @@ it('finds the reviewed service volume and checks its attachments across environm
   const attachment = (environmentId: string, serviceId: string, volumeId: string) => ({
     id: environmentId + '-' + volumeId, environmentId, serviceId, volumeId, deletedAt: null, isPendingDeletion: false,
   });
-  const { project } = vendor(({ query, variables }) => {
-    if (query.includes('environment(id:')) return { environment: { id: 'staging', projectId: 'project',
-      volumeInstances: page([attachment('staging', 'database', 'orders-volume')]) } };
-    return { project: { id: 'project', environments: variables.after === null
-      ? page([{ id: 'production', volumeInstances: page([
-        attachment('production', 'another-service', 'another-volume'),
-        attachment('production', 'database', 'orders-volume'),
-      ]) }], 'next-environment')
-      : page([{ id: 'staging', volumeInstances: page([], 'next-instance') }]) } };
+  const { project, requests } = vendor(({ query, variables }) => {
+    if (query.includes('environment(id:')) {
+      return { environment: { id: 'production', projectId: 'project', volumeInstances: page([{
+        ...attachment('production', 'database', 'orders-volume'), volume: { id: 'orders-volume', name: 'Orders data' },
+      }]) } };
+    }
+    return { project: { id: 'project', name: 'Orders', environments: variables.after === null
+      ? page([{ id: 'staging', volumeInstances: page([attachment('staging', 'database', 'orders-volume')]) }], 'next-environment')
+      : page([{ id: 'production', name: 'Production',
+        volumeInstances: page([attachment('production', 'another-service', 'another-volume')], 'next-instance') }]) } };
   });
   await expect(project.readServiceVolume(selection)).resolves.toEqual({
-    id: 'orders-volume', otherEnvironments: 1,
-    url: 'https://railway.com/project/project/volume/orders-volume?environmentId=staging',
+    providerScope: { projectName: 'Orders', environmentName: 'Production' },
+    volume: { id: 'orders-volume', name: 'Orders data', otherEnvironments: 1,
+      url: 'https://railway.com/project/project/volume/orders-volume?environmentId=staging' },
   });
+  expect(requests).toHaveLength(3);
+  expect(requests[2]?.query).toContain('volume { id name }');
 });
 
 it('creates a project in the selected workspace and returns its default environment', async () => {

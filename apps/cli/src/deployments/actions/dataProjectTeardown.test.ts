@@ -65,10 +65,11 @@ it('carries the provider scope from the linked database preview into the Delete 
 
 describe('Railway teardown receipt observation', () => {
     it.each([
-        { description: 'when observing the database absent', serviceDeleteConfirmed: true, observeFails: false },
-        { description: 'after a failed observation followed by confirmed service absence', serviceDeleteConfirmed: true, observeFails: true },
-        { description: 'after an unconfirmed service delete followed by confirmed service absence', serviceDeleteConfirmed: false, observeFails: false },
-    ])('retains the kept-unchecked volume line $description', async ({ serviceDeleteConfirmed, observeFails }) => {
+        { description: 'writes the named volume into the Receipt after confirmed removal', serviceDeleteConfirmed: true, observeFails: false, volumeDeleteConfirmed: true },
+        { description: 'retains the kept-unchecked volume line when observing the database absent', serviceDeleteConfirmed: true, observeFails: false },
+        { description: 'retains the kept-unchecked volume line after a failed observation followed by confirmed service absence', serviceDeleteConfirmed: true, observeFails: true },
+        { description: 'retains the kept-unchecked volume line after an unconfirmed service delete followed by confirmed service absence', serviceDeleteConfirmed: false, observeFails: false },
+    ])('$description', async ({ serviceDeleteConfirmed, observeFails, volumeDeleteConfirmed }) => {
         const installationId = 'fixture-installation';
         const machineId = 'fixture-machine';
         vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({
@@ -107,11 +108,14 @@ describe('Railway teardown receipt observation', () => {
                 if (query.includes('volumeInstances')) return reply({ project: { id: 'project-one', environments: {
                     edges: [{ node: { id: 'production', volumeInstances: { edges: [{ node: {
                         environmentId: 'production', serviceId: 'database-one', volumeId: 'volume-one',
-                        isPendingDeletion: false, deletedAt: null,
+                        isPendingDeletion: false, deletedAt: null, volume: { id: 'volume-one', name: 'billing-data' },
                     } }], pageInfo } } }], pageInfo,
                 } } });
                 if (query.includes('serviceDelete')) return reply({ serviceDelete: serviceDeleteConfirmed });
-                if (query.includes('volumeDelete')) throw new TypeError('volume response lost');
+                if (query.includes('volumeDelete')) {
+                    if (volumeDeleteConfirmed) return reply({ volumeDelete: true });
+                    throw new TypeError('volume response lost');
+                }
                 if (!query.includes('serviceInstances')) throw new Error('Unexpected Railway query');
                 const edges = ++observations === 1 && (!serviceDeleteConfirmed || observeFails)
                     ? [{ node: { serviceId: 'database-one', serviceName: 'Database', deletedAt: null, service: { templateId: 'pg-template' } } }]
@@ -164,6 +168,15 @@ describe('Railway teardown receipt observation', () => {
             }
 
             const deletion = await execute(receipt);
+            if (volumeDeleteConfirmed) {
+                expect(deletion).toEqual(result);
+                const settledReceipt = stored();
+                expect(settledReceipt.deployment.state).toBe('succeeded');
+                expect(settledReceipt.content).toHaveProperty('platform.observation.volumeRemoval', {
+                    kind: 'removed', volume: { name: 'billing-data', provider: 'Railway' },
+                });
+                return;
+            }
             expect(deletion).toMatchObject({ ok: false, errorCode: 'outcome_unknown' });
             if (serviceDeleteConfirmed) {
                 expect(deletion).toMatchObject({ failureCause: { phase: 'deployment.railway.data.volume_delete' } });

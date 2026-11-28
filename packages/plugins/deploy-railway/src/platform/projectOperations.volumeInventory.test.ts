@@ -29,14 +29,14 @@ it('N1 sibling in another environment with deletedAt ABSENT is not silently drop
   ])));
   const result = await project.readServiceVolume(selection).then(value => ({ value }), error => ({ error: String(error) }));
   // SAFE iff it throws (kept-unchecked) or counts staging. UNSAFE iff otherEnvironments === 0.
-  expect(result).not.toMatchObject({ value: { otherEnvironments: 0 } });
+  expect(result).not.toMatchObject({ value: { volume: { otherEnvironments: 0 } } });
 });
 
 it('N2 sibling only on the second environments page is counted', async () => {
   const { project, requests } = vendor(({ variables }) => ({ project: { id: 'project', environments: variables.after === null
     ? page([{ id: 'production', volumeInstances: page([att('production', 'database', 'vol')]) }], 'p2')
     : page([{ id: 'qa', volumeInstances: page([att('qa', 'other-svc', 'vol')]) }]) } }));
-  await expect(project.readServiceVolume(selection)).resolves.toMatchObject({ id: 'vol', otherEnvironments: 1 });
+  await expect(project.readServiceVolume(selection)).resolves.toMatchObject({ volume: { id: 'vol', otherEnvironments: 1 } });
   expect(requests).toHaveLength(2);
 });
 
@@ -56,8 +56,8 @@ it('starts independent attachment continuations before either chain advances, ke
     ], 'next-environment') : page([{ id: 'qa', volumeInstances: page([], 'qa-2') }]) } };
   });
   await expect(project.readServiceVolume(selection)).resolves.toEqual({
-    id: 'vol', otherEnvironments: 2,
-    url: 'https://railway.com/project/project/volume/vol?environmentId=staging',
+    volume: { id: 'vol', otherEnvironments: 2,
+      url: 'https://railway.com/project/project/volume/vol?environmentId=staging' },
   });
   expect(requests).toHaveLength(5);
   const continuations = requests.filter(({ variables }) => variables.environmentId).map(({ variables }) => variables.after);
@@ -118,7 +118,7 @@ it('N10 pending-deletion sibling still keeps the volume', async () => {
     { id: 'production', volumeInstances: page([att('production', 'database', 'vol')]) },
     { id: 'staging', volumeInstances: page([att('staging', 'database', 'vol', { deletedAt: '2026-11-26T00:00:00Z', isPendingDeletion: true })]) },
   ])));
-  await expect(project.readServiceVolume(selection)).resolves.toMatchObject({ otherEnvironments: 1 });
+  await expect(project.readServiceVolume(selection)).resolves.toMatchObject({ volume: { otherEnvironments: 1 } });
 });
 
 it('N11 another service in the SAME environment on the same volume, no other env: throws (never delete)', async () => {
@@ -129,7 +129,7 @@ it('N11 another service in the SAME environment on the same volume, no other env
 
 it('N12 read issues queries only (no mutation)', async () => {
   const { project, requests } = vendor(projectWith(page([{ id: 'production', volumeInstances: page([att('production', 'database', 'vol')]) }])));
-  await expect(project.readServiceVolume(selection)).resolves.toMatchObject({ id: 'vol', otherEnvironments: 0 });
+  await expect(project.readServiceVolume(selection)).resolves.toMatchObject({ volume: { id: 'vol', otherEnvironments: 0 } });
   expect(requests.every(({ query }) => !/\bmutation\b/u.test(query))).toBe(true);
 });
 
@@ -137,5 +137,5 @@ it('N13 own attachment with serviceId ABSENT field (post-delete shape) is not no
   const own = att('production', 'database', 'vol'); delete (own as Record<string, unknown>).serviceId;
   const { project } = vendor(projectWith(page([{ id: 'production', volumeInstances: page([own]) }])));
   const result = await project.readServiceVolume(selection).then(value => ({ value }), error => ({ error: String(error) }));
-  expect(result).not.toMatchObject({ value: { id: 'vol' } });
+  expect(result).not.toMatchObject({ value: { volume: { id: 'vol' } } });
 });

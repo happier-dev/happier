@@ -19,10 +19,11 @@ const linkedScope = {
 const page = <T>(nodes: T[], endCursor: string | null = null) => ({
   edges: nodes.map(node => ({ node })), pageInfo: { hasNextPage: endCursor !== null, endCursor },
 });
-const att = (environmentId: string, serviceId: string, volumeId: string) => ({
-  environmentId, serviceId, volumeId, deletedAt: null, isPendingDeletion: false });
-const inventory = (...envs: { id: string; instances: ReturnType<typeof att>[] }[]) => ({ data: { project: { id: 'project-one',
-  environments: page(envs.map(env => ({ id: env.id, volumeInstances: page(env.instances) }))) } } });
+const att = (environmentId: string, serviceId: string, volumeId: string, volume?: { id: string; name?: string }) => ({
+  environmentId, serviceId, volumeId, deletedAt: null, isPendingDeletion: false, volume });
+const inventory = (...envs: { id: string; name?: string; instances: ReturnType<typeof att>[] }[]) => ({ data: { project: {
+  id: 'project-one', name: 'Billing',
+  environments: page(envs.map(env => ({ id: env.id, name: env.name, volumeInstances: page(env.instances) }))) } } });
 const exclusive = inventory({ id: 'production', instances: [att('production', 'database-one', 'vol-1')] });
 const shared = inventory({ id: 'production', instances: [att('production', 'database-one', 'vol-1')] },
   { id: 'staging', instances: [att('staging', 'database-one', 'vol-1')] });
@@ -43,7 +44,7 @@ async function host(...replies: readonly unknown[]) {
     return { status: 200, body: new TextEncoder().encode(JSON.stringify(reply)), headers: {} };
   } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
-  const run = (localId: string) => kit.invokeAction(localId, { ...preparation(localId), ...linkedScope })
+  const run = (localId: string, selection = linkedScope) => kit.invokeAction(localId, { ...preparation(localId), ...selection })
     .then(value => ({ value }), error => ({ error: error as { code?: string; data?: unknown } }));
   return { calls, kit, run };
 }
@@ -82,14 +83,58 @@ describe('SEC negatives: Railway data Delete', () => {
     } finally { await h.kit.dispose(); }
   });
 
-  it('D4 exclusive volume: service deleted FIRST, then exactly the reviewed volume id', async () => {
-    const h = await host(exclusive, { data: { serviceDelete: true } }, { data: { volumeDelete: true } });
+  it.each([
+    { engine: 'PostgreSQL', serviceId: 'postgres-one', volumeName: 'postgres-data' },
+    { engine: 'MySQL', serviceId: 'mysql-one', volumeName: 'mysql-data' },
+  ])('$engine preview and confirmed Delete name the selected scope and volume without extra calls', async ({ serviceId, volumeName }) => {
+    const named = inventory(
+      { id: 'staging', name: 'Staging', instances: [att('staging', 'another-service', 'vol-2', { id: 'vol-2', name: 'staging-data' })] },
+      { id: 'production', name: 'EU Production', instances: [att('production', serviceId, 'vol-1', { id: 'vol-1', name: volumeName })] },
+    );
+    const volume = { name: volumeName, provider: 'Railway' };
+    const providerScope = { projectName: 'Billing', environmentName: 'EU Production' };
+    const selection = { ...linkedScope,
+      providerIdentity: { ...linkedScope.providerIdentity, providerResourceId: serviceId },
+      providerEnvironment: { ...linkedScope.providerEnvironment,
+        selection: { ...linkedScope.providerEnvironment.selection, serviceId } } };
+    const preview = await host(named);
+    const removal = await host(named, { data: { serviceDelete: true } }, { data: { volumeDelete: true } });
     try {
-      const r = await h.run('database-delete');
-      expect(ops(h.calls)).toEqual(['volumeRead', 'serviceDelete', 'volumeDelete']);
-      expect(h.calls[2]?.variables).toEqual({ volumeId: 'vol-1' });
-      expect(r).toMatchObject({ value: { state: 'succeeded', volumeRemoval: { kind: 'removed' } } });
+      const review = await preview.run('teardown-preview', selection);
+      const deletion = await removal.run('database-delete', selection);
+      expect(ops(preview.calls)).toEqual(['volumeRead']);
+      expect(ops(removal.calls)).toEqual(['volumeRead', 'serviceDelete', 'volumeDelete']);
+      expect(removal.calls[2]?.variables).toEqual({ volumeId: 'vol-1' });
+      expect.soft(review).toEqual({ value: { providerScope, volumeRemoval: { kind: 'removed', volume } } });
+      expect(deletion).toMatchObject({ value: { state: 'succeeded', volumeRemoval: { kind: 'removed', volume } } });
+      expect(preview.calls[0]?.query).toMatch(/project\(id: \$projectId\)\s*\{\s*id name environments/u);
+      expect(preview.calls[0]?.query).toMatch(/node\s*\{\s*id name volumeInstances/u);
+      expect(removal.calls[0]?.query).toMatch(/volume\s*\{\s*id name\s*\}/u);
+    } finally { await preview.kit.dispose(); await removal.kit.dispose(); }
+  });
+
+  it('names the preview scope even when the selected service has no volume', async () => {
+    const h = await host(inventory({ id: 'production', name: 'EU Production', instances: [] }));
+    try {
+      await expect(h.run('teardown-preview')).resolves.toEqual({
+        value: { providerScope: { projectName: 'Billing', environmentName: 'EU Production' } },
+      });
+      expect(ops(h.calls)).toEqual(['volumeRead']);
     } finally { await h.kit.dispose(); }
+  });
+
+  it('omits missing names from the preview and confirmed Delete', async () => {
+    const unnamed = inventory({ id: 'production', instances: [att('production', 'database-one', 'vol-1', { id: 'vol-1' })] });
+    const preview = await host(unnamed);
+    const removal = await host(unnamed, { data: { serviceDelete: true } }, { data: { volumeDelete: true } });
+    try {
+      await expect(preview.run('teardown-preview')).resolves.toEqual({ value: { volumeRemoval: { kind: 'removed' } } });
+      const deletion = await removal.run('database-delete');
+      expect(deletion).toMatchObject({ value: { state: 'succeeded', volumeRemoval: { kind: 'removed' } } });
+      expect(deletion).not.toHaveProperty('value.volumeRemoval.volume');
+      expect(ops(preview.calls)).toEqual(['volumeRead']);
+      expect(ops(removal.calls)).toEqual(['volumeRead', 'serviceDelete', 'volumeDelete']);
+    } finally { await preview.kit.dispose(); await removal.kit.dispose(); }
   });
 
   it.each([

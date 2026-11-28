@@ -82,19 +82,28 @@ function writeRefused(error: unknown): boolean {
     || isPluginError(error) && (error.code === 'credential_unavailable' || error.code === 'deployment_access_denied');
 }
 
-async function readDatabaseVolume(project: ReturnType<typeof railway>['project'], selection: ServiceSelection, signal: AbortSignal) {
+async function readDatabaseVolumeInventory(project: ReturnType<typeof railway>['project'], selection: ServiceSelection, signal: AbortSignal) {
   return await project.readServiceVolume(selection).catch(() => {
     signal.throwIfAborted();
     return undefined;
   });
 }
 
+function removedVolume(name: string | undefined) {
+  return { kind: 'removed' as const, ...(name ? { volume: { name, provider: 'Railway' } } : {}) };
+}
+
 export async function previewDatabaseVolume(selection: ServiceSelection, context: PluginAccountActionContext): Promise<JsonValue> {
-  const volume = await readDatabaseVolume(railway(context).project, selection, context.signal);
-  if (volume === undefined) return { volumeRemoval: { kind: 'unchecked' } };
-  if (volume === null) return {};
-  const { otherEnvironments, url } = volume;
-  return { volumeRemoval: otherEnvironments ? { kind: 'kept', otherEnvironments, url } : { kind: 'removed' } };
+  const inventory = await readDatabaseVolumeInventory(railway(context).project, selection, context.signal);
+  if (!inventory) return { volumeRemoval: { kind: 'unchecked' } };
+  const { providerScope, volume } = inventory;
+  const volumeRemoval = volume && (volume.otherEnvironments
+    ? { kind: 'kept', otherEnvironments: volume.otherEnvironments, url: volume.url }
+    : removedVolume(volume.name));
+  return {
+    ...(providerScope ? { providerScope } : {}),
+    ...(volumeRemoval ? { volumeRemoval } : {}),
+  };
 }
 
 function withUncheckedVolumeRemoval(error: PluginError): PluginError {
@@ -108,7 +117,7 @@ function withUncheckedVolumeRemoval(error: PluginError): PluginError {
 export async function removeDatabase(selection: ServiceSelection, context: PluginAccountActionContext, observeOnly: boolean): Promise<JsonValue> {
   const { project } = railway(context);
   const phase = 'deployment.railway.data.delete';
-  const volume = observeOnly ? null : await readDatabaseVolume(project, selection, context.signal);
+  const volume = observeOnly ? null : (await readDatabaseVolumeInventory(project, selection, context.signal))?.volume;
   let deleteCause: ActionFailureCauseV1 | undefined;
   let removed: Awaited<ReturnType<typeof settleDeploymentTargetResourceRemovalV1>>;
   try {
@@ -141,7 +150,7 @@ export async function removeDatabase(selection: ServiceSelection, context: Plugi
   }
   if (volume === null) return removed;
   if (volume === undefined) return { ...removed, volumeRemoval: { kind: 'kept-unchecked' } };
-  const { id, otherEnvironments, url } = volume;
+  const { id, name, otherEnvironments, url } = volume;
   if (otherEnvironments) return { ...removed, volumeRemoval: { kind: 'kept', otherEnvironments, url } };
   try {
     await project.deleteVolume(id);
@@ -160,5 +169,5 @@ export async function removeDatabase(selection: ServiceSelection, context: Plugi
       failureCause: { ...projectActionFailureCauseV1(error, volumePhase, { allowUnknownErrorCode: true }), phase: volumePhase } }),
     { phase: volumePhase, causeKind: 'native_failure', error });
   }
-  return { ...removed, volumeRemoval: { kind: 'removed' } };
+  return { ...removed, volumeRemoval: removedVolume(name) };
 }
