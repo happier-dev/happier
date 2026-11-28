@@ -222,8 +222,8 @@ const HORIZONTAL_COMPOSER_RULE = /[─━]+(?:[^\S\n]+\S[^\n]*?[^\S\n]+[─━]+
 // The complete upward-overflow label distinguishes a scrolled composer from other
 // labelled rules. Leave the next row's delimiter available for composer ordering.
 const SCROLLED_COMPOSER = new RegExp(
-  String.raw`(?:^|\n)(?=[^\n]*[─━][^\S\n]+↑[^\S\n]+[1-9]\d*[^\S\n]+more[^\S\n]+[─━])${HORIZONTAL_COMPOSER_RULE.source}\n((?:(?:[^\S\n][^\n]*)?\n)+)${HORIZONTAL_COMPOSER_RULE.source}(?=\n|$)`,
-  'gu',
+  String.raw`(?:^|\n)(?=[^\n]*[─━][^\S\n]+↑[^\S\n]+[1-9]\d*[^\S\n]+more[^\S\n]+[─━])${HORIZONTAL_COMPOSER_RULE.source}\n(?<draft>(?:(?:[^\S\n][^\n]*)?\n)+)${HORIZONTAL_COMPOSER_RULE.source}(?=\n|$)`,
+  'dgu',
 );
 const SLASH_SUGGESTION_LINE = /(?:^|\n)[^\S\n]*\/[a-z][a-z0-9-]*\b/i;
 // Agents/selection panel (live capture 2026-06-12 11:50, runner pid 58731): the selector header
@@ -521,7 +521,7 @@ function readScrolledComposerState(
   match: RegExpExecArray,
   context?: ClaudeScreenParseContext | undefined,
 ): ReturnType<typeof readComposerState> {
-  const rows = (match[1] ?? '').split('\n');
+  const rows = (match.groups?.draft ?? '').split('\n');
   const content = rows.map((line) => line.trim()).join('\n').trim();
   const headerLine = lineIndexAt(text, match.index + (match[0].startsWith('\n') ? 1 : 0));
   const footerLine = headerLine + rows.length;
@@ -798,11 +798,21 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
   const visibleTail = tailLines(text, 30);
   const composer = findLastComposerMatch(text);
   const lastComposerMatch = composer?.line ?? null;
+  const scrolledMatch = lastMatch(SCROLLED_COMPOSER, text);
+  const activeScrolledMatch = scrolledMatch
+    && (!lastComposerMatch || lastComposerMatch.index < scrolledMatch.index + scrolledMatch[0].length)
+    ? scrolledMatch
+    : null;
   const closingRuleIndex = composer?.framedContinuation?.closingRuleIndex ?? null;
+  const draftRange = activeScrolledMatch?.indices?.groups?.draft ?? (
+    composer && closingRuleIndex !== null
+      && (composer.framedContinuation?.lines.length || NUMBERED_COMPOSER_CONTENT.test(composer.line[2] ?? ''))
+      ? [composer.line.index, closingRuleIndex]
+      : null
+  );
   // Remove draft rows from selection parsing while preserving their screen positions.
-  const selectionText = composer && closingRuleIndex !== null
-    && (composer.framedContinuation?.lines.length || NUMBERED_COMPOSER_CONTENT.test(composer.line[2] ?? ''))
-    ? text.slice(0, composer.line.index) + text.slice(composer.line.index, closingRuleIndex).replace(/[^\n]+/g, '') + text.slice(closingRuleIndex)
+  const selectionText = draftRange
+    ? text.slice(0, draftRange[0]) + text.slice(draftRange[0], draftRange[1]).replace(/[^\n]+/g, '') + text.slice(draftRange[1])
     : text;
   const selectionTail = selectionText === text ? visibleTail : tailLines(selectionText, 30);
   const numberedDialogCandidate = resolveGenericNumberedDialog(selectionTail, 1);
@@ -825,11 +835,6 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
     ? resolveDialogSelectionPresentation(selectionTail, null)
     : selectionCandidate;
   const rewindSelectionVisible = REWIND_SELECTION.test(visibleTail);
-  const scrolledMatch = lastMatch(SCROLLED_COMPOSER, text);
-  const activeScrolledMatch = scrolledMatch
-    && (!lastComposerMatch || lastComposerMatch.index < scrolledMatch.index + scrolledMatch[0].length)
-    ? scrolledMatch
-    : null;
   // A notice above the current composer belongs to transcript history, not the active footer.
   const currentFooter = activeScrolledMatch
     ? text.slice(activeScrolledMatch.index + activeScrolledMatch[0].length)

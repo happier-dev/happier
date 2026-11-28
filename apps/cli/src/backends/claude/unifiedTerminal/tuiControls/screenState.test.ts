@@ -1474,6 +1474,31 @@ describe('parseClaudeScreenState — scrolled composer draft', () => {
     expect(resolveClaudeScreenInFlightSteerVeto(state)).toBe('user_draft');
   });
 
+  const clippedWithQuotedChoice = clipped.replace(
+    '  The last visible draft paragraph.',
+    '  ❯ 1. Build the project\n    2. Review the output',
+  );
+
+  it('keeps quoted choices inside the scrolled draft without cursor context', () => {
+    const state = parseClaudeScreenState(clippedWithQuotedChoice);
+    expect(state.composerContent).toContain('❯ 1. Build the project\n2. Review the output');
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(false);
+    expect(state.inputBoxInteractive).toBe(true);
+  });
+
+  it('blocks input on a real chooser below the scrolled draft', () => {
+    const state = parseClaudeScreenState([
+      clippedWithQuotedChoice,
+      '',
+      'Reset cache?',
+      '❯ 1. Yes, reset it',
+      '  2. No, go back',
+      'Enter to confirm · Esc to cancel',
+    ].join('\n'));
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(true);
+    expect(state.inputBoxInteractive).toBe(false);
+  });
+
   it('requires the complete bordered shape and lets a newer normal composer win', () => {
     expect(parseClaudeScreenState(clipped.replace('────────────────────────────────────────────────────────────────────────────────\n', '')).composerContent)
       .toBe('An earlier submitted prompt');
