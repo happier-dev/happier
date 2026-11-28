@@ -1,4 +1,4 @@
-import { isLiveSessionRuntime, isSessionRuntimeRunning } from '@/sync/domains/session/attention/runtimePresentation';
+import { isSessionRuntimeRunning } from '@/sync/domains/session/attention/runtimePresentation';
 import { DEFAULT_SESSION_INACTIVE_RESUME_POLICY } from '@happier-dev/protocol/account/settings/accountSettings';
 import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
 import { normalizeParticipantRecipientRoutingIdentityV1, withParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
@@ -32,7 +32,6 @@ import { SESSION_INPUT_TARGET_UPDATE_REQUIRED_ERROR_CODE } from './types';
 import { SESSION_INPUT_ACCOUNT_SCOPE_RETIRED_ERROR_CODE } from './types';
 import { recordSessionMessageDeliveryDecision } from './sessionMessageDeliveryTelemetry';
 import { isSessionHeldByPersonStop } from '@/sync/domains/session/control/sessionStopHold';
-import { readSessionRuntimeObservation } from '@/sync/domains/session/sessionRuntimeObservation';
 import {
     canSendUserMessageToSession,
     SESSION_MESSAGE_SEND_NOT_RESUMABLE_ERROR_CODE,
@@ -422,10 +421,6 @@ function requestedActionRequiresRuntimeActivation(action: PendingRequestedAction
     return action.kind === 'send_now' || action.kind === 'steer_now';
 }
 
-function hasObservedLiveRuntimeForPendingInput(opts: SubmitSessionUserMessageOptions): boolean {
-    return isLiveSessionRuntime(readSessionRuntimeObservation(opts.session)) && !isSendCrossingStopHold(opts);
-}
-
 function selectInactiveSessionResumePolicy(
     opts: SubmitSessionUserMessageOptions,
     decision: SessionMessageDeliveryDecision,
@@ -576,9 +571,7 @@ async function enqueuePending(
     const inactiveResumePolicy = !isExecutionRun && decision !== undefined
         ? selectInactiveSessionResumePolicy(opts, decision, requestedAction)
         : null;
-    const immediateAction = !isExecutionRun && requestedActionRequiresRuntimeActivation(requestedAction);
-    const usesLiveRuntime = immediateAction && hasObservedLiveRuntimeForPendingInput(opts);
-    const wakeRequested = inactiveResumePolicy !== null || (immediateAction && !usesLiveRuntime);
+    const wakeRequested = !isExecutionRun && (requestedActionRequiresRuntimeActivation(requestedAction) || inactiveResumePolicy !== null);
     const wakeOpts = wakeRequested ? getPendingQueueWakeResumeOptions({
         sessionId: opts.sessionId,
         session: opts.session,
@@ -678,11 +671,6 @@ async function enqueuePending(
             localId,
         };
     }
-    if (usesLiveRuntime) {
-        await switchRemoteAfterPendingEnqueueIfNeeded(port, opts);
-        if (!reportHandoffIfCurrent()) return accountScopeRetiredResult('send_failed', 'pending', localId);
-        return { type: 'success', persistence: 'pending', wake: { attempted: false, state: 'not_needed' }, localId };
-    }
     if (!wakeOpts) {
         if (!reportHandoffIfCurrent()) return accountScopeRetiredResult('send_failed', 'pending', localId);
         if (wakeRequested && !isSessionRuntimeRunning(opts.session)) return pendingInputWakeUnavailable(localId);
@@ -733,20 +721,16 @@ async function enqueuePending(
     };
 
     try {
-        const acknowledgedAuthorization = enqueueResult?.pendingActivationAuthorization;
-        // Released Homes may omit the projection. A current Home's explicit
-        // absence supersedes any activation cached from a different input.
-        const currentSession = acknowledgedAuthorization === undefined && port.refreshSessionForSubmit
-            ? await port.refreshSessionForSubmit(opts.sessionId, {
-                ...(opts.serverId ? { serverId: opts.serverId } : {}),
-                ...(opts.accountLifetime ? { accountLifetime: opts.accountLifetime } : {}),
-            }) : undefined;
+        // The enqueue ACK does not carry native enrollment authority. Read the
+        // current Session after acceptance, in the same captured Account/Home.
+        const currentSession = port.refreshSessionForSubmit ? await port.refreshSessionForSubmit(opts.sessionId, {
+            ...(opts.serverId ? { serverId: opts.serverId } : {}),
+            ...(opts.accountLifetime ? { accountLifetime: opts.accountLifetime } : {}),
+        }) : undefined;
         if (!isSubmitAccountLifetimeCurrent(opts)) return accountScopeRetiredResult('send_failed', 'pending', localId);
         const wakeResult = await port.ensureSessionRuntimeForPendingInput({
             ...resumeOptions,
-            ...(acknowledgedAuthorization !== undefined
-                ? { pendingActivationAuthorization: acknowledgedAuthorization ?? undefined }
-                : currentSession ? { pendingActivationAuthorization: currentSession.pendingActivationAuthorization ?? undefined } : {}),
+            ...(currentSession ? { pendingActivationAuthorization: currentSession.pendingActivationAuthorization ?? undefined } : {}),
         });
         if (!isSubmitAccountLifetimeCurrent(opts)) return accountScopeRetiredResult('send_failed', 'pending', localId);
         if (wakeResult.type === 'pending') {
@@ -923,8 +907,7 @@ export async function submitSessionUserMessage(
                 localId,
             };
         }
-        const wakeRequested = requestedActionRequiresRuntimeActivation(requestedAction)
-            && !hasObservedLiveRuntimeForPendingInput(effectiveOpts);
+        const wakeRequested = requestedActionRequiresRuntimeActivation(requestedAction);
         const wakeOpts = wakeRequested ? getPendingQueueWakeResumeOptions({
             sessionId: effectiveOpts.sessionId,
             session: effectiveOpts.session,

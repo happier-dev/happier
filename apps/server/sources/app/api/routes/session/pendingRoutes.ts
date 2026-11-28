@@ -445,7 +445,6 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
                 return reply.send({
                     didWrite: false,
                     suppressed: true,
-                    ...(!request.params.runId ? { pendingActivationAuthorization: null } : {}),
                     ...toPendingStateJson(res, request.params.runId),
                 });
             }
@@ -457,8 +456,6 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
                 pendingBlockedCount: res.pendingBlockedCount,
                 pendingVersion: res.pendingVersion,
                 ...(request.params.runId ? { recipient: { kind: "execution_run" as const, runId: request.params.runId } } : {}),
-                ...(!request.params.runId && res.terminal !== true && res.didWrite && res.pending.deliveryState === null
-                    ? { committedEnqueueLocalId: res.pending.localId } : {}),
                 meaningfulActivityAt: res.terminal === true ? undefined : res.meaningfulActivityAt,
                 recipientCursors: res.recipientCursors,
                 ...("activationTarget" in res && res.activationTarget
@@ -472,9 +469,6 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
 
             return reply.send({
                 didWrite: res.didWrite,
-                ...(!request.params.runId ? {
-                    pendingActivationAuthorization: res.terminal === true ? null : res.pendingActivationAuthorization ?? null,
-                } : {}),
                 ...(res.terminal === true
                     ? {
                         terminal: true as const,

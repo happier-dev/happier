@@ -375,7 +375,6 @@ type MaterializeNextPendingMessageParams = Readonly<{
     targetExecutionRunId?: string | null;
     expectedSidechainId?: string | null;
     retainedContext?: RetainedPendingContextV1;
-    committedEnqueue?: Readonly<{ localId: string; pendingVersion: number }>;
 }>;
 
 export async function materializeNextPendingMessage(
@@ -499,13 +498,6 @@ async function materializePendingTargetInTx(
     }).then(decodeSessionStoredContent);
     if (!sessionRow) return { ok: false, error: "session-not-found" };
     if (sessionRow.accountId !== actorUserId) return { ok: false, error: "forbidden" };
-    const committedEnqueue = params.committedEnqueue;
-    const leaveForPull = () => ({
-        ok: true, didMaterialize: false, pendingCount: sessionRow.pendingCount,
-        pendingBlockedCount: sessionRow.pendingBlockedCount, pendingVersion: sessionRow.pendingVersion,
-        deliveryState: noopDeliveryState,
-    } as const);
-    if (committedEnqueue && committedEnqueue.pendingVersion !== sessionRow.pendingVersion) return leaveForPull();
     const retainedContext = params.retainedContext === undefined ? undefined
         : RetainedPendingContextV1Schema.safeParse(params.retainedContext);
     if (retainedContext && (!retainedContext.success || params.targetExecutionRunId !== null)) {
@@ -566,7 +558,7 @@ async function materializePendingTargetInTx(
         const result = await (async () => {
             const sessionBefore = sessionRow;
 
-            const rejoin = !committedEnqueue && retainedFollowWakeSource === undefined ? await resolvePendingProviderRejoinInTx({
+            const rejoin = retainedFollowWakeSource === undefined ? await resolvePendingProviderRejoinInTx({
                 tx,
                 session: sessionRow,
                 authority: params.publisherAuthority,
@@ -585,7 +577,6 @@ async function materializePendingTargetInTx(
                 orderBy: [{ position: "asc" }, { createdAt: "asc" }, { localId: "asc" }],
                 select: { localId: true, messageRole: true, content: true, requestedAction: true, providerAction: true, inputAdmissionReceipt: true, status: true, deliveryState: true, deliveryBlockedReason: true, position: true, createdAt: true, updatedAt: true },
             });
-            if (committedEnqueue && pendingCandidates.some(row => row.deliveryState === 'delivering')) return leaveForPull();
             if (retainedFollowWakeSource !== undefined && pendingCandidates.some(row =>
                 row.deliveryState === 'delivering' && !retainedContextLocalIds.includes(row.localId))) {
                 return { ok: true, didMaterialize: false, pendingCount: sessionBefore.pendingCount,
@@ -630,8 +621,6 @@ async function materializePendingTargetInTx(
             const nextPending = "localId" in invocationSelection
                 ? pendingCandidates.find((row) => row.localId === invocationSelection.localId) ?? null
                 : null;
-
-            if (committedEnqueue && nextPending?.localId !== committedEnqueue.localId) return leaveForPull();
 
             if (!nextPending) {
                 const pendingCount = await tx.sessionPendingMessage.count({

@@ -30,7 +30,7 @@ import type { SessionAccessAuthentication } from "@/app/session/access/sessionAc
 import { buildSessionAccessWhere } from '@/app/session/access/sessionAccessWhere';
 import { PendingResetStartsReadInputV1Schema, type PendingResetStartsReadInputV1, type PendingResetStartsReadResultV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import type { CallerInputConstraintsV1 } from "@happier-dev/protocol/auth/apiTokenGrant";
-import type { PendingActivationAuthorizationV1, PendingMessageWithdrawOutcomeV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
+import type { PendingMessageWithdrawOutcomeV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import type { PendingMessageRow, PendingMessageRowRaw } from "@/app/session/pending/mapPendingMessageRow";
 import { projectSessionMessageAccountActors } from "@/app/session/messages/projectSessionMessageAccountActors";
 import { db, getActivePrismaRuntime } from "@/storage/db";
@@ -109,7 +109,6 @@ import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/act
 import { log, warn } from "@/utils/logging/log";
 import {
     armPendingActivationAuthorizationInTx,
-    mapPendingActivationAuthorization,
     markPendingActivationAuthorizationFailedInTx,
     reconcilePendingActivationAuthorizationForRemovedRequestInTx,
     shouldArmPendingActivationAuthorization,
@@ -663,7 +662,6 @@ export type EnqueuePendingMessageResult =
         recipientCursors: RecipientCursor[];
         meaningfulActivityAt?: Date;
         activationTarget?: PendingActivationTarget;
-        pendingActivationAuthorization?: PendingActivationAuthorizationV1;
         managedActivationLocalId?: string;
       }
     | {
@@ -914,7 +912,6 @@ async function enqueuePendingMessageWithAdmission(
                     pendingActivationStatus: true,
                     pendingActivationRequestId: true,
                     pendingActivationRequestedAt: true,
-                    pendingActivationFailureCode: true,
                     pendingActivationManagedTarget: true,
                 },
             });
@@ -1445,11 +1442,6 @@ async function enqueuePendingMessageWithAdmission(
                         },
                     });
                 }
-                const pendingActivationAuthorization = admission.kind === 'account'
-                    && admission.authentication.authority === 'present_user' && access.access.level === 'owner'
-                    && targetExecutionRunId === null && existing.status === 'queued' && existing.deliveryState === null
-                    && existing.providerAction === null && session.pendingActivationRequestId === localId
-                    ? mapPendingActivationAuthorization(session) : undefined;
                 const hasManagedActivation = acknowledgesManagedActivation
                     && await hasManagedWakeForPendingReplayInTx(tx, { ...session, id: sessionId }, existing);
                 return {
@@ -1461,7 +1453,6 @@ async function enqueuePendingMessageWithAdmission(
                     pendingVersion: session.pendingVersion ?? 0,
                     badgeAttentionChanged: false,
                     recipientCursors: [],
-                    ...(pendingActivationAuthorization ? { pendingActivationAuthorization } : {}),
                     ...(hasManagedActivation ? { managedActivationLocalId: localId } : {}),
                 };
             }
@@ -1787,8 +1778,6 @@ async function enqueuePendingMessageWithAdmission(
                 recipientCursors,
                 meaningfulActivityAt,
                 ...(activationTarget ? { activationTarget } : {}),
-                ...(activationTarget && admission.kind === 'account' && admission.authentication.authority === 'present_user'
-                    && access.access.level === 'owner' ? { pendingActivationAuthorization: activationTarget.authorization } : {}),
                 ...(acknowledgesManagedActivation && activationTarget?.managedControllerPublication
                     ? { managedActivationLocalId: activationTarget.requestId } : {}),
             };
@@ -2961,8 +2950,6 @@ export async function settlePendingInputAdmission(params: Readonly<{
                     tx,
                     sessionId,
                     hint: { lastMessageSeq: committed.message.seq, lastMessageId: committed.message.id },
-                    // Transcript rows never change owner metadata (Memory locality).
-                    memoryLocalityChanged: false,
                 })
                 : [];
             return {
@@ -4101,8 +4088,6 @@ async function commitResolvedPendingDelivery(
             tx,
             sessionId: params.sessionId,
             hint: { lastMessageSeq: committed.message.seq, lastMessageId: committed.message.id },
-            // Transcript rows never change owner metadata (Memory locality).
-            memoryLocalityChanged: false,
         })
         : [];
 

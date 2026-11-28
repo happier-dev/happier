@@ -1,4 +1,3 @@
-import type { PendingActivationAuthorizationV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
@@ -174,7 +173,6 @@ type SessionMessageSubmitReceipt = Extract<SessionMessageSendResultV1, { status:
 
 export type PendingMessageSubmitResult = Readonly<{
     localId?: string;
-    pendingActivationAuthorization?: PendingActivationAuthorizationV1 | null;
     accepted?: boolean;
     /** The exact row was durably cancelled while its enqueue operation was in flight. */
     cancelled?: true;

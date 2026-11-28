@@ -44,7 +44,6 @@ export function createSessionProviderInputConsumerSessionAdapter(
   return {
     ...options,
     waitForMetadataUpdate: (signal) => session.waitForMetadataUpdate(signal),
-    armPendingClaim: (signal, timing, active, revision) => session.armPendingClaim?.(signal, timing, active, revision),
     ...(session.readRuntimeActivitySnapshotTail
       ? { readRuntimeActivitySnapshotTail: () => session.readRuntimeActivitySnapshotTail!() }
       : {}),

@@ -349,47 +349,6 @@ describe('createSessionClientInteractionApi diagnostics', () => {
     });
   });
 
-  it('admits a bound pushed Pending claim without a pull RPC', async () => {
-    const socket = createSocketStub();
-    const runtime = createSessionClientMaterializationRuntime({
-      initialPendingQueueState: { known: true, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 3 },
-      onKeepAliveStateMayHaveChanged: () => undefined,
-    });
-    const deliver = vi.fn(() => true);
-    const api = createApi({
-      getSocket: () => socket as never,
-      getSessionConnectionSupervisor: () => ({ getState: () => ({ phase: 'online' }) }) as never,
-      getStoredContentCryptoContext: () => ({ mode: 'plain', ctx: null }),
-      getPendingQueueState: runtime.getPendingQueueState,
-      applyPendingQueueState: runtime.applyPendingQueueState,
-      handleSessionScopedUpdate: ({ body }) => {
-        if (body.t === 'pending-changed') runtime.applyPendingQueueState({
-          known: true, pendingCount: body.pendingCount, pendingBlockedCount: body.pendingBlockedCount ?? 0,
-          pendingVersion: body.pendingVersion,
-        });
-      },
-      deliverMaterializedUserMessageToAgentQueue: deliver,
-    });
-    const wait = new AbortController();
-    api.installSessionSocketEventHandlers(socket as never);
-    api.armPendingClaim(wait.signal, 'after_foreground_ready', false);
-    expect(socket.emit).toHaveBeenCalledWith('pending-input-ready', expect.objectContaining({ id: 1, pendingVersion: 3 }));
-    socket.trigger('update', { body: { t: 'pending-changed', sid: 's1', pendingCount: 1, pendingVersion: 4,
-      runnerClaim: { id: 1, result: { ok: true, didMaterialize: true, didWrite: false,
-        pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 5, deliveryState: { mode: 'provider', unresolved: true },
-        message: { id: null, seq: null, localId: 'push-claim', messageRole: 'user',
-          content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Pushed prompt' } } },
-          createdAt: 1_000, updatedAt: 1_000, providerAction: 'send' },
-      } },
-    } });
-    wait.abort();
-    socketAckMock.mockResolvedValueOnce({ v: 1, result: { status: 'accepted', localId: 'push-claim' } });
-    await expect(api.materializeNextPendingMessageSafely()).resolves.toMatchObject({ type: 'materialized' });
-    expect(deliver).toHaveBeenCalledOnce();
-    expect(deliver).toHaveBeenCalledWith(expect.objectContaining({ localId: 'push-claim' }), 'send', { v: 1, kind: 'enqueue' });
-    expect(socketAckMock.mock.calls.some(([event]) => event === 'pending-materialize-next')).toBe(false);
-  });
-
   it.each([true, false])('preserves a newer pending hint when an accepted materialization ACK omits its projection (materialized: %s)', async (didMaterialize) => {
     const runtime = createSessionClientMaterializationRuntime({
       onKeepAliveStateMayHaveChanged: () => undefined,

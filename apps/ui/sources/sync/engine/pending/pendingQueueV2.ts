@@ -98,8 +98,8 @@ import { assertValidPendingMessageId } from '@/sync/domains/pending/pendingMessa
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
-import { PendingMessageWithdrawOutcomeV1Schema, PendingActivationHoldReasonV1Schema, PendingActivationAuthorizationV1Schema,
-    type PendingMessageWithdrawOutcomeV1, type PendingActivationHoldReasonV1, type PendingActivationAuthorizationV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
+import { PendingMessageWithdrawOutcomeV1Schema, PendingActivationHoldReasonV1Schema,
+    type PendingMessageWithdrawOutcomeV1, type PendingActivationHoldReasonV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import type { SessionMessageHostAdmissionOrigin } from '@/sync/domains/session/input/types';
 import { encodeBase64 } from '@/encryption/base64';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
@@ -2367,7 +2367,6 @@ export function enqueuePendingMessageV2(
 
 export type PendingMessageEnqueueResultV2 = Readonly<{
     localId: string;
-    pendingActivationAuthorization?: PendingActivationAuthorizationV1 | null;
     accepted: boolean;
     didWrite?: boolean;
     cancelled?: true;
@@ -2712,10 +2711,6 @@ async function enqueuePendingMessageV2Owned(params: {
             }
             // Validate exact server custody before retiring the outbox, and record only against
             // the recipient's read captured at HTTP success, never one started during validation.
-            const rawAuthorization = isPlainObject(payload) ? payload.pendingActivationAuthorization : undefined;
-            const authorization = PendingActivationAuthorizationV1Schema.safeParse(rawAuthorization);
-            const pendingActivationAuthorization = rawAuthorization === undefined ? undefined
-                : !recipient && authorization.success && authorization.data.requestId === localId ? authorization.data : null;
             recordAcceptance(localId);
             applyPendingAcknowledgementActor(sessionId, localId, outboxScope, payload);
             const terminal = isPlainObject(payload) && payload.terminal === true;
@@ -2744,7 +2739,7 @@ async function enqueuePendingMessageV2Owned(params: {
             } else {
                 removePendingOutboxProjectionIfOwned(sessionId, localId, outboxScope);
             }
-            return { committed: true, cancelled: false, terminal, didWrite, pendingActivationAuthorization };
+            return { committed: true, cancelled: false, terminal, didWrite };
         });
 
         if (acceptedComposerAdmission && outcome.committed && !outcome.cancelled) {
@@ -2781,8 +2776,6 @@ async function enqueuePendingMessageV2Owned(params: {
             accepted: true,
             ...(typeof outcome.didWrite === 'boolean' ? { didWrite: outcome.didWrite } : {}),
             ...(outcome.terminal ? { terminal: true as const } : {}),
-            ...(outcome.pendingActivationAuthorization !== undefined
-                ? { pendingActivationAuthorization: outcome.pendingActivationAuthorization } : {}),
             ...(effectiveDeliveryMode === 'external_handoff' ? { externalHandoffClaimed: true as const } : {}),
         };
     } catch (e) {

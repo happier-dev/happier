@@ -61,10 +61,6 @@ const SAFE_EVENT_FANOUT_METRIC_LABEL_PATTERN = /^[a-zA-Z0-9_.:-]+$/;
 const EVENT_FANOUT_PAYLOAD_BYTES_SAMPLE_RATE = 0.01;
 
 type SessionDeliverySocket = Pick<Socket, "id" | "data">;
-type PendingClaimReceiver = (enqueue: Readonly<{ sessionId: string; localId: string; pendingVersion: number }>) => Promise<Readonly<{
-    claim: PendingRunnerClaimV1 | null;
-    afterSend?: () => Promise<void>;
-}> | null>;
 
 function normalizeEventFanoutMetricLabel(value: unknown): string {
     if (typeof value !== "string" || value.length === 0 || value.length > MAX_EVENT_FANOUT_METRIC_LABEL_LENGTH) {
@@ -106,7 +102,6 @@ type AccountChangeRowsGroup = {
 class EventRouter {
     private accountChangeRowsTails = new Map<string, Promise<void>>();
     private userConnections = new Map<string, Set<ClientConnection>>();
-    private pendingClaimReceivers = new Map<string, PendingClaimReceiver>();
     private io: SocketRoomEmitter | null = null;
     private serverOwnedRpcForwarder: ServerOwnedRpcForwarder | null = null;
     private broadcastServerSideEvent: NonNullable<SocketRoomEmitter['serverSideEmit']> | null = null;
@@ -123,7 +118,6 @@ class EventRouter {
     }
 
     removeConnection(userId: string, connection: ClientConnection): void {
-        this.pendingClaimReceivers.delete(connection.socket.id);
         const connections = this.userConnections.get(userId);
         if (connections) {
             connections.delete(connection);
@@ -135,11 +129,6 @@ class EventRouter {
 
     getConnections(userId: string): Set<ClientConnection> | undefined {
         return this.userConnections.get(userId);
-    }
-
-    setPendingClaimReceiver(socketId: string, receiver: PendingClaimReceiver | null): void {
-        if (receiver) this.pendingClaimReceivers.set(socketId, receiver);
-        else this.pendingClaimReceivers.delete(socketId);
     }
 
     async hasFocusedComputerUi(userId: string): Promise<boolean> {
@@ -369,8 +358,6 @@ class EventRouter {
         accountChangeRows?: readonly AccountChangeRowFacts[];
         /** A Session write's committed access facts by recipient: this node's sockets are decided from them. */
         deliveryAccess?: SessionDeliveryAccess;
-        /** Fresh main-route enqueue. Only a qualified local runner may consume this internal address. */
-        committedEnqueueLocalId?: string;
     }): void | Promise<void> {
         if (params.accountChangeFromCursor !== undefined && params.recipientFilter?.type === 'account-stored-content-v3') {
             return this.emitAccountChangeWake({ userId: params.userId, fromCursor: params.accountChangeFromCursor,
@@ -383,7 +370,6 @@ class EventRouter {
             recipientFilter: params.recipientFilter || { type: 'all-user-authenticated-connections' },
             skipSenderConnection: params.skipSenderConnection,
             committedAccess: params.deliveryAccess?.get(params.userId),
-            committedEnqueueLocalId: params.committedEnqueueLocalId,
         });
     }
 
@@ -476,7 +462,6 @@ class EventRouter {
         /** Row-demand sockets receive their own authorized page from `emitAccountChangeWake`. */
         exceptAccountChangeRowsSockets?: boolean;
         committedAccess?: SessionDeliveryAccessRow;
-        committedEnqueueLocalId?: string;
     }): void | Promise<void> {
         if (params.recipientFilter.type === "all-interested-in-session") {
             return this.emitToCredentialQualifiedSessionConnections({
@@ -761,7 +746,6 @@ class EventRouter {
         skipSenderConnection?: ClientConnection;
         /** The write's committed access row for this Account; only this node's own sockets use it. */
         committedAccess?: SessionDeliveryAccessRow;
-        committedEnqueueLocalId?: string;
     }): Promise<void> {
         const payloadType = resolveEventFanoutPayloadType(params.payload);
         const payloadBytes = shouldSampleEventFanoutPayloadBytes()
@@ -786,7 +770,6 @@ class EventRouter {
                     eventName: params.eventName,
                     payload: params.payload,
                     ...(skipSocketId ? { skipSocketId } : {}),
-                    ...(params.committedEnqueueLocalId ? { committedEnqueueLocalId: params.committedEnqueueLocalId } : {}),
                 });
                 return;
             }
@@ -798,7 +781,6 @@ class EventRouter {
                     eventName: params.eventName,
                     payload: params.payload,
                     ...(skipSocketId ? { skipSocketId } : {}),
-                    ...(params.committedEnqueueLocalId ? { committedEnqueueLocalId: params.committedEnqueueLocalId } : {}),
                 };
                 // Peer publication has no acknowledgement/census. Each API node
                 // qualifies only its own sockets, including this publishing node.
@@ -827,8 +809,6 @@ class EventRouter {
                 emit: (socket, isSessionOwner, metadataLayoutVersion) => {
                     const payload = projectSessionDeliveryForSocket(socket.data, params.sessionId, params.eventName, params.payload, isSessionOwner, metadataLayoutVersion);
                     if (payload === null) return false;
-                    if (this.offerCommittedEnqueue(socket.id, params.sessionId,
-                        params.committedEnqueueLocalId, payload, update => { socket.emit('update', update); })) return true;
                     socket.emit(params.eventName, payload);
                     return true;
                 },
@@ -846,28 +826,6 @@ class EventRouter {
             recordEventFanoutDrop({ eventName: params.eventName, reason: "no_matching_connections" });
             log({ module: "websocket", level: "warn", sessionId: params.sessionId, error }, "Credential-qualified Session event delivery unavailable");
         }
-    }
-
-    private offerCommittedEnqueue(socketId: string, sessionId: string, localId: string | undefined,
-        payload: unknown, emit: (payload: UpdatePayload) => void): boolean {
-        // The enqueue producer routes this address to the owner Account only. The receiver
-        // revalidates the bound publisher's authority; a runtime principal need not project as owner.
-        const receive = localId ? this.pendingClaimReceivers.get(socketId) : undefined;
-        if (!localId || !receive || !payload || typeof payload !== 'object') return false;
-        const update = payload as UpdatePayload;
-        const body = update.body;
-        if (body?.t !== 'pending-changed' || body.sid !== sessionId || body.recipient || !Number.isSafeInteger(body.pendingVersion)) return false;
-        void receive({ sessionId, localId, pendingVersion: body.pendingVersion }).then(async result => {
-            try {
-                emit(result?.claim ? { ...update, body: { ...body, runnerClaim: result.claim } } : update);
-            } finally {
-                await result?.afterSend?.();
-            }
-        }, error => {
-            log({ module: 'websocket', level: 'warn', sessionId, error }, 'Pending offer unavailable, preserving pull wake');
-            emit(update);
-        }).catch(error => log({ module: 'websocket', level: 'warn', sessionId, error }, 'Pending offer publication failed'));
-        return true;
     }
 
     /**
@@ -926,8 +884,6 @@ class EventRouter {
                 try {
                     const payload = projectSessionDeliveryForSocket(socket.data, delivery.sessionId, delivery.eventName, delivery.payload, isSessionOwner, metadataLayoutVersion);
                     if (payload === null) return false;
-                    if (this.offerCommittedEnqueue(socket.id, delivery.sessionId,
-                        delivery.committedEnqueueLocalId, payload, update => localIo.to(socket.id).emit('update', update))) return true;
                     if (live) {
                         localIo.to(socket.id).emit(delivery.eventName, payload);
                         return true;

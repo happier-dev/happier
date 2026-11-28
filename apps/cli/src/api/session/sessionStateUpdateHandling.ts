@@ -51,7 +51,6 @@ export function handleSessionStateUpdate(params: {
     agentState: AgentState | null;
     agentStateVersion: number;
     pendingWakeSeq: number;
-    pendingQueueOnly?: true;
     onMetadataUpdated: () => void;
     onMetadataEnvelopeTupleInvalidated?: () => void;
     onPendingChangedDrainTrigger?: (state: KnownPendingQueueState) => void;
@@ -80,8 +79,8 @@ export function handleSessionStateUpdate(params: {
             };
         }
 
+        params.onMetadataUpdated();
         const pendingQueueState = readKnownPendingQueueState(body);
-        if (params.pendingQueueOnly !== true) params.onMetadataUpdated();
         if (pendingQueueState) {
             params.onPendingChangedDrainTrigger?.(pendingQueueState);
         }
@@ -91,7 +90,7 @@ export function handleSessionStateUpdate(params: {
             metadataVersion: params.metadataVersion,
             agentState: params.agentState,
             agentStateVersion: params.agentStateVersion,
-            pendingWakeSeq: params.pendingQueueOnly === true ? params.pendingWakeSeq : params.pendingWakeSeq + 1,
+            pendingWakeSeq: params.pendingWakeSeq + 1,
             ...(pendingQueueState ? { pendingQueueState } : {}),
         };
     }

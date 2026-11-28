@@ -2030,8 +2030,8 @@ export class ApiSessionClient extends EventEmitter {
                 this.reconcileTurnStatusBeforePendingMaterializationIfNeeded(),
             logPendingMaterializationSkip: (stage) => this.logPendingMaterializationSkip(stage),
             maybeScheduleUserSocketDisconnect: () => this.maybeScheduleUserSocketDisconnect(),
-            handleSessionScopedUpdate: (data, opts) => this.updateRuntime.handleUpdate(data, {
-                source: 'session-scoped', ...opts,
+            handleSessionScopedUpdate: (data) => this.updateRuntime.handleUpdate(data, {
+                source: 'session-scoped',
             }),
             onSessionFinished: turnId => this.acceptFinishedTurn(turnId),
             onSessionFinishedReconnect: () => { void this.refreshFinishedTurn(); },
@@ -2310,7 +2310,6 @@ export class ApiSessionClient extends EventEmitter {
             && bodyRecord.settingsV2 !== undefined;
         const isSettingsHint = bodyRecord?.t === 'account-settings-changed';
         if (!isSettingsEnvelope && !isSettingsHint) {
-            if (this.interactionApi.prefersBoundPendingWake(data)) return;
             this.updateRuntime.handleUpdate(data, { source: 'user-scoped' });
             return;
         }
@@ -5271,11 +5270,6 @@ export class ApiSessionClient extends EventEmitter {
 
     getPendingQueueState(): PendingQueueState {
         return this.materializationRuntime.getPendingQueueState();
-    }
-
-    armPendingClaim(signal: AbortSignal, timing: import('./pendingQueueV2Transport').PendingMaterializationDeliveryTiming,
-        active: boolean, expectedRuntimeActivityRevision?: number): void {
-        if (!this.providerInputClosing) this.interactionApi.armPendingClaim(signal, timing, active, expectedRuntimeActivityRevision);
     }
 
     /**

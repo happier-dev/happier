@@ -203,7 +203,7 @@ export async function armPendingActivationAuthorizationInTx(params: Readonly<{
     resumeWhenAvailable?: true;
     /** This transaction wrote the row from its own target admission while holding the placement's controller locks. */
     admittedInTransaction?: true;
-}>): Promise<(PendingActivationPublicationTarget & { authorization: PendingActivationAuthorizationV1 }) | undefined> {
+}>): Promise<PendingActivationPublicationTarget | undefined> {
     if (params.currentAccess.sessionId !== params.sessionId) return undefined;
     const eligible = await params.tx.sessionPendingMessage.findUnique({
         where: { sessionId_localId: { sessionId: params.sessionId, localId: params.requestId }, targetExecutionRunId: null },
@@ -280,18 +280,12 @@ export async function armPendingActivationAuthorizationInTx(params: Readonly<{
     if (params.currentAccess.level !== 'owner' && !managedTarget) return undefined;
     if (inputAdmissionReceipt.data.issuer === 'authenticatedMachine' && !managedTarget && !admittedTarget) return undefined;
     if (priorTarget && managedTarget && priorTarget.managedId !== managedTarget.managedId) return undefined;
-    const authorization: PendingActivationAuthorizationV1 = {
-        requestId: params.requestId,
-        requestedAt: requestedAt.getTime(),
-        status: 'waiting',
-        ...(managedTarget ? { managedWakeTargetV1: managedTarget } : {}),
-    };
     await params.tx.session.update({
         where: { id: params.sessionId },
         data: {
-            pendingActivationRequestId: authorization.requestId,
+            pendingActivationRequestId: params.requestId,
             pendingActivationRequestedAt: requestedAt,
-            pendingActivationStatus: authorization.status,
+            pendingActivationStatus: 'waiting',
             pendingActivationFailureCode: null,
             pendingActivationManagedTarget: managedTarget ?? getActivePrismaRuntime().DbNull,
         },
@@ -304,7 +298,7 @@ export async function armPendingActivationAuthorizationInTx(params: Readonly<{
         } else managedControllerPublication = await publishManagedWakeChangeInTx(params.tx, managedTarget, session.accountId);
     }
     const targetMachine = admittedTarget ? await params.tx.machine.findUniqueOrThrow({ where: { id: admittedTarget.machineId }, select: { accountId: true } }) : undefined;
-    return { accountId: session.accountId, requestId: params.requestId, authorization,
+    return { accountId: session.accountId, requestId: params.requestId,
         ...(admittedTarget && targetMachine ? { machinePublication: { target: admittedTarget,
             custodianAccountId: targetMachine.accountId, requestedAt: requestedAt.getTime() } } : {}),
         ...(managedControllerPublication ? { managedControllerPublication } : {}) };

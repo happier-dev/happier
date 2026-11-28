@@ -1562,30 +1562,18 @@ async function tryMaterializeNextViaSocket(params: {
                 ...custody,
             };
         }
-        return { ...readSocketPendingClaim(rawAck, params.deliveryStateOptIn === true), ok: true, ...custody };
+        const parsedMessage = readMaterializedMessageFromAck(rawAck);
+        const localId = readMaterializedLocalIdFromAck(rawAck, parsedMessage);
+        const didWrite = rawAck.didWrite === true;
+        if (params.deliveryStateOptIn === true) {
+            assertProviderDeliveryClaimMaterialization({ didWrite, message: parsedMessage, localId });
+        }
+        return { ok: true, didMaterialize: true, localId, didWrite, pendingQueueState, message: parsedMessage, ...custody };
     } catch (error) {
         if (isAuthenticationError(error)) throw error;
         throw readPendingQueueMaterializationTransportDiagnostic(error)
             ? error
             : addPendingQueueMaterializationTransportDiagnostic(error);
-    }
-}
-
-function readSocketPendingClaim(rawAck: Record<string, unknown>, provider: boolean) {
-    const message = readMaterializedMessageFromAck(rawAck);
-    const localId = readMaterializedLocalIdFromAck(rawAck, message);
-    const didWrite = rawAck.didWrite === true;
-    if (provider) assertProviderDeliveryClaimMaterialization({ didWrite, message, localId });
-    return { didMaterialize: true as const, localId, didWrite, pendingQueueState: readKnownPendingQueueState(rawAck), message };
-}
-
-export function readPushedPendingClaim(rawAck: Record<string, unknown>): PendingQueueMaterializeNextResult | null {
-    if (rawAck.ok !== true || rawAck.didMaterialize !== true || rawAck.didWrite !== false) return null;
-    try {
-        const result = readSocketPendingClaim(rawAck, true);
-        return result.pendingQueueState ? result : null;
-    } catch {
-        return null;
     }
 }
 

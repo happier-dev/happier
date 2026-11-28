@@ -17,7 +17,6 @@ import { resolveSessionMessageAccountActor } from "@/app/session/messages/projec
 import { db } from "@/storage/db";
 import { bindSessionTranscriptApprovalVisualPublication } from '@/app/session/sessionTranscriptApprovalVisualPublication';
 import { RetainedContextPendingMaterializeRequestV5Schema } from '@happier-dev/protocol/sessions/pending/retainedPendingContextV1';
-import { PENDING_INPUT_READY_EVENT_V1, PendingInputReadyV1Schema, type PendingInputReadyV1 } from '@happier-dev/protocol/sessions/pending/pendingRunnerClaimV1';
 import {
     SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
     SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V1,
@@ -462,10 +461,7 @@ export function sessionUpdateHandler(
         legacyAliveStopped = true;
         clearPendingLegacyAlive();
     };
-    registerSessionEvent("disconnect", () => {
-        eventRouter.setPendingClaimReceiver(socket.id, null);
-        stopLegacyAlive();
-    });
+    registerSessionEvent("disconnect", stopLegacyAlive);
     // The authenticated publisher reports whether it owns rich delivery to the
     // Account owner. Keep that fact with this exact socket/publisher authority so
     // later committed turn failures use the same centralized Activity routing
@@ -2500,65 +2496,6 @@ export function sessionUpdateHandler(
                     );
                     respond({ ok: false, error: "internal" });
                 }
-            });
-        });
-    }
-
-    if (trustedSessionPublisher && connection.connectionType === 'session-scoped') {
-        const { presence, binding } = trustedSessionPublisher;
-        let readiness: PendingInputReadyV1 | null = null;
-        registerSessionEvent(PENDING_INPUT_READY_EVENT_V1, (data: unknown) => {
-            if (data === null) {
-                readiness = null;
-                eventRouter.setPendingClaimReceiver(socket.id, null);
-                return;
-            }
-            const parsed = PendingInputReadyV1Schema.safeParse(data);
-            if (!socket.connected || !parsed.success || !canTargetSessionFromSocket({ socket, connection, sessionId: binding.sessionId })) return;
-            readiness = parsed.data;
-            eventRouter.setPendingClaimReceiver(socket.id, async enqueue => {
-                const ready = readiness;
-                if (!ready || enqueue.sessionId !== binding.sessionId || enqueue.pendingVersion !== ready.pendingVersion + 1) return null;
-                return receiveMessageLock.inLock(async () => {
-                    if (!await hasCurrentSocketCredential(userId, socket) || ready !== readiness) return null;
-                    const result = await presence.runAsCurrentPublisherInTx({ socket,
-                        operation: async (publisherAuthority, tx) => {
-                            if (!socket.connected || ready !== readiness) return null;
-                            return materializeNextPendingMessageInTx({
-                                tx, actorUserId: userId, sessionId: binding.sessionId, publisherAuthority,
-                                deliveryState: 'provider', deliveryTiming: ready.deliveryTiming,
-                                foregroundState: ready.foregroundState, expectedRuntimeActivityRevision: ready.expectedRuntimeActivityRevision,
-                                committedEnqueue: enqueue,
-                            });
-                        },
-                    });
-                    if (!result?.ok) return null;
-                    // Publish committed custody changes even if the wait ended during the transaction.
-                    const afterSend = result.didMaterialize || result.pendingStateChanged
-                        ? () => publishSessionAfterCommit(binding.sessionId, 'Pending materialization', async () => {
-                            await emitPublicationSafePendingChanged({ data: {
-                                sessionId: binding.sessionId, ...toPendingSocketState(result), changedByAccountId: userId,
-                                meaningfulActivityAt: result.didMaterialize ? result.meaningfulActivityAt : undefined,
-                            }, recipientCursors: result.recipientCursorsPending ?? [] });
-                            scheduleTrackedSessionBadgeRefresh({ badgeAttentionChanged: result.badgeAttentionChanged ?? false,
-                                sessionId: binding.sessionId });
-                        }) : undefined;
-                    if (ready !== readiness || !socket.connected) return { claim: null, afterSend };
-                    if (result.didMaterialize) {
-                        readiness = null;
-                        return { claim: { id: ready.id, result: {
-                            ok: true, didMaterialize: true, didWrite: result.didWriteMessage, ...toPendingSocketState(result),
-                            message: serializePendingMaterializedMessage(result.message, { nativeAdmission: true }),
-                            deliveryState: result.deliveryState,
-                        } }, afterSend };
-                    }
-                    if (result.deferredReason === 'waiting_for_foreground_turn'
-                        && result.pendingVersion === enqueue.pendingVersion) {
-                        readiness = { ...ready, pendingVersion: enqueue.pendingVersion };
-                        return { claim: { id: ready.id, result: 'queue-only' as const } };
-                    }
-                    return { claim: null, afterSend };
-                });
             });
         });
     }

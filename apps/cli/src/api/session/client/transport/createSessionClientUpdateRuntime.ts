@@ -13,7 +13,6 @@ import type { ParticipantExecutionRunRecipientRoutingIdentityV1 } from '@happier
 export type SessionClientUpdateRuntime = Readonly<{
     handleUpdate: (data: Update, opts: {
         source: 'session-scoped' | 'user-scoped';
-        pendingQueueOnly?: true;
     }) => void;
     observeCommittedAck: (params: { seq: number; localId?: string | null; markAsUserMessage?: boolean; refreshAgentQueueEchoSuppression?: boolean }) => void;
     getLastObservedMessageSeq: () => number;
@@ -151,8 +150,6 @@ export function createSessionClientUpdateRuntime(
 
                 let shouldEmitMetadataUpdated = false;
                 let pendingChangedDrainTrigger: KnownPendingQueueState | null = null;
-                const pendingQueueOnly = opts.source === 'session-scoped' && opts.pendingQueueOnly === true
-                    && body.t === 'pending-changed';
                 const stateUpdateResult = handleSessionStateUpdate({
                     update: data,
                     updateSource: opts.source,
@@ -166,7 +163,6 @@ export function createSessionClientUpdateRuntime(
                     agentState: deps.getAgentState(),
                     agentStateVersion: deps.getAgentStateVersion(),
                     pendingWakeSeq,
-                    ...(pendingQueueOnly ? { pendingQueueOnly: true } : {}),
                     onMetadataUpdated: () => {
                         shouldEmitMetadataUpdated = true;
                     },
@@ -194,8 +190,7 @@ export function createSessionClientUpdateRuntime(
                     }
                     pendingWakeSeq = stateUpdateResult.pendingWakeSeq;
                     if (stateUpdateResult.pendingQueueState) {
-                        const changed = deps.applyPendingQueueState(stateUpdateResult.pendingQueueState);
-                        if (changed && !pendingQueueOnly) shouldEmitMetadataUpdated = true;
+                        shouldEmitMetadataUpdated = deps.applyPendingQueueState(stateUpdateResult.pendingQueueState) || shouldEmitMetadataUpdated;
                     }
                     if (pendingChangedDrainTrigger) {
                         const canonicalPendingQueueState = deps.getPendingQueueState?.()
@@ -224,7 +219,7 @@ export function createSessionClientUpdateRuntime(
                                     observedPendingVersion,
                                 );
                             }
-                            if (!recipient.success && !pendingQueueOnly) deps.onPendingChangedDrainTrigger?.(canonicalPendingQueueState);
+                            if (!recipient.success) deps.onPendingChangedDrainTrigger?.(canonicalPendingQueueState);
                         }
                     }
                     if (stateUpdateResult.runtimeActivityProjection) {

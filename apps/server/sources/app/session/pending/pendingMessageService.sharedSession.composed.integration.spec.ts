@@ -4109,112 +4109,45 @@ describe("pendingMessageService (shared sessions)", () => {
         expect(await db.sessionMessage.count({ where: { sessionId: session.id, localId: uncertainLocalId } })).toBe(1);
     });
 
-    it.each([
-        { mode: 'idle', foregroundState: 'ready', kind: 'enqueue', action: 'send', armed: true },
-        { mode: 'busy steer', foregroundState: 'active_steerable', kind: 'steer_now', action: 'steer', armed: true },
-        { mode: 'busy queue', foregroundState: 'active_steerable', kind: 'enqueue', action: 'queue-only', armed: true },
-        { mode: 'busy interrupt', foregroundState: 'active_steerable', kind: 'send_now', action: 'interrupt_and_send', armed: true },
-        { mode: 'idle', foregroundState: 'ready', kind: 'enqueue', action: 'send', armed: false },
-        { mode: 'busy steer', foregroundState: 'active_steerable', kind: 'steer_now', action: 'steer', armed: false },
-        { mode: 'busy queue', foregroundState: 'active_steerable', kind: 'enqueue', action: 'queue-only', armed: false },
-        { mode: 'busy interrupt', foregroundState: 'active_steerable', kind: 'send_now', action: 'interrupt_and_send', armed: false },
-        { mode: 'version gap', foregroundState: 'ready', kind: 'enqueue', action: 'send', armed: true },
-    ] as const)('routes fresh Pending custody ($mode, armed=$armed)', async ({ mode, foregroundState, kind, action, armed }) => {
-        const owner = await createAccount('pending-push-owner');
+    it('leaves Account Pending encrypted custody for the publisher to pull', async () => {
+        const owner = await createAccount('pending-pull-owner');
         const session = await createSession(owner.id);
         const runner = createAuthenticatedFakeSocket({ id: randomUUID(), data: { userId: owner.id, authTokenKind: 'account' } });
-        const viewer = createAuthenticatedFakeSocket({ id: randomUUID(), data: { userId: owner.id, authTokenKind: 'account' } });
         const publisher = await createCurrentPendingPublisher({ accountId: owner.id, sessionId: session.id, socket: runner });
-        const sessionConnection = { connectionType: 'session-scoped' as const, socket: runner, userId: owner.id,
+        const connection = { connectionType: 'session-scoped' as const, socket: runner, userId: owner.id,
             sessionId: session.id, machineId: publisher.machineId } as unknown as Parameters<typeof sessionUpdateHandler>[2];
-        const viewerConnection = { connectionType: 'user-scoped' as const, socket: viewer, userId: owner.id,
-        } as unknown as Parameters<typeof sessionUpdateHandler>[2];
-        sessionUpdateHandler(owner.id, runner as unknown as Parameters<typeof sessionUpdateHandler>[1], sessionConnection,
+        sessionUpdateHandler(owner.id, runner as unknown as Parameters<typeof sessionUpdateHandler>[1], connection,
             { presence: publisher.presence, binding: publisher });
-        eventRouter.addConnection(owner.id, sessionConnection);
-        eventRouter.addConnection(owner.id, viewerConnection);
+        eventRouter.addConnection(owner.id, connection);
         try {
             const { pendingVersion } = await db.session.findUniqueOrThrow({ where: { id: session.id }, select: { pendingVersion: true } });
-            if (armed) await getSocketHandler(runner, 'pending-input-ready')({
-                v: 1, id: 1, pendingVersion: mode === 'version gap' ? pendingVersion + 1 : pendingVersion,
-                foregroundState, deliveryTiming: 'after_foreground_ready',
+            await runner.handlers.get('pending-input-ready')?.({
+                v: 1, id: 1, pendingVersion, foregroundState: 'ready', deliveryTiming: 'after_foreground_ready',
             });
-            expect(await publisher.presence.checkCurrentPublisher({ socket: runner })).toBe(true);
             const localId = 'fresh-pending-input';
-            const expectPush = armed && mode !== 'version gap';
+            const requestBody = { localId, content: { t: 'encrypted', c: 'opaque-content' }, messageRole: 'user',
+                requestedAction: { v: 1, kind: 'enqueue' } };
             await withAuthenticatedTestApp(sessionPendingRoutes, async app => {
-                let onRunnerWake: (body: Record<string, unknown>) => void = () => {};
-                let runnerWakeAt: number | undefined;
-                const runnerWake = new Promise<Record<string, unknown>>(resolve => { onRunnerWake = resolve; });
-                runner.emit.mockImplementation((event, value) => {
-                    if (event !== 'update' || value?.body?.t !== 'pending-changed'
-                        || value.body.pendingVersion !== pendingVersion + 1) return;
-                    runnerWakeAt = performance.now();
-                    onRunnerWake(value.body);
-                });
-                const startedAt = performance.now();
                 const response = await app.inject({ method: 'POST', url: `/v2/sessions/${session.id}/pending`,
-                    headers: { 'x-test-user-id': owner.id }, payload: {
-                        localId, content: { t: 'encrypted', c: 'opaque-push-content' }, messageRole: 'user',
-                        requestedAction: { v: 1, kind },
-                    } });
-                const ackAt = performance.now();
+                    headers: { 'x-test-user-id': owner.id }, payload: requestBody });
                 expect(response.statusCode, response.body).toBe(200);
-                const body = await runnerWake;
-                const expectedResult = action === 'queue-only' ? 'queue-only' : expect.objectContaining({ didMaterialize: true,
-                    message: expect.objectContaining({ localId, providerAction: action }),
-                });
-                let pullAckAt: number | undefined;
-                const pull = vi.fn(() => { pullAckAt = performance.now(); });
-                if (expectPush) {
-                    expect(body.runnerClaim).toEqual({ id: 1, result: expectedResult });
-                } else {
-                    expect(body.runnerClaim).toBeUndefined();
-                    await getSocketHandler(runner, 'pending-materialize-next')({
-                        sid: session.id, deliveryState: 'provider', deliveryTiming: 'after_foreground_ready', foregroundState,
-                    }, pull);
-                    expect(pull).toHaveBeenCalledWith(action === 'queue-only'
-                        ? expect.objectContaining({ didMaterialize: false, deferredReason: 'waiting_for_foreground_turn' })
-                        : expectedResult);
-                }
-                console.info('P03 Pending SQLite', JSON.stringify({
-                    mode, armed, postAckMs: ackAt - startedAt, runnerWakeMs: runnerWakeAt! - startedAt,
-                    dispositionMs: (pullAckAt ?? runnerWakeAt!) - startedAt, claimRpcs: pull.mock.calls.length,
-                }));
-                await vi.waitFor(() => expect(viewer.emit).toHaveBeenCalledWith('update', expect.objectContaining({
+                await vi.waitFor(() => expect(runner.emit).toHaveBeenCalledWith('update', expect.objectContaining({
                     body: expect.objectContaining({ t: 'pending-changed', pendingVersion: pendingVersion + 1 }),
                 })));
-                expect(viewer.emit.mock.calls.some(([, value]) => value?.body?.runnerClaim !== undefined)).toBe(false);
-                await expect(db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId } } }))
-                    .resolves.toMatchObject({ status: 'queued', deliveryState: action === 'queue-only' ? null : 'delivering' });
-                await expect(db.sessionMessage.count({ where: { sessionId: session.id, localId } })).resolves.toBe(0);
-
-                if (expectPush && mode === 'idle') {
-                    const recovered = vi.fn();
-                    await getSocketHandler(runner, 'pending-materialize-next')({ sid: session.id, deliveryState: 'provider',
-                        deliveryTiming: 'after_foreground_ready', foregroundState }, recovered);
-                    expect(recovered).toHaveBeenCalledWith(expectedResult);
-
-                    // A replacement publisher cannot assume the previous one did not send.
-                    runner.connected = false;
-                    await getSocketHandler(runner, 'disconnect')();
-                    runner.connected = true;
-                    expect(await publisher.presence.registerPublisher({ socket: runner, binding: publisher,
-                        completeActivitySnapshot: { state: 'unknown', activeCount: 0 },
-                    })).toMatchObject({ status: 'registered' });
-                    const afterReconnect = vi.fn();
-                    await getSocketHandler(runner, 'pending-materialize-next')({ sid: session.id, deliveryState: 'provider',
-                        deliveryTiming: 'after_foreground_ready', foregroundState }, afterReconnect);
-                    expect(afterReconnect).toHaveBeenCalledWith(expect.objectContaining({
-                        didMaterialize: false, deferredReason: 'waiting_for_predecessor',
-                    }));
-                    await expect(db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId } } }))
-                        .resolves.toMatchObject({ deliveryState: 'blocked', deliveryBlockedReason: 'delivery_outcome_uncertain' });
-                }
+                await expect(db.sessionPendingMessage.findUniqueOrThrow({
+                    where: { sessionId_localId: { sessionId: session.id, localId } },
+                })).resolves.toMatchObject({ status: 'queued', deliveryState: null });
+                expect(response.json()).not.toHaveProperty('pendingActivationAuthorization');
+                const pull = vi.fn();
+                await getSocketHandler(runner, 'pending-materialize-next')({
+                    sid: session.id, deliveryState: 'provider', deliveryTiming: 'after_foreground_ready', foregroundState: 'ready',
+                }, pull);
+                expect(pull).toHaveBeenCalledWith(expect.objectContaining({ didMaterialize: true,
+                    message: expect.objectContaining({ localId, providerAction: 'send' }),
+                }));
             });
         } finally {
-            eventRouter.removeConnection(owner.id, sessionConnection);
-            eventRouter.removeConnection(owner.id, viewerConnection);
+            eventRouter.removeConnection(owner.id, connection);
         }
     });
 
@@ -8077,21 +8010,13 @@ describe("pendingMessageService (shared sessions)", () => {
                 expect(result.statusCode, result.body).toBe(200);
                 return result.json();
             };
-            const accepted = await send(localId);
-            expect(accepted).toMatchObject({ didWrite: true, managedActivationLocalId: localId });
+            expect(await send(localId)).toMatchObject({ didWrite: true, managedActivationLocalId: localId });
             const first = await db.session.findUniqueOrThrow({ where: { id: session.id } });
             expect(first).toMatchObject({ pendingActivationRequestId: localId, pendingActivationStatus: 'waiting' });
-            const requestAuthorization = mapPendingActivationAuthorization(first);
-            expect(accepted.pendingActivationAuthorization).toEqual(requestAuthorization);
-            expect(requestAuthorization).toMatchObject({ requestId: localId, status: 'waiting',
-                managedWakeTargetV1: { origin: { pendingRequestId: localId, session: { sessionId: session.id } } } });
-            expect(await send(localId)).toMatchObject({ didWrite: false, managedActivationLocalId: localId,
-                pendingActivationAuthorization: requestAuthorization });
+            expect(await send(localId)).toMatchObject({ didWrite: false, managedActivationLocalId: localId });
             const replayed = await db.session.findUniqueOrThrow({ where: { id: session.id } });
             expect(replayed.pendingActivationRequestedAt).toEqual(first.pendingActivationRequestedAt);
-            const ordinary = await send('another-input', guest.id, { v: 1, kind: 'enqueue' });
-            expect(ordinary).not.toHaveProperty('managedActivationLocalId');
-            expect(ordinary).toHaveProperty('pendingActivationAuthorization', null);
+            expect(await send('another-input', guest.id, { v: 1, kind: 'enqueue' })).not.toHaveProperty('managedActivationLocalId');
 
             const presence = createSessionPublisherPresence();
             const binding = { accountId: owner.id, machineId: guest.id, sessionId: session.id };
@@ -8103,12 +8028,11 @@ describe("pendingMessageService (shared sessions)", () => {
                 .toMatchObject({ ok: true, didMaterialize: true, message: { localId } });
             const providerOwned = await send(localId);
             expect(providerOwned).not.toHaveProperty('managedActivationLocalId');
-            expect(providerOwned).toHaveProperty('pendingActivationAuthorization', null);
             expect(await resolveAcceptedPendingDelivery({ actorUserId: owner.id, sessionId: session.id, localId,
                 publisherAuthority: { ...binding, committedFence: registered.committedFence } }))
                 .toMatchObject({ ok: true, didResolve: true });
             const terminal = await send(localId);
-            expect(terminal).toMatchObject({ didWrite: false, terminal: true, pendingActivationAuthorization: null });
+            expect(terminal).toMatchObject({ didWrite: false, terminal: true });
             expect(terminal).not.toHaveProperty('managedActivationLocalId');
 
             await db.machine.update({ where: { id: controller.id }, data: {
