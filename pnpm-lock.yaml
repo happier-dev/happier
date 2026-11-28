@@ -2267,6 +2267,9 @@ importers:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
+      '@happier-dev/plugins-machine-recipes':
+        specifier: 0.0.0
+        version: link:../plugins/machine-recipes
       esbuild:
         specifier: 0.27.2
         version: 0.27.2
