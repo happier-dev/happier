@@ -12,10 +12,8 @@ import {
   resolveAgentNativeTranscriptPathFromSessionMetadata,
   type AgentId,
 } from '@happier-dev/agents';
-import {
-  readConnectedServiceMaterializationIdentityV1FromMetadata,
-  type AgentNativeResumeIdentityV1,
-} from '@happier-dev/protocol';
+import { readConnectedServiceMaterializationIdentityV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/connectedServiceMaterializationIdentityV1';
+import type { AgentNativeResumeIdentityV1 } from '@happier-dev/protocol/agents/nativeResumeIdentityV1';
 import {
   ConnectedServiceBindingsV2IngressSchema,
   type ConnectedServiceBindingsV2,

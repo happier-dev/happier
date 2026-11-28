@@ -5,10 +5,8 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
 import type { AgentId } from '@happier-dev/agents';
-import {
-    ConnectedServiceMaterializationIdentityV1Schema,
-    type AgentNativeResumeIdentityV1,
-} from '@happier-dev/protocol';
+import { ConnectedServiceMaterializationIdentityV1Schema } from '@happier-dev/protocol/sessions/metadata/connectedServiceMaterializationIdentityV1';
+import type { AgentNativeResumeIdentityV1 } from '@happier-dev/protocol/agents/nativeResumeIdentityV1';
 import {
     ConnectedAccountServiceKeyIngressSchema,
     ConnectedServiceProfileIdSchema,
