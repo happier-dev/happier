@@ -1156,12 +1156,13 @@ test('Action DTO projection retains named public support roots with canonical ge
     [resolve(protocolRoot, 'actions/actionIds.ts'), "export const ACTION_ID_FAMILIES_V1 = { fixture: ['fixture.read'] };"],
     [resolve(protocolRoot, 'actions/pluginActionSurface.ts'), 'export const PLUGIN_SURFACE_EXCLUSION_REASONS = {};'],
   ]);
+  const payload = '{ observationId: string; sourceInstanceId: string; retainedRecordId: string; }';
   const outputs = actionTypeMapGenerator.projectActionDtoDeclarations({ repoRoot,
     declarations: new Map([
       [resolve(protocolRoot, 'actions/pluginActionDtos.ts'),
-        'export type PluginActionInputById = { "fixture.read": {} };\n'
-          + 'export type PluginActionResultById = { "fixture.read": {} };\n'
-          + "export type { Operand as PublicOperand } from './pluginActionDtoSupport.js';\n"],
+        `export type PluginActionInputById = { "fixture.read": ${payload} };\n`
+          + `export type PluginActionResultById = { "fixture.read": ${payload} };\n`
+          + "export type { Operand as PublicOperand, ActionFailureCauseV1 } from './pluginActionDtoSupport.js';\n"],
       [resolve(protocolRoot, 'actions/pluginActionDtoSupport.ts'), 'export type Operand<T extends { value: string }> = { selected: T };\n'],
     ]),
     readSource: path => {
@@ -1170,11 +1171,13 @@ test('Action DTO projection retains named public support roots with canonical ge
       return source;
     },
   }).outputs;
+  assert.ok(outputs.has('packages/plugin-sdk/src/actions/dtos/pluginActionDtoShapes.generated.ts'));
   const support = outputs.get('packages/plugin-sdk/src/actions/dtos/pluginActionDtoSupport.generated.ts');
   assert.ok(support, 'a named public root retains its canonical support module');
   assert.match(support, /export type Operand<T extends \{/u);
   assert.match(support, /selected: T/u);
   assert.doesNotMatch(support, /type PublicOperand/u);
+  assert.match(support, /export type \{ ActionFailureCauseV1 \} from '\.\.\/\.\.\/errors\/index\.js';/u);
 });
 
 test('Action DTO projection scopes mapped keys without hiding external declarations', () => {

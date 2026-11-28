@@ -3,7 +3,7 @@
 
 import type { ActionFailureCauseV1 } from '../../errors/index.js';
 import type { ScmComparisonSource } from '../../scm/comparisonSource.js';
-import type { ActionDtoShape_233fcff0dc6bab25, ActionDtoShape_2468b9bf58223a79, ActionDtoShape_251d3f0a565749e5, ActionDtoShape_35743730220635d7, ActionDtoShape_3f3b39d5e1a2a163, ActionDtoShape_4034bb660b008cef, ActionDtoShape_77633ed47a8d59aa, ActionDtoShape_864722e2392066e5, ActionDtoShape_8a935637951b864a, ActionDtoShape_93f289539f64fac2, ActionDtoShape_9fa7a46759da809a, ActionDtoShape_a111c55e93b2fe12, ActionDtoShape_aeb85a33650fbfcb, ActionDtoShape_af55101c431f3f28, ActionDtoShape_cc15fc287481a101, ActionDtoShape_cfac68324f9038e7, ActionDtoShape_d1e5ef10957a1690, ActionDtoShape_d2a7b6c5f18287e7, ActionDtoShape_d31cecb22d928271, ActionDtoShape_d634296942fd1e91, ActionDtoShape_df23cc8b30e6de20, ActionDtoShape_e4fd4f6baeb34a35, ActionDtoShape_ed34ace4718cecfe, ActionDtoShape_f3458e214d55b4a6, ActionDtoShape_f7052c96eb7a4dca } from './pluginActionDtoShapes.generated.js';
+import type { ActionDtoShape_05d91050fb7cbd60, ActionDtoShape_233fcff0dc6bab25, ActionDtoShape_2468b9bf58223a79, ActionDtoShape_251d3f0a565749e5, ActionDtoShape_35743730220635d7, ActionDtoShape_3c8700897dfeb15a, ActionDtoShape_3f3b39d5e1a2a163, ActionDtoShape_4034bb660b008cef, ActionDtoShape_77633ed47a8d59aa, ActionDtoShape_864722e2392066e5, ActionDtoShape_8a935637951b864a, ActionDtoShape_93f289539f64fac2, ActionDtoShape_986ecb19279896e3, ActionDtoShape_a111c55e93b2fe12, ActionDtoShape_af55101c431f3f28, ActionDtoShape_cc15fc287481a101, ActionDtoShape_cfac68324f9038e7, ActionDtoShape_d1e5ef10957a1690, ActionDtoShape_d2a7b6c5f18287e7, ActionDtoShape_d634296942fd1e91, ActionDtoShape_df23cc8b30e6de20, ActionDtoShape_e4fd4f6baeb34a35, ActionDtoShape_ed34ace4718cecfe, ActionDtoShape_f3458e214d55b4a6, ActionDtoShape_f7052c96eb7a4dca } from './pluginActionDtoShapes.generated.js';
 import type { SessionTargetV1 } from './pluginActionDtoSupport.generated.js';
 
 export type ScmDiffSummaryActionInputById = {
@@ -198,12 +198,12 @@ export type ScmDiffSummaryActionResultById = {
         effectAttempted?: boolean | undefined;
     } | ActionDtoShape_cc15fc287481a101 | {
         success: true;
-        comparison: ActionDtoShape_9fa7a46759da809a;
+        comparison: ActionDtoShape_05d91050fb7cbd60;
         metadata: ActionDtoShape_f3458e214d55b4a6;
         page?: ActionDtoShape_3f3b39d5e1a2a163;
     };
-    readonly "scm.diffSummary.draftPullRequest": ActionDtoShape_d31cecb22d928271;
-    readonly "scm.diffSummary.generate": ActionDtoShape_d31cecb22d928271;
+    readonly "scm.diffSummary.draftPullRequest": ActionDtoShape_3c8700897dfeb15a;
+    readonly "scm.diffSummary.generate": ActionDtoShape_3c8700897dfeb15a;
     readonly "scm.diffSummary.result.list": ActionDtoShape_cc15fc287481a101 | ActionDtoShape_d2a7b6c5f18287e7 | {
         success: true;
         results: {
@@ -257,18 +257,18 @@ export type ScmDiffSummaryActionResultById = {
             };
         })[];
     };
-    readonly "scm.diffSummary.commitPlan.accept": ActionDtoShape_aeb85a33650fbfcb;
-    readonly "scm.diffSummary.commitPlan.stop": ActionDtoShape_aeb85a33650fbfcb;
-    readonly "scm.diffSummary.commitPlan.includeHookChanges": ActionDtoShape_aeb85a33650fbfcb;
-    readonly "scm.diffSummary.commitPlan.cancel": ActionDtoShape_aeb85a33650fbfcb;
-    readonly "scm.diffSummary.commitPlan.recover": ActionDtoShape_aeb85a33650fbfcb;
+    readonly "scm.diffSummary.commitPlan.accept": ActionDtoShape_986ecb19279896e3;
+    readonly "scm.diffSummary.commitPlan.stop": ActionDtoShape_986ecb19279896e3;
+    readonly "scm.diffSummary.commitPlan.includeHookChanges": ActionDtoShape_986ecb19279896e3;
+    readonly "scm.diffSummary.commitPlan.cancel": ActionDtoShape_986ecb19279896e3;
+    readonly "scm.diffSummary.commitPlan.recover": ActionDtoShape_986ecb19279896e3;
     readonly "scm.diffSummary.reviewed.mark": ActionDtoShape_f7052c96eb7a4dca;
     readonly "scm.diffSummary.reviewed.unmark": ActionDtoShape_f7052c96eb7a4dca;
-    readonly "scm.diffSummary.result.read": ActionDtoShape_aeb85a33650fbfcb;
-    readonly "scm.diffSummary.result.edit": ActionDtoShape_aeb85a33650fbfcb;
-    readonly "scm.diffSummary.result.undo": ActionDtoShape_aeb85a33650fbfcb;
+    readonly "scm.diffSummary.result.read": ActionDtoShape_986ecb19279896e3;
+    readonly "scm.diffSummary.result.edit": ActionDtoShape_986ecb19279896e3;
+    readonly "scm.diffSummary.result.undo": ActionDtoShape_986ecb19279896e3;
     readonly "scm.diffSummary.result.delete": ActionDtoShape_cc15fc287481a101 | ActionDtoShape_d2a7b6c5f18287e7 | ActionDtoShape_a111c55e93b2fe12;
-    readonly "scm.diffSummary.refine": ActionDtoShape_aeb85a33650fbfcb;
-    readonly "scm.diffSummary.addOutputs": ActionDtoShape_aeb85a33650fbfcb;
-    readonly "scm.diffSummary.discuss": ActionDtoShape_aeb85a33650fbfcb;
+    readonly "scm.diffSummary.refine": ActionDtoShape_986ecb19279896e3;
+    readonly "scm.diffSummary.addOutputs": ActionDtoShape_986ecb19279896e3;
+    readonly "scm.diffSummary.discuss": ActionDtoShape_986ecb19279896e3;
 };
