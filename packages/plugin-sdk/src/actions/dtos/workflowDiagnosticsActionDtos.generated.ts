@@ -2,7 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
-import type { ActionDtoShape_14ca56260a37297b, ActionDtoShape_160d9843059d14a4, ActionDtoShape_2c857c00c40137fc, ActionDtoShape_44730498494303ae, ActionDtoShape_5e22a1995f03822f, ActionDtoShape_5e5c417373457f2b, ActionDtoShape_8019a6e2fc9693f6, ActionDtoShape_91b7440579bf77e8, ActionDtoShape_a64e14e21990e6ca, ActionDtoShape_adce83a563385c69, ActionDtoShape_b300b2d481955ca9, ActionDtoShape_bc923c82b8af4725, ActionDtoShape_ced0351403049665, ActionDtoShape_da684a12beaf534f, ActionDtoShape_e0a53c7f5ade8210, ActionDtoShape_e7ee87f907d9adb1, ActionDtoShape_f0d6a5b3080e4934 } from './pluginActionDtoShapes.generated.js';
+import type { ActionDtoShape_14ca56260a37297b, ActionDtoShape_160d9843059d14a4, ActionDtoShape_2c857c00c40137fc, ActionDtoShape_44730498494303ae, ActionDtoShape_5e22a1995f03822f, ActionDtoShape_5e5c417373457f2b, ActionDtoShape_8019a6e2fc9693f6, ActionDtoShape_919ed48a0c056f38, ActionDtoShape_a48aafa4767a3177, ActionDtoShape_a64e14e21990e6ca, ActionDtoShape_adce83a563385c69, ActionDtoShape_b300b2d481955ca9, ActionDtoShape_bc923c82b8af4725, ActionDtoShape_ced0351403049665, ActionDtoShape_da684a12beaf534f, ActionDtoShape_e0a53c7f5ade8210, ActionDtoShape_e7ee87f907d9adb1 } from './pluginActionDtoShapes.generated.js';
 
 export type WorkflowDiagnosticsActionInputById = {
     readonly "workflow.trigger.test": {
@@ -54,7 +54,7 @@ export type WorkflowDiagnosticsActionResultById = {
             definition: Readonly<ActionDtoShape_2c857c00c40137fc>;
             eventSeed?: ActionDtoShape_e7ee87f907d9adb1;
             triggerSeed?: ActionDtoShape_b300b2d481955ca9;
-            trigger?: undefined | ActionDtoShape_e0a53c7f5ade8210 | ActionDtoShape_adce83a563385c69 | ActionDtoShape_da684a12beaf534f | ActionDtoShape_f0d6a5b3080e4934 | ActionDtoShape_44730498494303ae | ActionDtoShape_14ca56260a37297b | ActionDtoShape_91b7440579bf77e8 | ActionDtoShape_5e5c417373457f2b | ActionDtoShape_bc923c82b8af4725 | ActionDtoShape_a64e14e21990e6ca | ActionDtoShape_8019a6e2fc9693f6;
+            trigger?: undefined | ActionDtoShape_e0a53c7f5ade8210 | ActionDtoShape_adce83a563385c69 | ActionDtoShape_da684a12beaf534f | ActionDtoShape_919ed48a0c056f38 | ActionDtoShape_44730498494303ae | ActionDtoShape_14ca56260a37297b | ActionDtoShape_a48aafa4767a3177 | ActionDtoShape_5e5c417373457f2b | ActionDtoShape_bc923c82b8af4725 | ActionDtoShape_a64e14e21990e6ca | ActionDtoShape_8019a6e2fc9693f6;
             sessionTarget?: ActionDtoShape_160d9843059d14a4;
         };
     } | {

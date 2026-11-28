@@ -390,10 +390,13 @@ Workbench presents a finding with its locally selected target and descriptor.
 The Event source config and subject are closed. Matching 0.3 development
 publishers, authoring clients, and Home readers must load together. Exact finding
 triggers armed against the earlier development contract require re-arming from
-the selected database. Action triggers keep their existing logical database
-subjects. The inspected `../0.2` frontier at `4df6e9e1a1c50c60a470da7324adcced4b6eec28`
-has no Database Workbench finding Event contract.
-
+the selected database. Action-trigger invocation uses the same binding digest.
+Authoring keeps the structural binding address used by the picker and the
+existing Environment access checks. Database endpoint names are resolved by the
+device or Machine presenting the target. Recreate pre-change database Action
+triggers on matching 0.3 development clients and Home. The inspected `../0.2`
+frontier at `4df6e9e1a1c50c60a470da7324adcced4b6eec28` has no Database Workbench
+finding Event contract.
 
 ## Automation Event watcher broker grants (unreleased 0.3)
 

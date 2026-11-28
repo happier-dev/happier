@@ -116,7 +116,7 @@ describe('managed database attachment at the deployment owner', () => {
                 target: { kind: 'deployment_service', environment, deploymentId: 'deployment-a', targetLinkId: 'target-link', serviceId: 'db', database: 'deployed' },
                 engine: 'postgresql', origin: { environment: origin }, access: { canRead: true, canWrite: false },
                 automationSubject: { ok: true, subject: { kind: 'database', serverId: environment.serverId,
-                    target: { kind: 'environment', environmentId: environment.environmentId, service: 'db', database: 'deployed' } } },
+                    target: { kind: 'environment', environmentId: environment.environmentId, service: 'db' } } },
             }], completeness: { complete: true } });
             stored.state.environment.environment.dataEditorMode = 'managers';
             stored.state.environment.environment.capabilities.editData = true;
@@ -311,7 +311,7 @@ describe('managed database attachment at the deployment owner', () => {
             expect(listed).toMatchObject({ targets: [{ target, origin, access: { canRead: true, canWrite: false, reason: 'database_editing_off' } }], completeness: { complete: true } });
             const automationSubject = { ok: true, subject: { kind: 'database', serverId: environment.serverId,
                 target: { kind: 'managed_deployment', environmentId: environment.environmentId,
-                    targetLinkId: target.targetLinkId, databaseName: target.database } } };
+                    targetLinkId: target.targetLinkId } } };
             expect(listed.targets[0]?.automationSubject).toEqual(automationSubject);
             expect(stored.state.reads).toBe(readsBeforeSelectedLink + 1);
             expect(requests).toMatchObject([{ headers: { authorization: 'Bearer selected-provider-credential' } }]);

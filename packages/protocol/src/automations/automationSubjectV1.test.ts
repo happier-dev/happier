@@ -5,10 +5,46 @@ import { AutomationDatabaseSubjectV1Schema, AutomationSubjectV1Schema, projectAu
     projectAutomationSubjectStructuralV1, readAutomationDatabaseSubjectV1, automationSubjectKeyV1, automationSubjectSharedKeyV1,
     automationSubjectKeyMatchesV1, automationSubjectMatchesV1, type AutomationSubjectV1 } from './automationSubjectV1.js';
 import { DatabaseManualTargetV1Schema, DatabaseWorktreeTargetV1Schema } from '../databases/databaseTargetIdentityV1.js';
+import { DATABASE_STATEMENT_RUN_ACTION_ID_V1 } from '../actions/actionIdsDatabaseV1.js';
+import { projectPluginActionApprovalScopeV1 } from '../plugins/actions/approvalScope.js';
 
 // Canonical serialization order and framing cannot be controlled through UI authoring.
 // These pure identity rules complement, and do not replace, P01.F1–F7.
 describe('automation subject identity', () => {
+    it('publishes only the binding in a database Action-trigger operand', () => {
+        const environment = { serverId: 'home', projectSourceId: 'source', environmentId: 'environment' };
+        const database = 'private-database-name';
+        const targets = [
+            { kind: 'managed_deployment' as const, environment, targetLinkId: 'link', database,
+                contribution: { pluginId: 'provider', contributionId: 'database' }, platformProjectId: 'p', branchId: 'b' },
+            { kind: 'deployment_service' as const, environment, serviceId: 'postgres', database },
+        ];
+        for (const target of targets) {
+            const projected = projectPluginActionApprovalScopeV1({ actionId: DATABASE_STATEMENT_RUN_ACTION_ID_V1,
+                declaration: 'environment', serverId: 'home', input: { target } });
+            expect(JSON.stringify(projected)).not.toContain(database);
+            expect(projected).toEqual({ ok: true, subjects: [{ role: 'operand',
+                subject: projectAutomationDatabaseFindingSubjectV1('home', target) }] });
+            const selected = readAutomationDatabaseSubjectV1('home', target);
+            const rotated = readAutomationDatabaseSubjectV1('home', { ...target, database: 'rotated-database-name' });
+            if (!projected.ok || !selected.ok || !rotated.ok) throw new Error('Expected admitted database subjects');
+            expect(automationSubjectMatchesV1(selected.subject, projected.subjects)).toBe(true);
+            expect(automationSubjectMatchesV1(rotated.subject, projected.subjects)).toBe(true);
+        }
+    });
+
+    it('keeps the database name out of authored selectors even for Plain Accounts', () => {
+        const environment = { serverId: 'home', projectSourceId: 'source', environmentId: 'environment' };
+        const database = 'private-database-name';
+        const target = { kind: 'deployment_service' as const, environment, targetLinkId: 'runtime',
+            deploymentId: 'serving', serviceId: 'postgres', database };
+        const selected = readAutomationDatabaseSubjectV1('home', target);
+        expect(JSON.stringify(selected)).not.toContain(database);
+        expect(AutomationDatabaseSubjectV1Schema.safeParse({ kind: 'database', serverId: 'home', target: {
+            kind: 'environment', environmentId: environment.environmentId, service: target.serviceId, database,
+        } }).success).toBe(false);
+    });
+
     it('matches a database finding by the admitted write-role binding through endpoint rotation', () => {
         const target = { kind: 'managed_deployment' as const,
             environment: { serverId: 'home', projectSourceId: 'source', environmentId: 'environment' },
@@ -25,21 +61,20 @@ describe('automation subject identity', () => {
             target: { ...subject.target, databaseName: target.database } }).success).toBe(false);
     });
 
-    it('resolves managed databases by admitted Home, Environment, Link and logical database only (AM1)', () => {
+    it('resolves managed databases by admitted Home, Environment and Link (AM1)', () => {
         const target = { kind: 'managed_deployment' as const,
             environment: { serverId: 'home', projectSourceId: 'source', environmentId: 'environment' },
             targetLinkId: 'link', contribution: { pluginId: 'provider', contributionId: 'database' },
             platformProjectId: 'provider-project', branchId: 'provider-branch', database: 'app' };
         const result = readAutomationDatabaseSubjectV1('home', target);
         expect(result).toEqual({ ok: true, subject: { kind: 'database', serverId: 'home',
-            target: { kind: 'managed_deployment', environmentId: 'environment', targetLinkId: 'link', databaseName: 'app' } } });
+            target: { kind: 'managed_deployment', environmentId: 'environment', targetLinkId: 'link' } } });
         if (!result.ok) throw new Error('Expected admitted managed database subject');
         expect(AutomationSubjectV1Schema.parse(result.subject)).toEqual(result.subject);
         expect(readAutomationDatabaseSubjectV1('home', { ...target, platformProjectId: 'rotated-project', branchId: 'rotated-branch' })).toEqual(result);
         for (const other of [readAutomationDatabaseSubjectV1('other-home', target),
             readAutomationDatabaseSubjectV1('home', { ...target, environment: { ...target.environment, environmentId: 'other-environment' } }),
-            readAutomationDatabaseSubjectV1('home', { ...target, targetLinkId: 'other-link' }),
-            readAutomationDatabaseSubjectV1('home', { ...target, database: 'other-database' })]) {
+            readAutomationDatabaseSubjectV1('home', { ...target, targetLinkId: 'other-link' })]) {
             if (!other.ok) throw new Error('Expected managed database subject');
             expect(automationSubjectMatchesV1(result.subject, [{ role: 'operand', subject: other.subject }])).toBe(false);
         }
@@ -89,7 +124,7 @@ describe('automation subject identity', () => {
         const manualTarget = DatabaseManualTargetV1Schema.parse({ kind: 'manual', ...context, savedSecretId: 'saved-connection' });
         const environmentInput = { kind: 'database' as const, serverId: 'home',
             target: { kind: 'environment' as const, environmentId: 'environment',
-                service: 'postgres', database: 'app' } };
+                service: 'postgres' } };
         const environment = projectAutomationDatabaseSubjectV1(AutomationDatabaseSubjectV1Schema.parse(environmentInput));
         expect(environment).toEqual(environmentInput);
         expect(automationSubjectKeyV1(environment)).toBe(automationSubjectKeyV1(environmentInput));

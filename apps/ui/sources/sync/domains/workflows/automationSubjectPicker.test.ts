@@ -112,7 +112,7 @@ describe('automation subject picker read ownership', () => {
     it('offers only the Database subjects published by the scoped targets read', () => {
         const descriptor = createDatabaseDescriptorV1Fixture();
         const subject = { kind: 'database', serverId: 'home-a', target: {
-            kind: 'environment', environmentId: 'environment-a', service: 'data', database: 'app',
+            kind: 'environment', environmentId: 'environment-a', service: 'data',
         } } as const;
         expect(projectAutomationSubjectPickerActionPage({ kind: { kind: 'database' }, serverId: 'home-a', result: {
             targets: [

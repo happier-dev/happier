@@ -211,7 +211,7 @@ describe('deployment scoped read transport', () => {
             { environmentId: environment.id }, { signal: new AbortController().signal });
         expect(result).toMatchObject({ ok: true, value: { items: [{ databaseSubjects: {
             database: { ok: true, subject: { kind: 'database', serverId, target: {
-                kind: 'environment', environmentId: environment.id, service: 'database', database: 'fixture-db' } } },
+                kind: 'environment', environmentId: environment.id, service: 'database' } } },
         }, databaseSizes: [{ service: 'database', size: { status: 'unavailable', reason: 'active_deployment_required' } }] }] } });
         expect(homes.requests.slice(start).some(request => /\/v1\/actions\/(action.invoke|deployments.data.size)/.test(request.path))).toBe(false);
         // Home has no deployment receipt for this authored database. This is
@@ -278,7 +278,7 @@ describe('deployment scoped read transport', () => {
             { environmentId: environment.id }, { signal: new AbortController().signal });
         expect(result).toMatchObject({ ok: true, value: { items: [{ databaseSubjects: {
             database: { ok: true, subject: { kind: 'database', serverId, target: {
-                kind: 'environment', environmentId: environment.id, service: 'database', database: 'serving-db' } } },
+                kind: 'environment', environmentId: environment.id, service: 'database' } } },
         } }] } });
         const reads = homes.requests.slice(before);
         const receiptPaths = reads.filter(request => request.path.includes('/receipts/'))
@@ -317,13 +317,13 @@ describe('deployment scoped read transport', () => {
             engine: 'postgresql', label: 'Postgres', origin: { label: 'Active deployment' }, capabilities: [],
             placement: { serverId, accountId: 'account-owner', machineId: runtimeMember.machineId, installationId: runtimeMember.installationId },
             automationSubject: { ok: true, subject: { kind: 'database', serverId,
-                target: { kind: 'environment', environmentId: detail.environment.id, service, database: databaseName } } } };
+                target: { kind: 'environment', environmentId: detail.environment.id, service } } } };
         const nativeWithoutSubject: DatabaseDescriptorV1 = (({ automationSubject: _automationSubject, ...descriptor }) => descriptor)(native);
         const managed = (database: string): DatabaseDescriptorV1 => ({ ...native,
             target: { kind: 'managed_deployment', environment: environmentRef, targetLinkId: 'managed-link',
                 contribution: { pluginId: 'provider', contributionId: 'data' }, platformProjectId: 'provider-project', branchId: 'branch', database },
             automationSubject: { ok: true, subject: { kind: 'database', serverId, target: { kind: 'managed_deployment',
-                environmentId: detail.environment.id, targetLinkId: 'managed-link', databaseName: database } } } });
+                environmentId: detail.environment.id, targetLinkId: 'managed-link' } } } });
         // A native deployment_service descriptor from an older daemon may omit the optional projection field. The
         // transport still owns enough canonical target data to project the native subject deterministically.
         const selected = exactEnvironment ? nativeWithoutSubject : nativeKind ? native : managed('first-database');
@@ -430,7 +430,7 @@ describe('deployment scoped read transport', () => {
                 }] } });
                 else if (exactEnvironment) expect(page).toMatchObject({ ok: true, value: { items: [{ databaseSubjects: {
                     [service]: { ok: true, subject: { kind: 'database', serverId,
-                        target: { kind: 'environment', environmentId: detail.environment.id, service, database: databaseName } } },
+                        target: { kind: 'environment', environmentId: detail.environment.id, service } } },
                 } }] } });
                 expect(invocations).toMatchObject(exactEnvironment ? [
                     { target: { kind: 'machine', machineId: 'controller' }, input: {

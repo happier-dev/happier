@@ -1,5 +1,6 @@
 import * as deploymentActionIds from '../../deployments/deploymentActionIdsV1.js';
 import { summarizeDeploymentRestoreReviewV1 } from '../../deployments/deploymentBackupRestoreV1.js';
+import { projectAutomationDatabaseFindingSubjectV1 } from '../../automations/automationSubjectV1.js';
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { deploymentTeardownOperationReentryV1 } from '../operations/v1.js';
 import type { ActionSpecProjectionMetadata, PreNormalizedActionSpec } from './definition.js';
@@ -307,11 +308,9 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
           const target = DeploymentActionInputSchemasV1[deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1].parse(input);
           return { scope: 'environment' as const, subjects: [
             { kind: 'backup' as const, serverId: target.serverId, environmentId: target.environmentId },
-            ...('destination' in target && target.destination?.kind === 'database' ? [{
-              kind: 'database' as const, serverId: target.serverId,
-              target: { kind: 'environment' as const, environmentId: target.environmentId,
-                service: target.destination.service, database: target.destination.database },
-            }] : []),
+            ...('destination' in target && target.destination?.kind === 'database'
+              ? [projectAutomationDatabaseFindingSubjectV1(target.serverId, { kind: 'environment_binding',
+                environmentId: target.environmentId, address: { service: target.destination.service } })] : []),
           ] };
         } }
         : backup || backupConfigure

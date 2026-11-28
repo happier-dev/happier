@@ -402,10 +402,9 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                         if (service.engine !== 'postgres' && service.engine !== 'mysql') continue;
                         if (!declaredServices?.includes(service.service) || data.filter(other => other.service === service.service).length !== 1) continue;
                         if (deployedServices && !deployedServices.includes(service.service)) continue;
-                        const database = readDeploymentDatabaseRuntimeNameV1(service, bindings);
-                        if (database === null) continue;
+                        if (readDeploymentDatabaseRuntimeNameV1(service, bindings) === null) continue;
                         const parsed = AutomationDatabaseSubjectV1Schema.safeParse({ kind: 'database', serverId: environment.serverId,
-                            target: { kind: 'environment', environmentId: environment.id, service: service.service, database } });
+                            target: { kind: 'environment', environmentId: environment.id, service: service.service } });
                         if (parsed.success) databaseSubjects.set(service.service, { ok: true, subject: parsed.data });
                     }
                 };

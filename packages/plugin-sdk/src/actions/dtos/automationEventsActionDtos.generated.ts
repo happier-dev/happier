@@ -2,7 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue, PluginJsonValueV2 } from '../../identity.js';
-import type { ActionDtoShape_018910fcd2e0151c, ActionDtoShape_075b2603cbc4a72f, ActionDtoShape_0de21da4479caadb, ActionDtoShape_107987b54ce4c274, ActionDtoShape_2fa1b73bf6d2473e, ActionDtoShape_39c4227db2b73075, ActionDtoShape_5e22a1995f03822f, ActionDtoShape_5ef720c2dc43a3ff, ActionDtoShape_a996694cf5cc36ac, ActionDtoShape_c9945676b1505c83, ActionDtoShape_ced0351403049665, ActionDtoShape_ee35e0cc99bde877 } from './pluginActionDtoShapes.generated.js';
+import type { ActionDtoShape_05e1d3029265b956, ActionDtoShape_075b2603cbc4a72f, ActionDtoShape_0de21da4479caadb, ActionDtoShape_107987b54ce4c274, ActionDtoShape_2fa1b73bf6d2473e, ActionDtoShape_39c4227db2b73075, ActionDtoShape_5e22a1995f03822f, ActionDtoShape_5ef720c2dc43a3ff, ActionDtoShape_a055e0b75275eb98, ActionDtoShape_a996694cf5cc36ac, ActionDtoShape_ced0351403049665, ActionDtoShape_ee35e0cc99bde877 } from './pluginActionDtoShapes.generated.js';
 
 export type AutomationEventsActionInputById = {
     readonly "automation.event.sources.list": {
@@ -38,7 +38,7 @@ export type AutomationEventsActionInputById = {
         payload: JsonValue;
         subjectContexts?: undefined | {
             role: 'context' | 'operand';
-            subject: ActionDtoShape_c9945676b1505c83;
+            subject: ActionDtoShape_a055e0b75275eb98;
         }[];
         sourceInstanceId?: string | undefined;
         originRunId?: string | undefined;
@@ -100,7 +100,7 @@ export type AutomationEventsActionResultById = {
             filter: ActionDtoShape_5e22a1995f03822f;
             maximumObservationAgeMs: null | number;
             deploymentPreview?: ActionDtoShape_ee35e0cc99bde877;
-            subject?: ActionDtoShape_018910fcd2e0151c;
+            subject?: ActionDtoShape_05e1d3029265b956;
             observationOnly?: undefined | {
                 kind: 'observationOnly';
             };

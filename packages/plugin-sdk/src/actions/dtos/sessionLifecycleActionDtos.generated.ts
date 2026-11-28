@@ -2,7 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
-import type { ActionDtoShape_018437f8f05070dd, ActionDtoShape_04ab8ed410e38608, ActionDtoShape_05b369cc3e141759, ActionDtoShape_06051575c2fe023e, ActionDtoShape_07c0998227292e80, ActionDtoShape_0952556bebd03fa6, ActionDtoShape_111b60d28bbb268a, ActionDtoShape_18216010620586ce, ActionDtoShape_1c6757e3e9cbec0c, ActionDtoShape_1cb70446344f51f2, ActionDtoShape_2e9ff5b125192bee, ActionDtoShape_30cce765543cbc7b, ActionDtoShape_35e92ee22845f27a, ActionDtoShape_3a555d03da417578, ActionDtoShape_3d9a69388000b500, ActionDtoShape_3eec608d806f747f, ActionDtoShape_498cf34395f17313, ActionDtoShape_4b14909fff008046, ActionDtoShape_4efca47fa0e3c0e2, ActionDtoShape_519ae847196f3da0, ActionDtoShape_51f70645dffab75f, ActionDtoShape_64c348749a63a403, ActionDtoShape_6ebefebd9fe5f287, ActionDtoShape_6ecb8ccbd5317322, ActionDtoShape_7ad0da9387df302c, ActionDtoShape_8052e7fb55384954, ActionDtoShape_994eac34721e1215, ActionDtoShape_9b0f5bcb480cd718, ActionDtoShape_a7adc49c3c46d868, ActionDtoShape_ab948ff1d00aa7ec, ActionDtoShape_b219889d3bedadb8, ActionDtoShape_b2a4f4152723f9c0, ActionDtoShape_b96a0cec64717ce5, ActionDtoShape_bd11bf5cce5cd917, ActionDtoShape_c5650123248754d2, ActionDtoShape_d159422b62cdf062, ActionDtoShape_d49b48b264f9082c, ActionDtoShape_e03921329a60143b, ActionDtoShape_ea61a32d54aa62c3, ActionDtoShape_eacbd2712dd8771d, ActionDtoShape_ee53f68f72afe3f0, ActionDtoShape_f217bbbd61dff1d2 } from './pluginActionDtoShapes.generated.js';
+import type { ActionDtoShape_018437f8f05070dd, ActionDtoShape_030780e0c8ab1a20, ActionDtoShape_04ab8ed410e38608, ActionDtoShape_05b369cc3e141759, ActionDtoShape_06051575c2fe023e, ActionDtoShape_07c0998227292e80, ActionDtoShape_0952556bebd03fa6, ActionDtoShape_111b60d28bbb268a, ActionDtoShape_18216010620586ce, ActionDtoShape_1c6757e3e9cbec0c, ActionDtoShape_1cb70446344f51f2, ActionDtoShape_2e9ff5b125192bee, ActionDtoShape_30cce765543cbc7b, ActionDtoShape_35e92ee22845f27a, ActionDtoShape_3d9a69388000b500, ActionDtoShape_3eec608d806f747f, ActionDtoShape_498cf34395f17313, ActionDtoShape_4b14909fff008046, ActionDtoShape_4efca47fa0e3c0e2, ActionDtoShape_519ae847196f3da0, ActionDtoShape_51f70645dffab75f, ActionDtoShape_64c348749a63a403, ActionDtoShape_6ebefebd9fe5f287, ActionDtoShape_6ecb8ccbd5317322, ActionDtoShape_7ad0da9387df302c, ActionDtoShape_8052e7fb55384954, ActionDtoShape_994eac34721e1215, ActionDtoShape_9b0f5bcb480cd718, ActionDtoShape_a7adc49c3c46d868, ActionDtoShape_ab948ff1d00aa7ec, ActionDtoShape_b219889d3bedadb8, ActionDtoShape_b2a4f4152723f9c0, ActionDtoShape_b96a0cec64717ce5, ActionDtoShape_bd11bf5cce5cd917, ActionDtoShape_c5650123248754d2, ActionDtoShape_d159422b62cdf062, ActionDtoShape_d49b48b264f9082c, ActionDtoShape_e03921329a60143b, ActionDtoShape_ea61a32d54aa62c3, ActionDtoShape_eacbd2712dd8771d, ActionDtoShape_ee53f68f72afe3f0, ActionDtoShape_f217bbbd61dff1d2 } from './pluginActionDtoShapes.generated.js';
 import type { SessionTargetV1 } from './pluginActionDtoSupport.generated.js';
 
 export type SessionLifecycleActionInputById = {
@@ -161,7 +161,7 @@ export type SessionLifecycleActionInputById = {
         [x: string]: unknown;
         handoffId: string;
     };
-    readonly "session.spawn_new": ActionDtoShape_3a555d03da417578;
+    readonly "session.spawn_new": ActionDtoShape_030780e0c8ab1a20;
     readonly "workspace.sync.relationship.create": {
         v: 1;
         sourceWorkspaceRefId: string;

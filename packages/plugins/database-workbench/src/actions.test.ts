@@ -219,7 +219,7 @@ describe('producer-backed database Action declarations', () => {
         { kind: 'deployment_service', binding: { kind: 'deployment_service',
             environment: { serverId: 'home', projectSourceId: 'app', environmentId: 'environment' },
             targetLinkId: 'runtime', deploymentId: 'serving', serviceId: 'postgres', database: 'app' },
-            subjectTarget: { kind: 'environment', environmentId: 'environment', service: 'postgres', database: 'app' } },
+            subjectTarget: { kind: 'environment', environmentId: 'environment', service: 'postgres' } },
     ] as const)('transports $kind producer results with canonical subjects through real Action admission', async ({ binding, subjectTarget }) => {
         const descriptor = { target: binding, label: 'Database', engine: 'postgresql',
             origin: { label: 'Service', environment: undefined }, capabilities: [], access: undefined,

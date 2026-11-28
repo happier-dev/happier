@@ -314,11 +314,10 @@ async function exerciseManagedDatabase(provider: (typeof providers)[number], mod
       expect(selectedDescriptor, 'F4 linked database must be reachable through real target discovery').toBeDefined();
       const target = DatabaseManagedDeploymentTargetV1Schema.parse(selectedDescriptor?.target);
       expect(target).toEqual(expectedTarget);
-      // AM1 binds the public automation subject to this selected data Link and
-      // database, rather than the provider's project or branch identity.
+      // AM1 binds the public automation subject to the selected data Link.
       const automationSubject = { ok: true, subject: { kind: 'database', serverId: fixture.serverId,
         target: { kind: 'managed_deployment', environmentId: environment.environmentId,
-          targetLinkId: link.targetLinkId, databaseName: target.database } } };
+          targetLinkId: link.targetLinkId } } };
       expect(selectedDescriptor?.automationSubject).toEqual(automationSubject);
       async function semantic(actionId: DatabaseActionIdV1, input: unknown, surface?: 'cli' | 'person') {
         return DatabaseOperationResultV1Schema.parse(await invokeDatabase(actionId, input, surface));
@@ -470,22 +469,22 @@ async function exerciseManagedDatabase(provider: (typeof providers)[number], mod
           semantic(DATABASE_STATEMENT_RUN_ACTION_ID_V1, DatabaseWriteStatementInputV1Schema.parse({
             operation: 'statement.run', mode: 'write', target, executionMode: 'transaction', statements }), 'person');
         // Match the real qualified contributed Action against the selected
-        // managed Database, including exclusion of a neighboring database name.
-        const armAfter = async (databaseName: string) => {
+        // managed Database, excluding a neighboring binding.
+        const armAfter = async (targetLinkId: string) => {
           const armed = await account.executeReviewed('workflow.trigger.add', {
             project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
             target: { kind: 'inline', definition: { version: 1, blocks: [
               { kind: 'action', id: 'read-policy', actionId: 'actions.policy.get', input: { profiles: { kind: 'literal', value: true } } },
             ] } },
             trigger: { kind: 'action', enabled: true, phase: 'after', actionIds: [DATABASE_STATEMENT_RUN_ACTION_ID_V1],
-              subject: { ...automationSubject.subject, target: { ...automationSubject.subject.target, databaseName } } },
+              subject: { ...automationSubject.subject, target: { ...automationSubject.subject.target, targetLinkId } } },
           }, { externalActionTarget: { kind: 'machine', machineId: machine.target.machineId },
             presentUserConfirmation: { actionId: 'workflow.trigger.add' } });
           if (!armed.ok) throw new Error(`Database after trigger refused (${armed.errorCode})`);
           return WorkflowTriggerWriteResultV1Schema.parse(armed.result);
         };
-        const after = await armAfter(target.database);
-        const neighborAfter = await armAfter(`${target.database}_neighbor`);
+        const after = await armAfter(link.targetLinkId);
+        const neighborAfter = await armAfter(randomUUID());
         const serverBaseUrl = fixture.server.baseUrl;
         const runs = async (automationId: string) => {
           const response = await fetchJson<unknown>(`${serverBaseUrl}/v3/automations/${encodeURIComponent(automationId)}/runs`, {

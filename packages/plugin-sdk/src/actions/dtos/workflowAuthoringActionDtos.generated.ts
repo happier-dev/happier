@@ -2,7 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
-import type { ActionDtoShape_07c7efa4c3a3640d, ActionDtoShape_0a718acb746e34af, ActionDtoShape_0b407b549a3822d0, ActionDtoShape_14ca56260a37297b, ActionDtoShape_199474909c8e1a9a, ActionDtoShape_24cf89c2a31067a8, ActionDtoShape_3a313d5890c1003b, ActionDtoShape_44730498494303ae, ActionDtoShape_45e2bcabb7f63fed, ActionDtoShape_513f91dad04d7f9a, ActionDtoShape_5e5c417373457f2b, ActionDtoShape_7c35b9da429154ae, ActionDtoShape_7c44251bc8819c70, ActionDtoShape_7fefe62295978318, ActionDtoShape_8019a6e2fc9693f6, ActionDtoShape_850443d9e321ff0c, ActionDtoShape_87708dc2213d24ce, ActionDtoShape_91b7440579bf77e8, ActionDtoShape_9ee90e6f659192fe, ActionDtoShape_a64e14e21990e6ca, ActionDtoShape_adce83a563385c69, ActionDtoShape_af2f2e2eeda59e54, ActionDtoShape_b380b9a7967adb10, ActionDtoShape_bc923c82b8af4725, ActionDtoShape_cb4f732682d1265c, ActionDtoShape_da684a12beaf534f, ActionDtoShape_dbbf829b24609ec8, ActionDtoShape_e0a53c7f5ade8210, ActionDtoShape_e1f335a6ed747447, ActionDtoShape_f0d6a5b3080e4934, ActionDtoShape_fd83f381d3df0bd6, ActionDtoShape_fed82f7a8bbc0d94, ActionDtoShape_ff8d9f6f80bdf734 } from './pluginActionDtoShapes.generated.js';
+import type { ActionDtoShape_07c7efa4c3a3640d, ActionDtoShape_0a718acb746e34af, ActionDtoShape_0b407b549a3822d0, ActionDtoShape_14ca56260a37297b, ActionDtoShape_199474909c8e1a9a, ActionDtoShape_24cf89c2a31067a8, ActionDtoShape_36078ad7f7141074, ActionDtoShape_3a313d5890c1003b, ActionDtoShape_44730498494303ae, ActionDtoShape_45e2bcabb7f63fed, ActionDtoShape_5e5c417373457f2b, ActionDtoShape_7c35b9da429154ae, ActionDtoShape_7c44251bc8819c70, ActionDtoShape_7fefe62295978318, ActionDtoShape_8019a6e2fc9693f6, ActionDtoShape_850443d9e321ff0c, ActionDtoShape_87708dc2213d24ce, ActionDtoShape_919ed48a0c056f38, ActionDtoShape_9ee90e6f659192fe, ActionDtoShape_a48aafa4767a3177, ActionDtoShape_a64e14e21990e6ca, ActionDtoShape_adce83a563385c69, ActionDtoShape_af2f2e2eeda59e54, ActionDtoShape_b380b9a7967adb10, ActionDtoShape_bc923c82b8af4725, ActionDtoShape_d681651e90854a1a, ActionDtoShape_da684a12beaf534f, ActionDtoShape_dbbf829b24609ec8, ActionDtoShape_e0a53c7f5ade8210, ActionDtoShape_e1f335a6ed747447, ActionDtoShape_fd83f381d3df0bd6, ActionDtoShape_fed82f7a8bbc0d94, ActionDtoShape_ff8d9f6f80bdf734 } from './pluginActionDtoShapes.generated.js';
 import type { PluginJsonSchemaV2 } from './pluginActionDtoSupport.generated.js';
 
 export type WorkflowAuthoringActionInputById = {
@@ -35,7 +35,7 @@ export type WorkflowAuthoringActionInputById = {
                         clientId: string;
                         triggerId?: string | undefined;
                     };
-                    trigger: null | ActionDtoShape_e0a53c7f5ade8210 | ActionDtoShape_9ee90e6f659192fe | ActionDtoShape_da684a12beaf534f | ActionDtoShape_cb4f732682d1265c | ActionDtoShape_44730498494303ae | ActionDtoShape_14ca56260a37297b | ActionDtoShape_513f91dad04d7f9a | ActionDtoShape_5e5c417373457f2b | ActionDtoShape_bc923c82b8af4725 | ActionDtoShape_a64e14e21990e6ca | ActionDtoShape_45e2bcabb7f63fed;
+                    trigger: null | ActionDtoShape_e0a53c7f5ade8210 | ActionDtoShape_9ee90e6f659192fe | ActionDtoShape_da684a12beaf534f | ActionDtoShape_36078ad7f7141074 | ActionDtoShape_44730498494303ae | ActionDtoShape_14ca56260a37297b | ActionDtoShape_d681651e90854a1a | ActionDtoShape_5e5c417373457f2b | ActionDtoShape_bc923c82b8af4725 | ActionDtoShape_a64e14e21990e6ca | ActionDtoShape_45e2bcabb7f63fed;
                     enabled: boolean;
                     payloadSchema?: unknown;
                 }[];
@@ -121,7 +121,7 @@ export type WorkflowAuthoringActionResultById = {
                             clientId: string;
                             triggerId?: (string) | undefined;
                         };
-                        trigger: null | ActionDtoShape_e0a53c7f5ade8210 | ActionDtoShape_adce83a563385c69 | ActionDtoShape_da684a12beaf534f | ActionDtoShape_f0d6a5b3080e4934 | ActionDtoShape_44730498494303ae | ActionDtoShape_14ca56260a37297b | ActionDtoShape_91b7440579bf77e8 | ActionDtoShape_5e5c417373457f2b | ActionDtoShape_bc923c82b8af4725 | ActionDtoShape_a64e14e21990e6ca | ActionDtoShape_8019a6e2fc9693f6;
+                        trigger: null | ActionDtoShape_e0a53c7f5ade8210 | ActionDtoShape_adce83a563385c69 | ActionDtoShape_da684a12beaf534f | ActionDtoShape_919ed48a0c056f38 | ActionDtoShape_44730498494303ae | ActionDtoShape_14ca56260a37297b | ActionDtoShape_a48aafa4767a3177 | ActionDtoShape_5e5c417373457f2b | ActionDtoShape_bc923c82b8af4725 | ActionDtoShape_a64e14e21990e6ca | ActionDtoShape_8019a6e2fc9693f6;
                         enabled: boolean;
                         payloadSchema?: PluginJsonSchemaV2 | null | undefined;
                     }[];

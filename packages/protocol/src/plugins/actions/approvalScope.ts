@@ -5,7 +5,7 @@ import { readRecord } from '../../inputs/inputRecords.js';
 import type { PluginActionApprovalScopeV2 } from './v2.js';
 import { readDatabaseActionAutomationMetadataV1 } from '../../actions/databaseActionMetadata.js';
 import type { DatabaseTargetV1 } from '../../databases/databaseTargetIdentityV1.js';
-import { readAutomationDatabaseSubjectV1 } from '../../automations/automationSubjectV1.js';
+import { projectAutomationDatabaseFindingSubjectV1 } from '../../automations/automationSubjectV1.js';
 import { readInputPath } from '../../inputs/inputPredicates.js';
 
 /** Static picker metadata comes from the same approval scope used at invocation. */
@@ -41,8 +41,8 @@ export function projectPluginActionApprovalScopeV1(args: Readonly<{
     if (!args.serverId) return { ok: false, code: 'subject_kind_unavailable' };
     // The contributed host already admitted this Action's canonical input schema.
     const target = readInputPath(args.input, database.primarySubject.field) as DatabaseTargetV1;
-    const projected = readAutomationDatabaseSubjectV1(args.serverId, target);
-    return projected.ok ? { ok: true, subjects: [{ role: 'operand', subject: projected.subject }] } : projected;
+    return { ok: true, subjects: [{ role: 'operand',
+      subject: projectAutomationDatabaseFindingSubjectV1(args.serverId, target) }] };
   }
   if (typeof args.declaration === 'object') {
     if (!args.serverId || !args.pluginId) return { ok: false, code: 'subject_kind_unavailable' };

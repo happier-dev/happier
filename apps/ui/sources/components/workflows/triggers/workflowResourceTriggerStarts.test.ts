@@ -36,7 +36,7 @@ describe('resource Link When choices', () => {
     const actions = listWorkflowStepActionSpecs(null, null, undefined, [{
       ...discovery, automation: { before: true, after: true, workflowStep: true, subjectKinds: ['database'] },
     }], 'automation');
-    const database = { kind: 'database', serverId: 'home', target: { kind: 'environment', environmentId: 'production', service: 'db', database: 'orders' } as const } as const;
+    const database = { kind: 'database', serverId: 'home', target: { kind: 'environment', environmentId: 'production', service: 'db' } as const } as const;
     const options = buildResourceWorkflowTriggerStartOptions({ subject: database, actions, events: [], machineId: 'runner' });
     expect(options.map(option => [option.relation, formatWorkflowLinkStartLabel(option)])).toEqual([
       ['before', 'Before each restore of this database'], ['after', 'After each restore of this database'],

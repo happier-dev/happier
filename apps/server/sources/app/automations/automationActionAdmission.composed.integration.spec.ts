@@ -315,7 +315,7 @@ describe("Action occurrence admission through the real router", () => {
             DatabaseWorktreeTargetV1Schema.parse({ kind: "worktree", ...context,
                 source: { kind: "env_file", path: ".env.local", variable: "DATABASE_URL" } }),
             DatabaseManualTargetV1Schema.parse({ kind: "manual", ...context, savedSecretId: randomUUID() }),
-            { kind: "managed_deployment", environmentId: randomUUID(), targetLinkId: randomUUID(), databaseName: "app" },
+            { kind: "managed_deployment", environmentId: randomUUID(), targetLinkId: randomUUID() },
         ];
         await db.account.create({ data: { id: accountId, encryptionMode: "plain" } });
         await db.automation.create({ data: { id: automationId, accountId, name: "Private database checks", enabled: false,
@@ -350,7 +350,7 @@ describe("Action occurrence admission through the real router", () => {
             DatabaseWorktreeTargetV1Schema.parse({ kind: "worktree", ...context,
                 source: { kind: "env_file", path: ".env.local", variable: "DATABASE_URL" } }),
             DatabaseManualTargetV1Schema.parse({ kind: "manual", ...context, savedSecretId: randomUUID() }),
-            { kind: "managed_deployment", environmentId: randomUUID(), targetLinkId: randomUUID(), databaseName: "app" },
+            { kind: "managed_deployment", environmentId: randomUUID(), targetLinkId: randomUUID() },
         ];
         await db.account.create({ data: { id: accountId, encryptionMode: "e2ee", ...createSignedAccountContentBinding() } });
         await db.automation.create({ data: { id: automationId, accountId, name: "Private database checks", enabled: false,

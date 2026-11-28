@@ -112,7 +112,7 @@ it('arms an after-Action trigger for an installed Account Action from the retain
         authored.setEnabled(false);
         expect(await arm(accountAction('echo'))).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
         const subject = { kind: 'database', serverId, target: { kind: 'managed_deployment',
-            environmentId: 'env', targetLinkId: 'db-link', databaseName: 'neondb' } };
+            environmentId: 'env', targetLinkId: 'db-link' } };
         expect(await arm(DATABASE_STATEMENT_RUN_ACTION_ID_V1, subject)).toMatchObject({
             ok: true, result: { set: { triggers: [{ kind: 'action', phase: 'after',
                 actionIds: [DATABASE_STATEMENT_RUN_ACTION_ID_V1], subject }] } },

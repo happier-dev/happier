@@ -21,7 +21,7 @@ const automationDatabaseFindingBindingTarget = lazyZodSchema(() => z.strictObjec
     bindingId: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/)),
 }));
 
-/** An Event can match the binding without receiving its locally resolved database endpoint. */
+/** Automations match the binding without receiving its locally resolved database endpoint. */
 export const AutomationDatabaseFindingSubjectV1Schema = lazyZodSchema(() => z.strictObject({
     kind: z.literal('database'),
     serverId: MachineTargetV1Schema.shape.serverId,
@@ -40,12 +40,10 @@ export const AutomationDatabaseSubjectV1Schema = lazyZodSchema(() => {
             kind: z.literal('environment'),
             environmentId: DeploymentEnvironmentRefV1Schema.shape.environmentId,
             service: destination.service,
-            database: destination.database,
         }), DatabaseWorktreeTargetV1Schema, DatabaseManualTargetV1Schema, z.strictObject({
             kind: managed.kind,
             environmentId: DeploymentEnvironmentRefV1Schema.shape.environmentId,
             targetLinkId: managed.targetLinkId,
-            databaseName: managed.database,
         }), automationDatabaseFindingBindingTarget]),
     });
 });
@@ -74,6 +72,21 @@ export function projectAutomationDatabaseSubjectV1(subject: AutomationDatabaseSu
     return AutomationDatabaseSubjectV1Schema.parse(subject);
 }
 
+/** Derive the same public identity from a locally selected or previously authored target. */
+function projectAutomationDatabaseBindingSubjectV1(subject: AutomationDatabaseSubjectV1): AutomationDatabaseFindingSubjectV1 {
+    const { serverId, target } = subject;
+    switch (target.kind) {
+        case 'binding': return { kind: 'database', serverId, target };
+        case 'environment': return projectAutomationDatabaseFindingSubjectV1(serverId, {
+            kind: 'environment_binding', environmentId: target.environmentId, address: { service: target.service },
+        });
+        case 'managed_deployment': return projectAutomationDatabaseFindingSubjectV1(serverId, {
+            kind: 'environment_binding', environmentId: target.environmentId, address: { targetLinkId: target.targetLinkId },
+        });
+        default: return projectAutomationDatabaseFindingSubjectV1(serverId, target);
+    }
+}
+
 export const AutomationDatabaseSubjectReadV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
     z.strictObject({ ok: z.literal(true), subject: AutomationDatabaseSubjectV1Schema }),
     z.strictObject({ ok: z.literal(false), code: z.literal('subject_kind_unavailable') }),
@@ -84,9 +97,9 @@ export type AutomationDatabaseSubjectReadV1 = z.infer<typeof AutomationDatabaseS
 export function readAutomationDatabaseSubjectV1(serverId: string, target: DatabaseTargetV1): AutomationDatabaseSubjectReadV1 {
     return { ok: true, subject: projectAutomationDatabaseSubjectV1({ kind: 'database', serverId,
         target: target.kind === 'managed_deployment' ? { kind: 'managed_deployment',
-            environmentId: target.environment.environmentId, targetLinkId: target.targetLinkId, databaseName: target.database }
+            environmentId: target.environment.environmentId, targetLinkId: target.targetLinkId }
             : target.kind === 'deployment_service' ? { kind: 'environment',
-            environmentId: target.environment.environmentId, service: target.serviceId, database: target.database } : target }) };
+            environmentId: target.environment.environmentId, service: target.serviceId } : target }) };
 }
 
 export const AutomationSessionSubjectV1Schema = lazyZodSchema(() => z.strictObject({
@@ -170,7 +183,8 @@ export function automationSubjectSharedKeyV1(subjectKey: string, workflowId: str
 
 /** Workflow-keyed projection for shared tuples; omit workflowId for the local index. */
 export function automationSubjectKeyV1(subject: AutomationSubjectV1, workflowId?: string): string {
-    const key = computeCanonicalDomainSeparatedDigest('happier.automation.subject.v1', [createCanonicalJsonSigningInput(subject)]);
+    const identity = subject.kind === 'database' ? projectAutomationDatabaseBindingSubjectV1(subject) : subject;
+    const key = computeCanonicalDomainSeparatedDigest('happier.automation.subject.v1', [createCanonicalJsonSigningInput(identity)]);
     return workflowId === undefined ? key : automationSubjectSharedKeyV1(key, workflowId);
 }
 

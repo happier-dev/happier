@@ -130,7 +130,7 @@ it('groups armed production findings and consumes a recurrence after Clear befor
     const admissions: Array<Readonly<{ occurrenceId: string; occurredAt: number; payload: unknown }>> = [];
     const databaseFindings: unknown[] = [];
     const databaseSubject = { kind: 'database', serverId: subject.serverId, target: {
-        kind: 'managed_deployment', environmentId: subject.environmentId, targetLinkId: 'orders-link', databaseName: 'orders',
+        kind: 'managed_deployment', environmentId: subject.environmentId, targetLinkId: 'orders-link',
     } };
     const binding = { engine: 'postgresql', hostname: 'orders-db.test', port: 5432, database: 'orders', subject: databaseSubject };
     let selectedBindings = [binding];

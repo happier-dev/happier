@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { getActionSpec } from '../actionSpecs.js';
 import { readActionApprovalScopeAdmissionV1 } from './approvalScope.js';
 import { createActionAutomationPortV1 } from './actionAutomationAdmission.js';
-import { automationSubjectKeyV1 } from '../../automations/automationSubjectV1.js';
+import { automationSubjectKeyV1, projectAutomationDatabaseFindingSubjectV1 } from '../../automations/automationSubjectV1.js';
 
 describe('declared Action operands', () => {
   it.each([
@@ -71,16 +71,19 @@ describe('declared Action operands', () => {
 
   it('projects only the database selected by restore while retaining Environment policy', () => {
     const spec = getActionSpec('deployments.backups.restore');
+    const database = 'private-restore-destination-name';
     const input = spec.inputSchema.parse({ mode: 'confirm', serverId: 'home', environmentId: 'environment',
       machineId: 'machine', installationId: 'installation', targetLinkId: 'target', deploymentId: 'deployment',
       expectedRevision: 1, source: { kind: 'repository', snapshotId: 'snapshot' }, prepareOperationId: 'prepare',
-      destination: { kind: 'database', service: 'postgres', database: 'app' } });
+      destination: { kind: 'database', service: 'postgres', database } });
     const project = typeof spec.approvalScope === 'object' ? spec.approvalScope.project : undefined;
     if (!project) throw new Error('Database operand declaration missing');
-    expect(project(input, { serverId: 'home' })).toEqual({ scope: 'environment', subjects: [
+    const scope = project(input, { serverId: 'home' });
+    expect(JSON.stringify(scope)).not.toContain(database);
+    expect(scope).toEqual({ scope: 'environment', subjects: [
       { kind: 'backup', serverId: 'home', environmentId: 'environment' },
-      { kind: 'database', serverId: 'home', target: { kind: 'environment',
-        environmentId: 'environment', service: 'postgres', database: 'app' } },
+      projectAutomationDatabaseFindingSubjectV1('home', { kind: 'environment_binding',
+        environmentId: 'environment', address: { service: 'postgres' } }),
     ] });
     expect(project({ ...input, destination: { kind: 'volume', service: 'postgres', volume: 'data' } },
       { serverId: 'home' })).toEqual({ scope: 'environment', subjects: [

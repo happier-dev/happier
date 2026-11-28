@@ -113,7 +113,7 @@ describe('A reopened Action trigger names its saved resource', () => {
         executionOrigin } } },
     }));
     const subject = { kind: 'database', serverId: serverIdentityId, target: {
-      kind: 'environment', environmentId: environment.id, service: 'postgres', database: 'app',
+      kind: 'environment', environmentId: environment.id, service: 'postgres',
     } } as const;
     const execute = vi.fn(() => ({ targets: [{ ...createDatabaseDescriptorV1Fixture(), label: 'App Database',
       automationSubject: { ok: true, subject } }], completeness: { complete: true } }));

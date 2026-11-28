@@ -897,7 +897,7 @@ describe('Environment → Database → Workbench', () => {
         const queries = homes.requestsFor('/v3/automations/query').map(request => request.input);
         expect(queries).toContainEqual(expect.objectContaining({
           subject: { kind: 'database', serverId: view.serverIdentityId,
-            target: { kind: 'environment', environmentId: view.environmentId, service: 'postgres', database: 'shop' } },
+            target: { kind: 'environment', environmentId: view.environmentId, service: 'postgres' } },
         }));
         const discoveries = view.effects.filter(effect => effect.actionId === 'action.invoke');
         expect(discoveries.length).toBeGreaterThan(0);
