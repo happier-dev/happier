@@ -643,6 +643,16 @@ Two dedupe owners for one concept caused the id/path pair to be dead on arrival 
 same-id republish carrying the path before the pair-aware subscriber ran. Both owners now dedupe on
 the pair. It is proven for the SDK launch mode only and has no live evidence.
 
+### Connected-account continuity
+
+A departure records the effective connected profile and local materialization
+identity alongside the conversation. On return, the native-return owner uses the
+same conversation and home only when the resolved destination bindings name
+those profiles. A different profile, a pool whose member is unresolved, or an
+older record without connected-account evidence uses a fresh conversation with
+the full bounded replay. The stored reader accepts the bundled service keys
+written by 0.2 and normalizes them to their qualified 0.3 keys.
+
 ### The delta boundary
 
 The record also carries `departureSeqInclusive`: the transcript head the Agent had already seen when

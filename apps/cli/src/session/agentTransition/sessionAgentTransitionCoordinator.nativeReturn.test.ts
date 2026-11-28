@@ -10,6 +10,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { LocalAgentNativeResumeRecordStore } from './agentNativeReturn';
+import type { LocalAgentNativeResumeRecordV1 } from '@/session/handoff/metadata/localSessionHandoffMetadataStore';
 import { runSessionAgentTransition } from './sessionAgentTransitionCoordinator';
 import {
   buildRawSession,
@@ -79,10 +80,7 @@ const CLAUDE_RECORD: StoredRecord = {
   departureSeqInclusive: CLAUDE_DEPARTURE_SEQ,
 };
 
-type StoredRecord = Readonly<{
-  identity: AgentNativeResumeIdentityV1;
-  departureSeqInclusive: number;
-}>;
+type StoredRecord = LocalAgentNativeResumeRecordV1;
 
 type RecordWrite = Readonly<{
   agentId: string;
@@ -320,6 +318,33 @@ describe('runSessionAgentTransition — native return (sections 6.5, 7.3 step 1)
   const returnToClaude = buildTransitionRequest({
     expectedCurrentAgentId: 'codex',
     selection: { v: 1, agentId: 'claude' },
+  });
+
+  it.each(['work', 'personal'] as const)('uses the recorded conversation only when the resolved account is %s', async (profileId) => {
+    const key = 'happier.agent.claude/claude-subscription';
+    const materializationIdentity = { v: 1, id: 'work-state', createdAt: 1 } as const;
+    const harness = createSourceHarness(CODEX_SOURCE_METADATA);
+    harness.deps.localAgentNativeResumeRecordStore = createRecordStoreDouble({
+      calls: harness.calls,
+      seeded: { claude: { ...CLAUDE_RECORD, auth: { profilesByServiceId: { [key]: 'work' }, materializationIdentity } } },
+    }).store;
+    harness.deps.resolveSpawnConnectedServicesDefaults = async () => ({
+      connectedServices: { v: 2, bindingsByServiceId: { [key]: { source: 'connected', selection: 'profile', profileId } } },
+      connectedServicesUpdatedAt: 1,
+    });
+    const result = await runSessionAgentTransition({
+      credentials: TEST_CREDENTIALS, request: returnToClaude, deps: harness.deps,
+    });
+    expect(result.type).toBe('accepted');
+    const sealed = readSealedTargetMetadata(harness);
+    if (profileId === 'work') {
+      expect(sealed.claudeSessionId).toBe(CLAUDE_IDENTITY.vendorResumeId);
+      expect(sealed.connectedServiceMaterializationIdentityV1).toEqual(materializationIdentity);
+      expect(readBriefBound(harness)).toBe(CLAUDE_DEPARTURE_SEQ);
+    } else {
+      expect(sealed.claudeSessionId).toBeUndefined();
+      expect(readBriefBound(harness)).toBeNull();
+    }
   });
 
   it('restores the target’s recorded id into the committed current view', async () => {

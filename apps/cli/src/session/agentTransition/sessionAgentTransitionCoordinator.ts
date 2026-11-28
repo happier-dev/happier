@@ -981,7 +981,8 @@ export async function runSessionAgentTransition(
   if (params.callerInputAuthorization && 'grant' in params.callerInputAuthorization.binding) {
     const nativeReturn = target.configuredBackend ? null : await resolveAgentNativeReturnIdentity({
       store: deps.localAgentNativeResumeRecordStore, sessionId, targetAgentId: target.agentId,
-      sourceMetadata, accountSettings: deps.readAccountSettings(),
+      sourceMetadata, targetBindings: targetConnectedServices.connectedServices?.connectedServices,
+      accountSettings: deps.readAccountSettings(),
     });
     const lineage = await fetchForkTranscriptSegments({ credentials, startingSessionId: sessionId,
       accountEncryptionMode: transport.accountEncryptionCurrentness.mode,
@@ -1167,6 +1168,7 @@ export async function runSessionAgentTransition(
     sessionId,
     targetAgentId: target.agentId,
     sourceMetadata: stoppedMetadata,
+    targetBindings: targetConnectedServices.connectedServices?.connectedServices,
     accountSettings: deps.readAccountSettings(),
   });
 
@@ -1218,7 +1220,9 @@ export async function runSessionAgentTransition(
     modelSelectionRef,
     nativeResumeIdentity: nativeReturn?.identity ?? null,
     activationSeed: brief.seed,
-    connectedServices: targetConnectedServices.connectedServices,
+    connectedServices: targetConnectedServices.connectedServices && nativeReturn?.auth?.materializationIdentity
+      ? { ...targetConnectedServices.connectedServices, materializationIdentity: nativeReturn.auth.materializationIdentity }
+      : targetConnectedServices.connectedServices,
     updatedAtMs,
   });
 

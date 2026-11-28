@@ -15,6 +15,26 @@ const CLAUDE_IDENTITY = { v: 1, vendorResumeId: 'claude-1' } as const;
 const DEPARTURE_SEQ = 412;
 
 describe('localSessionHandoffMetadataStore — inactive Agent native record', () => {
+  it('reads the account and state home from a 0.2 native return record', async () => {
+    const { store } = await createStore();
+    const key = { happierSessionId: 'session-1', agentId: 'claude' } as const;
+    await store.writeAgentNativeResumeRecord({
+      ...key, identity: CLAUDE_IDENTITY, departureSeqInclusive: DEPARTURE_SEQ,
+    });
+    const auth = {
+      profilesByServiceId: { 'claude-subscription': 'work' },
+      materializationIdentity: { v: 1, id: 'work-state', createdAt: 1 },
+    };
+    await writeFile(store.resolveAgentNativeResumeRecordPath(key), JSON.stringify({
+      v: 1, ...key, vendorResumeId: CLAUDE_IDENTITY.vendorResumeId,
+      departureSeqInclusive: DEPARTURE_SEQ, auth,
+    }));
+    await expect(store.readAgentNativeResumeRecord(key)).resolves.toEqual({
+      identity: CLAUDE_IDENTITY, departureSeqInclusive: DEPARTURE_SEQ,
+      auth: { ...auth, profilesByServiceId: { 'happier.agent.claude/claude-subscription': 'work' } },
+    });
+  });
+
   it('round-trips the id and the departure boundary for one Session and Agent', async () => {
     const { store } = await createStore();
 

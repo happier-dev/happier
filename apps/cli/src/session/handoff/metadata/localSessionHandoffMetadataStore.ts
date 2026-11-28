@@ -5,7 +5,14 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
 import type { AgentId } from '@happier-dev/agents';
-import type { AgentNativeResumeIdentityV1 } from '@happier-dev/protocol';
+import {
+    ConnectedServiceMaterializationIdentityV1Schema,
+    type AgentNativeResumeIdentityV1,
+} from '@happier-dev/protocol';
+import {
+    ConnectedAccountServiceKeyIngressSchema,
+    ConnectedServiceProfileIdSchema,
+} from '@happier-dev/protocol/connect/connected-service-bindings';
 import { z } from 'zod/mini';
 
 import {
@@ -32,6 +39,13 @@ function buildAgentNativeResumeRecordFingerprint(
         .digest('hex');
 }
 
+const LocalAgentNativeResumeAuthSchema = lazyZodSchema(() => z.strictObject({
+    profilesByServiceId: z.record(ConnectedAccountServiceKeyIngressSchema, ConnectedServiceProfileIdSchema),
+    materializationIdentity: z.optional(ConnectedServiceMaterializationIdentityV1Schema),
+}));
+
+export type LocalAgentNativeResumeAuth = z.infer<typeof LocalAgentNativeResumeAuthSchema>;
+
 /**
  * Machine-local record of an INACTIVE Agent's native conversation.
  *
@@ -40,8 +54,8 @@ function buildAgentNativeResumeRecordFingerprint(
  * unusable everywhere it could be read (`REQ-PRIVACY-01`). It is scope, not
  * secrecy.
  *
- * It carries two facts and nothing else: WHICH conversation to resume, and HOW
- * FAR that conversation had seen this Session's transcript when the Agent left.
+ * It carries the conversation, its transcript boundary, and the non-secret
+ * connected account and state home associated with that conversation.
  * There is no continuity proof and no id/proof atomicity obligation (`AM-24`):
  * whether a recorded id still resumes is answered by resuming it, which fails
  * loudly in both Agents that support native resume. No model, Provider ref,
@@ -75,6 +89,7 @@ const StoredLocalAgentResumeRecordV1Schema = lazyZodSchema(() => z.strictObject(
      * this record is already read on return.
      */
     departureSeqInclusive: z.number().check(z.int(), z.nonnegative()),
+    auth: z.optional(LocalAgentNativeResumeAuthSchema),
 }));
 
 type StoredLocalAgentResumeRecordV1 = z.infer<typeof StoredLocalAgentResumeRecordV1Schema>;
@@ -84,10 +99,11 @@ export type LocalAgentNativeResumeRecordKey = Readonly<{
     agentId: AgentId;
 }>;
 
-/** Both facts the record carries, read as one value. */
+/** The conversation and its continuity metadata, read as one value. */
 export type LocalAgentNativeResumeRecordV1 = Readonly<{
     identity: AgentNativeResumeIdentityV1;
     departureSeqInclusive: number;
+    auth?: LocalAgentNativeResumeAuth;
 }>;
 
 export function createLocalSessionHandoffMetadataStore(params: Readonly<{
@@ -161,6 +177,7 @@ export function createLocalSessionHandoffMetadataStore(params: Readonly<{
             return {
                 identity: { v: 1, vendorResumeId: record.vendorResumeId },
                 departureSeqInclusive: record.departureSeqInclusive,
+                ...(record.auth ? { auth: record.auth } : {}),
             };
         },
 
@@ -177,6 +194,7 @@ export function createLocalSessionHandoffMetadataStore(params: Readonly<{
         async writeAgentNativeResumeRecord(input: LocalAgentNativeResumeRecordKey & Readonly<{
             identity: AgentNativeResumeIdentityV1 | null;
             departureSeqInclusive: number;
+            auth?: LocalAgentNativeResumeAuth;
         }>): Promise<void> {
             const happierSessionId = input.happierSessionId.trim();
             if (!happierSessionId) return;
@@ -193,6 +211,7 @@ export function createLocalSessionHandoffMetadataStore(params: Readonly<{
                 agentId: input.agentId,
                 vendorResumeId: input.identity.vendorResumeId,
                 departureSeqInclusive: input.departureSeqInclusive,
+                auth: input.auth,
             });
             if (!candidate.success) return;
 
