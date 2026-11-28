@@ -121,17 +121,17 @@ function describePluginChangeFailureCause(error: unknown): string | undefined {
   return projected === 'Plugin operation failed' ? undefined : projected;
 }
 
-function failedPluginChange(
+export function projectPluginChangeFailure(
   fallbackCode: string,
   error: unknown,
-  sourceRootPath?: string,
   phase = 'plugins.change.apply',
+  logLocalFailure?: (code: string) => void,
 ): Extract<PluginChangeApplyResult, { kind: 'failed' }> {
   const ownerRefusal = error instanceof RegistryFetchErrorV1
     || error instanceof DaemonPluginChangePreparationError
     || isPluginError(error);
   const code = ownerRefusal ? error.code : fallbackCode;
-  logger.warnLocalFile(`[plugins] ${code}`, { code, ...(sourceRootPath ? { sourceRootPath } : {}), error });
+  logLocalFailure?.(code);
   const moduleError = findPluginModuleLoadError(error);
   const diagnostic = findPluginFailureDiagnostic(error)
     ?? (moduleError ? mapDaemonModuleLoadErrorToDiagnostic(moduleError) : undefined);
@@ -146,6 +146,17 @@ function failedPluginChange(
       failureCause: { ...failureCause },
     },
   };
+}
+
+function failedPluginChange(
+  fallbackCode: string,
+  error: unknown,
+  sourceRootPath?: string,
+  phase?: string,
+): Extract<PluginChangeApplyResult, { kind: 'failed' }> {
+  return projectPluginChangeFailure(fallbackCode, error, phase, (code) => {
+    logger.warnLocalFile(`[plugins] ${code}`, { code, ...(sourceRootPath ? { sourceRootPath } : {}), error });
+  });
 }
 
 export function createDaemonPluginChangeService(params: Readonly<{

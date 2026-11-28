@@ -9,7 +9,7 @@ import { computePluginUiArtifactFileSetSha256DigestV1 } from '@happier-dev/proto
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createTestNpmTarball } from '@/plugins/distribution/testkit/npmTarball';
-import { decideUserPluginChange } from '@/plugins/daemon/changeClient';
+import { decideUserPluginChange, describeUserPluginChangeFailure } from '@/plugins/daemon/changeClient';
 import { executePluginDevLoopAction } from '@/plugins/devLoop/actions';
 import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
 import type { PluginGenerationCustodyRetirementRemoteDependencies } from '@/plugins/store/registry/generationCustodyRetirement';
@@ -904,6 +904,34 @@ describe('createDaemonArchivePluginChangePreparer', () => {
       .resolves.toBe('reviewed archive bytes');
     expect(await candidateRoots(happyHomeDir)).toEqual([]);
     expect(await preparedGenerationRoots(happyHomeDir)).toHaveLength(1);
+  });
+
+  it('preserves the missing-generation filesystem cause when approving an archive', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-archive-change-home-'));
+    roots.push(happyHomeDir);
+    const fixture = await createArchiveFixture();
+    const service = createDaemonPluginChangeService({
+      prepare: createDaemonArchivePluginChangePreparer({
+        happyHomeDir,
+        runtimeLifecycle: { prepare: async () => { throw new Error('A missing generation cannot activate'); } },
+      }),
+    });
+    const review = await service.requestPluginChange({ kind: 'installArchive', locator: fixture.archivePath });
+    if (review.kind !== 'reviewRequired') throw new Error('Expected archive installation review');
+    const [generation] = await preparedGenerationRoots(happyHomeDir);
+    await rm(join(generation!, 'plugin-generation.v1.json'));
+
+    const result = await service.decidePluginChange({
+      pendingChangeId: review.pendingChangeId,
+      decision: 'installAndTrust',
+    });
+    expect(result.kind).toBe('failed');
+    if (result.kind !== 'failed') throw new Error('Expected archive installation failure');
+    expect(describeUserPluginChangeFailure(result)).toMatchObject({
+      code: 'plugin_install_failed',
+      failureCause: { phase: 'plugins.change.apply', errorCode: 'ENOENT' },
+    });
+    expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins).toEqual({});
   });
 
   it('rejects when the same installed plugin changes after archive review', async () => {

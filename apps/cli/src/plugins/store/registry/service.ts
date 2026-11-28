@@ -40,6 +40,8 @@ export type PluginRegistryTransactionResult =
       status: 'precommit_failed';
       phase: 'prepare' | 'validateAndActivate' | 'readCurrent' | 'persist' | 'commit';
       message: string;
+      /** In-process transfer to the mutation caller, which owns public failure projection. */
+      cause: unknown;
       abortMessage?: string;
     }>;
 
@@ -84,6 +86,17 @@ function projectTransactionFailureMessage(message: string): string {
   return projectTransactionFailureText(new Error(message));
 }
 
+function projectPrecommitFailure(
+  phase: Extract<PluginRegistryTransactionResult, { status: 'precommit_failed' }>['phase'],
+  cause: unknown,
+  abortMessage?: string,
+): Extract<PluginRegistryTransactionResult, { status: 'precommit_failed' }> {
+  return {
+    status: 'precommit_failed', phase, cause, message: projectTransactionFailureText(cause),
+    ...(abortMessage ? { abortMessage } : {}),
+  };
+}
+
 function projectUnknownTransaction(
   record: PluginRegistryCommitRecord,
   phase: 'durability' | 'adoption',
@@ -113,7 +126,7 @@ export function createPluginRegistryTransactionService(input: Readonly<{
       try {
         prepared = await operation.prepare();
       } catch (error) {
-        return { status: 'precommit_failed', phase: 'prepare', message: projectTransactionFailureText(error) };
+        return projectPrecommitFailure('prepare', error);
       }
 
       let activation: Readonly<{ value: TActivated }> | null = null;
@@ -132,22 +145,14 @@ export function createPluginRegistryTransactionService(input: Readonly<{
       try {
         activation = { value: await operation.validateAndActivate(prepared) };
       } catch (error) {
-        const abortMessage = await abortOnce();
-        return {
-          status: 'precommit_failed', phase: 'validateAndActivate', message: projectTransactionFailureText(error),
-          ...(abortMessage ? { abortMessage } : {}),
-        };
+        return projectPrecommitFailure('validateAndActivate', error, await abortOnce());
       }
 
       let current: PluginRegistryCommitRecord | null;
       try {
         current = await input.coordinator.readCurrent();
       } catch (error) {
-        const abortMessage = await abortOnce();
-        return {
-          status: 'precommit_failed', phase: 'readCurrent', message: projectTransactionFailureText(error),
-          ...(abortMessage ? { abortMessage } : {}),
-        };
+        return projectPrecommitFailure('readCurrent', error, await abortOnce());
       }
       const actualRevision = current?.revision ?? null;
       if (
@@ -173,11 +178,7 @@ export function createPluginRegistryTransactionService(input: Readonly<{
       try {
         next = await operation.persist(prepared, current);
       } catch (error) {
-        const abortMessage = await abortOnce();
-        return {
-          status: 'precommit_failed', phase: 'persist', message: projectTransactionFailureText(error),
-          ...(abortMessage ? { abortMessage } : {}),
-        };
+        return projectPrecommitFailure('persist', error, await abortOnce());
       }
 
       let commitResult: PluginRegistryCommitResult;
@@ -190,11 +191,7 @@ export function createPluginRegistryTransactionService(input: Readonly<{
           buildNext: () => next,
         });
       } catch (error) {
-        const abortMessage = await abortOnce();
-        return {
-          status: 'precommit_failed', phase: 'commit', message: projectTransactionFailureText(error),
-          ...(abortMessage ? { abortMessage } : {}),
-        };
+        return projectPrecommitFailure('commit', error, await abortOnce());
       }
       if (commitResult.status === 'committed_durability_pending') {
         if (!activation) {

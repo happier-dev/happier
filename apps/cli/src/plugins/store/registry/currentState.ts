@@ -1,4 +1,5 @@
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
+import { logger } from '@/ui/logger';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
@@ -756,9 +757,14 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     if (result.status === 'aborted') {
       throw new Error(result.abortMessage ?? 'Plugin registry transaction was aborted before promotion');
     }
-    throw new Error(result.message, {
-      cause: result.abortMessage ? new Error(result.abortMessage) : undefined,
-    });
+    if (result.abortMessage) {
+      logger.warnLocalFile('[plugins] Registry transaction cleanup failed', {
+        phase: result.phase,
+        failure: result.message,
+        cleanup: result.abortMessage,
+      });
+    }
+    throw result.cause;
   }
 
   function requireRuntimeLifecycle(): PluginRegistryRuntimeLifecycle {

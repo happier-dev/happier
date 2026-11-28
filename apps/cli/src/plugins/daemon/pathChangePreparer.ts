@@ -63,7 +63,7 @@ import type {
   PreparedDaemonPluginChangeCandidate,
   PreparedPluginDevelopmentCandidate,
 } from './changeContract';
-import { DaemonPluginChangePreparationError, type DaemonPluginChangePreparationOptions } from './changeService';
+import { DaemonPluginChangePreparationError, projectPluginChangeFailure, type DaemonPluginChangePreparationOptions } from './changeService';
 import { derivePluginInstallReviewPrincipal } from './installReviewPrincipal';
 import { projectPluginInstallationReview } from './installationReview';
 import { projectPluginTransactionChangeResult } from './transactionChangeResult';
@@ -888,11 +888,7 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
         } catch (error) {
           return error instanceof PluginRegistryCandidateConflictError
             ? { kind: 'conflict' as const, pluginId: manifest.id }
-            : {
-                kind: 'failed' as const,
-                code: 'plugin_install_failed',
-                message: projectPluginFailureText(error),
-              };
+            : projectPluginChangeFailure('plugin_install_failed', error);
         }
       },
       cleanup,

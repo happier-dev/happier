@@ -61,7 +61,7 @@ import {
   type PluginChangeRequest,
   type PreparedDaemonPluginChangeCandidate,
 } from './changeContract';
-import { DaemonPluginChangePreparationError } from './changeService';
+import { DaemonPluginChangePreparationError, projectPluginChangeFailure } from './changeService';
 import { projectPluginArchiveStagingFailure } from '@/plugins/distribution/archive/stage';
 import { derivePluginInstallReviewPrincipal } from './installReviewPrincipal';
 import {
@@ -72,7 +72,6 @@ import { projectPluginTransactionChangeResult } from './transactionChangeResult'
 import { updateSelectedPluginOptionalAccess } from './optionalAccessSelections';
 import { createDaemonPluginCandidateOperationRoot } from './candidateStorage';
 import { createVerifiedPortablePluginInstallationAvailability } from '@/plugins/availability/releaseFacts';
-import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
 
 const PACKAGE_MANIFEST_PATH = '.happier-plugin/plugin.json';
 
@@ -658,11 +657,7 @@ export function createDaemonNpmPluginChangePreparer(params: Readonly<{
             return error instanceof PluginRegistryCandidateConflictError
               || (error instanceof NpmRegistryProfileOperationError && error.code === 'source_changed')
               ? { kind: 'conflict' as const, pluginId: staged.candidate.manifest.id }
-              : {
-                  kind: 'failed' as const,
-                  code: 'plugin_install_failed',
-                  message: projectPluginFailureText(error),
-                };
+              : projectPluginChangeFailure('plugin_install_failed', error);
           }
         },
         cleanup,

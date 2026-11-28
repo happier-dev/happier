@@ -799,7 +799,7 @@ describe('PluginRegistryStateStore', () => {
     await expect(readPluginRegistryCommitRecord(store.paths)).resolves.toBeNull();
   });
 
-  it('does not publish an install when daemon runtime preparation rejects the candidate', async () => {
+  it('preserves a typed daemon runtime preparation failure without publishing the install', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-registry-runtime-prepare-reject-'));
     const pluginRoot = join(happyHomeDir, 'rejected-plugin');
     await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
@@ -842,7 +842,8 @@ describe('PluginRegistryStateStore', () => {
         prepare: async (candidate) => {
           preparedCandidates += 1;
           expect(candidate.changedPluginIds).toEqual(['acme.rejected.plugin']);
-          throw new Error('registration graph rejected');
+          await readFile(join(pluginRoot, 'missing-runtime-output.mjs'));
+          throw new Error('Expected the missing runtime output read to fail');
         },
       },
     });
@@ -855,7 +856,7 @@ describe('PluginRegistryStateStore', () => {
       trust,
       updatePolicy: 'allowed',
       optionalAccess: [],
-    })).rejects.toThrow('registration graph rejected');
+    })).rejects.toMatchObject({ code: 'ENOENT' });
 
     expect(preparedCandidates).toBe(1);
     await expect(readPluginRegistryCommitRecord(store.paths)).resolves.toMatchObject({

@@ -30,7 +30,6 @@ import {
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import type { PluginStateRecord } from '@/plugins/store/state';
 import { createVerifiedPortablePluginInstallationAvailability } from '@/plugins/availability/releaseFacts';
-import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
 
 import type {
   PluginChangeRequest,
@@ -41,7 +40,7 @@ import { projectPluginInstallationReview } from './installationReview';
 import { projectPluginTransactionChangeResult } from './transactionChangeResult';
 import { updateSelectedPluginOptionalAccess } from './optionalAccessSelections';
 import { createDaemonPluginCandidateOperationRoot } from './candidateStorage';
-import { DaemonPluginChangePreparationError } from './changeService';
+import { DaemonPluginChangePreparationError, projectPluginChangeFailure } from './changeService';
 import { projectPluginArchiveStagingFailure } from '@/plugins/distribution/archive/stage';
 import {
   evaluatePluginAuthorityReview,
@@ -356,11 +355,7 @@ export function createDaemonArchivePluginChangePreparer(params: Readonly<{
           } catch (error) {
             return error instanceof PluginRegistryCandidateConflictError
               ? { kind: 'conflict' as const, pluginId: staged.candidate.manifest.id }
-              : {
-                  kind: 'failed' as const,
-                  code: 'plugin_install_failed',
-                  message: projectPluginFailureText(error),
-                };
+              : projectPluginChangeFailure('plugin_install_failed', error);
           }
         },
         cleanup,
