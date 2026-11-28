@@ -139,16 +139,22 @@ async function send(context: VercelPlatformContext, url: string, operation: Verc
   }
   // A received response remains evidence even if cancellation arrives with it.
   const value = response.status < 200 || response.status >= 300 ? body(response) : null;
-  if (record(value) && record(value.error)) {
+  const nativeError = record(value) && record(value.error) ? value.error : undefined;
+  // A server error after dispatch can describe the response failure even when the effect committed.
+  const uncertainWrite = intent === 'write' && response.status >= 500;
+  if (uncertainWrite || nativeError) {
     // Vercel owns repository access and the one-time provider connection grant.
-    const needsGitAccess = value.error.action === 'Install GitHub App' || value.error.action === 'Add a Login Connection' || value.error.code === 'repo_not_found';
-    throw withActionFailureDiagnostic(new PluginError({ code: needsGitAccess ? 'needsGitAccess' : response.status === 401 || response.status === 403 ? 'deployment_access_denied'
+    const needsGitAccess = !uncertainWrite && (nativeError?.action === 'Install GitHub App'
+      || nativeError?.action === 'Add a Login Connection' || nativeError?.code === 'repo_not_found');
+    throw withActionFailureDiagnostic(new PluginError({ code: uncertainWrite ? 'outcome_unknown' : needsGitAccess ? 'needsGitAccess'
+      : response.status === 401 || response.status === 403 ? 'deployment_access_denied'
       : response.status === 404 ? 'deployment_unavailable' : 'provider_request_failed', retryable: false,
-      ...(phase === 'send' && text(value.error.message) ? { message: projectPluginFailureText(new Error(value.error.message)) } : {}),
+      ...(phase === 'send' && !uncertainWrite && text(nativeError?.message)
+        ? { message: projectPluginFailureText(new Error(nativeError.message)) } : {}),
       details: { ...(phase === undefined ? {} : { phase }),
         ...(needsGitAccess ? { reason: repositoryKind === 'github' ? 'vercel_github_app_required' : 'vercel_git_connection_required', grantUrl: vercelGitGrantUrl(repositoryKind) } : {}) },
       failureCause: { phase: phase === undefined ? 'deployment.provider' : `deployment.provider.${phase}`, errorClass: 'Error',
-        errorCode: text(value.error.code) ? value.error.code : null, httpStatus: response.status } }), { phase: `deployment.vercel.provider.${phase ?? 'request'}`, causeKind: response.status === 404 ? 'not_found' : response.status === 401 || response.status === 403 ? 'access_denied' : 'native_failure' });
+        errorCode: text(nativeError?.code) ? nativeError.code : null, httpStatus: response.status } }), { phase: `deployment.vercel.provider.${phase ?? 'request'}`, causeKind: response.status === 404 ? 'not_found' : response.status === 401 || response.status === 403 ? 'access_denied' : 'native_failure' });
   }
   return response;
 }
@@ -157,13 +163,11 @@ export { endpoint as vercelEndpoint, send as vercelRequest };
 /** A lost deployment or traffic reply leaves the effect uncertain. Retain the observed cause for the Action adapter. */
 export async function sendVercelDeploymentMutation(context: VercelPlatformContext, url: string,
   content?: Parameters<typeof send>[3], repositoryKind?: Repository['kind']): Promise<HttpResponse | DeploymentTargetRoleFailureV1> {
-  let response: HttpResponse;
-  try { response = await send(context, url, ['write', 'POST'], content, 'send', repositoryKind); }
+  try { return await send(context, url, ['write', 'POST'], content, 'send', repositoryKind); }
   catch (error) {
-    if (isPluginError(error)) throw error;
+    if (isPluginError(error) && error.code !== 'outcome_unknown') throw error;
     return failure('outcome_unknown', 'send', { error });
   }
-  return response.status < 500 ? response : failure('outcome_unknown', 'send', { status: response.status });
 }
 
 export function requestVercelDeployment(providerIdentity: ProjectCoordinates, id: string, context: VercelPlatformContext) {
@@ -420,7 +424,7 @@ export async function cancelVercelDeployment(input: ObservationInput, context: V
   let response: HttpResponse;
   try {
     response = await send(context, endpoint(`/v12/deployments/${encodeURIComponent(input.providerDeploymentId)}/cancel`,
-      input.providerIdentity.providerAccountId), ['write', 'PATCH']);
+      input.providerIdentity.providerAccountId), ['write', 'PATCH'], undefined, 'cancel');
   } catch (error) {
     if (isPluginError(error)) {
       // Vercel's documented terminal-400 is reconciled by the existing exact read.

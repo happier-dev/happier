@@ -827,7 +827,10 @@ The deployment target SDK settles an oversized provider response using the
 operation's declared read or write intent. Cloudflare Pages `check-missing`
 uses POST and reports a read failure if its response exceeds the host limit.
 A write with an oversized reply retains `outcome_unknown` and the sanitized
-cause. Recovery uses the existing receipt observation.
+cause. Vercel also records an unknown outcome when a dispatched write receives
+an HTTP 5xx, preserving the native error code and status when available. An
+exact read can settle a deployment once its provider ID is known. Recovery
+uses the existing receipt observation without replaying the write.
 
 In 0.3 development, public terminal deployment settlements and failed, cancelled
 or unknown receipt-list rows use the shared failure-recovery projector. List

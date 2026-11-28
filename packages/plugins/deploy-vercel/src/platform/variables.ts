@@ -18,8 +18,8 @@ type Read = VercelRoleInput<DeploymentTargetVariablesReadInputV1>;
 type Sync = VercelRoleInput<DeploymentTargetVariablesSyncInputV1>;
 type FailureCode = DeploymentTargetVariablesSyncResultV1['failures'][number]['code'];
 function writeFailureCode(error: unknown): FailureCode {
-  if (!isPluginError(error)) return 'outcome_unknown';
-  // The shared request owner retained a received provider refusal; it is not a lost acknowledgement.
+  if (!isPluginError(error) || error.code === 'outcome_unknown') return 'outcome_unknown';
+  // A received refusal carries its native HTTP status.
   return typeof error.data.failureCause?.httpStatus === 'number' ? 'provider_request_failed' : 'outcome_unknown';
 }
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);

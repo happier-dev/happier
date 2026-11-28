@@ -70,7 +70,6 @@ export const projectCreateAction: AccountAction = {
     } catch (error) { if (isPluginError(error)) throw error; return unknownOutcome(); }
     let body: unknown;
     try { body = JSON.parse(new TextDecoder().decode(response.body)); } catch { body = undefined; }
-    if (response.status >= 500) return unknownOutcome();
     if (response.status < 200 || response.status >= 300) {
       const errorCode = record(body) && record(body.error) && text(body.error.code) ? body.error.code : null;
       throw new PluginError({ code: response.status === 401 || response.status === 403 ? 'deployment_access_denied' : 'provider_request_failed',

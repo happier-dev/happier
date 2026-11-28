@@ -25,19 +25,19 @@ async function run(input: Input, ctx: PluginAccountActionContext, operation: 'ad
   const account = input.providerIdentity.providerAccountId;
   const io = { http: ctx.services.http, signal: ctx.signal, now: () => Date.now() };
   const endpoint = vercelEndpoint(`/v9/projects/${encodeURIComponent(project)}/domains/${encodeURIComponent(hostname)}`, account);
-  async function request(url: string, requestOperation: readonly ['read', 'GET'] | readonly ['write', 'POST' | 'DELETE'], body?: unknown) {
+  async function request(url: string, requestOperation: readonly ['read', 'GET' | 'POST'] | readonly ['write', 'POST' | 'DELETE'], body?: unknown) {
     try { return await vercelRequest(io, url, requestOperation, body === undefined ? undefined
       : { headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify(body)) }); }
     catch (error) {
       ctx.signal.throwIfAborted();
       if (isPluginError(error)) throw error;
-      return fail(requestOperation[0] === 'read' || operation === 'verify' ? 'provider_request_failed' : 'outcome_unknown');
+      return fail(requestOperation[0] === 'read' ? 'provider_request_failed' : 'outcome_unknown');
     }
   }
-  function check(response: Awaited<ReturnType<typeof request>>, mutation: boolean) {
+  function check(response: Awaited<ReturnType<typeof request>>) {
     if (response.status < 200 || response.status >= 300) return fail(response.status === 401 || response.status === 403
       ? 'deployment_access_denied' : response.status === 404 ? 'deployment_unavailable' : response.status === 409
-        ? 'deployment_conflict' : mutation && response.status >= 500 ? 'outcome_unknown' : 'provider_request_failed');
+        ? 'deployment_conflict' : 'provider_request_failed');
     try { return JSON.parse(new TextDecoder().decode(response.body)) as unknown; } catch { return fail('provider_response_invalid'); }
   }
   function selected(domain: unknown): asserts domain is Record<string, unknown> {
@@ -59,7 +59,7 @@ async function run(input: Input, ctx: PluginAccountActionContext, operation: 'ad
       const verifyUrl = new URL(endpoint);
       verifyUrl.pathname += '/verify';
       try {
-        const verified = await request(verifyUrl.href, ['write', 'POST']);
+        const verified = await request(verifyUrl.href, ['read', 'POST']);
         if (verified.status !== 400 && verified.status !== 403) return verified;
         verificationFailure = new PluginError({ code: verified.status === 403 ? 'deployment_access_denied' : 'provider_request_failed',
           failureCause: { phase: 'deployment.vercel.domain.verify', errorClass: 'Error', errorCode: null, httpStatus: verified.status } });
@@ -77,7 +77,7 @@ async function run(input: Input, ctx: PluginAccountActionContext, operation: 'ad
       try {
         const current = await request(endpoint, ['read', 'GET']);
         if (current.status === 404) return null;
-        const domain = check(current, false);
+        const domain = check(current);
         selected(domain);
         return domain;
       } catch (error) {
@@ -89,13 +89,13 @@ async function run(input: Input, ctx: PluginAccountActionContext, operation: 'ad
     await settleDeploymentTargetDomainRemovalV1({
       remove: async () => {
         const removed = await request(endpoint, ['write', 'DELETE']);
-        if (removed.status !== 404 && (removed.status < 200 || removed.status >= 300)) check(removed, true);
+        if (removed.status !== 404 && (removed.status < 200 || removed.status >= 300)) check(removed);
       },
       observeAbsent: async () => await readCurrent() === null,
     });
     return { v: 1, hostname, state: 'removed', dns: [] };
   } else response = await request(endpoint, ['read', 'GET']);
-  const domain = check(response, operation === 'add');
+  const domain = check(response);
   selected(domain);
   if (verificationFailure && domain.verified) throw verificationFailure;
   const dns: Result['dns'] = [];
@@ -105,7 +105,7 @@ async function run(input: Input, ctx: PluginAccountActionContext, operation: 'ad
   }
   const configUrl = new URL(vercelEndpoint(`/v6/domains/${encodeURIComponent(hostname)}/config`, account));
   configUrl.searchParams.set('projectIdOrName', project);
-  const config = check(await request(configUrl.href, ['read', 'GET']), false);
+  const config = check(await request(configUrl.href, ['read', 'GET']));
   if (!record(config) || typeof config.misconfigured !== 'boolean') return fail('provider_response_invalid');
   if (config.misconfigured) {
     // Vercel ranks alternatives; A and CNAME cannot coexist on the same name.
