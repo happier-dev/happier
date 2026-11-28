@@ -1,7 +1,5 @@
-import {
-  isPluginError,
-  type PluginInvocationContext,
-} from '@happier-dev/plugin-sdk';
+import { isPluginError } from '@happier-dev/plugin-sdk';
+import type { PluginAccountStorageConsumerContext } from '@happier-dev/plugin-sdk/storage';
 import {
   projectTriageDisplayTextV1,
   TriageSourceDescriptorV1Schema,
@@ -24,6 +22,7 @@ export const TELEMETRY_EXCEPTION_SOURCE_V1 = { pluginId: 'happier.telemetry', lo
 export const TELEMETRY_EXCEPTION_ISSUE_WATCH_V1 = { publication: 'commit' } as const;
 export const TELEMETRY_EXCEPTION_KIND_ID_V1 = 'exception';
 const LABEL = 'Happier exceptions';
+type IssueReadContext = PluginAccountStorageConsumerContext & Readonly<{ signal: AbortSignal }>;
 
 /** The built-in, credentialless Account-data source (D30): one per Account, no connection row. */
 export const TELEMETRY_EXCEPTION_SOURCE_DRAFT_V1 = {
@@ -212,7 +211,7 @@ function exactReadProjection(record: Item['value'], shared: boolean) {
   };
 }
 
-function collection(context: PluginInvocationContext) {
+function collection(context: IssueReadContext) {
   return (
     context.services.storage.account?.collection(
       TELEMETRY_EXCEPTION_ISSUES_COLLECTION_V1,
@@ -222,7 +221,7 @@ function collection(context: PluginInvocationContext) {
 
 /** Own records first (newest update first), then records Teams shared with this Account (D34). */
 async function readAll(
-  context: PluginInvocationContext,
+  context: IssueReadContext,
 ): Promise<Readonly<{ items: readonly Item[]; sharedUnavailable: boolean }> | null> {
   const issues = collection(context);
   if (!issues) return null;
@@ -274,7 +273,7 @@ async function readAll(
 
 export async function scanTelemetryExceptions(
   input: TriageScanInputV1,
-  context: PluginInvocationContext,
+  context: IssueReadContext,
 ): Promise<TriageScanResultV1> {
   if (!isTelemetryExceptionInstanceV1(input.instance))
     return { kind: 'failed', failure: INVALID };
@@ -331,7 +330,7 @@ export async function scanTelemetryExceptions(
 
 export async function getTelemetryException(
   input: TriageGetInputV1,
-  context: PluginInvocationContext,
+  context: IssueReadContext,
 ): Promise<TriageGetResultV1> {
   const owner = ownerOf(input.localRef);
   if (!isTelemetryExceptionInstanceV1(input.instance) || owner === null)

@@ -4,6 +4,7 @@ import { PluginServiceListFieldResourceInputV1Schema, type PluginServiceListFiel
 
 import { TELEMETRY_EXCEPTION_ISSUES_COLLECTION_V1, TELEMETRY_EXCEPTION_ENVIRONMENT_INDEX, type ExceptionIssueRecord } from './issueRecord.js';
 import { TELEMETRY_LAST_ISSUE_SEEN_FACT_ID, TELEMETRY_OPEN_ISSUES_FIELD } from './serviceFactIds.js';
+import { TELEMETRY_ACCOUNT_EXECUTION, TELEMETRY_EXCEPTION_SOURCE_ACTIONS } from './sourceActions.js';
 
 function environmentIssueDemand(options: PluginDynamicResourceInvocationOptionsV1) {
     if (options.context.kind !== 'surface') throw new PluginError({ code: 'plugin_resource_demand_unavailable' });
@@ -64,7 +65,7 @@ const issueResource: PluginDynamicResourceRuntime = {
 export const TELEMETRY_SERVICE_ISSUE_RESOURCES = {
     [TELEMETRY_OPEN_ISSUES_FIELD.source.resource]: {
         source: 'dynamic', kind: 'config', contentType: 'application/json', scope: 'surface', hostAccess: ['account-storage'],
-        execution: { target: 'account', account: { artifactId: 'telemetry-account-runtime', exportName: 'activate' } },
+        execution: TELEMETRY_ACCOUNT_EXECUTION,
         runtime: issueResource,
     },
 } as const;
@@ -72,5 +73,6 @@ export const TELEMETRY_SERVICE_ISSUE_RESOURCES = {
 export const TELEMETRY_ACCOUNT_DEFINITION = {
     id: 'happier.telemetry', version: '0.0.0', displayName: 'Telemetry',
     hostAccess: { required: [], optional: [{ id: 'account-storage', capability: 'storage.account', reason: 'Read the Project capture preference and keep native exception issues.', scope: { enabled: true } }] },
+    actions: TELEMETRY_EXCEPTION_SOURCE_ACTIONS,
     resources: TELEMETRY_SERVICE_ISSUE_RESOURCES,
 } as const;

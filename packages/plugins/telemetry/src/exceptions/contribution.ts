@@ -1,4 +1,3 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/plugin-sdk/events';
 import {
   TriageIssueCommitPublishedEventSourceConfigV1Schema,
@@ -19,74 +18,21 @@ import {
 import { exceptionActions } from './actions.js';
 import { TELEMETRY_EXCEPTION_ISSUES_COLLECTION_V1 } from './issueRecord.js';
 import {
-  getTelemetryException,
-  scanTelemetryExceptions,
   TELEMETRY_EXCEPTION_SOURCE_DESCRIPTOR_V1,
   TELEMETRY_EXCEPTION_ISSUE_WATCH_V1,
-  TELEMETRY_EXCEPTION_SOURCE_DRAFT_V1,
   TELEMETRY_EXCEPTION_SOURCE_V1,
 } from './source.js';
+import { TELEMETRY_EXCEPTION_SOURCE_ACTIONS, TELEMETRY_EXCEPTION_SOURCE_ACTION_IDS } from './sourceActions.js';
 
 const protocol = TriageSourcesContributionProtocolV1;
 const surfaces = ['plugin', 'ui', 'agent', 'mcp', 'cli'] as const;
-// Source reads run on any of the reader's own Machines: they read Account data, never collector raw data.
-const read = {
-  surfaces,
-  scopes: ['global'] as const,
-  execution: { target: 'daemon' as const },
-  dangerLevel: 'safe' as const,
-  readOnly: true,
-};
-const ids = {
-  listInstances: 'exceptions/list-instances-v1',
-  scan: 'exceptions/scan-v1',
-  get: 'exceptions/get-v1',
-} as const;
 
 /** D30 native exceptions: one Account collection, one commit-published event, one public Triage source contribution. */
 export const telemetryExceptionManifestParts = {
   ...createTriageIssueWatchOptionsV1(TELEMETRY_EXCEPTION_SOURCE_V1),
   actions: {
     ...exceptionActions,
-    [ids.listInstances]: {
-      ...read,
-      title: 'Discover Happier exceptions',
-      description:
-        'Discover the built-in Happier exceptions source for PRs & Issues setup.',
-      inputSchema: protocol.operations.listInstances.declaration.input.schema,
-      resultSchema: protocol.operations.listInstances.declaration.resultSchema,
-      run: async () => ({
-        kind: 'complete' as const,
-        candidates: [TELEMETRY_EXCEPTION_SOURCE_DRAFT_V1],
-        failures: [],
-      }),
-    },
-    [ids.scan]: {
-      ...read,
-      title: 'Read Happier exceptions',
-      description:
-        'Read native exception issues in this Account and those a Team shared with it, without collector occurrences.',
-      inputSchema: protocol.operations.scan.declaration.input.schema,
-      resultSchema: protocol.operations.scan.declaration.resultSchema,
-      run: (input: unknown, context: PluginInvocationContext) =>
-        scanTelemetryExceptions(
-          protocol.operations.scan.declaration.input.schema.parse(input),
-          context,
-        ),
-    },
-    [ids.get]: {
-      ...read,
-      title: 'Read a Happier exception',
-      description:
-        'Read one exact native exception issue, including one a Team shared with this Account.',
-      inputSchema: protocol.operations.get.declaration.input.schema,
-      resultSchema: protocol.operations.get.declaration.resultSchema,
-      run: (input: unknown, context: PluginInvocationContext) =>
-        getTelemetryException(
-          protocol.operations.get.declaration.input.schema.parse(input),
-          context,
-        ),
-    },
+    ...TELEMETRY_EXCEPTION_SOURCE_ACTIONS,
     [TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1]: {
       surfaces,
       scopes: ['global'] as const,
@@ -158,9 +104,9 @@ export function telemetryExceptionSourceContribution(detail: Readonly<{ renderer
     [TELEMETRY_EXCEPTION_SOURCE_V1.localId]: protocol.contribute({
       descriptor: TELEMETRY_EXCEPTION_SOURCE_DESCRIPTOR_V1,
       operations: {
-        listInstances: protocol.operations.listInstances.bind(ids.listInstances),
-        scan: protocol.operations.scan.bind(ids.scan),
-        get: protocol.operations.get.bind(ids.get),
+        listInstances: protocol.operations.listInstances.bind(TELEMETRY_EXCEPTION_SOURCE_ACTION_IDS.listInstances),
+        scan: protocol.operations.scan.bind(TELEMETRY_EXCEPTION_SOURCE_ACTION_IDS.scan),
+        get: protocol.operations.get.bind(TELEMETRY_EXCEPTION_SOURCE_ACTION_IDS.get),
       },
       surfaces: { detail },
     }),

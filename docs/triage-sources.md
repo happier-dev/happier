@@ -659,10 +659,11 @@ observers' checkpoint save uses. Its event config is the commit-published arm
 records are shared with that Team through Collection sharing (`view`) when the
 writer creates them. Grants are not re-armed when a Project changes Teams, and
 lifecycle Actions are admitted by Environment telemetry read access, not by the
-grant (see [Native exception issues](encryption.md#native-exception-issues-03-development)). The
-source's scan and get read the reader's own records first, then records shared
-with them, with owner-relative refs. Occurrences and stacks stay on the
-collector and are read on demand through
+grant (see [Native exception issues](encryption.md#native-exception-issues-03-development)).
+The portable Account Actions discover the source and read issue metadata while
+the collector is offline. The scan lists the reader's own records first, then
+records shared with them, using owner-relative refs for the shared records.
+Occurrences and stacks stay on the collector and are read on demand through
 `happier.telemetry/actions/capture/exceptions/occurrences/read`.
 
 ### Operations failure investigation (0.3 development source)
