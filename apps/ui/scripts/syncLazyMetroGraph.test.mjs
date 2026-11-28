@@ -718,3 +718,35 @@ test('sync consumers and lazy presence never pull the sync implementation into t
         rmSync(cache, { recursive: true, force: true });
     }
 });
+
+// The generated module is the native Mermaid renderer's only edge to its runtime
+// (MermaidRenderer.native.tsx reaches it through mermaidWebViewRuntime.ts).
+test('native Mermaid runtime enters the app as a packaged asset, not JavaScript in the bundle', async () => {
+    const cache = mkdtempSync(path.join(tmpdir(), 'happier-mermaid-native-metro-'));
+    let server;
+    try {
+        delete require.cache[require.resolve(path.join(uiRoot, 'metro.config.js'))];
+        const config = require(path.join(uiRoot, 'metro.config.js'));
+        config.maxWorkers = 2;
+        config.cacheStores = [new (require('metro-cache').FileStore)({ root: path.join(cache, 'transforms') })];
+        config.fileMapCacheDirectory = path.join(cache, 'filemap');
+        mkdirSync(config.fileMapCacheDirectory, { recursive: true });
+        config.reporter = { update() {} };
+        const Server = require('metro/private/Server').default;
+        server = new Server(config, { watch: false });
+        const result = await server.build({ ...Server.DEFAULT_BUNDLE_OPTIONS,
+            entryFile: path.join(uiRoot, 'sources/components/markdown/mermaidWebViewBundle.generated.ts'),
+            platform: 'ios', dev: false, minify: false, lazy: false,
+        });
+        const graph = [...server.getBundler().getDeltaBundler()._deltaCalculators.keys()].at(-1);
+        const paths = [...graph.dependencies.keys()].map(file => file.replaceAll('\\', '/'));
+        const assets = paths.filter(file => file.endsWith('/markdown/mermaidWebViewBundle.generated.bundle'));
+        console.log(JSON.stringify({ entry: 'native Mermaid runtime', modules: paths.length, bytes: Buffer.byteLength(result.code), assets: assets.length }));
+        assert.equal(result.code.includes('HAPPIER_MERMAID_REMOVE_NAVIGATION='), false,
+            'the Mermaid runtime is read from its packaged asset when a diagram renders');
+        assert.equal(assets.length, 1, 'the runtime remains packaged with the app for offline rendering');
+    } finally {
+        if (server) await server.end();
+        rmSync(cache, { recursive: true, force: true });
+    }
+});

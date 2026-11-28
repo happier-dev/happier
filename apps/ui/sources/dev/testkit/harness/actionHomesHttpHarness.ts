@@ -1,6 +1,5 @@
 // Restore/Sync also uses device record persistence; browser storage is a system boundary.
 import 'fake-indexeddb/auto';
-import { vi } from 'vitest';
 import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
 import { getVitestNodeBuiltin } from '@/dev/vitestNodeBuiltins';
 import type { AuthCredentials, HomeCredentialWriteRollback } from '@/auth/storage/tokenStorage';
@@ -21,12 +20,6 @@ import { createUsageQueryBatchHttpBoundary } from './usageQueryBatchHttpBoundary
 
 // File identities belong to Node, not Vite's client asset URL transform.
 const { URL: NodeURL } = getVitestNodeBuiltin<typeof import('node:url')>('node:url');
-
-// A generated third-party WebView asset is not part of an HTTP Action journey. Its multi-MB
-// source otherwise enters the default executor's presentation import graph during collection.
-vi.mock('@/components/markdown/mermaidWebViewBundle.generated', () => ({
-    MERMAID_WEBVIEW_BUNDLE_JS: '', MERMAID_WEBVIEW_BUNDLE_BYTES: 0,
-}));
 
 export type ServedHomeRequest = Readonly<{
     home: string;

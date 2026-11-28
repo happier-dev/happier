@@ -1,3 +1,7 @@
 # pnpm copies patch line endings into node_modules; a CRLF checkout on Windows
 # leaves mixed-EOL patched files that the UI postinstall preflight rejects.
 patches/*.patch text eol=lf
+
+# Generated minified WebView runtimes shipped as packaged assets: byte-exact (freshness checks and
+# the runtime compare bytes), and their string literals keep whitespace that diff checks would flag.
+apps/ui/sources/components/markdown/*.generated.bundle binary

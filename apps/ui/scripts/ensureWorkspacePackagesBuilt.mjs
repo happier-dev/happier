@@ -362,9 +362,9 @@ export async function ensureUiWorkspacePackagesBuilt({
         build: () => buildTiptapWebViewBundle({ expoAppDir: uiPackageDir, repoRootDir: repoRoot }) });
     }
     if (tasks.includes('vendor-mermaid-webview-bundle')) {
-      const { buildMermaidWebViewBundle } = await import('../tools/mermaid/buildMermaidWebViewBundle.mjs');
+      const { buildMermaidWebViewBundle, MERMAID_WEBVIEW_BUNDLE_OUTPUT_RELATIVE_PATHS } = await import('../tools/mermaid/buildMermaidWebViewBundle.mjs');
       await buildUiSourceAsset({ retainLastGreen,
-        outputs: [resolve(uiPackageDir, 'sources/components/markdown/mermaidWebViewBundle.generated.ts')],
+        outputs: MERMAID_WEBVIEW_BUNDLE_OUTPUT_RELATIVE_PATHS.map(output => resolve(uiPackageDir, output)),
         build: () => buildMermaidWebViewBundle({ expoAppDir: uiPackageDir }) });
     }
     if (tasks.includes('vendor-pdfjs-webview-bundle')) {

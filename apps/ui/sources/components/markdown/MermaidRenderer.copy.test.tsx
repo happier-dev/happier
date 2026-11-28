@@ -2,7 +2,7 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { createOnShouldStartLoadWithRequest } from 'react-native-webview/src/WebViewShared';
-import { renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 const homes = createHomeGovernanceHarness();
@@ -52,7 +52,73 @@ vi.mock('react-native-webview', () => ({
   },
 }));
 
+// Metro registers the packaged runtime asset and expo-asset resolves it: platform boundaries.
+// The real generated runtime is read through the real asset owner.
+const runtimeAsset = vi.hoisted(() => ({ reads: 0, failNext: false }));
+vi.mock('./mermaidWebViewBundle.generated', () => ({
+  requireMermaidWebViewBundleAsset: () => 'mermaid-runtime-asset', MERMAID_WEBVIEW_BUNDLE_BYTES: 0,
+}));
+vi.mock('expo-asset', () => ({
+  Asset: {
+    fromModule: (asset: string) => ({
+      localUri: `file:///app/assets/${asset}`,
+      downloadAsync: async () => {
+        runtimeAsset.reads += 1;
+        if (runtimeAsset.failNext) {
+          runtimeAsset.failNext = false;
+          throw new Error('asset unavailable');
+        }
+      },
+    }),
+  },
+}));
+// The runtime is served from the canonical native file-system boundary (vitestSetup's testkit mock).
+beforeEach(async () => {
+  // File identities belong to Node, not Vite's client asset URL transform.
+  const { getVitestNodeBuiltin } = await import('@/dev/vitestNodeBuiltins');
+  const fs = getVitestNodeBuiltin<typeof import('node:fs')>('node:fs');
+  const path = getVitestNodeBuiltin<typeof import('node:path')>('node:path');
+  const url = getVitestNodeBuiltin<typeof import('node:url')>('node:url');
+  const { File } = await import('expo-file-system');
+  const runtime = new File('file:///app/assets/mermaid-runtime-asset');
+  if (runtime.exists) return;
+  runtime.write(new Uint8Array(fs.readFileSync(path.join(path.dirname(url.fileURLToPath(import.meta.url)), 'mermaidWebViewBundle.generated.bundle'))));
+});
+
+// The runtime read settles after mount; its state update commits inside act.
+async function waitForMountedWebView() {
+  await vi.waitFor(async () => {
+    await flushHookEffects();
+    expect(getCapturedWebViewProps()).not.toBeNull();
+  });
+}
+
+async function renderMountedMermaid(content: string) {
+  const { MermaidRenderer } = await import('./MermaidRenderer');
+  webViewCapture.props = null;
+  const screen = await renderScreen(<MermaidRenderer content={content} />);
+  await waitForMountedWebView();
+  return screen;
+}
+
 describe('MermaidRenderer', () => {
+  it('reads the packaged runtime when a diagram mounts, shares it with later diagrams and retries a failed read', async () => {
+    // First in this file, so no diagram has read the runtime yet.
+    runtimeAsset.reads = 0;
+    runtimeAsset.failNext = true;
+    const first = await renderMountedMermaid('graph TD\\nA-->B');
+    // A failed read mounts without the runtime, so the page's own error path reports the diagram.
+    expect(getCapturedWebViewProps()?.injectedJavaScriptBeforeContentLoaded).toBeUndefined();
+    act(() => { first.tree.unmount(); });
+
+    const second = await renderMountedMermaid('graph TD\\nB-->C');
+    expect(getCapturedWebViewProps()?.injectedJavaScriptBeforeContentLoaded).toContain('HAPPIER_MERMAID_REMOVE_NAVIGATION=');
+    const third = await renderMountedMermaid('graph TD\\nC-->D');
+    expect(getCapturedWebViewProps()?.injectedJavaScriptBeforeContentLoaded).toContain('HAPPIER_MERMAID_REMOVE_NAVIGATION=');
+    expect(runtimeAsset.reads).toBe(2);
+    act(() => { second.tree.unmount(); third.tree.unmount(); });
+  });
+
   it('copies raw Mermaid source to clipboard', async () => {
     const { MermaidRenderer } = await import('./MermaidRenderer');
 
@@ -60,6 +126,7 @@ describe('MermaidRenderer', () => {
     try {
       const screen = await renderScreen(<MermaidRenderer content={'graph TD\\nA-->B'} />);
       tree = screen.tree;
+      await waitForMountedWebView();
 
       expect(screen.findByTestId('mermaid-copy-button')).not.toBeNull();
 
@@ -81,11 +148,13 @@ describe('MermaidRenderer', () => {
     const { MermaidRenderer } = await import('./MermaidRenderer');
 
     lastWebViewHtml = null;
+    webViewCapture.props = null;
     const payload = 'graph TD\\nA-->B\\n%% </div><img src=x onerror=alert(1)>\\n';
 
     let tree: ReturnType<typeof renderer.create> | undefined;
     try {
       tree = (await renderScreen(<MermaidRenderer content={payload} />)).tree;
+      await waitForMountedWebView();
 
       expect(typeof lastWebViewHtml).toBe('string');
       expect(lastWebViewHtml).toContain('<div id=\"mermaid-container\"></div>');
@@ -105,6 +174,7 @@ describe('MermaidRenderer', () => {
     lastWebViewHtml = null;
     webViewCapture.props = null;
     await renderScreen(<MermaidRenderer content={'graph TD\\nA-->B'} />);
+    await waitForMountedWebView();
 
     expect(lastWebViewHtml).toContain('Content-Security-Policy');
     expect(lastWebViewHtml).not.toMatch(/https?:\/\//);
@@ -129,6 +199,7 @@ describe('MermaidRenderer', () => {
     let tree: ReturnType<typeof renderer.create> | undefined;
     try {
       tree = (await renderScreen(<MermaidRenderer content={'graph TD\\nA-->B'} />)).tree;
+      await waitForMountedWebView();
       const capturedProps = getCapturedWebViewProps();
       const loadRequest = vi.fn();
       const wrapperHandler = createOnShouldStartLoadWithRequest(

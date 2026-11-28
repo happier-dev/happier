@@ -9,11 +9,10 @@ import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
-import { MERMAID_WEBVIEW_BUNDLE_JS } from './mermaidWebViewBundle.generated';
+import { loadMermaidWebViewRuntime, readLoadedMermaidWebViewRuntime } from './mermaidWebViewRuntime';
 
 const MAX_MERMAID_WEBVIEW_MESSAGE_BYTES = 1_024;
 const MAX_MERMAID_WEBVIEW_HEIGHT_PX = 100_000;
-const MERMAID_WEBVIEW_INJECTED_JAVASCRIPT = `${MERMAID_WEBVIEW_BUNDLE_JS}\ntrue;`;
 
 type MermaidWebViewMessage =
     | Readonly<{ type: 'dimensions'; height: number }>
@@ -53,6 +52,18 @@ export const MermaidRenderer = React.memo((props: {
 }) => {
     const { theme } = useUnistyles();
     const [dimensions, setDimensions] = React.useState({ width: 0, height: 200 });
+    // The runtime is a packaged asset read on the first diagram; the box keeps its size meanwhile.
+    // A failed read mounts without it, and the page's own error path reports the diagram.
+    const [runtime, setRuntime] = React.useState<string | null | undefined>(readLoadedMermaidWebViewRuntime);
+    React.useEffect(() => {
+        if (runtime !== undefined) return;
+        let current = true;
+        loadMermaidWebViewRuntime().then(
+            (script) => { if (current) setRuntime(script); },
+            () => { if (current) setRuntime(null); },
+        );
+        return () => { current = false; };
+    }, [runtime]);
     const copyFeedback = useHappierCopyFeedback();
     const writeClipboard = useClipboardWrite();
 
@@ -164,13 +175,13 @@ export const MermaidRenderer = React.memo((props: {
                         )}
                     </Pressable>
                 </View>
-                <WebView
+                {runtime !== undefined ? <WebView
                     source={{ html }}
                     style={{ flex: 1 }}
                     scrollEnabled={false}
                     originWhitelist={['*']}
                     onShouldStartLoadWithRequest={(request) => shouldAllowMermaidWebViewNavigation(request.url)}
-                    injectedJavaScriptBeforeContentLoaded={MERMAID_WEBVIEW_INJECTED_JAVASCRIPT}
+                    injectedJavaScriptBeforeContentLoaded={runtime ?? undefined}
                     injectedJavaScriptForMainFrameOnly
                     javaScriptCanOpenWindowsAutomatically={false}
                     setSupportMultipleWindows={false}
@@ -191,7 +202,7 @@ export const MermaidRenderer = React.memo((props: {
                             }));
                         }
                     }}
-                />
+                /> : null}
             </View>
         </View>
     );
