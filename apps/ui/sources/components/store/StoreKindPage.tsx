@@ -110,6 +110,8 @@ export type DirectoryRow = Readonly<{
   added?: boolean;
   /** Built-in entries open their own page; there is nothing to add. */
   addable?: boolean;
+  /** The Registry item a catalog row stands for (`useRegistryRows`), for a host that picks one (Deploy an app). */
+  item?: RegistryCatalogItemSummary;
 }>;
 export type DirectoryGroup = Readonly<{
   key: string;
@@ -734,6 +736,7 @@ export function useRegistryRows(
         title: presentation.title,
         description,
         group: group.key,
+        item,
         open: () => latest.current.open(item),
         ...(addable ? { add: () => latest.current.add?.(item) } : {}),
         added,

@@ -63,6 +63,7 @@ import { useOpenProject } from '../useOpenProject';
 import { projectCheckoutParentPath } from '../activation/projectOpenChoices';
 import type { ProjectSourceRepositorySelectorV1, ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { StoreItemMark } from '@/components/store/catalog/StoreItemMark';
+import { openStoreAppChooseModal } from '@/components/store/StoreAppChooseModal';
 import type { DeploymentNewDefinitionKind } from '@/components/projects/deployments/deploymentNavigation';
 import type { DeploymentDraftFrame } from '@/components/projects/deployments/DeploymentEnvironmentDraft';
 import { NewAppCodeSources } from './NewAppCodeSources';
@@ -261,7 +262,13 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   }, []);
   // The catalog's first apps, read only while the person is choosing a way in.
   const appCatalog = useAppList({ query: search }, { presented: step === 'start' });
-  const catalogApps = React.useMemo(() => appCatalog.items.slice(0, CATALOG_TILES), [appCatalog.items]);
+  // An app chosen in Browse all apps comes back as a tile here, selected, even when it is not among the first apps.
+  const [chosenCatalogApp, setChosenCatalogApp] = React.useState<RegistryCatalogItemSummary | null>(null);
+  const catalogApps = React.useMemo(() => {
+    const first = appCatalog.items.slice(0, CATALOG_TILES);
+    if (!chosenCatalogApp || first.some((item) => catalogDoor(item) === catalogDoor(chosenCatalogApp))) return first;
+    return [chosenCatalogApp, ...first.slice(0, CATALOG_TILES - 1)];
+  }, [appCatalog.items, chosenCatalogApp]);
   const builtTiles = React.useMemo((): Array<SelectionTile<Door>> => [
     { id: 'built:image', testID: 'newApp.built.image', icon: 'image',
       title: t('newApp.builtImage'), subtitle: t('newApp.builtImageSubtitle') },
@@ -375,9 +382,15 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     if (!item) return;
     startDeploy({ kind: 'catalogApp', app: { sourceId: item.sourceId, itemId: item.itemId } });
   };
+  // Every app, in the Store's own Add dialog in choose mode: the chosen app returns here selected (owner 11-28).
   const browseCatalog = () => {
-    stepAside();
-    router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'app', machine: props.machine ?? null }) as never);
+    openStoreAppChooseModal({
+      machine: props.machine ?? null,
+      onChoose: (item) => {
+        setChosenCatalogApp(item);
+        chooseDoor(catalogDoor(item));
+      },
+    });
   };
   // Every starter, where the catalog lists them: the Store's starter kind (journey-deploy jdF-src "All starters").
   const browseStarters = () => {

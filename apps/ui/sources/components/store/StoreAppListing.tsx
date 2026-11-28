@@ -98,7 +98,7 @@ function StoreAppListingRead(
   return props.children({ listing, lifetime: props.lifetime });
 }
 
-type Presented = Extract<
+export type StoreAppListingPresented = Extract<
   StoreAppListingState,
   { kind: 'ready' | 'needs_review' }
 >;
@@ -117,7 +117,7 @@ function formatMemory(bytes: number): string {
  */
 export function StoreAppListing(
   props: Readonly<{
-    state: Presented;
+    state: StoreAppListingPresented;
     lifetime: ServerAccountScopeLifetime;
     pushed: boolean;
     onClose: () => void;
@@ -126,15 +126,9 @@ export function StoreAppListing(
   const { theme } = useUnistyles();
   const { state, lifetime } = props;
   const initialMachine = useStoreMachineScope();
-  const { item, catalogRef } = state;
+  const { item } = state;
   const summary = item.summary;
-  const app = state.kind === 'ready' ? state.app : null;
-  const name = catalogText(app?.title) ?? summary.title;
-  // The same mark the App's Store row draws (one owner for list and detail, D28): its admitted artwork, else the kind's.
-  const markFacts = React.useMemo(
-    (): StoreMarkFacts => ({ kind: 'app', title: summary.title, brand: admitRegistrySummaryMark(summary).brandMark ?? null }),
-    [summary],
-  );
+  const name = storeAppListingName(state);
   const ready = state.kind === 'ready' ? state : null;
   // The exact pin joins a preset as an App in its own new Environment; saving the preset deploys nothing.
   const templateRef = ready?.templateRef;
@@ -156,6 +150,73 @@ export function StoreAppListing(
     if (sheetId.current) Modal.hide(sheetId.current);
   }, []);
 
+  const config: CapabilityListingConfig<typeof item> = {
+    testID: 'store.app.listing',
+    catalog: {
+      itemKey: () => JSON.stringify([summary.sourceId, summary.itemId]),
+    },
+    detailFooter: () => ({
+      primary: {
+        label: t('capabilities.store.appPage.install'),
+        onPress: async () => {
+          if (ready) sheetId.current = showStoreAppPreparation({ ready, lifetime, name, initialMachine });
+          return null;
+        },
+        ...(ready
+          ? {}
+          : {
+              disabledReason: t('capabilities.store.appPage.needsReviewHint'),
+            }),
+      },
+      ...(presetItem ? { secondary: (
+        <StoreAddToPresetButton
+          testID="store.app.listing.addToPreset"
+          serverId={lifetime.scope.serverId}
+          item={presetItem}
+          name={name}
+          onChoose={setPresetHandoff}
+        />
+      ) } : {}),
+      provenance: (
+        <Text variant="meta" style={{ color: theme.colors.text.secondary }}>
+          {t('capabilities.store.appPage.installNote')}
+        </Text>
+      ),
+    }),
+    renderDetail: () => <StoreAppListingBody state={state} />,
+  };
+  if (presetHandoff && presetItem) {
+    return <StorePresetEditorHandoff choice={presetHandoff} item={presetItem} onReturn={returnFromPreset} />;
+  }
+  return (
+    <CapabilityListingDetail
+      config={config}
+      item={item}
+      onClose={props.onClose}
+      pushed={props.pushed}
+    />
+  );
+}
+
+/**
+ * The App listing's body (identity, headline facts, what it runs and can reach, Versions and Source): the Store's
+ * listing and the Deploy an app chooser show the same words for one App; each host supplies its own one action.
+ */
+export function StoreAppListingBody(props: Readonly<{ state: StoreAppListingPresented }>): React.ReactElement {
+  const { theme } = useUnistyles();
+  const { state } = props;
+  const { item, catalogRef } = state;
+  const summary = item.summary;
+  const app = state.kind === 'ready' ? state.app : null;
+  const name = storeAppListingName(state);
+  // The same mark the App's Store row draws (one owner for list and detail, D28): its admitted artwork, else the kind's.
+  const markFacts = React.useMemo(
+    (): StoreMarkFacts => ({ kind: 'app', title: summary.title, brand: admitRegistrySummaryMark(summary).brandMark ?? null }),
+    [summary],
+  );
+  const focused = useIsFocused();
+  const visible = useLayoutPresentationActive();
+  const presented = focused && visible;
   const facts = React.useMemo((): FactStripFact[] => {
     const list: FactStripFact[] = [];
     if (!app) return list;
@@ -214,184 +275,144 @@ export function StoreAppListing(
     <Icon name={icon} size={ICON_SIZE.md} color={theme.colors.text.secondary} />
   );
 
-  const config: CapabilityListingConfig<typeof item> = {
-    testID: 'store.app.listing',
-    catalog: {
-      itemKey: () => JSON.stringify([summary.sourceId, summary.itemId]),
-    },
-    detailFooter: () => ({
-      primary: {
-        label: t('capabilities.store.appPage.install'),
-        onPress: async () => {
-          if (ready) sheetId.current = showStoreAppPreparation({ ready, lifetime, name, initialMachine });
-          return null;
-        },
-        ...(ready
-          ? {}
-          : {
-              disabledReason: t('capabilities.store.appPage.needsReviewHint'),
-            }),
-      },
-      ...(presetItem ? { secondary: (
-        <StoreAddToPresetButton
-          testID="store.app.listing.addToPreset"
-          serverId={lifetime.scope.serverId}
-          item={presetItem}
-          name={name}
-          onChoose={setPresetHandoff}
-        />
-      ) } : {}),
-      provenance: (
-        <Text variant="meta" style={{ color: theme.colors.text.secondary }}>
-          {t('capabilities.store.appPage.installNote')}
-        </Text>
-      ),
-    }),
-    renderDetail: () => (
-      <View>
-        <ItemGroup surface="none" header="none">
-          <BareSectionContent>
-            <View style={styles.head}>
-              <CapabilityDetailHeader
-                testID="store.app.listing.header"
-                mark={<StoreItemMark facts={markFacts} size={30} />}
-                title={name}
-                {...(prose.purpose ? { purpose: prose.purpose } : {})}
-                facts={{
-                  // What it is and where it comes from, on one line: App · its catalog · that catalog's version.
-                  extra: [
-                    t('capabilities.store.kindWord.app'),
-                    summary.publisher?.name,
-                    catalogFacts.sourceTitle,
-                    catalogFacts.version,
-                  ].filter((fact): fact is string => Boolean(fact)),
-                }}
-              />
-              <CapabilityAddDetailAction />
-              {facts.length > 0 ? (
-                <View style={styles.facts}>
-                  <FactStrip testID="store.app.listing.facts" facts={facts} />
-                </View>
-              ) : null}
-              {prose.about ? (
-                <Text
-                  variant="reading"
-                  style={{ color: theme.colors.text.primary }}
-                >
-                  {prose.about}
-                </Text>
-              ) : null}
-            </View>
-          </BareSectionContent>
-        </ItemGroup>
-        {state.kind === 'needs_review' ? (
-          <ItemGroup
-            testID="store.app.listing.review"
-            title={t('capabilities.store.appPage.reviewTitle')}
-            description={t('capabilities.store.appPage.reviewDescription')}
-          >
-            {state.diagnostics.map((diagnostic) => (
-              <Item
-                key={`${diagnostic.field}:${diagnostic.reason}`}
-                mode="info"
-                icon={glyph('warning-circle')}
-                title={
-                  <Text variant="body" style={styles.mono}>
-                    {diagnostic.field}
-                  </Text>
-                }
-                subtitle={diagnostic.reason}
-              />
-            ))}
-          </ItemGroup>
-        ) : null}
-        {state.kind === 'needs_review' && state.reviewSource ? <DeploymentTemplateMappingCorrection
-          source={state.reviewSource} onReview={state.correctMappings} testID="store.app.mapping" /> : null}
-        {app ? (
-          <ItemGroup title={t('capabilities.store.appPage.reachTitle')}>
-            {app.domains.map((domain) => (
-              <Item
-                key={`domain:${domain.key}`}
-                testID={`store.app.listing.domain.${domain.key}`}
-                mode="info"
-                icon={glyph('globe')}
-                title={
-                  domain.protocol === 'tcp'
-                    ? t('capabilities.store.appPage.internalTitle', {
-                        service: domain.service,
-                        port: domain.containerPort,
-                      })
-                    : t('capabilities.store.appPage.addressTitle')
-                }
-                subtitle={t('capabilities.store.appPage.addressBody', {
-                  service: domain.service,
-                  port: domain.containerPort,
-                })}
-              />
-            ))}
-            {app.volumes.some((volume) => volume.persistent) ? (
-              <Item
-                mode="info"
-                icon={glyph('hard-drives')}
-                title={t('capabilities.store.appPage.keptTitle', {
-                  count: app.volumes.filter((volume) => volume.persistent)
-                    .length,
-                })}
-                subtitle={t('capabilities.store.appPage.keptBody', {
-                  count: app.volumes.filter((volume) => volume.persistent).length,
-                })}
-              />
-            ) : null}
-            {app.generatedSecrets.length > 0 ? (
-              <Item
-                mode="info"
-                icon={glyph('key')}
-                title={t('capabilities.store.appPage.secretsTitle', {
-                  count: app.generatedSecrets.length,
-                })}
-                subtitle={t('capabilities.store.appPage.secretsBody')}
-              />
-            ) : null}
-            {app.firstRunSetup ? (
-              <Item
-                testID="store.app.listing.firstRun"
-                mode="info"
-                icon={glyph('user-circle')}
-                title={t('capabilities.store.appPage.firstRunTitle')}
-                subtitle={t('capabilities.store.appPage.firstRunBody')}
-              />
-            ) : null}
-          </ItemGroup>
-        ) : null}
-        <CapabilityListingSections
-          testID="store.app.listing"
-          facts={{
-            version: appVersion ?? exactPin,
-            versionNote: appVersion ? exactPin : null,
-            license: state.license,
-            sourceTitle: catalogFacts.sourceTitle,
-            links: {
-              ...(catalogFacts.repository
-                ? { repository: catalogFacts.repository }
-                : {}),
-              ...(website ? { website } : {}),
-            },
-          }}
-        />
-      </View>
-    ),
-  };
-  if (presetHandoff && presetItem) {
-    return <StorePresetEditorHandoff choice={presetHandoff} item={presetItem} onReturn={returnFromPreset} />;
-  }
   return (
-    <CapabilityListingDetail
-      config={config}
-      item={item}
-      onClose={props.onClose}
-      pushed={props.pushed}
-    />
-  );
+    <View>
+      <ItemGroup surface="none" header="none">
+        <BareSectionContent>
+          <View style={styles.head}>
+            <CapabilityDetailHeader
+              testID="store.app.listing.header"
+              mark={<StoreItemMark facts={markFacts} size={30} />}
+              title={name}
+              {...(prose.purpose ? { purpose: prose.purpose } : {})}
+              facts={{
+                // What it is and where it comes from, on one line: App · its catalog · that catalog's version.
+                extra: [
+                  t('capabilities.store.kindWord.app'),
+                  summary.publisher?.name,
+                  catalogFacts.sourceTitle,
+                  catalogFacts.version,
+                ].filter((fact): fact is string => Boolean(fact)),
+              }}
+            />
+            <CapabilityAddDetailAction />
+            {facts.length > 0 ? (
+              <View style={styles.facts}>
+                <FactStrip testID="store.app.listing.facts" facts={facts} />
+              </View>
+            ) : null}
+            {prose.about ? (
+              <Text
+                variant="reading"
+                style={{ color: theme.colors.text.primary }}
+              >
+                {prose.about}
+              </Text>
+            ) : null}
+          </View>
+        </BareSectionContent>
+      </ItemGroup>
+      {state.kind === 'needs_review' ? (
+        <ItemGroup
+          testID="store.app.listing.review"
+          title={t('capabilities.store.appPage.reviewTitle')}
+          description={t('capabilities.store.appPage.reviewDescription')}
+        >
+          {state.diagnostics.map((diagnostic) => (
+            <Item
+              key={`${diagnostic.field}:${diagnostic.reason}`}
+              mode="info"
+              icon={glyph('warning-circle')}
+              title={
+                <Text variant="body" style={styles.mono}>
+                  {diagnostic.field}
+                </Text>
+              }
+              subtitle={diagnostic.reason}
+            />
+          ))}
+        </ItemGroup>
+      ) : null}
+      {state.kind === 'needs_review' && state.reviewSource ? <DeploymentTemplateMappingCorrection
+        source={state.reviewSource} onReview={state.correctMappings} testID="store.app.mapping" /> : null}
+      {app ? (
+        <ItemGroup title={t('capabilities.store.appPage.reachTitle')}>
+          {app.domains.map((domain) => (
+            <Item
+              key={`domain:${domain.key}`}
+              testID={`store.app.listing.domain.${domain.key}`}
+              mode="info"
+              icon={glyph('globe')}
+              title={
+                domain.protocol === 'tcp'
+                  ? t('capabilities.store.appPage.internalTitle', {
+                      service: domain.service,
+                      port: domain.containerPort,
+                    })
+                  : t('capabilities.store.appPage.addressTitle')
+              }
+              subtitle={t('capabilities.store.appPage.addressBody', {
+                service: domain.service,
+                port: domain.containerPort,
+              })}
+            />
+          ))}
+          {app.volumes.some((volume) => volume.persistent) ? (
+            <Item
+              mode="info"
+              icon={glyph('hard-drives')}
+              title={t('capabilities.store.appPage.keptTitle', {
+                count: app.volumes.filter((volume) => volume.persistent)
+                  .length,
+              })}
+              subtitle={t('capabilities.store.appPage.keptBody', {
+                count: app.volumes.filter((volume) => volume.persistent).length,
+              })}
+            />
+          ) : null}
+          {app.generatedSecrets.length > 0 ? (
+            <Item
+              mode="info"
+              icon={glyph('key')}
+              title={t('capabilities.store.appPage.secretsTitle', {
+                count: app.generatedSecrets.length,
+              })}
+              subtitle={t('capabilities.store.appPage.secretsBody')}
+            />
+          ) : null}
+          {app.firstRunSetup ? (
+            <Item
+              testID="store.app.listing.firstRun"
+              mode="info"
+              icon={glyph('user-circle')}
+              title={t('capabilities.store.appPage.firstRunTitle')}
+              subtitle={t('capabilities.store.appPage.firstRunBody')}
+            />
+          ) : null}
+        </ItemGroup>
+      ) : null}
+      <CapabilityListingSections
+        testID="store.app.listing"
+        facts={{
+          version: appVersion ?? exactPin,
+          versionNote: appVersion ? exactPin : null,
+          license: state.license,
+          sourceTitle: catalogFacts.sourceTitle,
+          links: {
+            ...(catalogFacts.repository
+              ? { repository: catalogFacts.repository }
+              : {}),
+            ...(website ? { website } : {}),
+          },
+        }}
+      />
+    </View>
+    );
+}
+
+/** The App's name as its listing says it: the template's own title, else the catalog's. */
+export function storeAppListingName(state: StoreAppListingPresented): string {
+  return catalogText(state.kind === 'ready' ? state.app.title : undefined) ?? state.item.summary.title;
 }
 
 const styles = StyleSheet.create((theme) => ({

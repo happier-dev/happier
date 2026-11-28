@@ -26,6 +26,8 @@ type Copy = Readonly<{
   builtFolder: string;
   builtFolderSubtitle: string;
   browseCatalog: string;
+  /** Browse all apps: the Store's Add dialog in choose mode; the chosen app comes back to step 1 selected. */
+  chooseApp: Readonly<{ title: string; subtitle: string; search: string; use: (p: Name) => string }>;
   auto: Readonly<{
     entryTitle: string;
     entrySubtitle: string;
@@ -304,6 +306,7 @@ export const newAppTranslations: Readonly<
     builtFolder: 'A folder on a Machine',
     builtFolderSubtitle: 'Your code as it is there, no repository needed',
     browseCatalog: 'Browse the catalog',
+    chooseApp: { title: 'Choose an app', subtitle: 'Apps from the Store. The one you choose comes back to Deploy an app.', search: 'Search apps', use: ({ name }) => `Use ${name}` },
     auto: {
       entryTitle: "Describe your app",
       entrySubtitle: "Not sure what to build it with? Say what it should do; Happier suggests a starter and where it runs.",
@@ -556,6 +559,7 @@ export const newAppTranslations: Readonly<
     builtFolder: 'Una carpeta en una Machine',
     builtFolderSubtitle: 'El teu codi tal com és allà, sense repositori',
     browseCatalog: 'Explora el catàleg',
+    chooseApp: { title: 'Tria una app', subtitle: 'Apps de la Botiga. La que triïs torna a Desplega una app.', search: 'Cerca apps', use: ({ name }) => `Fes servir ${name}` },
     auto: {
       entryTitle: "Descriu la teva app",
       entrySubtitle: "No saps amb què construir-la? Explica què ha de fer; Happier et suggereix una plantilla i on s’executa.",
@@ -808,6 +812,7 @@ export const newAppTranslations: Readonly<
     builtFolder: 'Ein Ordner auf einer Machine',
     builtFolderSubtitle: 'Ihr Code, wie er dort liegt, ohne Repository',
     browseCatalog: 'Katalog durchsuchen',
+    chooseApp: { title: 'App auswählen', subtitle: 'Apps aus dem Store. Die gewählte App kommt zurück zu „App bereitstellen“.', search: 'Apps durchsuchen', use: ({ name }) => `${name} verwenden` },
     auto: {
       entryTitle: "Beschreibe deine App",
       entrySubtitle: "Nicht sicher, womit du sie baust? Sag, was sie tun soll; Happier schlägt eine Vorlage vor und wo sie läuft.",
@@ -1060,6 +1065,7 @@ export const newAppTranslations: Readonly<
     builtFolder: 'Una carpeta en una Machine',
     builtFolderSubtitle: 'Tu código tal como está allí, sin repositorio',
     browseCatalog: 'Explorar el catálogo',
+    chooseApp: { title: 'Elige una app', subtitle: 'Apps de la Tienda. La que elijas vuelve a Desplegar una app.', search: 'Buscar apps', use: ({ name }) => `Usar ${name}` },
     auto: {
       entryTitle: "Describe tu app",
       entrySubtitle: "¿No sabes con qué construirla? Di qué debe hacer; Happier sugiere una plantilla y dónde se ejecuta.",
@@ -1312,6 +1318,7 @@ export const newAppTranslations: Readonly<
     builtFolder: 'Un dossier sur une Machine',
     builtFolderSubtitle: 'Votre code tel qu’il est, sans dépôt',
     browseCatalog: 'Parcourir le catalogue',
+    chooseApp: { title: 'Choisir une app', subtitle: 'Les apps du Store. Celle que vous choisissez revient dans Déployer une app.', search: 'Rechercher des apps', use: ({ name }) => `Utiliser ${name}` },
     auto: {
       entryTitle: "Décrivez votre app",
       entrySubtitle: "Vous ne savez pas avec quoi la construire ? Dites ce qu’elle doit faire ; Happier propose un modèle et où l’exécuter.",
@@ -1564,6 +1571,7 @@ export const newAppTranslations: Readonly<
     builtFolder: 'Una cartella su una Machine',
     builtFolderSubtitle: 'Il tuo codice così com’è, senza repository',
     browseCatalog: 'Sfoglia il catalogo',
+    chooseApp: { title: 'Scegli un’app', subtitle: 'App dallo Store. Quella che scegli torna in Distribuisci un’app.', search: 'Cerca app', use: ({ name }) => `Usa ${name}` },
     auto: {
       entryTitle: "Descrivi la tua app",
       entrySubtitle: "Non sai con cosa costruirla? Di’ cosa deve fare; Happier suggerisce un modello e dove eseguirla.",
@@ -1816,6 +1824,7 @@ export const newAppTranslations: Readonly<
     builtFolder: 'Machine 上のフォルダー',
     builtFolderSubtitle: 'そこにあるコードをそのまま、リポジトリ不要',
     browseCatalog: 'カタログを見る',
+    chooseApp: { title: 'アプリを選ぶ', subtitle: 'ストアのアプリです。選んだアプリが「アプリをデプロイ」に戻ります。', search: 'アプリを検索', use: ({ name }) => `${name}を使う` },
     auto: {
       entryTitle: "アプリを説明する",
       entrySubtitle: "何で作るか迷っていますか？やりたいことを書くと、Happier がスターターと実行場所を提案します。",
@@ -2068,6 +2077,7 @@ export const newAppTranslations: Readonly<
     builtFolder: 'Folder na Machine',
     builtFolderSubtitle: 'Twój kod taki, jaki tam jest, bez repozytorium',
     browseCatalog: 'Przeglądaj katalog',
+    chooseApp: { title: 'Wybierz aplikację', subtitle: 'Aplikacje ze Sklepu. Wybrana wraca do Wdróż aplikację.', search: 'Szukaj aplikacji', use: ({ name }) => `Użyj ${name}` },
     auto: {
       entryTitle: "Opisz swoją aplikację",
       entrySubtitle: "Nie wiesz, w czym ją zbudować? Napisz, co ma robić; Happier zaproponuje szablon i miejsce uruchomienia.",
@@ -2320,6 +2330,7 @@ export const newAppTranslations: Readonly<
     builtFolder: 'Uma pasta numa Machine',
     builtFolderSubtitle: 'O seu código tal como está, sem repositório',
     browseCatalog: 'Explorar o catálogo',
+    chooseApp: { title: 'Escolher um app', subtitle: 'Apps da Loja. O que você escolher volta para Implantar um app.', search: 'Pesquisar apps', use: ({ name }) => `Usar ${name}` },
     auto: {
       entryTitle: "Descreva seu app",
       entrySubtitle: "Não sabe com o que construir? Diga o que ele deve fazer; o Happier sugere um modelo e onde ele roda.",
@@ -2572,6 +2583,7 @@ export const newAppTranslations: Readonly<
     builtFolder: 'Папка на Machine',
     builtFolderSubtitle: 'Ваш код как есть, без репозитория',
     browseCatalog: 'Открыть каталог',
+    chooseApp: { title: 'Выберите приложение', subtitle: 'Приложения из Магазина. Выбранное вернётся в «Развернуть приложение».', search: 'Поиск приложений', use: ({ name }) => `Использовать ${name}` },
     auto: {
       entryTitle: "Опишите приложение",
       entrySubtitle: "Не знаете, на чём его сделать? Скажите, что оно должно делать; Happier предложит шаблон и где его запустить.",
@@ -2824,6 +2836,7 @@ export const newAppTranslations: Readonly<
     builtFolder: 'Machine 上的文件夹',
     builtFolderSubtitle: '按原样使用那里的代码，无需仓库',
     browseCatalog: '浏览目录',
+    chooseApp: { title: '选择应用', subtitle: '来自商店的应用。所选应用会回到“部署应用”。', search: '搜索应用', use: ({ name }) => `使用 ${name}` },
     auto: {
       entryTitle: "描述你的应用",
       entrySubtitle: "不确定用什么构建？说说它要做什么；Happier 会推荐一个模板和运行位置。",
@@ -3072,6 +3085,7 @@ export const newAppTranslations: Readonly<
     builtFolder: 'Machine 上的資料夾',
     builtFolderSubtitle: '按原樣使用那裡的程式碼，無需儲存庫',
     browseCatalog: '瀏覽目錄',
+    chooseApp: { title: '選擇應用程式', subtitle: '來自商店的應用程式。所選的會回到「部署應用程式」。', search: '搜尋應用程式', use: ({ name }) => `使用 ${name}` },
     auto: {
       entryTitle: "描述你的應用程式",
       entrySubtitle: "不確定要用什麼建置？說說它要做什麼；Happier 會推薦一個範本和執行位置。",

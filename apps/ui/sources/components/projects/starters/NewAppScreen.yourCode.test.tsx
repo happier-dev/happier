@@ -163,8 +163,13 @@ it('the Deploy route keeps its Machine through Your code and the catalog (lab dM
     await screen.pressByTestIdAsync('newApp.continue');
     await waitForHomeGovernance(() => expect(draftMachine()).toBe('second-machine'));
     await screen.pressByTestIdAsync('newApp.deploy.changeSource');
+    // Browse all apps reads the catalog for the same Machine, in the Store's Add dialog (owner 11-28).
+    const { Modal } = await import('@/modal');
     await screen.pressByTestIdAsync('newApp.fromCatalog');
-    expect(routerMock.spies.push).toHaveBeenCalledWith(expect.stringMatching(/kind=app.*machine=/));
+    const chooser = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
+    expect((chooser?.props as { params?: { machine?: unknown } } | undefined)?.params?.machine)
+      .toEqual(expect.objectContaining({ machineId: 'second-machine' }));
+    expect(routerMock.spies.push).not.toHaveBeenCalled();
     await screen.unmount();
   } finally {
     await standardCleanup();

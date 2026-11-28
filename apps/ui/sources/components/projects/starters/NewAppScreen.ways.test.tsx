@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { act, renderScreen, standardCleanup } from '@/dev/testkit';
 
 const routerMock = await vi.hoisted(async () => {
   const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -66,11 +66,23 @@ it('runs an app that already exists: Already built continues to Where it runs in
     expect(onClose).not.toHaveBeenCalled();
     expect(routerMock.spies.push).not.toHaveBeenCalled();
     await screen.pressByTestIdAsync('newApp.deploy.changeSource');
+    // Browse all apps opens the Store's Add dialog in choose mode over this dialog (owner 11-28); nothing leaves.
+    const { Modal } = await import('@/modal');
+    vi.mocked(Modal.show).mockClear();
     await screen.pressByTestIdAsync('newApp.fromCatalog');
-    expect(onClose).toHaveBeenCalledOnce();
-    expect(routerMock.spies.push).toHaveBeenCalledWith(
-      expect.stringMatching(/view=kind.*kind=app/),
-    );
+    expect(onClose).not.toHaveBeenCalled();
+    expect(routerMock.spies.push).not.toHaveBeenCalled();
+    const chooser = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
+    expect(chooser?.chrome && 'testID' in chooser.chrome ? chooser.chrome.testID : null).toBe('newApp.chooseApp');
+    // The chosen app comes back to step 1 selected, even though it is not among the first catalog apps.
+    const { onChoose } = (chooser!.props as { params: { onChoose: (item: unknown) => void } }).params;
+    await act(async () => onChoose({ kind: 'app', sourceId: 'store-apps', itemId: 'plausible', title: 'Plausible Analytics' }));
+    expect(screen.findByTestId('newApp.catalog.plausible')).toBeTruthy();
+    expect(screen.findByTestId('newApp.continue')?.props.disabled).toBe(false);
+    // Continue takes the chosen app into this dialog's deploy steps, where its catalog listing is read.
+    await screen.pressByTestIdAsync('newApp.continue');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.deploy.changeSource')).toBeTruthy());
+    expect(onClose).not.toHaveBeenCalled();
     await screen.unmount();
   } finally {
     await standardCleanup();
@@ -98,11 +110,11 @@ it('as its own page, a way out goes straight to its destination and Back leaves 
     await waitForHomeGovernance(() =>
       expect(screen.findByTestId('newApp.fromCatalog')).toBeTruthy(),
     );
-    await screen.pressByTestIdAsync('newApp.fromCatalog');
+    // Every starter is a way out to the Store's starter kind; going back first would race the push.
+    await screen.pressByTestIdAsync('newApp.allStarters');
     expect(routerMock.spies.push).toHaveBeenCalledWith(
-      expect.stringMatching(/view=kind.*kind=app/),
+      expect.stringMatching(/view=kind.*kind=starter/),
     );
-    // Going back first would race the push and land on the previous page instead.
     expect(routerMock.spies.back).not.toHaveBeenCalled();
     await screen.pressByTestIdAsync('newApp.back');
     expect(
