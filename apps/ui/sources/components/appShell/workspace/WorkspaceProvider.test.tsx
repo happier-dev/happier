@@ -1857,9 +1857,14 @@ describe('consumed workspace navigation owner', () => {
         expect(publication).toEqual([1, 0]);
         expect(nav().readDestinationTitles?.()[tabId]?.source).toBe('page');
         expect(title()).toBe(`${pageTitle} · ${t('approvals.status.open')}`);
+        await act(async () => storage.setState({ artifacts: { 'subject-request': artifact('executed') } }));
+        expect(title()).toBe(`${pageTitle} · ${t('approvals.status.executed')}`);
+        expect(nav().state.fallbackTitlesByTabId[tabId]).toBe(pageTitle);
         showPage = false;
         await screen.update(scene());
-        expect(title()).toBe(`${pageTitle} · ${t('approvals.status.open')}`);
+        expect(title()).toBe(`${pageTitle} · ${t('approvals.status.executed')}`);
+        await act(async () => { nav().publishDestinationTitle?.(tabId, nav().state.tabs[tabId].target, 'Approval', 'fallback'); });
+        expect(title()).toBe(`${pageTitle} · ${t('approvals.status.executed')}`);
         await act(async () => storage.setState({ artifacts: { 'subject-request': artifact('failed') } }));
         expect(title()).toBe(`${pageTitle} · ${t('approvals.status.failed')}`);
     });

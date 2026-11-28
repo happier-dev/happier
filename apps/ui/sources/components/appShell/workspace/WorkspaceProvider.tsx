@@ -16,7 +16,7 @@ import { isNewSessionModalRoute } from '@/components/sessions/new/navigation/new
 import { useActiveServerAccountScope, useSetting } from '@/sync/domains/state/storage';
 import { getActiveUnsavedChangesGuard, runGuardedNavigation, runGuardedTabNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { hrefForDestinationRef, isProjectDestinationKnownGone, readDestinationInstanceTitle, resolveCurrentAppDestination, resolveDestinationRefFromHref, type CompactAppDestination, type DestinationRef } from '../destinations/compactAppDestinationCatalog';
+import { hrefForDestinationRef, isApprovalInstanceRef, isProjectDestinationKnownGone, readDestinationInstanceTitle, resolveCurrentAppDestination, resolveDestinationRefFromHref, type CompactAppDestination, type DestinationRef } from '../destinations/compactAppDestinationCatalog';
 import { desktopSessionTargetForDestination, type AppWindowRecord } from '@/desktop/window/appWindowBoot';
 import { registerDesktopAppWindowWorkspace, getDesktopAppWindowWorkspaceLayouts, getDesktopAppWindowTabPresentations,
     getDesktopAppWindows, getDesktopAppWindowPlacedTabs, getDesktopAppWindowTransfers, focusDesktopAppWindow,
@@ -217,6 +217,12 @@ export function WorkspaceProvider(props: Readonly<{
         // The body may finish an effect after navigation. Its old identity must
         // never name the new destination retained under the same tab key.
         if (latest.current.scopeKey !== scopeKey || latest.current.owner.getState().tabs[tabId]?.target !== ref) return () => {};
+        // Approval subjects survive a cold layout restore; the Artifact still owns their live status.
+        if (isApprovalInstanceRef(ref)) {
+            const previous = latest.current.destinationTitles[tabId];
+            if (source === 'fallback' && previous?.ref === ref && previous.source === 'page' && previous.title) return () => {};
+            if (source === 'page' && title) latest.current.owner.dispatch({ type: 'setFallbackTitle', tabId, title });
+        }
         setPublishedTitles(current => {
             const previous = current.scopeKey === scopeKey ? current.titles[tabId] : undefined;
             if (previous?.ref === ref && previous.title === title && previous.source === source) return current;

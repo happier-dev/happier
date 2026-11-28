@@ -1280,7 +1280,11 @@ function resolvePublishedOrStaticInstanceTitle(
     // Approval tabs reuse the open page's subject-aware base while their stored lifecycle
     // owns the status suffix. A fallback publication never replaces the stored title.
     // The always-mounted strip takes no Machine subscription to resolve that subject.
-    if (isApprovalInstanceRef(ref) && storedTitle) return storedTitle;
+    if (isApprovalInstanceRef(ref)) {
+        if (storedTitle) return storedTitle;
+        const savedTitle = resolveSavedInstanceTitle(catalog, ref, options?.fallbackTitle);
+        if (savedTitle) return savedTitle;
+    }
     const title = options?.publishedTitle?.ref === ref
         ? options.publishedTitle.title
         : staticTitle ?? storedTitle ?? resolveSavedInstanceTitle(catalog, ref, options?.fallbackTitle);
@@ -1347,7 +1351,7 @@ export function readDestinationSessionAddress(ref: DestinationRef): Readonly<{ s
         ? { sessionId: ref.params.id, serverId: ref.params.serverId ?? null } : null;
 }
 
-function isApprovalInstanceRef(ref: DestinationRef): boolean {
+export function isApprovalInstanceRef(ref: DestinationRef): boolean {
     return ref.kind === 'inbox'
         && matchWorkspaceDestinationRoute(ref.params.workspacePathname ?? '')?.routeKey === 'inbox/approvals/[id]';
 }
@@ -1444,7 +1448,8 @@ function resolveStoredInstanceTitle(ref: DestinationRef, state: ReturnType<typeo
         if (!isApprovalArtifactKindV1(artifact.header?.kind)) return null;
         const parsed = typeof artifact.body === 'string' ? approvalArtifactBodyMatchesHeaderV1(artifact.header ?? {}, artifact.body) : null;
         const title = resolveApprovalRequestTitle({ ...readApprovalArtifactTitleInput(artifact, parsed, artifact.sessions ?? []),
-            publishedTitle: published?.ref === ref ? published : undefined }).title;
+            publishedTitle: published?.ref === ref && published.source === 'page' ? published
+                : fallbackTitle ? { title: fallbackTitle, source: 'page' } : undefined }).title;
         const status = ApprovalRequestV2StatusSchema.safeParse(readApprovalArtifactDisplayStatus(artifact));
         return status.success ? `${title} · ${formatApprovalStatusLabel(status.data)}` : title;
     }

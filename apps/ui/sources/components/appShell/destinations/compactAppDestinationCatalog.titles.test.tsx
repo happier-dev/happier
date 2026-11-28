@@ -258,6 +258,25 @@ describe('Project destination instance titles', () => {
         expect(hook.getCurrent().get('1')).not.toBe(t('artifacts.notFound'));
         await hook.unmount();
     });
+    it('restores a decided approval subject before and after its artifact arrives without a mounted page', async () => {
+        const request = { v: 1 as const, status: 'executed' as const, createdAtMs: 1, updatedAtMs: 3,
+            createdBy: { surface: 'system' as const }, actionId: 'session.title.set' as const,
+            actionArgs: { sessionId: 'A1', title: 'Release notes' }, summary: 'Rename session' };
+        const ref = destination('/inbox/approvals/restored-decision');
+        const entries = [{ key: 'restored', ref, fallbackTitle: 'Rename session · Release planning' }];
+        const hook = await renderHook(() => useDestinationInstanceTitles(catalog, entries));
+        expect(hook.getCurrent().get('restored')).toBe(entries[0].fallbackTitle);
+        await act(async () => storage.setState({ artifacts: { 'restored-decision': {
+            id: 'restored-decision', isDecrypted: true, title: request.summary,
+            header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request),
+            headerVersion: 1, seq: 1, createdAt: 1, updatedAt: 3,
+        } } }));
+        expect(hook.getCurrent().get('restored')).toBe(`${entries[0].fallbackTitle} · ${t('approvals.status.executed')}`);
+        expect(readDestinationInstanceTitle(catalog, ref, { fallbackTitle: entries[0].fallbackTitle }))
+            .toBe(`${entries[0].fallbackTitle} · ${t('approvals.status.executed')}`);
+        await hook.unmount();
+    });
+
     it('reads an executed Approval whose Action refused its effect as Failed, like its detail page', async () => {
         const request = { v: 2 as const, status: 'executed' as const, createdAtMs: 1, updatedAtMs: 3,
             createdBy: { surface: 'system' as const, sessionId: 'session-1' }, requestedSurface: 'ui' as const,
