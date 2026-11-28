@@ -9,7 +9,11 @@ import {
     removeProtectedLocalStateFile,
     writeProtectedLocalStateFileAtomic,
 } from '@/utils/fs/protectedLocalState';
-import { lazySchema } from '@happier-dev/protocol';
+import {
+    ConnectedServiceMaterializationIdentityV1Schema,
+    ConnectedServiceProfileIdSchema,
+    lazySchema,
+} from '@happier-dev/protocol';
 
 /**
  * Domain-separated so a Session+Agent record can never collide with any other
@@ -17,10 +21,8 @@ import { lazySchema } from '@happier-dev/protocol';
  * in a filename.
  *
  * The domain string, the separators, the digest, the directory layout and the
- * stored key set are BYTE-COMPATIBLE with the successor tree's store on
- * purpose: one machine's `~/.happier` is shared across a CLI upgrade in either
- * direction, so a record written by one tree must read in the other rather than
- * silently degrading every returning Agent to a fresh target.
+ * core record keys match the successor store. Both CLI lines can use the same
+ * local state. Older readers that reject the optional auth field use full replay.
  */
 const AGENT_NATIVE_RESUME_RECORD_FINGERPRINT_DOMAIN = 'happier.local-agent-native-resume.v1';
 
@@ -44,14 +46,20 @@ function buildAgentNativeResumeRecordFingerprint(
  * id recorded here cannot be resumed anywhere else, so a server copy would be
  * unusable everywhere it could be read. It is scope, not secrecy.
  *
- * It carries two facts and nothing else: WHICH conversation to resume, and HOW
- * FAR that conversation had seen this Session's transcript when the Agent left.
+ * It carries the conversation, its departure boundary, and the non-secret auth
+ * identity needed to identify its materialized state after an account selection.
  * There is no continuity proof and no id/proof atomicity obligation (`AM-24`):
  * whether a recorded id still resumes is answered by resuming it, which fails
  * loudly in both Agents that support native resume. No model, Provider ref,
  * AgentState, PID, permission, cursor, request, or transcript content is
  * retained.
  */
+const NativeReturnAuthSchema = lazySchema(() => z.object({
+    profilesByServiceId: z.record(z.string(), ConnectedServiceProfileIdSchema),
+    materializationIdentity: ConnectedServiceMaterializationIdentityV1Schema.nullable(),
+}).strict());
+export type NativeReturnAuth = z.infer<typeof NativeReturnAuthSchema>;
+
 const StoredLocalAgentResumeRecordV1Schema = lazySchema(() => z.object({
     v: z.literal(1),
 
@@ -79,6 +87,7 @@ const StoredLocalAgentResumeRecordV1Schema = lazySchema(() => z.object({
      * this record is already read on return.
      */
     departureSeqInclusive: z.number().int().nonnegative(),
+    auth: NativeReturnAuthSchema.optional(),
 }).strict());
 
 type StoredLocalAgentResumeRecordV1 = z.infer<typeof StoredLocalAgentResumeRecordV1Schema>;
@@ -101,6 +110,7 @@ export type LocalAgentNativeResumeRecordKey = Readonly<{
 export type LocalAgentNativeResumeRecordV1 = Readonly<{
     identity: LocalAgentNativeResumeIdentityV1;
     departureSeqInclusive: number;
+    auth?: NativeReturnAuth;
 }>;
 
 export function createLocalAgentNativeResumeRecordStoreAt(params: Readonly<{
@@ -174,6 +184,7 @@ export function createLocalAgentNativeResumeRecordStoreAt(params: Readonly<{
             return {
                 identity: { v: 1, vendorResumeId: record.vendorResumeId },
                 departureSeqInclusive: record.departureSeqInclusive,
+                ...(record.auth ? { auth: record.auth } : {}),
             };
         },
 
@@ -189,6 +200,7 @@ export function createLocalAgentNativeResumeRecordStoreAt(params: Readonly<{
         async writeAgentNativeResumeRecord(input: LocalAgentNativeResumeRecordKey & Readonly<{
             identity: LocalAgentNativeResumeIdentityV1 | null;
             departureSeqInclusive: number;
+            auth?: NativeReturnAuth;
         }>): Promise<void> {
             const happierSessionId = input.happierSessionId.trim();
             if (!happierSessionId) return;
@@ -205,6 +217,7 @@ export function createLocalAgentNativeResumeRecordStoreAt(params: Readonly<{
                 agentId: input.agentId,
                 vendorResumeId: input.identity.vendorResumeId.trim(),
                 departureSeqInclusive: input.departureSeqInclusive,
+                ...(input.auth ? { auth: input.auth } : {}),
             });
             if (!candidate.success) return;
 

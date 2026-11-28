@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { BackendTargetRefSchema, matchesBackendTargetAgentId } from './backendTargets/backendTargetRef.js';
 
+import { ConnectedServiceBindingsV1Schema } from './connect/connectedServiceBindings.js';
+import { ConnectedServiceUxDiagnosticV1Schema } from './connect/connectedServiceUxDiagnostics.js';
 import { AcpConfigOptionOverridesV1Schema } from './sessionMetadata/metadataOverridesV1.js';
 import { isSessionAgentTransitionDividerLocalId } from './sessionAgentTransitionDivider.js';
 import { PendingLocalIdSchema } from './sessionMessages/pendingLocalId.js';
@@ -74,6 +76,13 @@ export const SessionAgentTransitionSelectionV1Schema = lazySchema(() => z
     providerConnectionId: z.string().trim().min(1).max(128).nullable().optional(),
     acpSessionModeId: z.string().trim().min(1).max(128).nullable().optional(),
     sessionConfigOptionOverrides: AcpConfigOptionOverridesV1Schema.optional(),
+    /**
+     * Connected-service account the TARGET Agent continues under, chosen before the
+     * switch. Absent means the target's account default, exactly as before. A tree
+     * or daemon that cannot honor an explicit choice MUST reject the transition
+     * rather than silently continue under a different account.
+     */
+    connectedServices: ConnectedServiceBindingsV1Schema.optional(),
   })
   .strict()
   .superRefine((selection, ctx) => {
@@ -162,6 +171,13 @@ export const SESSION_AGENT_TRANSITION_REJECTED_CODES_V1 = [
   'target_unavailable',
   'source_not_idle',
   'source_stop_failed',
+  /**
+   * The owner chose a connected account for the target Agent that the target cannot use (it names
+   * a service the Agent does not support). Refused before any effect, so the owner can pick
+   * another account, rather than being told the Agent itself is unavailable.
+   */
+  'connected_account_unsupported',
+  'connected_account_unavailable',
 ] as const;
 
 /**
@@ -260,6 +276,7 @@ const SessionAgentTransitionRejectedResultV1Schema = lazySchema(() => z
   .object({
     type: z.literal('rejected'),
     code: SessionAgentTransitionRejectedCodeV1Schema,
+    connectedServiceDiagnostic: ConnectedServiceUxDiagnosticV1Schema.optional(),
     /**
      * Always `'none'`. `rejected` is the "nothing happened" arm by construction;
      * any code reachable with the source already stopped lives on

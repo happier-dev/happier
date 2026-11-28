@@ -5269,7 +5269,18 @@ function SessionViewLoaded({
             serverId: capabilityServerId,
             agentCore: getAgentCore(liveComposerState.agentId),
             armedContinuationAgent: armedContinuationAgentId
-                ? { agentId: armedContinuationAgentId, agentCore: getAgentCore(armedContinuationAgentId) }
+                ? {
+                    agentId: armedContinuationAgentId,
+                    agentCore: getAgentCore(armedContinuationAgentId),
+                    // The account is chosen before Continue and rides the armed intent; nothing
+                    // about the running session's own binding changes until the switch is sent.
+                    connectedServices: inSessionAgentPicker.armedContinuation?.selection.connectedServices ?? null,
+                    // While a submission is issued the choice is final, so the popover goes back to a
+                    // read-only preview instead of offering a pick that would be ignored.
+                    onConnectedServicesChange: inSessionAgentPicker.armedContinuationSubmission
+                        ? undefined
+                        : inSessionAgentPicker.setArmedContinuationConnectedServices,
+                }
                 : null,
             sessionMetadata: session.metadata,
             settings: {
@@ -5686,17 +5697,18 @@ function SessionViewLoaded({
                     }
                     : transitionSubmission;
                 const isScopeCurrent = () => areServerAccountScopesEqual(activeServerAccountScope, getActiveServerAccountScope());
+                const issuedSubmission = existingSubmission?.localId === destination.localId ? existingSubmission : {
+                    localId: destination.localId,
+                    input: transitionInput,
+                    currentness: {
+                        text: previousMessage,
+                        mentions: semanticDraftSnapshot.structuredInputMentions ?? [],
+                        attachmentDraftIds: attachmentDrafts.map((draft) => draft.id),
+                    },
+                };
                 const { disposition, result } = await continueSessionWithArmedAgent(submissionForDispatch, {
                     isCurrent: isScopeCurrent,
-                    onBeforeTransitionDispatch: () => inSessionAgentPicker.recordArmedContinuationSubmission({
-                        localId: destination.localId,
-                        input: transitionInput,
-                        currentness: {
-                            text: previousMessage,
-                            mentions: semanticDraftSnapshot.structuredInputMentions ?? [],
-                            attachmentDraftIds: attachmentDrafts.map((draft) => draft.id),
-                        },
-                    }),
+                    onBeforeTransitionDispatch: () => inSessionAgentPicker.recordArmedContinuationSubmission(issuedSubmission),
                 });
                 if (!isScopeCurrent()) return;
                 if (result === null) {
@@ -5709,7 +5721,9 @@ function SessionViewLoaded({
                 // promise about the next message.
                 // A draft clear is consumed by the one compare-clear owner below,
                 // which needs the nested snapshot to remain available first.
-                if (disposition.arm === 'clear' && disposition.draft !== 'clear') {
+                if (result.type === 'rejected') {
+                    inSessionAgentPicker.clearArmedContinuationSubmissionIfCurrent(issuedSubmission, disposition.arm);
+                } else if (disposition.arm === 'clear' && disposition.draft !== 'clear') {
                     inSessionAgentPicker.clearArmedContinuation();
                 }
                 // The outcome itself is recorded, not its rendering: the banner

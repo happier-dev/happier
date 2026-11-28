@@ -1,5 +1,7 @@
+import { resolveConnectedServiceUxDiagnosticPresentation, translateConnectedServiceUxDiagnosticBody } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnostics';
 import {
     buildBackendTargetKey,
+    CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
     type BackendTargetRefV1,
     type ComposerAgentContinuationIntentV1,
     type SessionAgentTransitionInputV1,
@@ -237,6 +239,12 @@ function resolveRejectedMessage(
             return t('session.agentContinuation.transition.rejected.sourceStopFailed', {
                 agent: labels.sourceAgentLabel,
             });
+        case 'connected_account_unavailable':
+            return t('connectedServices.authSwitch.switchFailed');
+        case 'connected_account_unsupported':
+            return t('session.agentContinuation.transition.rejected.connectedAccountUnsupported', {
+                agent: labels.targetAgentLabel,
+            });
     }
 }
 
@@ -410,14 +418,23 @@ export function reconcileArmedAgentContinuationDisposition(params: Readonly<{
                 message: '',
                 awaitingRuntime: resolveAwaitingRuntime(result, facts),
             });
-        case 'rejected':
+        case 'rejected': {
+            const diagnostic = result.connectedServiceDiagnostic;
+            const presentation = resolveConnectedServiceUxDiagnosticPresentation(diagnostic);
+            const message = diagnostic?.code === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceProfileMissing
+                && diagnostic.profileId
+                ? t('session.agentContinuation.transition.rejected.connectedAccountMissing', { account: diagnostic.profileId })
+                : presentation
+                    ? translateConnectedServiceUxDiagnosticBody({ presentation, translate: t })
+                    : resolveRejectedMessage(result.code, labels);
             return buildDisposition({
                 depth: 'no_effect',
-                message: resolveRejectedMessage(result.code, labels),
+                message,
                 // A Session that already runs the armed Agent makes the armed row
                 // a promise about a switch that cannot happen.
                 armSpent: result.code === 'same_target',
             });
+        }
         case 'partially_applied':
             if (result.applied === 'source_stopped') {
                 return buildDisposition({

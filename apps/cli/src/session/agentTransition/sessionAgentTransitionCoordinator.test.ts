@@ -1,9 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Fastify from 'fastify';
+import { ApiClient } from '@/api/api';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBaseUrl';
 
 import {
+  buildConnectedServiceCredentialRecord,
+  ConnectedServiceAuthGroupPolicyV1Schema,
+  type ConnectedServiceId,
   FeaturesResponseSchema,
   SessionStopOutcomeSchema,
   isSessionStopConfirmed,
@@ -105,6 +109,20 @@ vi.mock('@/session/handoff/metadata/localAgentNativeResumeRecordStore', () => ({
 
 const { runSessionAgentTransition } = await import('./sessionAgentTransitionCoordinator');
 const { resolveCliFeatureDecision } = await import('@/features/featureDecisionService');
+
+function provideConnectedCredential(serviceId: ConnectedServiceId, profileId: string) {
+  vi.spyOn(ApiClient.prototype, 'getAccountEncryptionMode').mockResolvedValue('plain');
+  vi.spyOn(ApiClient.prototype, 'listConnectedServiceProfiles').mockResolvedValue({
+    serviceId, profiles: [{ profileId, status: 'connected' }],
+  });
+  return vi.spyOn(ApiClient.prototype, 'getConnectedServiceCredentialPlain').mockResolvedValue({
+    revisionSemantics: 'legacy_unfenced', credentialRevision: null,
+    content: { t: 'plain', v: buildConnectedServiceCredentialRecord({
+      now: 0, serviceId, profileId, kind: 'token',
+      token: { token: 'fixture', providerAccountId: null, providerEmail: null },
+    }) },
+  });
+}
 
 const SESSION_ID = 'session-1';
 const LOCAL_ID = 'local-42';
@@ -418,6 +436,8 @@ describe('runSessionAgentTransition', () => {
       decision: resolveAgentSwitchingDecision({ status: 'ready', features: enabledAgentSwitchingFeatures }),
     });
   });
+
+  afterEach(() => vi.restoreAllMocks());
 
   describe('pre-effect rejections leave the source running', () => {
     it.each(['unrecognized-permission', '', 42])('rejects invalid authored permission %j before stopping the source', async (permissionMode) => {
@@ -876,6 +896,206 @@ describe('runSessionAgentTransition', () => {
         // id would point the target at the departed Agent's home.
         expect(written.connectedServiceMaterializationIdentityV1).not.toMatchObject({ id: 'csm_source' });
         expect(written.connectedServicesUpdatedAt).not.toBe(11);
+      });
+
+      describe('explicit account chosen before the switch', () => {
+        const ACCOUNT_DEFAULT_SETTINGS = {
+          connectedServicesDefaultAuthByAgentIdV1: {
+            v: 1,
+            bindingsByAgentId: {
+              codex: {
+                v: 1,
+                bindingsByServiceId: {
+                  'openai-codex': { source: 'connected', selection: 'group', groupId: 'happier' },
+                },
+              },
+            },
+          },
+        };
+
+        it('continues under the chosen account instead of the account default', async () => {
+          const read = provideConnectedCredential('openai-codex', 'codex2');
+          primeHappyPath(sourceMetadata({ ...SOURCE_BOUND }));
+          mocks.bootstrapAccountSettingsContext.mockResolvedValue({ settings: ACCOUNT_DEFAULT_SETTINGS });
+
+          await runSessionAgentTransition({
+            credentials,
+            deps: { connectedServiceAdmission: { api: await ApiClient.create(credentials) } },
+            request: request({
+              selection: {
+                v: 1,
+                agentId: 'codex',
+                connectedServices: {
+                  v: 1,
+                  bindingsByServiceId: {
+                    'openai-codex': { source: 'connected', selection: 'profile', profileId: 'codex2' },
+                  },
+                },
+              },
+            }),
+          });
+
+          const cutover = mocks.commitSessionAgentTransitionCutover.mock.calls[0]?.[0];
+          const written = JSON.parse(cutover.currentView.metadataCiphertext) as Record<string, unknown>;
+          const bindings = (written.connectedServices as { bindingsByServiceId: Record<string, unknown> })
+            .bindingsByServiceId;
+          expect(bindings['openai-codex']).toEqual({ source: 'connected', selection: 'profile', profileId: 'codex2' });
+          expect(bindings['claude-subscription']).toBeUndefined();
+          expect(written.connectedServiceMaterializationIdentityV1).toBeDefined();
+          expect(written.connectedServiceMaterializationIdentityV1).not.toMatchObject({ id: 'csm_source' });
+          expect(read).toHaveBeenCalledWith({ serviceId: 'openai-codex', profileId: 'codex2' });
+        });
+
+        it('keeps the source running when the daemon has no connected-account admission port', async () => {
+          const read = provideConnectedCredential('openai-codex', 'codex2');
+          primeHappyPath(sourceMetadata({ ...SOURCE_BOUND }));
+
+          const result = await runSessionAgentTransition({
+            credentials,
+            request: request({
+              selection: { v: 1, agentId: 'codex', connectedServices: { v: 1, bindingsByServiceId: {
+                'openai-codex': { source: 'connected', selection: 'profile', profileId: 'codex2' },
+              } } },
+            }),
+          });
+
+          expect(result).toMatchObject({
+            type: 'rejected', sourceEffect: 'none', code: 'connected_account_unavailable',
+          });
+          expect(read).not.toHaveBeenCalled();
+          expect(mocks.requestSessionStop).not.toHaveBeenCalled();
+        });
+
+        it('keeps the source running when the selected account is confirmed missing', async () => {
+          primeHappyPath(sourceMetadata({ ...SOURCE_BOUND }));
+          const selectedService = 'openai-codex';
+          const read = vi.spyOn(ApiClient.prototype, 'getConnectedServiceCredentialSealed').mockResolvedValue(null);
+          const profiles = vi.spyOn(ApiClient.prototype, 'listConnectedServiceProfiles')
+            .mockResolvedValue({ serviceId: selectedService, profiles: [] });
+          const mode = vi.spyOn(ApiClient.prototype, 'getAccountEncryptionMode').mockResolvedValue('e2ee');
+          try {
+            const result = await runSessionAgentTransition({
+              credentials,
+              deps: { connectedServiceAdmission: { api: await ApiClient.create(credentials) } },
+              request: request({
+                selection: {
+                  v: 1,
+                  agentId: 'codex',
+                  connectedServices: {
+                    v: 1,
+                    bindingsByServiceId: {
+                      [selectedService]: { source: 'connected', selection: 'profile', profileId: 'deleted' },
+                    },
+                  },
+                },
+              }),
+            });
+            expect(result).toMatchObject({
+              type: 'rejected', sourceEffect: 'none',
+              connectedServiceDiagnostic: { code: 'connected_service_profile_missing', profileId: 'deleted' },
+            });
+            expect(mocks.requestSessionStop).not.toHaveBeenCalled();
+            expect(mocks.commitSessionAgentTransitionCutover).not.toHaveBeenCalled();
+          } finally {
+            mode.mockRestore();
+            profiles.mockRestore();
+            read.mockRestore();
+          }
+        });
+
+        it('recovers a selected group through launch policy before stopping the source', async () => {
+          primeHappyPath(sourceMetadata({ ...SOURCE_BOUND }));
+          const serviceId = 'openai-codex' as const;
+          const groupId = 'happier';
+          const api = await ApiClient.create(credentials);
+          let activeProfileId = 'expired';
+          const getGroup = async () => ({
+            v: 1 as const, serviceId, groupId, activeProfileId, displayName: null, runtimeStateRevision: 0,
+            generation: activeProfileId === 'expired' ? 1 : 2,
+            policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({}),
+            state: { v: 1 as const },
+            members: ['expired', 'healthy'].map((profileId) => ({
+              v: 1 as const, serviceId, groupId, profileId, enabled: true, priority: 1,
+              state: { v: 1 as const }, createdAt: 1, updatedAt: 1,
+            })),
+            createdAt: 1, updatedAt: 1,
+          });
+          vi.spyOn(api, 'getConnectedServiceAuthGroup').mockImplementation(getGroup);
+          vi.spyOn(api, 'getAccountEncryptionMode').mockResolvedValue('plain');
+          const readCredential = vi.spyOn(api, 'getConnectedServiceCredentialPlain').mockImplementation(async ({ profileId }) => ({
+            revisionSemantics: 'legacy_unfenced', credentialRevision: null,
+            content: { t: 'plain', v: buildConnectedServiceCredentialRecord({
+              now: 0, serviceId, profileId, kind: 'oauth', expiresAt: profileId === 'expired' ? 1 : null,
+              oauth: { accessToken: 'fixture', refreshToken: 'fixture', idToken: null, scope: null,
+                tokenType: 'Bearer', providerAccountId: null, providerEmail: null },
+            }) },
+          }));
+          const result = await runSessionAgentTransition({
+            credentials,
+            request: request({
+              selection: { v: 1, agentId: 'codex', connectedServices: { v: 1, bindingsByServiceId: {
+                [serviceId]: { source: 'connected', selection: 'group', groupId },
+              } } },
+            }),
+            deps: { connectedServiceAdmission: { api, createAuthGroupSwitchCoordinator: () => ({
+              switchBeforeTurn: async () => ({ status: 'no_eligible_member' }),
+              switchAfterClassifiedFailure: async (input: { sessionId?: string }) => {
+                expect(input.sessionId).toBe(SESSION_ID);
+                expect(mocks.requestSessionStop).not.toHaveBeenCalled();
+                activeProfileId = 'healthy';
+                return { status: 'switched', activeProfileId, generation: 2 };
+              },
+            }) } },
+          });
+          expect(result.type).toBe('accepted');
+          expect(activeProfileId).toBe('healthy');
+          expect(readCredential).toHaveBeenLastCalledWith(expect.objectContaining({ serviceId, profileId: 'healthy' }));
+        });
+
+        it('honors an explicit native choice even when the account has a connected default', async () => {
+          primeHappyPath(sourceMetadata({ ...SOURCE_BOUND }));
+          mocks.bootstrapAccountSettingsContext.mockResolvedValue({ settings: ACCOUNT_DEFAULT_SETTINGS });
+
+          await runSessionAgentTransition({
+            credentials,
+            request: request({
+              selection: {
+                v: 1,
+                agentId: 'codex',
+                connectedServices: { v: 1, bindingsByServiceId: { 'openai-codex': { source: 'native' } } },
+              },
+            }),
+          });
+
+          const cutover = mocks.commitSessionAgentTransitionCutover.mock.calls[0]?.[0];
+          const written = JSON.parse(cutover.currentView.metadataCiphertext) as Record<string, unknown>;
+          expect(written.connectedServices).toBeUndefined();
+          expect(written.connectedServiceMaterializationIdentityV1).toBeUndefined();
+        });
+
+        it('rejects before any effect when the choice names a service the target Agent does not support', async () => {
+          primeHappyPath(sourceMetadata({ ...SOURCE_BOUND }));
+
+          const result = await runSessionAgentTransition({
+            credentials,
+            request: request({
+              selection: {
+                v: 1,
+                agentId: 'codex',
+                connectedServices: {
+                  v: 1,
+                  bindingsByServiceId: {
+                    'claude-subscription': { source: 'connected', selection: 'profile', profileId: 'team' },
+                  },
+                },
+              },
+            }),
+          });
+
+          expect(result).toEqual({ type: 'rejected', code: 'connected_account_unsupported', sourceEffect: 'none' });
+          expect(mocks.requestSessionStop).not.toHaveBeenCalled();
+          expect(mocks.commitSessionAgentTransitionCutover).not.toHaveBeenCalled();
+        });
       });
 
       it('leaves the target on native auth when the account configures no default for it', async () => {
@@ -1683,6 +1903,7 @@ describe('runSessionAgentTransition', () => {
         agentId: 'claude',
         identity: { v: 1, vendorResumeId: 'claude-native-1' },
         departureSeqInclusive: 100,
+        auth: { profilesByServiceId: {}, materializationIdentity: null },
       });
       // Control: the brief runs to the POST-stop head, so the fixture really
       // does distinguish the two.
@@ -1800,6 +2021,76 @@ describe('runSessionAgentTransition', () => {
       // a flat resume key: exactly one Agent's key may be present.
       expect(written.claudeSessionId).toBe('claude-native-9');
       expect(written.codexSessionId).toBeUndefined();
+    });
+
+    it('returns to the same connected login using its recorded materialization and replay boundary', async () => {
+      provideConnectedCredential('claude-subscription', 'work');
+      primeHappyPath(codexSourceMetadata());
+      const materializationIdentity = { v: 1, id: 'csm_recorded' };
+      mocks.readAgentNativeResumeRecord.mockResolvedValue({
+        identity: { v: 1, vendorResumeId: 'claude-native-9' },
+        departureSeqInclusive: 55,
+        auth: { profilesByServiceId: { 'claude-subscription': 'work' }, materializationIdentity },
+      });
+
+      const result = await runSessionAgentTransition({
+        credentials,
+        deps: { connectedServiceAdmission: { api: await ApiClient.create(credentials) } },
+        request: request({
+          expectedCurrentAgentId: 'codex',
+          selection: {
+            v: 1, agentId: 'claude',
+            connectedServices: {
+              v: 1, bindingsByServiceId: {
+                'claude-subscription': { source: 'connected', selection: 'profile', profileId: 'work' },
+              },
+            },
+          },
+        }),
+      });
+
+      expect(result.type).toBe('accepted');
+      expect(readCommittedDivider()?.returningAgentLastSeenSeqInclusive).toBe(55);
+      expect(readCommittedTargetView()).toMatchObject({
+        claudeSessionId: 'claude-native-9',
+        connectedServiceMaterializationIdentityV1: materializationIdentity,
+      });
+    });
+
+    it('starts a fresh conversation with the full replay when the owner chose an explicit account', async () => {
+      provideConnectedCredential('claude-subscription', 'claude1');
+      // The record names a conversation but not the account that produced it, and a connected
+      // account keeps its own provider home. Reusing it under an account the owner picked
+      // deliberately could resume a conversation that account cannot see, or silently start an
+      // empty one while the brief is bounded to the away delta. An unconfirmable record is ignored.
+      primeHappyPath(codexSourceMetadata());
+      mocks.readAgentNativeResumeRecord.mockResolvedValue({
+        identity: { v: 1, vendorResumeId: 'claude-native-9' },
+        departureSeqInclusive: 55,
+      });
+
+      const result = await runSessionAgentTransition({
+        credentials,
+        deps: { connectedServiceAdmission: { api: await ApiClient.create(credentials) } },
+        request: request({
+          expectedCurrentAgentId: 'codex',
+          selection: {
+            v: 1,
+            agentId: 'claude',
+            connectedServices: {
+              v: 1,
+              bindingsByServiceId: {
+                'claude-subscription': { source: 'connected', selection: 'profile', profileId: 'claude1' },
+              },
+            },
+          },
+        }),
+      });
+
+      expect(result).toEqual({ type: 'accepted', localId: LOCAL_ID });
+      expect(readSeedSource()).not.toHaveProperty('returningAgentLastSeenSeq');
+      expect(readCommittedDivider()).not.toHaveProperty('returningAgentLastSeenSeqInclusive');
+      expect(readCommittedTargetView().claudeSessionId).toBeUndefined();
     });
 
     it('refuses a recorded id the shared eligibility owner will not resume', async () => {

@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+import type { ConnectedServiceSpawnAdmission } from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
+
 import { readPendingQueueV2ActivationEligibilityFromServer } from '@/api/session/pendingQueueV2Transport';
 
 type Launch = Readonly<{
@@ -8,6 +10,7 @@ type Launch = Readonly<{
   localId: string;
   metadataVersion: number;
   pendingVersion: number;
+  allowCredentialRecovery?: boolean;
 }>;
 
 // The transition coordinator supplies this evidence only on the original
@@ -16,14 +19,16 @@ type LaunchAttempt = {
   launch: Launch;
   nonce: string;
   state: 'expected' | 'preparing' | 'credential_refused';
+  admittedAuth?: Readonly<{ materializationId: string; credentials: ConnectedServiceSpawnAdmission }>;
 };
 const attempts = new Map<string, LaunchAttempt>();
 
 export async function runFirstTransitionLaunch<T>(
   launch: Launch,
   start: (spawnNonce: string) => Promise<T>,
+  admittedAuth?: LaunchAttempt['admittedAuth'],
 ): Promise<T> {
-  const attempt: LaunchAttempt = { launch, nonce: randomUUID(), state: 'expected' };
+  const attempt: LaunchAttempt = { launch, nonce: randomUUID(), state: 'expected', admittedAuth };
   attempts.set(launch.sessionId, attempt);
   try {
     return await start(attempt.nonce);
@@ -37,7 +42,7 @@ export function observeTransitionTargetSpawn(
   sessionId: string,
   spawnNonce: string | undefined,
   pendingRequestId?: string,
-): Readonly<{ credentialRefused: () => void; finish: () => void }> | undefined {
+): Readonly<{ admittedAuth?: LaunchAttempt['admittedAuth']; credentialRefused: () => void; finish: () => void }> | undefined {
   const previous = attempts.get(sessionId);
   if (!previous) return;
   const originalLaunch = previous.state === 'expected' && previous.nonce === spawnNonce;
@@ -52,9 +57,12 @@ export function observeTransitionTargetSpawn(
   const attempt: LaunchAttempt = originalLaunch ? previous : { ...previous };
   attempt.state = 'preparing';
   attempts.set(sessionId, attempt);
+  const admittedAuth = attempt.admittedAuth;
+  delete attempt.admittedAuth;
   return {
+    admittedAuth,
     credentialRefused: () => {
-      if (attempts.get(sessionId) === attempt) attempt.state = 'credential_refused';
+      if (attempt.launch.allowCredentialRecovery !== false && attempts.get(sessionId) === attempt) attempt.state = 'credential_refused';
     },
     finish: () => {
       if (attempts.get(sessionId) === attempt && attempt.state !== 'credential_refused') attempts.delete(sessionId);

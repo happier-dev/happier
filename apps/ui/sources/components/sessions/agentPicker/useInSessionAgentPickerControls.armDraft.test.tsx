@@ -32,10 +32,6 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
     machineRpcWithServerScope: (params: unknown) => machineRpcWithServerScope(params),
 }));
 
-vi.mock('./buildSessionAgentPickerDetailContent', () => ({
-    buildSessionAgentPickerDetailContent: () => null,
-}));
-
 vi.mock('@/agents/registry/AgentIcon', () => ({
     AgentIcon: (props: Record<string, unknown>) => React.createElement('AgentIcon', props),
 }));
@@ -92,6 +88,7 @@ const UNSUPPORTED = {
 } as const;
 
 type HookProps = Readonly<{
+    accountScope?: typeof SCOPE | null;
     currentAgentId?: string | null;
     entries?: readonly ResolvedBackendCatalogEntry[];
     featureDecision?: SessionAgentContinuationFeatureDecision;
@@ -104,7 +101,7 @@ let controlsRenderCount = 0;
 async function renderControls(props: HookProps = {}) {
     const hook = await renderHook((hookProps: HookProps) => (controlsRenderCount += 1, useInSessionAgentPickerControls({
         sessionId: 'session-1',
-        accountScope: SCOPE,
+        accountScope: hookProps.accountScope === undefined ? SCOPE : hookProps.accountScope,
         currentAgentId: hookProps.currentAgentId ?? 'claude',
         currentAgentLabel: 'Claude Code',
         currentAgentSessionActive: true,
@@ -519,7 +516,7 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         if (targetMetadataLanded) expect(readTargetOptionIds(hook)).toEqual([]);
 
         await act(async () => {
-            expect(hook.getCurrent().clearArmedContinuationSubmissionIfCurrent(submission)).toBe(true);
+            hook.getCurrent().clearArmedContinuationSubmissionIfCurrent(submission);
         });
         await act(async () => { await Promise.resolve(); });
 
@@ -553,7 +550,7 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         await armTarget(hook, 'agent:gemini');
 
         await act(async () => {
-            expect(hook.getCurrent().clearArmedContinuationSubmissionIfCurrent(submission)).toBe(false);
+            hook.getCurrent().clearArmedContinuationSubmissionIfCurrent(submission);
         });
 
         expect(hook.getCurrent().armedContinuation).toEqual(armedIntentFor('gemini'));
@@ -598,6 +595,158 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         const hook = await renderControls();
 
         expect(hook.getCurrent().armedContinuationModelLabel).toBe('GPT-5');
+    });
+
+    describe('account chosen for the armed Agent before Continue', () => {
+        const CHOSEN = {
+            v: 1 as const,
+            bindingsByServiceId: {
+                openai: { source: 'connected' as const, selection: 'profile' as const, profileId: 'personal' },
+            },
+        };
+
+        it('records the chosen account on the armed intent and keeps the Agent armed', async () => {
+            const hook = await renderControls();
+            await armTarget(hook, 'agent:codex');
+            expect(hook.getCurrent().armedContinuation).toEqual(armedIntentFor('codex'));
+
+            await act(async () => {
+                hook.getCurrent().setArmedContinuationConnectedServices(CHOSEN);
+            });
+            await act(async () => { await Promise.resolve(); });
+
+            expect(hook.getCurrent().armedContinuation).toEqual({
+                ...armedIntentFor('codex'),
+                selection: { v: 1, agentId: 'codex', connectedServices: CHOSEN },
+            });
+            expect(readPersistedArm()?.intent.selection.connectedServices).toEqual(CHOSEN);
+
+            const targetDetail = hook.getCurrent()
+                .composeAgentPickerOptions([CURRENT_AGENT_ROW])
+                .find((option) => option.id === 'agent:codex')
+                ?.renderDetailContent?.();
+            expect(targetDetail).toMatchObject({ props: { connectedServices: CHOSEN } });
+        });
+
+        it('does not ask the machine to re-inspect the target because the account changed', async () => {
+            const hook = await renderControls();
+            await armTarget(hook, 'agent:codex');
+            const callsBefore = machineRpcWithServerScope.mock.calls.length;
+
+            await act(async () => {
+                hook.getCurrent().setArmedContinuationConnectedServices(CHOSEN);
+            });
+            await act(async () => { await Promise.resolve(); });
+
+            // Eligibility is about the target, not its account. Re-asking would also drop the arm
+            // while the new answer is pending, so choosing an account would un-arm the switch.
+            expect(machineRpcWithServerScope.mock.calls.length).toBe(callsBefore);
+            expect(hook.getCurrent().armedContinuation).not.toBeNull();
+        });
+
+        it('keeps the Agent armed when the account changes while the machine is being re-inspected', async () => {
+            const hook = await renderControls();
+            await armTarget(hook, 'agent:codex');
+            const reinspection = createDeferred<{ v: 1; inspections: readonly (typeof AVAILABLE)[] }>();
+            machineRpcWithServerScope.mockImplementationOnce(() => reinspection.promise);
+            await hook.rerender({ machine: { ...onlineMachine, daemonGeneration: 2 } });
+            await act(async () => { await Promise.resolve(); });
+            expect(hook.getCurrent().armedContinuation).not.toBeNull();
+
+            await act(async () => {
+                hook.getCurrent().setArmedContinuationConnectedServices(CHOSEN);
+            });
+            await act(async () => { await Promise.resolve(); });
+
+            // The inspection target is unchanged (the account is not part of it), so a pending answer
+            // must not un-arm the switch: a send in that window would otherwise go to the source Agent.
+            expect(hook.getCurrent().armedContinuation?.selection.connectedServices).toEqual(CHOSEN);
+            expect(readPersistedArm()?.intent.selection.connectedServices).toEqual(CHOSEN);
+        });
+
+        it('leaves an already-issued submission reconcilable instead of re-arming under a new identity', async () => {
+            const hook = await renderControls();
+            await armTarget(hook, 'agent:codex');
+            const submittedLocalId = hook.getCurrent().armedContinuationLocalId as string;
+            await act(async () => {
+                expect(hook.getCurrent().recordArmedContinuationSubmission({
+                    localId: submittedLocalId,
+                    input: { localId: submittedLocalId, text: 'switch and send this', meta: {} },
+                    currentness: { text: 'switch and send this', mentions: [], attachmentDraftIds: [] },
+                })).toBe(true);
+            });
+
+            await act(async () => {
+                hook.getCurrent().setArmedContinuationConnectedServices(CHOSEN);
+            });
+            await act(async () => { await Promise.resolve(); });
+
+            // The account is part of the arm's identity; changing it here would mint a new localId and
+            // drop the issued input, so custody could no longer spend or retry the transition it issued.
+            expect(hook.getCurrent().armedContinuationLocalId).toBe(submittedLocalId);
+            expect(hook.getCurrent().armedContinuationSubmission).toMatchObject({ localId: submittedLocalId });
+            expect(readPersistedArm()?.submission?.input).toMatchObject({ text: 'switch and send this' });
+            expect(readPersistedArm()?.intent.selection.connectedServices).toBeUndefined();
+        });
+
+        it('allows another account after releasing a refused submission', async () => {
+            const hook = await renderControls();
+            await armTarget(hook, 'agent:codex');
+            await act(async () => {
+                hook.getCurrent().setArmedContinuationConnectedServices(CHOSEN);
+            });
+            const localId = hook.getCurrent().armedContinuationLocalId;
+            if (!localId) throw new Error('Expected armed continuation identity');
+            const submitted = {
+                localId,
+                input: { localId, text: 'Keep this message', meta: {} },
+                currentness: { text: 'Keep this message', mentions: [], attachmentDraftIds: [] },
+            };
+            await act(async () => {
+                expect(hook.getCurrent().recordArmedContinuationSubmission(submitted)).toBe(true);
+            });
+            await act(async () => {
+                hook.getCurrent().clearArmedContinuationSubmissionIfCurrent(submitted, 'keep');
+            });
+
+            expect(hook.getCurrent().armedContinuation?.selection.connectedServices).toEqual(CHOSEN);
+            expect(readPersistedArm()?.submission).toBeUndefined();
+            const next = { v: 1 as const, bindingsByServiceId: { openai: { source: 'native' as const } } };
+            await act(async () => {
+                hook.getCurrent().setArmedContinuationConnectedServices(next);
+            });
+            expect(readPersistedArm()?.intent.selection.connectedServices).toEqual(next);
+        });
+
+        it('releases a refused submission from the dispatch render without an Account draft', async () => {
+            const hook = await renderControls({ accountScope: null });
+            await armTarget(hook, 'agent:codex');
+            await act(async () => hook.getCurrent().setArmedContinuationConnectedServices(CHOSEN));
+            const dispatch = hook.getCurrent();
+            const localId = dispatch.armedContinuationLocalId;
+            if (!localId) throw new Error('Expected armed continuation identity');
+            const submitted = {
+                localId,
+                input: { localId, text: 'Try this', meta: {} },
+                currentness: { text: 'Try this', mentions: [], attachmentDraftIds: [] },
+            };
+            await act(async () => { expect(dispatch.recordArmedContinuationSubmission(submitted)).toBe(true); });
+            expect(hook.getCurrent().armedContinuationSubmission?.localId).toBe(localId);
+            await act(async () => { dispatch.clearArmedContinuationSubmissionIfCurrent(submitted, 'keep'); });
+            expect(hook.getCurrent().armedContinuationSubmission).toBeNull();
+            expect(hook.getCurrent().armedContinuation?.selection.connectedServices).toEqual(CHOSEN);
+        });
+
+        it('restores the chosen account with the arm after a remount', async () => {
+            existingSessionDraftSemanticValues.write(SCOPE, 'session-1', 'routing.agentContinuation', {
+                backendTargetKey: 'agent:codex',
+                intent: { ...armedIntentFor('codex'), selection: { v: 1, agentId: 'codex', connectedServices: CHOSEN } },
+            });
+
+            const hook = await renderControls();
+
+            expect(hook.getCurrent().armedContinuation?.selection.connectedServices).toEqual(CHOSEN);
+        });
     });
 
     it('keeps an arm through a daemon reinspection that remains eligible', async () => {
