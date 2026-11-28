@@ -60,6 +60,10 @@ import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, type WorktreeRemovedEventV1 } f
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { ExternalActionExecutionAuthorizationV1Schema, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { retainVerifiedExternalActionRequester } from '@/daemon/agentIsolation/verifiedExternalActionRequester';
+import { resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
+import { requireExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
+import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
+import { verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createCliMachineActionTransport } from '@/session/actions/cliActionDeps/machineTransport';
 import { createCliSessionActionTransport } from '@/session/transport/cliActionTransport';
 import { createSessionBoundScmAction } from '@/scm/actions/sessionBoundAction';
@@ -693,7 +697,8 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     // Home is the network boundary. Preserve its admitted root and currentness.
     const retain = (admitted: typeof root) => {
       const isCurrent = async () => true;
-      const transport = { authorization: admitted, credentials: params.credentials, serverHttpBaseUrl,
+      const requesterToken = `e30.${Buffer.from(JSON.stringify({ sub: admitted.binding.accountId })).toString('base64url')}.fixture`;
+      const transport = { authorization: admitted, credentials: { token: requesterToken, encryption: null }, serverHttpBaseUrl,
         isCurrent, resolveEncryption: async () => null } satisfies RequesterAccountActionTransportContext;
       Object.defineProperties(admitted, {
         requesterAccountExecutor: { value: requesterAccountExecutor },
@@ -706,7 +711,7 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
         requesterHttpProjection: { value: Object.freeze({
           accountId: admitted.binding.accountId, serverId, serverIdentityId: f.home, serverHttpBaseUrl,
           accountEncryptionMode: 'plain', isCurrent,
-          createRequestHeaders: async () => ({ Authorization: `Bearer ${token}` }),
+          createRequestHeaders: async () => ({ Authorization: `Bearer ${requesterToken}` }),
         }) },
       });
       return retainVerifiedExternalActionRequester({ authorization: admitted, isCurrent });
@@ -729,8 +734,32 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     const foreignSession = 'c222222222222222222222222';
     const sharedSession = 'c333333333333333333333333';
     let sharedAccess: 'edit' | 'view' | 'none' = 'edit';
-    vi.spyOn(axios, 'get').mockImplementation(async url => {
+    const signingKeys = nacl.sign.keyPair();
+    const nativeRoots = new Map<string, typeof root>();
+    vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
       const path = new URL(String(url)).pathname;
+      const headers = config?.headers;
+      const signedRoot = headers?.[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER];
+      if (typeof signedRoot === 'string') {
+        const admitted = nativeRoots.get(signedRoot);
+        if (!admitted) throw new Error('Unknown fixture admission');
+        expect(headers?.Authorization).toBeUndefined();
+        expect(verifyExternalActionMachineRequestV1({
+          authorizationToken: signedRoot,
+          effectActionId: admitted.binding.actionId,
+          target: admitted.binding.target,
+          installationId: f.installationId,
+          requestId: admitted.binding.requestId,
+          method: 'GET',
+          path: path + new URL(String(url)).search,
+          signature: String(headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]),
+          publicKey: signingKeys.publicKey,
+        })).toBe(true);
+        // Both guests have Machine Use. Only the Session owner can read it.
+        if (path === `/v2/sessions/${ownSession}` && admitted.binding.accountId !== accountId) {
+          return { status: 404, data: { error: 'Session not found' } };
+        }
+      }
       if (path === '/v1/account/encryption/currentness') {
         return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
       }
@@ -757,7 +786,15 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     const common = {
       callMachineAction: machine.callMachineAction,
       normalizeStringValue: (value: unknown) => typeof value === 'string' && value.trim() ? value.trim() : null,
-      resolveServerRequestHeaders: () => ({ Authorization: `Bearer ${token}` }),
+      resolveServerRequestHeaders: (context: ActionExecutorContext | undefined, effectActionId: string,
+        request: Readonly<{ method: string; path: string; body?: unknown }>) => {
+        const admitted = context?.externalActionExecutionAuthorization;
+        if (!admitted || !nativeRoots.has(admitted.token)) return { Authorization: `Bearer ${token}` };
+        return requireExternalActionHeaders(resolveExternalActionServerRequestHeaders({
+          context, effectActionId, ...request, daemonToken: 'fixture-custodian-token',
+          serverIdentityId: f.home, installationId: f.installationId, privateKey: signingKeys.secretKey,
+        }));
+      },
     };
     const session = createCliSessionActionTransport(params, { ...common,
       readCurrentSessionMetadata: async () => null,
@@ -875,6 +912,39 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
       expect(daemonGit()).toEqual([]);
       expect(os.runAs.slice(memberLaunchCount).map(run => [run.args[0], run.uid]))
         .toEqual(captureCallers.map(() => ['workspace-effect', 2401]));
+    }
+
+    if (agentRole === 'use') {
+      const nativeContext = (actionId: 'scm.diffSummary.capture' | 'review.start', actor: string): ActionExecutorContext => {
+        const requestId = `${actionId}-${actor}`;
+        const admitted = ExternalActionExecutionAuthorizationV1Schema.parse({
+          ...root, token: requestId, binding: { ...root.binding, actionId, accountId: actor, requestId },
+        });
+        nativeRoots.set(admitted.token, admitted);
+        return {
+          surface: 'cli', authority: 'present_user', runtimeAccountId: actor, serverId, actionRequestId: requestId,
+          expectedSessionAddress: { serverId: f.home, sessionId: ownSession },
+          externalActionExecutionAuthorization: retain(admitted),
+        };
+      };
+
+      // SCM selects the exact Session after clearing the inherited placement.
+      // A native Review's capture uses the same Session transport under its root.
+      for (const rootAction of ['scm.diffSummary.capture', 'review.start'] as const) {
+        const input = { cwd: ownRepository, sessionId: ownSession, source: { kind: 'workingTree', area: 'included' } };
+        const run = (actor: string) => execute({
+          actionId: 'scm.diffSummary.capture', input,
+          context: { ...nativeContext(rootAction, actor), defaultSessionId: ownSession },
+          executeCanonicalAction: async () => { throw new Error('Unexpected Action'); },
+        });
+        const own = await run(accountId);
+        expect(own).toMatchObject({ success: true, comparison: {
+          repository: { rootPath: ownRepository }, inventory: { files: [{ path: 'guest-change.txt' }] },
+        } });
+        const gitCount = gitLaunches().length;
+        expect(await run('other-guest')).toMatchObject({ ok: false, errorCode: 'session_not_found' });
+        expect(gitLaunches()).toHaveLength(gitCount);
+      }
     }
   }));
 

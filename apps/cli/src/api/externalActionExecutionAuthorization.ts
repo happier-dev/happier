@@ -2652,14 +2652,20 @@ export function resolveExternalActionServerRequestHeaders(input: Readonly<{
     effectActionId: input.effectActionId, authority: input.context?.authority,
     ...(input.context?.externalActionTarget ? {} : { targetless: true as const }) });
   if (contributed) return contributed;
-  if (!input.context?.externalActionTarget) return refuse('target_missing');
+  // Session placement can clear an inherited routing target. Home reads for
+  // the verified root still spend its exact admitted target and requester.
+  const target = input.context?.externalActionTarget
+    ?? (input.effectActionId === binding.actionId && input.method.toUpperCase() === 'GET' && input.body === undefined
+      ? readRetainedVerifiedExternalActionRequester(authorization)?.authorization.binding.target
+      : undefined);
+  if (!target) return refuse('target_missing');
   if (binding.actionId === 'approval.request.create' && binding.actionId !== input.effectActionId
     && 'authentication' in binding) {
     // The proposal proof remains approval provenance, not an effect credential.
     // Replay has reopened the original requester's private custody. Spend that
     // Account at Home, as a direct Account Action does; never borrow the daemon.
-    const approval = input.context.presentUserApproval;
-    const replay = input.context.approvedActionReplay;
+    const approval = input.context?.presentUserApproval;
+    const replay = input.context?.approvedActionReplay;
     const requester = readRequesterAccountActionContext(authorization);
     if (!requester || !approval || !replay || approval.actionId !== input.effectActionId
       || approval.artifactId !== replay.artifactId || approval.requestId !== binding.requestId
@@ -2667,7 +2673,7 @@ export function resolveExternalActionServerRequestHeaders(input: Readonly<{
       || binding.sessionActionOrigin || binding.workflowActionOrigin
       || (binding.authentication.kind !== 'account' && binding.authentication.kind !== 'terminal')) return refuse('approval_replay_mismatch');
     return { ok: true, headers: { Authorization: `Bearer ${requester.credentials.token}`,
-      ...(input.context.authority === 'account_automation' ? { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' } : {}) } };
+      ...(input.context?.authority === 'account_automation' ? { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' } : {}) } };
   }
   const admittedChild = readHostAdmittedReviewedChildHttpProofV1(input.context);
   // Setup already spends its own child grant and Home purpose. Retain that
@@ -2680,7 +2686,7 @@ export function resolveExternalActionServerRequestHeaders(input: Readonly<{
   if (templateChild && !('credentialId' in binding)) {
     if (binding.accountId !== readAccountIdFromToken(input.daemonToken)) return refuse('template_account_mismatch');
     return { ok: true, machineRpcAuthorization: 'account', headers: { Authorization: `Bearer ${input.daemonToken}`,
-      ...(input.context.authority === 'account_automation' ? { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' } : {}) } };
+      ...(input.context?.authority === 'account_automation' ? { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' } : {}) } };
   }
   const managedReadEffect = input.method.toUpperCase() === 'POST'
     && input.path.split('?')[0] === managedMachineActionEndpointPathV1('machines.managed.get')
@@ -2698,7 +2704,7 @@ export function resolveExternalActionServerRequestHeaders(input: Readonly<{
     headers: createExternalActionAuthorizedRequestHeaders({
       authorization,
       effectActionId,
-      target: input.context.externalActionTarget,
+      target,
       installationId: input.installationId,
       method: input.method,
       path: input.path,
