@@ -9,7 +9,7 @@ import {
   classifyClaudeCodeCredentialHealth,
   type ClaudeCodeCredentialHealth,
 } from './claudeCodeCredentialHealth';
-import { readClaudeCodeMacOsKeychainCredentialWithMetadata } from './claudeCodeMacOsKeychain';
+import { readClaudeCodeMacOsKeychainDocument } from './claudeCodeMacOsKeychain';
 import {
   CLAUDE_CODE_REQUIRED_OAUTH_SCOPES,
   CLAUDE_CODE_SETUP_TOKEN_SCOPES,
@@ -22,11 +22,13 @@ import {
   computeClaudeCodeCredentialSafeTokenFingerprint,
   isExistingClaudeCodeCredentialNewer,
   readClaudeCodeCredentialFreshness,
+  readClaudeCodeCatalogSignIn,
   readClaudeCodeNativeCredentialPayload,
   readNumber,
   readObject,
   readOptionalString,
   readString,
+  type ClaudeCodeCatalogSignIn,
   type ClaudeCodeNativeCredentialPayload,
 } from './claudeCodeNativeCredentialPayload';
 
@@ -122,29 +124,8 @@ export async function readClaudeCodeNativeCredential(params: Readonly<{
   diagnosticContext?: ClaudeCodeCredentialDiagnosticContext | undefined;
   signal?: AbortSignal;
 }>): Promise<ClaudeCodeNativeCredentialReadResult | null> {
-  params.signal?.throwIfAborted();
-  if (process.platform === 'darwin') {
-    const keychain = await readClaudeCodeMacOsKeychainCredentialWithMetadata({
-      claudeConfigDir: params.claudeConfigDir,
-      homeDir: params.homeDir,
-      username: params.username,
-      signal: params.signal,
-    });
-    if (keychain) {
-      const result: ClaudeCodeNativeCredentialReadResult = {
-        payload: keychain.payload,
-        updatedAtMs: keychain.updatedAtMs ?? Date.now(),
-        source: 'macos_keychain',
-      };
-      logCredentialRead({
-        diagnosticContext: params.diagnosticContext,
-        result,
-      });
-      return result;
-    }
-  }
-  const file = await readClaudeCodeNativeCredentialFile(params.claudeConfigDir, { signal: params.signal });
-  const result = file ? { ...file, source: 'file' as const } : null;
+  const read = await readClaudeCodeSecureStorage(params, readClaudeCodeNativeCredentialPayload);
+  const result = read ? { payload: read.value, updatedAtMs: read.updatedAtMs, source: read.source } : null;
   logCredentialRead({
     diagnosticContext: params.diagnosticContext,
     result,
@@ -152,10 +133,62 @@ export async function readClaudeCodeNativeCredential(params: Readonly<{
   return result;
 }
 
+/** Read the effective saved model-catalog sign-in from a single secure-storage document. */
+export async function readClaudeCodeNativeCatalogSignIn(params: Readonly<{
+  claudeConfigDir: string;
+  homeDir?: string | null | undefined;
+  signal?: AbortSignal;
+}>): Promise<ClaudeCodeCatalogSignIn | null> {
+  return (await readClaudeCodeSecureStorage(params, readClaudeCodeCatalogSignIn))?.value ?? null;
+}
+
+/**
+ * Read one projection of Claude Code's secure storage: the macOS keychain item first, then
+ * `<configDir>/.credentials.json`, which is where Claude Code keeps it on every other platform.
+ */
+async function readClaudeCodeSecureStorage<T>(
+  params: Readonly<{
+    claudeConfigDir: string;
+    homeDir?: string | null | undefined;
+    username?: string | null | undefined;
+    signal?: AbortSignal;
+  }>,
+  project: (document: unknown) => T | null,
+): Promise<Readonly<{ value: T; updatedAtMs: number; source: ClaudeCodeNativeCredentialReadSource }> | null> {
+  params.signal?.throwIfAborted();
+  if (process.platform === 'darwin') {
+    const keychain = await readClaudeCodeMacOsKeychainDocument({
+      claudeConfigDir: params.claudeConfigDir,
+      homeDir: params.homeDir,
+      username: params.username,
+      signal: params.signal,
+    });
+    const value = keychain ? project(keychain.document) : null;
+    if (keychain && value) {
+      return { value, updatedAtMs: keychain.updatedAtMs ?? Date.now(), source: 'macos_keychain' };
+    }
+  }
+  const file = await readClaudeCodeCredentialsDocumentFile(
+    resolveClaudeCodeCredentialsFilePath(params.claudeConfigDir),
+    { signal: params.signal },
+  );
+  const value = file ? project(file.document) : null;
+  return file && value ? { value, updatedAtMs: file.updatedAtMs, source: 'file' } : null;
+}
+
 async function readClaudeCodeNativeCredentialFilePath(
   credentialPath: string,
   options?: Readonly<{ signal?: AbortSignal }>,
 ): Promise<ClaudeCodeNativeCredentialFileReadResult | null> {
+  const file = await readClaudeCodeCredentialsDocumentFile(credentialPath, options);
+  const payload = file ? readClaudeCodeNativeCredentialPayload(file.document) : null;
+  return file && payload ? { payload, updatedAtMs: file.updatedAtMs } : null;
+}
+
+async function readClaudeCodeCredentialsDocumentFile(
+  credentialPath: string,
+  options?: Readonly<{ signal?: AbortSignal }>,
+): Promise<Readonly<{ document: unknown; updatedAtMs: number }> | null> {
   options?.signal?.throwIfAborted();
   try {
     const [contents, stats] = await Promise.all([
@@ -163,12 +196,7 @@ async function readClaudeCodeNativeCredentialFilePath(
       stat(credentialPath),
     ]);
     options?.signal?.throwIfAborted();
-    const payload = readClaudeCodeNativeCredentialPayload(JSON.parse(contents));
-    if (!payload) return null;
-    return {
-      payload,
-      updatedAtMs: stats.mtimeMs,
-    };
+    return { document: JSON.parse(contents) as unknown, updatedAtMs: stats.mtimeMs };
   } catch {
     options?.signal?.throwIfAborted();
     return null;

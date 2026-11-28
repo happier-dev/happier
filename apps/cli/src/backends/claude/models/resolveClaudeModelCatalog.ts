@@ -198,6 +198,14 @@ export async function resolveClaudeModelCatalogResolution(
       ...(target.credential.kind === 'api_key' ? { apiKey: target.credential.value } : {}),
       ...(target.credential.kind === 'bearer' ? { accessToken: target.credential.value } : {}),
       ...(target.credential.kind === 'api_key_helper' ? { apiKeyHelperValue: target.credential.value } : {}),
+      ...(target.credential.kind === 'gateway_login'
+        ? {
+            gatewayLogin: {
+              accessToken: target.credential.value,
+              tlsCertificateSha256: target.credential.tlsCertificateSha256,
+            },
+          }
+        : {}),
       ...(target.baseUrl ? { baseUrl: target.baseUrl } : {}),
       timeoutMs: params.timeoutMs,
       deadlineAt,

@@ -399,7 +399,8 @@ A provider with both surfaces needs **one owner** for the model list. Claude's i
 `apps/cli/src/backends/claude/models/resolveClaudeModelCatalog.ts`: the preflight probe adapter and
 the in-session `sessionModelsV1` publisher both read it, so the two pickers cannot disagree about
 which models exist or which effort tiers they report. Its provider-owned cache identity is the
-normalized endpoint, credential kind, and full SHA-256 credential hash. A warm cache entry avoids a
+normalized endpoint, credential kind, and full SHA-256 credential hash, plus the pinned certificate
+fingerprint for a gateway sign-in. A warm cache entry avoids a
 network request; a cold session start may fetch the catalog before publishing the resolved models.
 In development source, the same target resolver reads user-scoped Claude Code `apiKeyHelper`
 settings and executes the configured shell command when the canonical launch settings-source policy
@@ -414,6 +415,17 @@ environment and selected session directory, and its credential kind and value re
 and installed-runtime parser phases share the caller's deadline, cancellation and owned-resource
 cleanup. Helper output uses both API-key and Bearer headers without the subscription OAuth beta
 header. Custom endpoint path prefixes are preserved, while saved subscription credentials remain restricted to Anthropic.
+The saved enterprise-gateway sign-in takes precedence over an earlier saved Claude.ai login.
+The resolver selects between them from the same keychain item or `.credentials.json`. That gateway token is used only with
+the gateway URL stored beside it, and only when `ANTHROPIC_BASE_URL` is unset or names the same
+origin. It is sent as `Authorization: Bearer` without the subscription OAuth beta header, over a
+connection whose leaf certificate matches the SHA-256 fingerprint Claude Code pinned for that host
+in `gatewayTrust`. The standard chain and hostname checks still run, each request does a fresh
+handshake so session resumption cannot skip the pin, and the request is not routed through an
+HTTP(S) proxy. A sign-in with no pin, a non-https URL, or a passed `expiresAt` is not used; the
+resolver never refreshes it or substitutes a previous Claude.ai login.
+Saved-login reads, including the macOS keychain commands, run inside the discovery deadline and
+are cancelled with it.
 For Claude, a successful account response is authoritative for membership and API capability/context
 facts; curated rows only enrich matching ids and serve as the fallback before the first success. A
 later failed refresh retains the bounded last successful account snapshot, serves it during the
