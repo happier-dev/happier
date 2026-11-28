@@ -5,8 +5,6 @@ export const ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION_V1 = 1 as const;
 export const ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION_V2 = 2 as const;
 export const ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION_V3 = 3 as const;
 export const ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION_V4 = 4 as const;
-/** V5 is reserved solely for the Account-owned staged encryption transition. */
-export const ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION_V5 = 5 as const;
 export const CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION =
   ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION_V3;
 
@@ -58,13 +56,6 @@ export const ACCOUNT_STORED_CONTENT_PROFILE_PRESERVING_SETTINGS_WRITER_PROTOCOL_
 /** V4 readers also preserve the ended primary turn that is waiting for a person. */
 export const ACCOUNT_STORED_CONTENT_SESSION_TURN_WAITING_PROTOCOL_VERSION =
   ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION_V4;
-
-/**
- * This must be checked by the transition operation itself. It is not the base
- * stored-content requirement and is deliberately not advertised by default.
- */
-export const ACCOUNT_STORED_CONTENT_ACCOUNT_ENCRYPTION_TRANSITION_PROTOCOL_VERSION =
-  ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION_V5;
 
 /**
  * The caller advertises its cumulative V4 behavior independently of the base
