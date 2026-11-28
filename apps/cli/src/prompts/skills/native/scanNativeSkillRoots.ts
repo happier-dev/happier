@@ -162,16 +162,24 @@ export async function scanNativeSkillRoots(input: MaskingScanInput | FoundNative
   const items: Array<Omit<FoundNativeSkillItem, 'agents'> & { agents: string[] }> = [];
   const physicalItems = new Map<string, (typeof items)[number]>();
   const physicalNames = new Set<string>();
-  for (const root of roots.values()) {
-    if (root.status === 'failed') continue;
-    let children: string[];
-    try { children = root.layout === 'skill' ? [''] : await readdir(root.path); }
-    catch (error) {
+  // Root directory reads are independent. Consume them in declaration order
+  // so the first physical alias still supplies the skill's presentation.
+  const directories = [...roots.values()].map(async root => {
+    if (root.status === 'failed') return { root, children: [] };
+    try {
+      return { root, children: root.layout === 'skill' ? [''] : await readdir(root.path) };
+    } catch (error) {
       if (missing(error)) {
-        // Absent native folders are normal; an existing broken alias is not an empty scan.
+        // Existing broken aliases must be reported as failed roots.
         try { await lstat(root.path); }
-        catch (metadataError) { if (missing(metadataError)) continue; }
+        catch (metadataError) { if (missing(metadataError)) return { root, children: [] }; }
       }
+      return { root, children: null };
+    }
+  });
+  for (const directory of directories) {
+    const { root, children } = await directory;
+    if (children === null) {
       root.status = 'failed'; failed.push(root.path); continue;
     }
     for (const child of children.sort()) {

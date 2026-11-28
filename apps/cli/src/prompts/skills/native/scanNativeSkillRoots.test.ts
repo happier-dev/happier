@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { constants, openSync, writeSync, closeSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, rm, symlink, utimes, writeFile } from 'node:fs/promises';
@@ -10,6 +10,20 @@ import { computePromptBundleDigestV1 } from '@happier-dev/protocol/prompts/libra
 import { SkillFoundListInputV1Schema } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
+const { beforeReadDirectory } = vi.hoisted(() => ({
+  beforeReadDirectory: vi.fn<(path: unknown) => void | Promise<void>>(),
+}));
+vi.mock('node:fs/promises', async importOriginal => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...fs,
+    async readdir(...args: Parameters<typeof fs.readdir>) {
+      await beforeReadDirectory(args[0]);
+      return fs.readdir(...args);
+    },
+  };
+});
+
 async function createSkill(root: string, name: string) {
   const directory = join(root, name);
   await mkdir(directory, { recursive: true });
@@ -20,8 +34,34 @@ async function createSkill(root: string, name: string) {
 const homes: string[] = [];
 const releaseReads: Array<() => Promise<void>> = [];
 afterEach(async () => {
+  beforeReadDirectory.mockReset();
   for (const release of releaseReads.splice(0)) await release();
   for (const home of homes.splice(0)) await rm(home, { recursive: true, force: true });
+});
+
+it('opens independent native roots while the first directory read is still pending and preserves root order', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'happier-native-root-order-')); homes.push(home);
+  const first = join(home, '.native-first');
+  const second = join(home, '.native-second');
+  await createSkill(first, 'review-first');
+  await createSkill(second, 'review-second');
+
+  const firstRead = Promise.withResolvers<void>();
+  const releaseFirst = Promise.withResolvers<void>();
+  beforeReadDirectory.mockImplementation(path => {
+    if (path === first) {
+      firstRead.resolve();
+      return releaseFirst.promise;
+    }
+  });
+  const scanning = scanNativeSkillRoots({ home, nativeRoots: { user: [['.native-first'], ['.native-second']] } });
+  try {
+    await firstRead.promise;
+    expect(beforeReadDirectory).toHaveBeenCalledWith(second);
+  } finally {
+    releaseFirst.resolve();
+    expect((await scanning).names.map(({ name }) => name)).toEqual(['review-first', 'review-second']);
+  }
 });
 it('discovers the hosted Session home and relative project roots independently', async () => {
   await Promise.all(['first', 'second'].map(async name => {
