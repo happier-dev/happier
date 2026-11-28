@@ -280,6 +280,39 @@ function writtenContext(input: ReturnType<typeof AutomationDefinitionReconcileRe
 // The retained Account adapter below exercises settings, source intake and legacy
 // links. Primary Library presentation consumes the unified view tested alongside it.
 describe('Account Workflow Library and settings', () => {
+    it.each([false, true])('activates a transcript draft only at its acknowledged revision (superseded=%s)', async superseded => {
+        const { TranscriptToolResultCard } = await import('@/components/sessions/transcript/references/TranscriptToolResultCard');
+        const { createTestSessionTranscriptSource, wrapWithSessionTranscriptSource } = await import('@/dev/testkit/sessionTranscriptSource');
+        const { createToolCallMessageFixture } = await import('@/dev/testkit/fixtures/transcriptFixtures');
+        const set = { ...fixture(), revision: 7, triggers: [{ ...trigger('t1'), enabled: false }] };
+        serve(superseded ? { ...set, revision: 8 } : set);
+        const tool = {
+            ...createToolCallMessageFixture().tool,
+            name: 'mcp__happier__action_execute',
+            input: { actionId: 'workflow.trigger.add', input: {} },
+            state: 'completed' as const,
+            result: { ok: true, result: { set, triggerId: 't1' } },
+        };
+        const screen = await renderAccountScreen(wrapWithSessionTranscriptSource(
+            <TranscriptToolResultCard tool={tool} serverId={serverId} mediaPreviewEnabled={false} />,
+            { ...createTestSessionTranscriptSource({ serverId }), kind: 'app' },
+        ));
+        const enable = 'transcript-automation-draft-enable';
+        await waitForHomeGovernance(() => expect(screen.findByTestId(enable)).not.toBeNull());
+        expect(writes()).toHaveLength(0);
+        await screen.pressByTestIdAsync(enable);
+        await waitForHomeGovernance(() => expect(screen.findByTestId(enable)).toBeNull());
+        if (superseded) {
+            const { describeWorkflowOperationProblem } = await import('../presentation/workflowProblemPresentation');
+            expect(screen.getTextContent()).toContain(describeWorkflowOperationProblem('currentness_conflict').message);
+            expect(writes()).toHaveLength(0);
+        } else {
+            expect(writes()).toMatchObject([{ expectedTemplateVersion: 7 }]);
+        }
+        expect(rows[0]?.triggers[0]?.enabled).toBe(!superseded);
+        await screen.unmount();
+    });
+
     it('binds the public plugin Automations section to the core selected read using its physical Account and visible demand', async () => {
         const { AutomationsSection } = await import('@happier-dev/plugin-ui/components');
         const { createSurfaceContextFixture } = await import('@happier-dev/plugin-sdk/testing');

@@ -224,6 +224,13 @@ export async function updateWorkflowTrigger(request: z.input<typeof WorkflowTrig
     );
 }
 
+export function writeAccountTriggerEnabled(set: Pick<WorkflowTriggerSetV1, 'automationId' | 'revision'>,
+    triggerId: WorkflowTriggerSetV1['triggers'][number]['id'] | null, enabled: boolean,
+    accountLifetime?: ServerAccountScopeLifetime | null) {
+    return updateWorkflowTrigger({ automationId: set.automationId, expectedRevision: set.revision,
+        ...(triggerId === null ? {} : { triggerId }), patch: { enabled } }, accountLifetime === undefined ? {} : { accountLifetime });
+}
+
 export function removeWorkflowTrigger(
     request: z.input<typeof WorkflowTriggerRemoveRequestV1Schema> & Readonly<{ triggerId: string }>,
     options?: CallOptions,

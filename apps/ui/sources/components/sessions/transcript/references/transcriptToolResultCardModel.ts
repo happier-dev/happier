@@ -1,6 +1,7 @@
 import type { ToolCall } from '@happier-dev/session-core/messages';
 import { isTranscriptSessionBoardItemReplyCallV1 } from '@happier-dev/protocol/sessions/board';
 import { WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { WORKFLOW_TRIGGER_ADD_ACTION_ID } from '@happier-dev/protocol/actions/workflowTriggerActionIds';
 import { SKILL_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/prompts/library/skills/skillActionIdsV1';
 import { BOT_TEMPLATE_DRAFT_ACTION_ID_V1 } from '@happier-dev/protocol/bots/templates/botTemplateActionIdsV1';
 import { isMemoryWriteActionV1, MemoryMutationResultV1Schema } from '@happier-dev/protocol/prompts/library/memoryActionsV1';
@@ -18,6 +19,7 @@ export function readTranscriptToolResultCardKind(tool: ToolCall) {
         case SKILL_CREATE_ACTION_ID_V1: return 'saved-skill';
         case BOT_TEMPLATE_DRAFT_ACTION_ID_V1: return 'template-draft';
         case WORKFLOW_RUN_START_ACTION_ID_V1: return 'workflow-run';
+        case WORKFLOW_TRIGGER_ADD_ACTION_ID: return 'automation-draft';
     }
     if (actionId && isMemoryWriteActionV1(actionId)) return 'memory-mutation';
     if (isTranscriptWorkflowDefinitionWrite(tool)) return 'workflow-definition';

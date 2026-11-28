@@ -34,6 +34,7 @@ import {
     removeWorkflowTrigger,
     reviewWorkflowTriggerSet,
     updateWorkflowTrigger,
+    writeAccountTriggerEnabled,
 } from '@/sync/domains/workflows/workflowTriggerActions';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { sync } from '@/sync/sync';
@@ -299,12 +300,6 @@ export function AccountTriggersReadContent(props: Readonly<{ first?: boolean; an
             {popover}
         </>
     );
-}
-
-async function writeAccountTriggerEnabled(set: WorkflowTriggerSetV1, triggerId: AccountTriggerRow['triggerId'], enabled: boolean,
-    accountLifetime?: ServerAccountScopeLifetime | null) {
-    return updateWorkflowTrigger({ automationId: set.automationId, expectedRevision: set.revision,
-        ...(triggerId === null ? {} : { triggerId }), patch: { enabled } }, accountLifetime === undefined ? {} : { accountLifetime });
 }
 
 const AccountTriggerRowView = React.memo(function AccountTriggerRowView(props: Readonly<{

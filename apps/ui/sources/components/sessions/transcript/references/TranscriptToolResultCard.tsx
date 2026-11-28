@@ -6,6 +6,7 @@ import { SavedSkillResult } from '@/components/tools/renderers/system/SavedSkill
 import { readSavedSkillResult } from '@/components/tools/renderers/system/savedSkillResultModel';
 import { useTranscriptVisualContext } from '../source/SessionTranscriptSourceContext';
 import { useTranscriptRowContentDemand } from '../viewport/visibility/TranscriptRowContentDemand';
+import { AutomationDraftActionResultReference } from './AutomationDraftActionResultReference';
 import { BrowserActionResultReference } from './BrowserActionResultReference';
 import { ComputerActionResultReference } from './ComputerActionResultReference';
 import { MemoryMutationActionResultReference } from './MemoryMutationActionResultReference';
@@ -30,6 +31,7 @@ export function TranscriptToolResultCard(props: Readonly<{
         }
         case 'template-draft': return <BotTemplateDraftCard tool={props.tool} />;
         case 'memory-mutation': return <MemoryMutationActionResultReference tool={props.tool} serverId={props.serverId} />;
+        case 'automation-draft': return <AutomationDraftActionResultReference tool={props.tool} serverId={props.serverId} />;
         case 'workflow-run': return <WorkflowRunActionResultReference tool={props.tool} serverId={props.serverId} />;
         case 'workflow-definition': return <WorkflowDefinitionActionResultReference tool={props.tool} serverId={props.serverId} />;
         case 'browser': return <BrowserActionResultReference {...props} />;
