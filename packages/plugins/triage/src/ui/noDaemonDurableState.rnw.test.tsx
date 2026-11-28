@@ -34,6 +34,7 @@ import {
 } from '../settings/testkit/accountKv.test-support.js';
 import { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1, TRIAGE_DEFAULT_ACTIONS_V1, mutateTriageAction } from '../settings/actions.js';
 import { TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1 } from '../settings/savedViews.js';
+import { TRIAGE_ADMINISTER_SAVED_VIEW_ACTION_LOCAL_ID_V1 } from '../actions/savedViewsProtocol.js';
 import { readTriageEntryDetail, createTriageReadEntryDetailActionHandler } from '../actions/readEntryDetail.js';
 import { TriageReadEntryDetailInputV1Schema } from '../actions/entryDetailProtocol.js';
 import { TriageUnlinkEntryFromSessionActionInputV1Schema } from '../actions/entrySessionProtocol.js';
@@ -326,6 +327,9 @@ async function mountProbe(harness: DurableHarness, surfaceContext = createSurfac
                 // Account Actions remain reachable without a Machine. Their
                 // real handlers run over the persistence boundary testkit.
                 executeAction: async ({ action, input }) => {
+                    if (action === TRIAGE_ADMINISTER_SAVED_VIEW_ACTION_LOCAL_ID_V1 && harness.admissionDenied) {
+                        throw new PluginError({ code: 'denied' });
+                    }
                     if (harness.client !== null && ['entries/read-detail-v1', 'sessions/unlink-entry-v1'].includes(String(action))) {
                         (harness.accountActionCalls as string[]).push(String(action));
                         if (harness.admissionDenied) throw new PluginError({ code: 'denied' });
@@ -513,7 +517,7 @@ describe('durable Account state with no daemon reachable', () => {
         expect(harness.actionCalls).toEqual([]);
     });
 
-    it('retains reachable pins, saved views and sources after direct mutation policy refusals', async () => {
+    it('retains reachable pins, saved views and sources after mutation policy refusals', async () => {
         const harness = createDurableHarness({ admissionDenied: true });
         await seedPin(harness, 'Keep this pin');
         seedConfiguredSource(harness);

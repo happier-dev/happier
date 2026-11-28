@@ -8,10 +8,8 @@ import { TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1 } from '../../settings/savedViews.
 import type { CorpusSavedViewsReadV1 } from '../../settings/savedViews.js';
 import { useTriageDurableAccount } from '../durable/accountDurableState.js';
 import {
-  createActionTriageSavedViewsTransport,
-  createDirectTriageSavedViewsTransport,
+  createTriageSavedViewsTransport,
   readTriageSavedViewsProjectionV1,
-  type TriageSavedViewsTransportV1,
 } from './savedViewsCommand.js';
 
 /**
@@ -78,13 +76,8 @@ export function useTriageSavedViews(): TriageMountedSavedViewsV1 {
   const dataClient = usePluginUiDataClientOrNull();
   const readiness = usePluginHostReadiness(durable.savedViews === null && Object.is(TRIAGE_DATA_ACTION_EXECUTION_V1.target, 'daemon'));
   const text = usePluginTranslation();
-  // One owner, two transports. Direct Account KV when this mount can
-  // reach the Account — which is what keeps saved views readable and writable
-  // while no daemon is — and the published Actions otherwise.
-  const transport = useMemo<TriageSavedViewsTransportV1>(
-    () => durable.savedViews
-      ? createDirectTriageSavedViewsTransport(durable.savedViews, hostApi)
-      : createActionTriageSavedViewsTransport(hostApi),
+  const transport = useMemo(
+    () => createTriageSavedViewsTransport(hostApi, durable.savedViews),
     [durable.savedViews, hostApi],
   );
   const [saved, setSaved] = useState<CorpusSavedViewsReadV1 | null>(null);
@@ -157,7 +150,6 @@ export function useTriageSavedViews(): TriageMountedSavedViewsV1 {
     setNotice(null);
     try {
       const result = await transport.administer(input, { signal: controller.signal });
-      if (result === null) return null;
       if (result.status === 'applied') {
         const projection = readTriageSavedViewsProjectionV1({
           availability: 'parsed',

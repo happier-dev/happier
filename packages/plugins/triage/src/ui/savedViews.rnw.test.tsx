@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { act } from 'react';
+import { act, cloneElement, type ReactElement } from 'react';
+import type { PluginUiDataClient } from '@happier-dev/plugin-ui/data';
 import { createPluginClientTestkit, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginClientTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
@@ -209,6 +210,18 @@ function createHarness(
     return {
         executeAction,
         accountKv,
+        dataClient: {
+            accountKv: accountKv.kv,
+            collection: ({ id }) => {
+                const collection = id === 'source-instances' ? collections.sourceInstances
+                    : id === 'session-links' ? collections.sessionLinks
+                    : id === 'user-marks' ? collections.userMarks : null;
+                if (collection === null) throw new Error(`Unexpected collection: ${id}`);
+                return collection as ReturnType<PluginUiDataClient['collection']>;
+            },
+            openCollectionQuery: async () => { throw new Error('No query fixture'); },
+            watchAccountData: async () => ({ dispose() {} }),
+        } satisfies PluginUiDataClient,
         enableViewsRead: () => { viewsReadUnavailable = false; },
         failNextWrite: () => { failNextWrite = true; },
     };
@@ -224,6 +237,7 @@ async function mountShell(options: Readonly<{
     viewsReadUnavailable?: boolean;
     rejectRoute?: boolean;
     savedViewApprovalRequired?: boolean;
+    directAccountRead?: boolean;
 }> = {}): Promise<Readonly<{
     shell: PluginUiTestkit;
     locations: readonly string[];
@@ -280,13 +294,22 @@ async function mountShell(options: Readonly<{
             ui: fixture.context.hostApi, ephemeralSharedScope,
         }));
     };
+    const adapter = createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope, overlays: true });
     await act(async () => {
         fixture = await createPluginUiTestkit({
             identity: { instanceId: 'fixture-instance-189', mountNonce: 'fixture-mount-189' },
             authorPlugin: { id: 'happier.triage', version: '0.0.0' },
             surface: renderShellSurface,
             surfaceContext: createSurfaceContextFixture(),
-            adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope, overlays: true }),
+            adapter: options.directAccountRead ? {
+                mount: async (mountInput) => await adapter.mount({
+                    ...mountInput,
+                    surface: (context) => cloneElement(
+                        renderShellSurface(context) as ReactElement<{ dataClient?: PluginUiDataClient }>,
+                        { dataClient: harness.dataClient },
+                    ),
+                }),
+            } : adapter,
             ...(options.subPath === undefined ? {} : { subPath: options.subPath }),
             handlers: {
                 publishCurrentUiContext: () => undefined,
@@ -297,7 +320,6 @@ async function mountShell(options: Readonly<{
                     }
                     return await harness.executeAction({ action, input });
                 },
-                admitAction: async ({ input }) => await admitSavedView(input),
                 replacePageLocation: ({ subPath: written }) => {
                     if (options.rejectRoute === true) throw new Error('host rejected replacement');
                     locations.push(written);
@@ -370,12 +392,18 @@ afterEach(async () => {
 
 describe('the PRs & Issues saved-view lens', () => {
     // SIMPLIFY-CHALLENGE-1106 #5/M1: a reversible in-app press is the default intent.
-    it.each([false, true])('saves from the mounted UI with explicit Ask=%s', async (savedViewApprovalRequired) => {
-        const { shell, accountKv, intentPromptCount } = await mountShell({ savedViewApprovalRequired });
+    it.each([false, true])('saves and selects the exact mounted lens with explicit Ask=%s', async (savedViewApprovalRequired) => {
+        const { shell, accountKv, intentPromptCount, locations } = await mountShell({
+            savedViewApprovalRequired,
+            directAccountRead: true,
+        });
+        await act(async () => { await shell.press(await filterFacetOption(shell, 'State', { name: 'Open' })); });
         await act(async () => { await shell.press(await toolbarMenuItem(shell, 'Views', 'menuitem', { name: 'Save as new view' })); });
         await editViewName('My direct saved view');
         await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Save view' })); });
-        expect(storedValue(accountKv).views.some((view) => view.label === 'My direct saved view')).toBe(true);
+        const saved = storedValue(accountKv).views.find((view) => view.label === 'My direct saved view');
+        expect(saved).toMatchObject({ filters: { states: ['open'] } });
+        expect(parseTriageRouteSubPathV1(locations.at(-1))).toMatchObject({ selectedViewId: saved?.viewId });
         expect(intentPromptCount()).toBe(savedViewApprovalRequired ? 1 : 0);
     });
 
@@ -515,8 +543,8 @@ describe('the PRs & Issues saved-view lens', () => {
         expect(storedValue(accountKv).views[0]?.filters.states).toEqual(['done']);
     });
 
-    it('writes the edited lens into the saved view only on an explicit Update', async () => {
-        const { shell, accountKv } = await mountShell();
+    it('writes the edited lens at the current revision on an explicit mounted Update', async () => {
+        const { shell, accountKv } = await mountShell({ directAccountRead: true });
 
         const option = await toolbarMenuItem(shell, 'Views', 'menuitemradio', { name: VIEW_LABEL });
         await act(async () => { await shell.press(option); });

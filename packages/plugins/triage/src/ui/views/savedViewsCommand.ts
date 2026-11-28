@@ -1,11 +1,7 @@
 import type { TriageListSortV1 } from '@happier-dev/triage-protocol/v1';
 import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
-import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 
-import {
-  administerTriageSavedView,
-  readTriageSavedViewsForSurface,
-} from '../../actions/savedViews.js';
+import { readTriageSavedViewsForSurface } from '../../actions/savedViews.js';
 import {
   TRIAGE_ADMINISTER_SAVED_VIEW_ACTION_LOCAL_ID_V1,
   TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1,
@@ -29,17 +25,10 @@ import type { TriageCatalogStoreV1 } from '../../settings/accountKvCatalogStore.
 /**
  * The surface's path to the `triage.savedViews` CAS owner.
  *
- * Two transports, one owner. A mount that can reach the reader's Account
- * directly drives `actions/savedViews.ts` over its own Account KV scope,
- * so saved views keep working with no daemon reachable — a saved view is
- * Account state, not provider data. A mount that cannot reach the Account
- * directly invokes the same two published Actions through a daemon.
- *
- * Neither transport owns a decision: `settings/savedViews.ts` still mints the
- * view id, validates every bound and decides the conflict verdict.
- * This module is transport plus the one
- * thing a caller must not spell twice — what **Rename** and **Update** mean in
- * terms of the single `update` command.
+ * Mounted and native writes enter the published Account Action so the host
+ * admits and executes the same operation. Direct Account KV remains a read
+ * path for the mounted projection. The Saved Views owner mints ids, validates
+ * the lens and decides compare-and-swap conflicts for both entry points.
  *
  * The lens carried here is the exact source-neutral facet vocabulary the list
  * Action queries with, passed through unreshaped. Nothing rebuilds, sorts or
@@ -69,55 +58,20 @@ export type TriageSavedViewLensV1 = Readonly<{
   view: TriageSavedViewPresentationV1;
 }>;
 
-/**
- * The two saved-view operations a mounted surface performs, independent of how
- * they reach the owner. The hook holds one of these and never branches on
- * transport.
- */
-export type TriageSavedViewsTransportV1 = Readonly<{
-  read(options?: PluginCancellationOptions): Promise<TriageReadSavedViewsResultV1>;
-  administer(
-    input: TriageAdministerSavedViewInputV1,
-    options?: PluginCancellationOptions,
-  ): Promise<TriageAdministerSavedViewResultV1 | null>;
-}>;
-
-/**
- * The direct transport: this mount's own Account KV catalog, handed to the
- * same projection the daemon handler calls. It restates no bound, no CAS rule
- * and no id-minting decision.
- */
-export function createDirectTriageSavedViewsTransport(
-  catalog: TriageCatalogStoreV1,
-  host: Pick<PluginUiHostApi, 'admitAction'>,
-): TriageSavedViewsTransportV1 {
+export function createTriageSavedViewsTransport(
+  host: TriageSavedViewsHostV1,
+  catalog: TriageCatalogStoreV1 | null,
+) {
   return Object.freeze({
-    read: async (options) => await readTriageSavedViewsForSurface({ v: 1 }, {
-      catalog,
-      mintViewId: mintTriageOpaqueIdV1,
-      ...(options?.signal ? { signal: options.signal } : {}),
-    }),
-    administer: async (input, options) => {
-      if (!await host.admitAction(TRIAGE_ADMINISTER_SAVED_VIEW_ACTION_LOCAL_ID_V1, input as unknown as JsonValue, options)) return null;
-      return await administerTriageSavedView(input, {
+    read: async (options?: PluginCancellationOptions) => catalog === null
+      ? await readTriageSavedViewsFromSurface(host, options)
+      : await readTriageSavedViewsForSurface({ v: 1 }, {
         catalog,
-        // Minted at the writer, which for this transport is this mount.
         mintViewId: mintTriageOpaqueIdV1,
         ...(options?.signal ? { signal: options.signal } : {}),
-      });
-    },
-  });
-}
-
-/** The daemon transport: the same owner, reached through the published Actions. */
-export function createActionTriageSavedViewsTransport(
-  host: TriageSavedViewsHostV1,
-): TriageSavedViewsTransportV1 {
-  return Object.freeze({
-    read: async (options) => await readTriageSavedViewsFromSurface(host, options),
-    administer: async (input, options) => (
-      await administerTriageSavedViewFromSurface(host, input, options)
-    ),
+      }),
+    administer: async (input: TriageAdministerSavedViewInputV1, options?: PluginCancellationOptions) =>
+      await administerTriageSavedViewFromSurface(host, input, options),
   });
 }
 
