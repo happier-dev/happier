@@ -17,9 +17,9 @@ import {
   usePluginTranslation,
   type PluginTranslate,
 } from '@happier-dev/plugin-ui';
-import { useHostDatabaseWorkbench } from '@happier-dev/plugin-ui/hostApi';
+import { projectPluginActionRejectionV1, useHostDatabaseWorkbench } from '@happier-dev/plugin-ui/hostApi';
 import { useDatabaseAccess, useWorkbenchDraft, useWorkbenchInstance } from '../hooks.js';
-import type { WorkbenchApplyOutcome, WorkbenchReview } from '../models.js';
+import type { WorkbenchApplyOutcome, WorkbenchConflictReloadFailure, WorkbenchReview } from '../models.js';
 import { presentCell } from './cells.js';
 import { translateUnverifiedServerNotice } from './connectionCopy.js';
 import { formatMoment } from './insights/format.js';
@@ -72,12 +72,12 @@ function outcomeLine(
       return {
         text: outcome.why === 'row_missing'
           ? translate('plugins.database.apply.conflictRemoved',
-            'Nothing was applied: someone removed a row after you loaded it. Your changes are kept. Take that change back, or reload the table to see it as it is now.')
+            'Nothing was applied: someone removed a row after you loaded it. Your changes are kept. Take that change back, or reload this row.')
           : outcome.why === 'relation_changed'
             ? translate('plugins.database.apply.conflictRelation',
-              'Nothing was applied: the table changed after you loaded it. Your changes are kept. Reload the table before you apply them.')
+              'Nothing was applied: the table changed after you loaded it. Your changes are kept. Take these changes back and reload the table before editing again.')
             : translate('plugins.database.apply.conflictChanged',
-              'Nothing was applied: someone changed a row after you loaded it. Your changes are kept. Take that change back, or reload the table to see it as it is now.'),
+              'Nothing was applied: someone changed a row after you loaded it. Your changes are kept. Take that change back, or reload this row.'),
         tone: 'attention',
       };
     case 'refused':
@@ -182,6 +182,8 @@ function ReviewGroup(
   props: Readonly<{
     group: WorkbenchReview[number];
     translate: PluginTranslate;
+    conflict?: Readonly<{ rowKey: string; notice: string; reloadFailure?: WorkbenchConflictReloadFailure }>;
+    onReload: (rowKey: string) => Promise<void>;
     onTakeBack: (rowKey: string) => void;
   }>,
 ) {
@@ -191,55 +193,86 @@ function ReviewGroup(
       title={props.group.relation.name}
       description={changesLabel(props.group.rows.length, translate)}
     >
-      {props.group.rows.map((row) => (
-        <Item
-          key={row.rowKey}
-          icon={
-            <Icon
-              name={row.kind === 'insert' ? 'add' : row.kind === 'delete' ? 'close' : 'edit'}
-              tone={row.kind === 'insert' ? 'success' : row.kind === 'delete' ? 'danger' : 'info'}
-            />
-          }
-          title={
-            row.kind === 'insert'
-              ? translate('plugins.database.review.insert', 'New row')
-              : row.label
-          }
-          {...(row.kind === 'delete'
-            ? { subtitle: translate('plugins.database.review.delete', 'Delete row') }
-            : {})}
-          accessory={
-            <Button
-              variant="plain"
-              size="small"
-              title={translate('plugins.database.review.takeBack', 'Take back')}
-              onPress={() => props.onTakeBack(row.rowKey)}
-            />
-          }
-        >
-          {row.kind === 'delete' ? null : (
-            <Stack gap="small">
-              {row.changes.map((change) => {
-                const next =
-                  change.new?.kind === 'default'
-                    ? translate('plugins.database.cell.default', 'default')
-                    : presentCell(change.new?.kind === 'value' ? change.new.cell : undefined, translate).text;
-                return (
-                  <DiffViewer
-                    key={change.column}
-                    label={change.column}
-                    unifiedDiff={valueDiff(
-                      change.column,
-                      change.old === undefined ? undefined : presentCell(change.old, translate).text,
-                      next,
-                    )}
-                  />
-                );
-              })}
-            </Stack>
-          )}
-        </Item>
-      ))}
+      {props.group.rows.map((row) => {
+        const conflict = props.conflict?.rowKey === row.rowKey ? props.conflict : undefined;
+        const reloadFailure = conflict?.reloadFailure;
+        const canReload = conflict !== undefined && row.kind !== 'insert';
+        const takeBack = (
+          <Button
+            variant="plain"
+            size="small"
+            title={translate('plugins.database.review.takeBack', 'Take back')}
+            onPress={() => props.onTakeBack(row.rowKey)}
+          />
+        );
+        return (
+          <Item
+            key={row.rowKey}
+            testID="database-workbench-review-row"
+            accessoryWraps={canReload}
+            icon={
+              <Icon
+                name={row.kind === 'insert' ? 'add' : row.kind === 'delete' ? 'close' : 'edit'}
+                tone={row.kind === 'insert' ? 'success' : row.kind === 'delete' ? 'danger' : 'info'}
+              />
+            }
+            title={
+              row.kind === 'insert'
+                ? translate('plugins.database.review.insert', 'New row')
+                : row.label
+            }
+            {...(row.kind === 'delete'
+              ? { subtitle: translate('plugins.database.review.delete', 'Delete row') }
+              : {})}
+            accessory={canReload ? (
+              <Row gap="small">
+                {takeBack}
+                <Button
+                  variant="secondary"
+                  size="small"
+                  title={translate('plugins.database.review.reloadRow', 'Reload')}
+                  onPress={() => props.onReload(row.rowKey)}
+                />
+              </Row>
+            ) : takeBack}
+          >
+            {conflict || row.kind !== 'delete' ? (
+              <Stack gap="small">
+                {conflict ? (
+                  <ErrorState layout="line" title={canReload ? conflict.notice : translate(
+                    'plugins.database.review.conflictInsert',
+                    'Nothing was applied. The new row is still staged. Take it back to continue.',
+                  )} />
+                ) : null}
+                {reloadFailure?.kind === 'failed' ? (
+                  <Action.Failure execution={projectPluginActionRejectionV1(reloadFailure.error, translate)} />
+                ) : reloadFailure ? (
+                  <Text tone="secondary" value={reloadFailure.kind === 'missing'
+                    ? translate('plugins.database.review.reloadMissing', 'This row is no longer there.')
+                    : translate('plugins.database.review.reloadIncomplete', 'The full row could not be read.')} />
+                ) : null}
+                {row.kind === 'delete' ? null : row.changes.map((change) => {
+                  const next =
+                    change.new?.kind === 'default'
+                      ? translate('plugins.database.cell.default', 'default')
+                      : presentCell(change.new?.kind === 'value' ? change.new.cell : undefined, translate).text;
+                  return (
+                    <DiffViewer
+                      key={change.column}
+                      label={change.column}
+                      unifiedDiff={valueDiff(
+                        change.column,
+                        change.old === undefined ? undefined : presentCell(change.old, translate).text,
+                        next,
+                      )}
+                    />
+                  );
+                })}
+              </Stack>
+            ) : null}
+          </Item>
+        );
+      })}
     </ItemGroup>
   );
 }
@@ -277,6 +310,7 @@ export function StagedReview(
   const production = descriptor.origin.environment === 'production';
   const apply = draft.apply(props.relation);
   const outcome = outcomeLine(draft.outcome, translate);
+  const rowConflict = draft.outcome?.kind === 'conflict' && draft.outcome.why !== 'relation_changed' ? draft.outcome : undefined;
   const refusal = draft.outcome?.kind === 'refused' ? draft.outcome : undefined;
   const execution = refusal && 'execution' in refusal ? refusal.execution : undefined;
   const refusalCode = refusal && 'failure' in refusal ? refusal.failure.code : execution?.code;
@@ -377,6 +411,8 @@ export function StagedReview(
           key={`${group.relation.schema}.${group.relation.name}`}
           group={group}
           translate={translate}
+          {...(rowConflict && outcome ? { conflict: { ...rowConflict, notice: outcome.text } } : {})}
+          onReload={(rowKey) => instance.reloadConflict({ targetKey: props.targetKey, relation: group.relation, rowKey })}
           onTakeBack={(rowKey) =>
             draft.takeBack({
               rowKey,
@@ -387,7 +423,7 @@ export function StagedReview(
         />
       ))}
       {writeSetup || (policyLifted ? null : execution ? <Action.Failure execution={execution} />
-        : outcome && outcome.tone !== 'success'
+        : !rowConflict && outcome && outcome.tone !== 'success'
           ? <ErrorState layout="line" kind="error" title={outcome.text} details={refusalCode} />
           : null)}
       {refusalStands && policyRefusal && policy && target ? host?.renderEnvironmentAccessObserver?.({

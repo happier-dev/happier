@@ -3,6 +3,8 @@ import type {
     DatabaseDescriptorV1,
     DatabaseFailureV1,
     DatabaseIncomingForeignKeyV1,
+    DatabaseNamedCellV1,
+    DatabaseRowsResultV1,
     DatabaseOperationResultV1,
     DatabaseRelationV1,
     DatabaseTargetV1,
@@ -22,11 +24,12 @@ import { projectRelationPage } from './projections.js';
 import { databaseEngineName, databaseFacts } from './surface/engines.js';
 import { createResource, type WorkbenchResource } from './resource.js';
 import { createKeyedState } from './state.js';
-import { createApplyControl, projectStagedApplyInput } from './apply.js';
-import { sameRelation, mergeWorkbenchLocation, foreignKeyNavigation, incomingForeignKeyNavigation, foreignKeyBack } from './location.js';
+import { createApplyControl, projectStagedApplyInput, selectRelationChanges } from './apply.js';
+import { sameRelation, mergeWorkbenchLocation, foreignKeyNavigation, incomingForeignKeyNavigation, foreignKeyBack, keyEqualityFilter } from './location.js';
 import type {
     DatabaseRelations, DatabaseTargets, WorkbenchApplyOutcome, WorkbenchChange, WorkbenchLocation,
     WorkbenchOptions, WorkbenchReview, WorkbenchCellState, WorkbenchActivityResource, WorkbenchControlBinding,
+    WorkbenchConflictReloadFailure,
 } from './models.js';
 
 export class WorkbenchOperationError extends PluginError {
@@ -46,7 +49,11 @@ function success<O extends Extract<DatabaseOperationResultV1, { ok: true }>['ope
 }
 const key = (value: unknown): string => JSON.stringify(value);
 export { workbenchTargetKey } from '../targetIdentity.js';
-const draftKey = (change: Pick<WorkbenchChange, 'rowKey' | 'relation' | 'targetKey'>) => key([change.targetKey, change.relation, change.rowKey]);
+type ReviewScope = Pick<WorkbenchChange, 'targetKey' | 'relation'>;
+type DraftRow = ReviewScope & Pick<WorkbenchChange, 'rowKey'>;
+const draftKey = (row: DraftRow) => key([row.targetKey, row.relation, row.rowKey]);
+const reviewKey = (scope: ReviewScope) => key([scope.targetKey, scope.relation]);
+type ApplyConflict = Extract<WorkbenchApplyOutcome, { kind: 'conflict' }>;
 
 /** A physical workbench occurrence owns this object until close/Account retirement. */
 export function createWorkbenchInstance(options: WorkbenchOptions) {
@@ -98,6 +105,15 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
         }
         return held;
     }
+    function conflictAt(scope: ReviewScope): ApplyConflict | undefined {
+        const held = applyOutcomes.get(reviewKey(scope));
+        return held?.kind === 'conflict' ? held : undefined;
+    }
+    function conflictHasDraft(scope: ReviewScope, conflict: ApplyConflict): boolean {
+        return conflict.why === 'relation_changed'
+            ? selectRelationChanges(drafts.changes(), scope.targetKey, scope.relation).length !== 0
+            : drafts.get(draftKey({ ...scope, rowKey: conflict.rowKey })) !== undefined;
+    }
     const instance = {
         scope: options.scope,
         local,
@@ -105,6 +121,48 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
         drafts,
         applyOutcomes,
         draftKey,
+        reviewKey,
+        takeBackChanges(scope: ReviewScope, rowKeys: readonly string[]) {
+            drafts.takeBackMany(rowKeys.map(rowKey => draftKey({ ...scope, rowKey })));
+            const conflict = conflictAt(scope);
+            if (conflict && !conflictHasDraft(scope, conflict)) applyOutcomes.set(reviewKey(scope), undefined);
+        },
+        async reloadConflict(row: DraftRow) {
+            const conflict = conflictAt(row);
+            const rowDraftKey = draftKey(row);
+            const held = drafts.get(rowDraftKey);
+            if (closed || !conflict || conflict.why === 'relation_changed' || conflict.rowKey !== row.rowKey
+                || !held || held.change.kind === 'insert') return;
+
+            const change = held.change;
+            const columns = (change.kind === 'update' ? change.original : change.key).map(cell => cell.column);
+            const outcomeKey = reviewKey(row);
+            const settlesCurrentDraft = () => !closed && conflictAt(row) === conflict && drafts.get(rowDraftKey) === held;
+            const recordReloadFailure = (reloadFailure: WorkbenchConflictReloadFailure) => {
+                if (settlesCurrentDraft()) applyOutcomes.set(outcomeKey, { ...conflict, reloadFailure });
+            };
+            let result: DatabaseRowsResultV1;
+            try {
+                result = success(await client.operation({
+                    operation: 'rows.read', target: target(row.targetKey).target, relation: row.relation, columns, order: [],
+                    filter: keyEqualityFilter(change.key), page: { rows: 1 },
+                }, reads.signal), 'rows.read').result;
+            } catch (error) {
+                return recordReloadFailure({ kind: 'failed', error });
+            }
+            if (!settlesCurrentDraft()) return;
+            const [loaded] = result.rows;
+            if (!result.completeness.complete || result.rows.length > 1) return recordReloadFailure({ kind: 'incomplete' });
+            if (!loaded) return recordReloadFailure({ kind: 'missing' });
+            const original: DatabaseNamedCellV1[] = [];
+            for (const column of columns) {
+                const value = loaded.cells[result.columns.findIndex(loadedColumn => loadedColumn.name === column)];
+                if (!value || value.type === 'partial') return recordReloadFailure({ kind: 'incomplete' });
+                original.push({ column, value });
+            }
+            if (change.kind === 'update') drafts.stage(rowDraftKey, { ...held, change: { ...change, original } });
+            applyOutcomes.set(outcomeKey, undefined);
+        },
         cellState(rowKey: string, column: string): WorkbenchCellState {
             const location = local.get('location');
             if (!location.relation) return { kind: 'unchanged' };
@@ -305,17 +363,19 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
             if (previous) { await client.navigate(previous); local.set('location', previous); }
         },
         refresh: invalidate,
-        apply(relation: DatabaseRelationV1, targetKey = local.get('location').targetKey): WorkbenchControlBinding {
-            const controlKey = key([targetKey, relation]);
+        apply(relation: DatabaseRelationV1, targetKey = local.get('location').targetKey): WorkbenchControlBinding & { disabled: boolean } {
+            const scope = { targetKey, relation };
+            const controlKey = reviewKey(scope);
             let held = applyControls.get(controlKey);
             if (!held) {
                 held = createApplyControl({ drafts, draftKey, target, isClosed: () => closed,
+                    hasConflict: () => conflictAt(scope) !== undefined,
                     onOutcome: outcome => {
-                        applyOutcomes.set(controlKey, outcome);
+                        applyOutcomes.set(controlKey, outcome?.kind === 'conflict' && !conflictHasDraft(scope, outcome) ? undefined : outcome);
                     } }, targetKey, relation);
                 applyControls.set(controlKey, held);
             }
-            return held;
+            return { ...held, disabled: conflictAt(scope) !== undefined };
         },
         close() { if (closed) return; closed = true; unsubscribe(); draftOff(); reads.abort(); for (const console of consoles.values()) console.close(); consoles.clear(); applyControls.clear(); for (const held of resources.values()) held.resource.dispose?.(); resources.clear(); targets.clear(); consoleStores.clear(); drafts.discard(); },
     };

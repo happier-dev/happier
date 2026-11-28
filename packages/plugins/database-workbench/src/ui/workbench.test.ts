@@ -187,6 +187,94 @@ it('prepares Apply for a host gesture and retains proposals edited while the sub
     } finally { instance.close(); }
 });
 
+it('blocks stale Apply after a row conflict and reloads only that original before explicit Apply', async () => {
+    const relation = { schema: 'public', name: 'items' };
+    const location: WorkbenchLocation = { targetKey, relation, mode: 'data', sort: [], columns: [], page: { rows: 40, offset: 0 }, fkTrail: [] };
+    const cell = (value: string) => ({ type: 'text' as const, value });
+    const column = { name: 'label', nativeType: 'text', semanticType: 'text' as const };
+    const reads: Parameters<WorkbenchClient['operation']>[0][] = [];
+    type ReadOutcome = 'missing' | 'failed' | 'partial' | 'complete';
+    const replies: ReadOutcome[] = ['missing', 'failed', 'partial', 'complete'];
+    const unexpected = async (): Promise<never> => { throw new Error('Unexpected database demand'); };
+    const client: WorkbenchClient = {
+        targets: unexpected, access: unexpected, subscribeOwnWrites: () => () => {},
+        navigate: async () => {}, openRoot: async () => {}, setUnsavedChanges: async () => {},
+        presentDeviceStorageError(error) { throw error; }, saveExport: unexpected,
+        async operation(input) {
+            reads.push(input);
+            const reply = replies.shift();
+            if (input.operation !== 'rows.read' || !reply) return unexpected();
+            if (reply === 'failed') return { ok: false, status: 'unavailable', code: 'database_unavailable', reason: 'The connection closed' };
+            if (reply === 'partial') return { ok: true, operation: 'rows.read', result: {
+                columns: [], rows: [{ cells: [] }], completeness: { complete: false, reason: 'response_envelope' },
+            } };
+            return { ok: true, operation: 'rows.read', result: {
+                columns: [column], rows: reply === 'missing' ? [] : [{ cells: [cell('concurrent')] }],
+                completeness: { complete: true },
+            } };
+        },
+    };
+    const instance = createWorkbenchInstance({ client, scope: { kind: 'worktree', accountId: 'account', installationId: 'installation', projectKey: 'project',
+        workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'workspace', rootPath: '/project' } }, location, selectedTarget: descriptor,
+        cataloguePageRows: 40, statementRanges: () => [], consoleStorage: () => ({ read: async () => null, write: async () => {} }) });
+    const stage = (id: string) => {
+        const proposal = {
+            targetKey, relation, rowKey: id, label: id,
+            change: { kind: 'update' as const,
+                key: [{ column: 'tenant', value: { type: 'integer' as const, value: id } }, { column: 'id', value: cell('same-id') }],
+                original: [{ column: 'label', value: cell(`original-${id}`) }],
+                values: [{ column: 'label', value: { kind: 'value' as const, cell: cell(`draft-${id}`) } }],
+            },
+        };
+        instance.drafts.stage(instance.draftKey(proposal), proposal);
+        return proposal;
+    };
+    try {
+        const first = stage('1');
+        const second = stage('2');
+        const binding = instance.apply(relation);
+        const gesture = { signal: new AbortController().signal };
+        const conflict = (reason: 'row_changed' | 'relation_changed') =>
+            binding.controller.onSettled({ ok: true, result: {
+                ok: false, status: 'conflict', code: 'database_edit_conflict', changeIndex: 1, reason,
+            } });
+
+        expect(await binding.controller.prepare(gesture)).not.toBeNull();
+        conflict('row_changed');
+        expect(await binding.controller.prepare(gesture)).toBeNull();
+        expect(instance.applyOutcomes.get(JSON.stringify([targetKey, relation]))).toMatchObject({ kind: 'conflict', rowKey: '2' });
+
+        for (const failed of ['missing', 'failed', 'partial']) {
+            await instance.reloadConflict(second);
+            expect(await binding.controller.prepare(gesture), failed).toBeNull();
+            expect(instance.drafts.changes(), failed).toEqual([first, second]);
+        }
+        await instance.reloadConflict(second);
+        expect(reads).toEqual(Array.from({ length: 4 }, () => ({
+            operation: 'rows.read', target: descriptor.target, relation, columns: ['label'], order: [], page: { rows: 1 },
+            filter: { kind: 'and', filters: second.change.key.map(({ column, value }) => ({ kind: 'comparison', column, operator: 'eq', value })) },
+        })));
+        expect(instance.drafts.get(instance.draftKey(first))).toBe(first);
+        const rebased = { ...second.change, original: [{ column: 'label', value: cell('concurrent') }] };
+        expect(instance.review(instance.drafts.changes()).groups[0]?.rows[1]?.changes[0]?.old).toEqual(cell('concurrent'));
+        expect(await binding.controller.prepare(gesture)).toMatchObject({ input: { changes: [first.change, rebased] } });
+
+        conflict('relation_changed');
+        await instance.reloadConflict(second);
+        expect(reads).toHaveLength(4);
+        const scope = { targetKey, relation };
+        instance.takeBackChanges(scope, [second.rowKey]);
+        expect(await binding.controller.prepare(gesture)).toBeNull();
+        instance.takeBackChanges(scope, [first.rowKey]);
+        stage('1');
+        stage('2');
+        expect(await binding.controller.prepare(gesture)).not.toBeNull();
+        conflict('row_changed');
+        instance.takeBackChanges(scope, [second.rowKey]);
+        expect(await binding.controller.prepare(gesture)).toMatchObject({ input: { changes: [first.change] } });
+    } finally { instance.close(); }
+});
+
 it('keeps typed filters, full FK Back state and loaded-only export on the same cached page owner', async () => {
     const relation = { schema: 'public', name: 'items' };
     const location: WorkbenchLocation = { targetKey, relation, mode: 'data', columns: ['id', 'parent'], sort: [],

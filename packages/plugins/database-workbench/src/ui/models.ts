@@ -68,9 +68,13 @@ export type WorkbenchCellState =
     | Readonly<{ kind: 'unchanged' | 'inserted' | 'removed' }>
     | Readonly<{ kind: 'edited'; old: DatabaseCellV1 | undefined }>
     | Readonly<{ kind: 'refused'; message: string; constraint?: string }>;
+export type WorkbenchConflictReloadFailure =
+    | Readonly<{ kind: 'missing' | 'incomplete' }>
+    | Readonly<{ kind: 'failed'; error: unknown }>;
 export type WorkbenchApplyOutcome =
     | Readonly<{ kind: 'applied'; count: string; at: string }>
-    | Readonly<{ kind: 'conflict'; rowKey: string; why: string }>
+    | Readonly<{ kind: 'conflict'; rowKey: string; why: Extract<DatabaseFailureV1, { status: 'conflict' }>['reason'];
+        reloadFailure?: WorkbenchConflictReloadFailure }>
     | Readonly<{ kind: 'refused'; failure: DatabaseFailureV1; constraint?: string }>
     | Readonly<{ kind: 'refused'; execution: Extract<PluginActionExecution, { status: 'error' }> }>
     | Readonly<{ kind: 'unknown'; failure?: DatabaseFailureV1; code?: string; message?: string }>;

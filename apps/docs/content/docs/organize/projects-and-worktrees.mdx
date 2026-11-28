@@ -211,6 +211,11 @@ to use the Environment's direct writer connection. Choose its Saved Secret first
 if the Environment does not already identify it.
 After setup succeeds, apply the same staged changes again.
 
+If someone changes a row before you apply, **Review** keeps your drafts and marks
+the conflicting change. Select **Reload** to see that row's current values in the
+comparison before applying again, or **Take back** to remove the change from the
+batch.
+
 - In a table, open a row and use **Referenced by** to jump to rows in another
   table that point to it. The destination opens with the selected row's key
   values as filters.

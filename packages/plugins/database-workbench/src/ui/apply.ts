@@ -13,6 +13,7 @@ type ApplyHost = Readonly<{
     draftKey(change: WorkbenchChange): string;
     target(targetKey: string): DatabaseDescriptorV1;
     isClosed(): boolean;
+    hasConflict(): boolean;
     onOutcome(value: WorkbenchApplyOutcome | undefined): void;
 }>;
 
@@ -30,7 +31,7 @@ export function createApplyControl(host: ApplyHost, targetKey: string, relation:
     let submitted: readonly WorkbenchChange[] = [];
     const controller: PluginUiActionControlController = {
         prepare({ signal }) {
-            if (host.isClosed() || signal.aborted || submitted.length) return null;
+            if (host.isClosed() || signal.aborted || submitted.length || host.hasConflict()) return null;
             submitted = selectRelationChanges(host.drafts.changes(), targetKey, relation);
             if (!submitted.length) return null;
             host.onOutcome(undefined);

@@ -4,6 +4,7 @@ import type {
     DatabaseForeignKeyV1,
     DatabaseIncomingForeignKeyV1,
     DatabaseFilterV1,
+    DatabaseNamedCellV1,
 } from '@happier-dev/plugin-sdk/database';
 import type { WorkbenchLocation } from './models.js';
 
@@ -33,19 +34,24 @@ export function incomingForeignKeyNavigation(location: WorkbenchLocation, refere
     return navigateByKey(location, reference.source, reference.targetColumns, reference.sourceColumns, columns, cells);
 }
 
+export function keyEqualityFilter(key: readonly DatabaseNamedCellV1[]): DatabaseFilterV1 {
+    const filters = key.map(({ column, value }): DatabaseFilterV1 => ({ kind: 'comparison', column, operator: 'eq', value }));
+    return filters.length === 1 ? filters[0]! : { kind: 'and', filters };
+}
+
 function navigateByKey(location: WorkbenchLocation, destination: DatabaseRelationV1, currentKey: readonly string[],
     destinationKey: readonly string[], columns: readonly string[], cells: readonly DatabaseCellV1[]): ForeignKeyNavigation {
-    const filters: DatabaseFilterV1[] = [];
+    const key: DatabaseNamedCellV1[] = [];
     for (const [index, column] of currentKey.entries()) {
         const value = cells[columns.indexOf(column)];
         if (!value) return { status: 'unavailable', reason: 'missing_key' };
         if (value.type === 'null') return { status: 'unavailable', reason: 'null_key' };
         if (value.type === 'partial') return { status: 'unavailable', reason: 'partial_key' };
-        filters.push({ kind: 'comparison', column: destinationKey[index]!, operator: 'eq', value });
+        key.push({ column: destinationKey[index]!, value });
     }
     const { fkTrail, relation, ...source } = location;
     return { status: 'ready', location: { ...location, relation: destination, mode: 'data', columns: [], sort: [],
-        conditions: filters.length === 1 ? filters[0] : { kind: 'and', filters }, page: { rows: location.page.rows, offset: 0 },
+        conditions: keyEqualityFilter(key), page: { rows: location.page.rows, offset: 0 },
         fkTrail: relation ? [...fkTrail, { ...source, relation }] : fkTrail } };
 }
 export function foreignKeyBack(location: WorkbenchLocation): WorkbenchLocation | undefined {

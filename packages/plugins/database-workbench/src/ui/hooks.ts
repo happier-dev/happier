@@ -194,8 +194,8 @@ export function useWorkbenchDraft(instance: WorkbenchInstance, scope?: Readonly<
     const select = useCallback((location: WorkbenchLocation) => {
         const targetKey = scope?.targetKey ?? location.targetKey;
         const relation = scope?.relation ?? location.relation;
-        return relation ? JSON.stringify([targetKey, relation]) : '';
-    }, [scope?.targetKey, scope?.relation]);
+        return relation ? instance.reviewKey({ targetKey, relation }) : '';
+    }, [instance, scope?.targetKey, scope?.relation]);
     const key = useLocationValue(instance, select);
     const location = instance.local.get('location');
     const targetKey = scope?.targetKey ?? location.targetKey;
@@ -209,8 +209,8 @@ export function useWorkbenchDraft(instance: WorkbenchInstance, scope?: Readonly<
             counts: { edits: selected.filter(item => item.change.kind === 'update').length, inserts: selected.filter(item => item.change.kind === 'insert').length,
                 removals: selected.filter(item => item.change.kind === 'delete').length },
             stage: (change: WorkbenchChange) => instance.drafts.stage(instance.draftKey(change), change),
-            takeBack: (change: Pick<WorkbenchChange, 'rowKey' | 'relation' | 'targetKey'>) => instance.drafts.takeBack(instance.draftKey(change)),
-            discard: () => instance.drafts.takeBackMany(selected.map(instance.draftKey)),
+            takeBack: (change: Pick<WorkbenchChange, 'rowKey' | 'relation' | 'targetKey'>) => instance.takeBackChanges(change, [change.rowKey]),
+            discard: () => { if (relation) instance.takeBackChanges({ targetKey, relation }, selected.map(change => change.rowKey)); },
             cellState: (rowKey: string, column: string) => instance.cellState(rowKey, column),
             review: () => instance.review(selected),
             apply: (relation: DatabaseRelationV1) => instance.apply(relation, targetKey),
