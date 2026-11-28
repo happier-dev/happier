@@ -724,7 +724,15 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
                 const needsExactDetail = !isBackgroundRefresh
                     || (summaryTerminal && loadedDetail?.terminal === false);
                 const exactRead = needsExactDetail ? workflowRunDetailActions.getRun(runId, controller.signal) : null;
-                const readHistory = () => workflowRunDetailActions.listInvocations({ runId, includeContent: true }, controller.signal);
+                const retainedFacts = isBackgroundRefresh
+                    ? getStorage().getState().workflowRunInvocationsByRunId[workflowRunStoreKey(runId, lifetime.scope)]?.factsById
+                    : undefined;
+                const revisions = Object.entries(retainedFacts ?? {}).flatMap(([id, fact]) =>
+                    fact.opened ? [[id, fact.opened.index.contentRevision] as const] : []);
+                const knownProgress = revisions.length > 0 ? { knownProgressRevisions: Object.fromEntries(revisions) } : {};
+                const readHistory = () => workflowRunDetailActions.listInvocations({
+                    runId, includeContent: true, ...knownProgress,
+                }, controller.signal);
                 const readAttention = () => workflowRunDetailActions.listInvocations({
                     runId, lifecycles: WORKFLOW_ATTENTION_LIFECYCLES, includeContent: true,
                 }, controller.signal);
@@ -780,7 +788,13 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
                         const structure = projectWorkflowInvocationStructure({
                             definition: accepted?.definition ?? null, frozenChildren: accepted?.acceptedContext?.frozenChildren,
                             invocations: indices,
-                            progressByInvocationId: new Map((history.invocationDetails ?? []).map(opened => [opened.index.id, opened.progress])),
+                            progressByInvocationId: new Map([
+                                ...history.invocations.flatMap(index => {
+                                    const opened = retainedFacts?.[index.id]?.opened;
+                                    return opened?.index.contentRevision === index.contentRevision ? [[index.id, opened.progress] as const] : [];
+                                }),
+                                ...(history.invocationDetails ?? []).map(opened => [opened.index.id, opened.progress] as const),
+                            ]),
                         });
                         const first = selectWorkflowRunFailureInvocation({ invocations: indices, structure,
                             firstFailedInvocationId: page.invocations[0]?.id ?? null });
@@ -812,6 +826,7 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
                                 ...(cursor === undefined ? {} : { cursor }),
                                 lifecycles: WORKFLOW_ATTENTION_LIFECYCLES,
                                 includeContent: true,
+                                ...knownProgress,
                             }, controller.signal),
                             previousPageCount: Math.max(1, attentionPageCountRef.current),
                             signal: controller.signal,

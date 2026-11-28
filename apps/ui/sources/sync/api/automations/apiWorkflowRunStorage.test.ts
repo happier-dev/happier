@@ -65,6 +65,25 @@ it('shares only admitted read bytes across invocation transports and leaves canc
     } finally { held.resolve(); await Promise.allSettled([departed, live]); }
 });
 
+it('reads the original invocation cursor on an older Home and propagates access denial', async () => {
+    const runId = '11111111-1111-4111-8111-111111111111';
+    const operation = { operation: 'invocations.list', runId, cursor: 'opaque+/=cursor', progressEnvelopes: true };
+    const knownProgressRevisions = { '22222222-2222-4222-8222-222222222222': '1' };
+    const page = { invocations: [], parentRevision: 8 };
+    const request = vi.fn<ServerFetch>()
+        .mockImplementationOnce(async () => Response.json({ error: 'invalid-params' }, { status: 400 }))
+        .mockImplementationOnce(async () => Response.json(page))
+        .mockImplementationOnce(async () => Response.json({ error: 'run_access_denied' }, { status: 403 }));
+    const storage = createWorkflowRunAccountStorage({ credentials: { token: 'token' },
+        serverId: 'captured-home', request, assertCurrent: () => {} });
+    const projected = { ...operation, knownProgressRevisions };
+
+    await expect(storage.execute(projected)).resolves.toEqual(page);
+    await expect(storage.execute(projected)).rejects.toMatchObject({ status: 403, code: 'run_access_denied' });
+    expect(request.mock.calls.map(([, init]) => JSON.parse(String(init?.body))))
+        .toEqual([projected, operation, projected]);
+});
+
 it('witnesses a Run deletion only after issuing its captured HTTP request', async () => {
     const runId = '11111111-1111-4111-8111-111111111111';
     const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
@@ -158,7 +177,7 @@ it('keeps a received storage failure visible through real Account review transpo
 it('rejects worker publication and unknown operations before any Account request', async () => {
     const request = vi.fn();
     const storage = createWorkflowRunAccountStorage({ credentials: { token: 'token' }, serverId: 'captured-home', request, assertCurrent: () => {} });
-    for (const operation of ['admit', 'invocations.recover', 'invocations.fact', 'transition', 'unknown']) {
+    for (const operation of ['admit', 'invocations.fact', 'transition', 'unknown']) {
         await expect(storage.execute({ operation })).rejects.toMatchObject({ code: 'run_access_denied' });
     }
     await expect(storage.execute({ operation: 'get', publisherMachineId: 'machine' })).rejects.toMatchObject({ code: 'run_access_denied' });

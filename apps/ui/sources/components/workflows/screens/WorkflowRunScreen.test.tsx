@@ -218,6 +218,7 @@ let supplementalRecoveryLookupEffect: (() => void | Promise<unknown>) | undefine
 const supplementalRecoveryLookupFailures: number[] = [];
 let accountConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
 const storedRunDetails = new Map<string, Record<string, unknown>>();
+const disclosedProgressIds: string[] = [];
 const approvalArtifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
 let approvalRequired = false;
 const appliedRuntime = vi.hoisted(() => ({ serverId: 'server-a', serverUrl: 'https://server-a', generation: 0 }));
@@ -491,7 +492,7 @@ async function renderRunScreen(overrides: Readonly<{
         ));
     }
     detailActions.listRuns.mockResolvedValue({ runs: [run], metadataByRunId: {} });
-    detailActions.getRun.mockResolvedValue({
+    const detail = {
         run,
         callerAccess: { canEdit: overrides.canEdit ?? true },
         definition: overrides.definition ?? DEFINITION,
@@ -503,7 +504,10 @@ async function renderRunScreen(overrides: Readonly<{
         ...(overrides.finalOutputInvocationId === undefined
             ? {}
             : { finalOutputInvocationId: overrides.finalOutputInvocationId }),
-    });
+    };
+    // Home has the Run and its progress before any of the independent reads.
+    storedRunDetails.set(run.id, detail);
+    detailActions.getRun.mockResolvedValue(detail);
     if (overrides.getRunFailure !== undefined) detailActions.getRun.mockRejectedValue(overrides.getRunFailure);
     if (overrides.invocationListFailure === undefined) {
         detailActions.listInvocations.mockImplementation(async (input: Readonly<{ parentRecordId?: string; memberOrdinal?: string; lifecycles?: readonly string[]; includeContent?: boolean; cursor?: string }>) => (
@@ -869,8 +873,9 @@ async function workflowStorageResponse(operation: Record<string, unknown>, signa
             }
             return { ...page, invocations, invocationDetails: undefined, ...(progressEnvelopes ? {
                 keyCensus: runKeyCensus(String(fields.runId), true, String(fixtureRecord(storedRunDetails.get(String(fields.runId))?.run ?? { ownerAccountId: 'account-a' }).ownerAccountId)),
-                progressEnvelopesByInvocationId: Object.fromEntries(invocations.map(raw => {
+                progressEnvelopesByInvocationId: Object.fromEntries(invocations.flatMap(raw => {
                     const index = createWorkflowInvocationIndexFixture(fixtureRecord(raw));
+                    if (fields.knownProgressRevisions && fixtureRecord(fields.knownProgressRevisions)[index.id] === index.contentRevision) return [];
                     const detail = details.find(value => fixtureRecord(fixtureRecord(value).index).id === index.id) ?? {
                         index, parentRevision: page.parentRevision ?? 1, progress: {
                             kind: 'happier.workflow-progress.v1', blockKind: index.parentRecordId === null ? 'root' : 'step',
@@ -878,7 +883,9 @@ async function workflowStorageResponse(operation: Record<string, unknown>, signa
                             attempt: index.attempt, logicalInvocationRecordId: index.id,
                         },
                     };
-                    const stored = storedInvocation(detail); return [stored.index.id, stored.contentEnvelope];
+                    const stored = storedInvocation(detail);
+                    disclosedProgressIds.push(stored.index.id);
+                    return [[stored.index.id, stored.contentEnvelope] as const];
                 })),
             } : {}) };
         }
@@ -929,6 +936,7 @@ beforeEach(async (context) => {
     storedRunDetails.clear();
     runStorageHomes.length = 0;
     sourceHeaderReads.length = 0;
+    disclosedProgressIds.length = 0;
     sourceArtifactAccess = 'view';
     heldSourceHeaderRead = undefined;
     sourceHeaderSignal = undefined;
@@ -2398,8 +2406,8 @@ describe('WorkflowRunScreen', () => {
             exactRead.resolve({ run, definition: DEFINITION, authoredDefinition: DEFINITION,
                 acceptedContext: ACCEPTED_CONTEXT, checkpoint: null, callerAccess: { canEdit: true } });
         });
-        // Exact detail reads one unfiltered usage window through the same storage operation.
-        await vi.waitFor(() => expect(firstPages()).toEqual(['history', 'attention', 'history', 'attention']));
+        // The exact Action's usage read shares the in-flight history request.
+        await vi.waitFor(() => expect(firstPages()).toEqual(['history', 'attention', 'attention']));
         expect(readContentProps()?.invocationsLoaded).toBe(false);
         expect(readContentProps()?.onLoadMoreAttention).toBeUndefined();
 
@@ -3079,10 +3087,9 @@ describe('WorkflowRunScreen', () => {
         });
         detailActions.restoreWorkspace.mockResolvedValue({ run: { ...run, state: 'running', revision: 2 }, intent: 'resumed' });
         await renderRunScreen({ run, invocations });
+        await vi.waitFor(() => expect(readContentProps()?.invocationsLoaded).toBe(true));
         await act(async () => readContentProps()?.onSelectInvocation('44444444-4444-4444-8444-444444444444'));
-        await act(async () => {});
-
-        expect(readContentProps()?.onRestoreWorkspace).toBeTypeOf('function');
+        await vi.waitFor(() => expect(readContentProps()?.onRestoreWorkspace).toBeTypeOf('function'));
         // Restoration resumes this Run, so the arm that would repeat its
         // completed work is not offered beside it.
         expect(readContentProps()?.onStartReviewedNewRun).toBeUndefined();
@@ -4372,6 +4379,43 @@ describe('WorkflowRunScreen', () => {
                     expect.objectContaining({ runIds: [run.id] }),
                 ]);
             } finally { readGate.resolve(); await catchUp; await rail.unmount(); }
+        });
+
+        it('refreshes invocation membership and opens only the changed progress body', async () => {
+            const run = createWorkflowRunSummaryFixture({ state: 'running', revision: 1, origin: { kind: 'direct' } });
+            const root = createWorkflowInvocationIndexFixture({ runId: run.id, id: '33333333-3333-4333-8333-333333333333', parentRecordId: null });
+            const retained = createWorkflowInvocationIndexFixture({ runId: run.id, id: '44444444-4444-4444-8444-444444444444',
+                parentRecordId: root.id, sequence: '1', lifecycle: 'waiting_for_review' });
+            const removed = createWorkflowInvocationIndexFixture({ runId: run.id, id: '55555555-5555-4555-8555-555555555555',
+                parentRecordId: root.id, sequence: '2', lifecycle: 'waiting_for_review' });
+            const open = (index: WorkflowInvocationGetResultV1['invocation']['index'], parentRevision: number) => ({
+                index, parentRevision, progress: WorkflowProgressEnvelopeV1Schema.parse({
+                    kind: 'happier.workflow-progress.v1', blockKind: 'root', attempt: index.attempt,
+                    logicalInvocationRecordId: index.id, invocationPath: { blockId: '$root', scope: [] },
+                }),
+            });
+            const invocations = [root, retained, removed];
+            await renderRunScreen({ run, invocations, invocationDetails: invocations.map(index => open(index, 1)),
+                attentionInvocations: [retained, removed] });
+            const completed = { ...removed, lifecycle: 'completed' as const, contentRevision: '1' };
+            const updated = [root, retained, completed];
+            await vi.waitFor(() => expect(readContentProps()?.invocationsLoaded).toBe(true));
+            disclosedProgressIds.length = 0;
+            detailActions.listInvocations.mockClear();
+            detailActions.listRuns.mockResolvedValue({ runs: [{ ...run, revision: 2 }], metadataByRunId: {} });
+            detailActions.listInvocations.mockImplementation(async (input: Readonly<{ lifecycles?: readonly string[] }>) => {
+                const rows = input.lifecycles ? [retained] : updated;
+                return { invocations: rows, parentRevision: 2, invocationDetails: rows.map(index => open(index, 2)) };
+            });
+            await act(async () => publishHomeAccountChange('server-a', [`workflow-run:${run.id}`], { changeKinds: ['account'] }));
+            await vi.waitFor(() => expect(storeState.state.workflowRunInvocationsByRunId[workflowRunStoreKey(run.id)]
+                ?.factsById[completed.id]?.opened?.index.contentRevision).toBe('1'));
+            const loaded = storeState.state.workflowRunInvocationsByRunId[workflowRunStoreKey(run.id)]!;
+            expect(loaded.history.invocationIds).toEqual(updated.map(index => index.id));
+            expect(loaded.attention.invocationIds).toEqual([retained.id]);
+            expect(loaded.factsById[retained.id]?.opened?.progress).toEqual(open(retained, 1).progress);
+            expect(disclosedProgressIds).toEqual([completed.id]);
+            expect(detailActions.listInvocations).toHaveBeenCalledTimes(2);
         });
 
         it('shows current held work when the opened admission detail still records queued revision zero', async () => {

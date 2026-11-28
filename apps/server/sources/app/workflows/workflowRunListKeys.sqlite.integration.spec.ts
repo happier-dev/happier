@@ -735,4 +735,29 @@ it("pages only selected parent histories through SQLite JSON membership, retaini
     const current = await listWorkflowRunInvocations({ ...request, parentRecordIds: undefined,
         parentRecordId: firstParentId, memberOrdinal: "0" });
     expect(current.invocations.map(row => row.id)).toEqual([retriedReply]);
+    const { accountId, ...selection } = request;
+    const app = createAuthenticatedTestApp();
+    registerWorkflowRunStorageRoutes(app);
+    try {
+        const payload = { ...selection, operation: "invocations.list", lifecycles: ["superseded", "completed"] };
+        const readPage = (body: Readonly<Record<string, unknown>>) => app.inject({
+            method: "POST", url: "/v3/automations/runs/workflow-storage", headers: { "x-test-user-id": accountId },
+            payload: body,
+        });
+        const incumbent = await readPage(payload);
+        expect(incumbent.statusCode).toBe(200);
+        expect(incumbent.json().progressEnvelopesByInvocationId).toEqual({ [firstReply]: envelopes.get(firstReply) });
+
+        const filtered = await readPage({ ...payload, knownProgressRevisions: { [firstReply]: "0" } });
+        expect(filtered.statusCode, filtered.body).toBe(200);
+        expect(filtered.json()).toMatchObject({
+            invocations: incumbent.json().invocations, nextCursor: incumbent.json().nextCursor,
+            parentRevision: incumbent.json().parentRevision,
+        });
+        expect(filtered.json().progressEnvelopesByInvocationId).toEqual({});
+        const next = await readPage({ ...payload, cursor: filtered.json().nextCursor });
+        expect(next.statusCode).toBe(200);
+        expect(next.json().invocations.map((row: { id: string }) => row.id)).toEqual([secondReply]);
+        expect(next.json().progressEnvelopesByInvocationId).toEqual({ [secondReply]: envelopes.get(secondReply) });
+    } finally { await app.close(); }
 });

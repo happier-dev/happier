@@ -37,7 +37,7 @@ export function createWorkflowRunAccountStorage(params: Readonly<{
     readTransport?: CapturedServerReadTransport;
     accountLifetime?: ServerAccountScopeLifetime;
 }>) {
-    return {
+    const storage = {
         execute: async (operation: Readonly<Record<string, unknown>>, options?: Readonly<{ signal?: AbortSignal; publisherMachineId?: string; onTransportIssued?: () => void }>): Promise<unknown> => {
             params.assertCurrent();
             if (isWorkflowRunExecutorStorageOperationV1(operation.operation)
@@ -84,6 +84,19 @@ export function createWorkflowRunAccountStorage(params: Readonly<{
                 params.assertCurrent();
                 return result;
             } finally { invalidate(); }
+        },
+    };
+    return {
+        execute: async (...[operation, options]: Parameters<typeof storage.execute>) => {
+            try {
+                return await storage.execute(operation, options);
+            } catch (error) {
+                if (operation.operation !== 'invocations.list' || operation.knownProgressRevisions === undefined
+                    || !(error instanceof AutomationApiError) || error.status !== 400 || error.code !== 'invalid-params') throw error;
+                // An older Home can read the same window with its original projection.
+                const { knownProgressRevisions: _known, ...legacy } = operation;
+                return storage.execute(legacy, options);
+            }
         },
     };
 }

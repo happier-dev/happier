@@ -556,9 +556,14 @@ export const WorkflowInvocationListRequestV1Schema = lazyZodSchema(() => z.stric
   /** Newest attempt of one direct-member slot. */
   memberOrdinal: z.optional(WorkflowDecimalV1Schema),
   lifecycles: z.optional(z.array(WorkflowInvocationLifecycleV1Schema).check(z.minLength(1))),
+  /** Omit only the already-opened bodies, retaining all selected page indices. */
+  knownProgressRevisions: z.optional(z.record(WorkflowInvocationRecordIdSchema, WorkflowDecimalV1Schema)),
   /** Open private progress beside the selected indices, without recovery-detail reads. */
   includeContent: z.optional(z.boolean()),
 }).check(z.superRefine((value, context) => {
+  if (value.knownProgressRevisions !== undefined && value.includeContent !== true) {
+    context.addIssue({ code: "custom", path: ['knownProgressRevisions'], message: 'Known progress revisions require a content page' });
+  }
   if (value.knownContentRevisions !== undefined && (value.parentRecordId !== undefined || value.parentRecordIds !== undefined
     || value.invocationId !== undefined || value.memberOrdinal !== undefined || value.lifecycles !== undefined)) {
     context.addIssue({ code: "custom", path: ['knownContentRevisions'], message: 'Known revisions select unfiltered Run history' });
@@ -575,7 +580,7 @@ export const WorkflowInvocationListRequestV1Schema = lazyZodSchema(() => z.stric
 })));
 export const WorkflowInvocationListResultV1Schema = lazyZodSchema(() => z.strictObject({
   invocations: z.array(WorkflowRunInvocationIndexV1Schema), nextCursor: zMini.optional(CursorSchema), parentRevision: RevisionSchema,
-  /** Present only when requested; one opened detail for each index on this page. */
+  /** Present for a content page, with matching known revisions omitted. */
   invocationDetails: z.optional(z.array(WorkflowInvocationDetailV1Schema)),
 }));
 export const WorkflowInvocationGetRequestV1Schema = lazyZodSchema(() => z.strictObject({ runId: WorkflowRunIdV1Schema, invocationId: WorkflowInvocationRecordIdSchema }));

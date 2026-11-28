@@ -68,6 +68,7 @@ export function createWorkflowRunDetailActions(dependencies: Readonly<{
             limit?: number;
             invocationId?: string;
             knownContentRevisions?: Readonly<Record<string, string>>;
+            knownProgressRevisions?: Readonly<Record<string, string>>;
             parentRecordId?: string;
             memberOrdinal?: string;
             lifecycles?: readonly WorkflowInvocationLifecycleV1[];
@@ -81,6 +82,7 @@ export function createWorkflowRunDetailActions(dependencies: Readonly<{
                     ...(input.limit === undefined ? {} : { limit: input.limit }),
                     ...(input.invocationId === undefined ? {} : { invocationId: input.invocationId }),
                     ...(input.knownContentRevisions === undefined ? {} : { knownContentRevisions: input.knownContentRevisions }),
+                    ...(input.knownProgressRevisions === undefined ? {} : { knownProgressRevisions: input.knownProgressRevisions }),
                     ...(input.parentRecordId === undefined ? {} : { parentRecordId: input.parentRecordId }),
                     ...(input.memberOrdinal === undefined ? {} : { memberOrdinal: input.memberOrdinal }),
                     ...(input.lifecycles === undefined ? {} : { lifecycles: [...input.lifecycles] }),

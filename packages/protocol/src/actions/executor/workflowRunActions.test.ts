@@ -3418,9 +3418,11 @@ describe('shared Account workflow run owner', () => {
       operations.push(String(operation.operation));
       if (operation.operation !== 'invocations.list') throw new Error('Content list must not read individual details or accepted snapshots');
       const row = operation.cursor ? rows[1]! : rows[0]!;
+      const known = operation.knownProgressRevisions as Record<string, string> | undefined;
       return { invocations: [row.index], parentRevision: 4, keyCensus: runSnapshot().keyCensus,
         ...(operation.cursor ? {} : { nextCursor: 'page-2' }),
-        ...(operation.progressEnvelopes ? { progressEnvelopesByInvocationId: { [row.index.id]: row.contentEnvelope } } : {}) };
+        ...(operation.progressEnvelopes ? { progressEnvelopesByInvocationId:
+          known?.[row.index.id] === row.index.contentRevision ? {} : { [row.index.id]: row.contentEnvelope } } : {}) };
     } }));
     for (const ordinal of [0, 1]) {
       const row = rows[ordinal]!;
@@ -3430,7 +3432,11 @@ describe('shared Account workflow run owner', () => {
           invocationDetails: [{ index: row.index, progress: row.progress, parentRevision: 4 }],
           ...(ordinal === 0 ? { nextCursor: 'page-2' } : {}) });
     }
-    expect(operations).toEqual(['invocations.list', 'invocations.list']);
+    const retained = rows[0]!.index;
+    await expect(owner.execute({ actionId: 'workflow.run.invocations.list',
+      input: { runId, includeContent: true, knownProgressRevisions: { [retained.id]: retained.contentRevision } }, context: {} }))
+      .resolves.toEqual({ invocations: [retained], parentRevision: 4, invocationDetails: [], nextCursor: 'page-2' });
+    expect(operations).toEqual(['invocations.list', 'invocations.list', 'invocations.list']);
     await expect(owner.execute({ actionId: 'workflow.run.invocations.list', input: { runId }, context: {} }))
       .resolves.toEqual({ invocations: [rows[0]!.index], parentRevision: 4, nextCursor: 'page-2' });
   });

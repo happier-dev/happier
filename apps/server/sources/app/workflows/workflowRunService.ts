@@ -1998,7 +1998,7 @@ export async function completeWorkflowInvocationReview(input: WorkflowReviewMuta
  * its members count
  * against the same response-byte boundary and it is part of the cursor binding.
  */
-export async function listWorkflowRunInvocations(params: PageOptions & Readonly<{ accountId: string; runId: string; invocationId?: string; knownContentRevisions?: Readonly<Record<string, string>>; parentRecordId?: string | null; parentRecordIds?: readonly string[]; memberOrdinal?: string; lifecycles?: readonly WorkflowInvocationLifecycleV1[]; progressEnvelopes?: true }>) {
+export async function listWorkflowRunInvocations(params: PageOptions & Readonly<{ accountId: string; runId: string; invocationId?: string; knownContentRevisions?: Readonly<Record<string, string>>; knownProgressRevisions?: Readonly<Record<string, string>>; parentRecordId?: string | null; parentRecordIds?: readonly string[]; memberOrdinal?: string; lifecycles?: readonly WorkflowInvocationLifecycleV1[]; progressEnvelopes?: true }>) {
     if (params.limit !== undefined && (!Number.isSafeInteger(params.limit) || params.limit <= 0)) throw new WorkflowRunServiceError("invalid_input");
     if (params.knownContentRevisions !== undefined && (params.invocationId !== undefined || params.parentRecordId !== undefined
         || params.parentRecordIds !== undefined || params.memberOrdinal !== undefined || params.lifecycles !== undefined)) throw new WorkflowRunServiceError("invalid_input");
@@ -2035,10 +2035,14 @@ export async function listWorkflowRunInvocations(params: PageOptions & Readonly<
         };
         const invocationPage = (rows: readonly InvocationRow[], nextCursor?: string) => ({
             invocations: rows.map(projectInvocation),
-            ...(params.progressEnvelopes ? { progressEnvelopesByInvocationId: Object.fromEntries(rows.map(discloseProgressEnvelope)) } : {}),
+            ...(params.progressEnvelopes ? { progressEnvelopesByInvocationId: Object.fromEntries(rows
+                .filter(row => params.knownProgressRevisions?.[row.id] !== row.contentRevision.toString())
+                .map(discloseProgressEnvelope)) } : {}),
             ...(nextCursor ? { nextCursor } : {}),
             parentRevision: run.revision, keyCensus,
         });
+        // Full content still sizes the page, so the retained revision map
+        // cannot move the continuation or change the selected membership.
         const serializeMembers = (row: InvocationRow) => params.progressEnvelopes
             ? [JSON.stringify(projectInvocation(row)), `${JSON.stringify(row.id)}:${JSON.stringify(row.contentEnvelope)}`]
             : [JSON.stringify(projectInvocation(row))];

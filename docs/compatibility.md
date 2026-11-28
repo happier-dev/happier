@@ -9549,6 +9549,16 @@ their final source binding is resolved later. Daemon and server must reload
 together for this development seam; no older-server fallback is provided.
 The 0.2 predecessor has no Workflow storage endpoint.
 
+The unreleased Account invocation list accepts optional
+`knownProgressRevisions` with the progress projection. Home still selects the
+same authorized page and applies its full-projection byte budget. It omits
+progress envelopes whose invocation ID and revision match the supplied values.
+Page membership, order, and cursors apply equally to both projections, and the
+Action owner keeps the normal Run read and content-access checks. The UI
+retries the same cursor with the original projection if a development Home
+rejects the new field with `400 invalid-params`. Older clients continue to
+receive the full projection. The omission hint stays out of persisted state.
+
 Automation Runs use `automation-run-summary:<automationId>:<runId>` on the
 existing `automation` Account changes feed. Each Run coalesces independently.
 Addressed Run readers use the Run ID, while older coalesced

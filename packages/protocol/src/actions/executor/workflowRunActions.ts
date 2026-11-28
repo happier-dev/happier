@@ -3436,10 +3436,14 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     }
     if (args.actionId === 'workflow.run.invocations.list') {
       try {
-        const { includeContent, ...input } = args.input;
-        const page = record(await deps.storage.execute({ operation: 'invocations.list', ...input,
+        const { includeContent, knownProgressRevisions, ...input } = args.input;
+        const operation = { operation: 'invocations.list', ...input,
           ...(includeContent === true ? { progressEnvelopes: true } : {}),
-          pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES }, args.context.signal ? { signal: args.context.signal } : {}));
+          pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES };
+        const options = args.context.signal ? { signal: args.context.signal } : {};
+        const page = record(await deps.storage.execute({
+          ...operation, ...(knownProgressRevisions === undefined ? {} : { knownProgressRevisions }),
+        }, options));
         const result = WorkflowActionOutputSchemasV1[args.actionId].parse({
           invocations: page.invocations,
           parentRevision: page.parentRevision,
@@ -3455,12 +3459,13 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         await prepareRunRecipients(input.runId, resolved.encryption, census, args.context.signal);
         const envelopes = record(page.progressEnvelopesByInvocationId);
         return WorkflowActionOutputSchemasV1[args.actionId].parse({ ...result,
-          invocationDetails: result.invocations.map(index => {
+          invocationDetails: result.invocations.flatMap(index => {
             if (index.runId !== input.runId) throw workflowError('content_unavailable');
-            return { index, parentRevision: result.parentRevision,
+            if (!Object.hasOwn(envelopes, index.id) && knownProgressRevisions?.[index.id] === index.contentRevision) return [];
+            return [{ index, parentRevision: result.parentRevision,
               progress: openProgress(input.runId, index, envelopes[index.id], {
                 accountId: census.ownerAccountId, enc: resolved.encryption,
-              }) };
+              }) }];
           }),
         });
       } catch (error) {
