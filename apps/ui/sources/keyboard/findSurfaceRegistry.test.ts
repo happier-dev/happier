@@ -28,7 +28,7 @@ function surfaceFixture(surfaceId: string) {
 describe('mounted Find keyboard resolution', () => {
     it('passes outside a surface and on a second Find, steps only in the input and lets closed Ctrl+G reach the PTY', () => {
         const find = createFindSurfaceRegistry();
-        const dispatch = createKeyboardShortcutDispatcher({ enabled: true, platform: 'windows', surface: 'web', singleKeyShortcutsEnabled: false,
+        const dispatch = createKeyboardShortcutDispatcher({ platform: 'windows', surface: 'web', singleKeyShortcutsEnabled: false,
             disabledCommandIds: [], overrides: {}, handlers: {
                 'find.open': (key) => find.command('find.open', key), 'find.next': (key) => find.command('find.next', key),
                 'find.previous': (key) => find.command('find.previous', key),
@@ -132,7 +132,7 @@ describe('mounted Find keyboard resolution', () => {
     });
 
     it('does not consume native Return until the Find input owns focus and respects disabling and overrides', () => {
-        const options = { enabled: true, platform: 'ios' as const, surface: 'native' as const, singleKeyShortcutsEnabled: false,
+        const options = { platform: 'ios' as const, surface: 'native' as const, singleKeyShortcutsEnabled: false,
             disabledCommandIds: [], overrides: {}, handlers: { 'find.next': () => 'handled' as const },
             getContext: () => ({ isEditableTarget: true, isComposing: false }) };
         expect(resolveNativeHardwareKeyboardConsumableEventSignatures(options)).toEqual(['g|shift=false|ctrl=false|meta=true|alt=false']);

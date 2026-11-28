@@ -22,7 +22,7 @@ describe('mounted file Find surface', () => {
     it('opens from the sibling file toolbar, steps through the real line renderer, passes second Find and restores focus', async () => {
         Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' });
         const settings = storage.getState().settings;
-        storage.setState({ settings: { ...settings, keyboardShortcutsV2Enabled: true,
+        storage.setState({ settings: { ...settings,
             keyboardShortcutDisabledCommandIdsV1: [], keyboardShortcutOverridesV1: {} } });
         const container = document.createElement('div'); document.body.appendChild(container);
         const root = createRoot(container);

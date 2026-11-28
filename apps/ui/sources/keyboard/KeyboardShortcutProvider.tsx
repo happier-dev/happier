@@ -270,7 +270,6 @@ const EMPTY_EMBEDDED_KEYBOARD: EmbeddedKeyboardChannel = { signatures: [], dispa
 
 export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly<{
     handlers: KeyboardShortcutHandlers;
-    enabledWhenDisabledCommandIds?: readonly KeyboardCommandId[];
 }>>) {
     // A modal opens before its handlers register. Publish the owner's live labels,
     // not an opening-time copy, across its out-of-tree context bridge.
@@ -338,22 +337,14 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
     const surface: KeyboardSurface = Platform.OS === 'web' ? 'web' : 'native';
     const webHost = isDesktopHost() ? 'desktop' as const : 'browser' as const;
     const {
-        keyboardShortcutsV2Enabled,
         keyboardSingleKeyShortcutsEnabled,
         keyboardShortcutOverridesV1,
         keyboardShortcutDisabledCommandIdsV1,
     } = useSettingsValues([
-        'keyboardShortcutsV2Enabled', 'keyboardSingleKeyShortcutsEnabled',
+        'keyboardSingleKeyShortcutsEnabled',
         'keyboardShortcutOverridesV1', 'keyboardShortcutDisabledCommandIdsV1',
     ]);
     const singleKeyShortcutsEnabled = keyboardSingleKeyShortcutsEnabled === true;
-    // Find and Inbox navigation are local surface interactions. Their handlers
-    // are present only while that surface owns focus; explicit per-command
-    // disablement and the letter-key preference still apply.
-    const enabledWhenDisabledCommandIds = React.useMemo<readonly KeyboardCommandId[]>(() => [
-        ...(props.enabledWhenDisabledCommandIds ?? []), 'find.open', 'find.next', 'find.previous',
-        'inbox.item.next', 'inbox.item.previous', 'inbox.item.open', 'inbox.item.close',
-    ], [props.enabledWhenDisabledCommandIds]);
     const disabledCommandIds = keyboardShortcutDisabledCommandIdsV1 ?? NO_DISABLED_COMMAND_IDS;
     const overrides = keyboardShortcutOverridesV1 ?? NO_SHORTCUT_OVERRIDES;
     const defaultLabelContext = React.useMemo(() => ({
@@ -385,8 +376,6 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
 
     const shortcutLabels = React.useMemo(
         () => buildKeyboardShortcutLabels(platform, surface, {
-            enabled: keyboardShortcutsV2Enabled === true,
-            enabledWhenDisabledCommandIds,
             webHost,
             disabledCommandIds,
             overrides,
@@ -394,7 +383,7 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
             handlers: labelHandlers,
             context: defaultLabelContext,
         }),
-        [defaultLabelContext, disabledCommandIds, enabledWhenDisabledCommandIds, keyboardShortcutsV2Enabled, labelHandlers, overrides, platform, singleKeyShortcutsEnabled, surface, webHost],
+        [defaultLabelContext, disabledCommandIds, labelHandlers, overrides, platform, singleKeyShortcutsEnabled, surface, webHost],
     );
     // One retained value feeds both the store and the context: a recompute with the same content
     // (handler registrations changing, a fresh `handlers` prop) must not re-render every label consumer.
@@ -413,8 +402,6 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
     }), [disabledCommandIds, overrides, platform, rootHandlers, singleKeyShortcutsEnabled, webHost]);
     const handlerKeySignature = buildHandlerKeySignature(handlers);
     const nativeKeyboardConfigurationKey = React.useMemo(() => [
-        keyboardShortcutsV2Enabled === true ? 'enabled' : 'disabled',
-        buildSignatureListKey(enabledWhenDisabledCommandIds),
         ownedCommandIdsKey,
         platform,
         surface,
@@ -425,17 +412,13 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
     ].join(HANDLER_KEY_SIGNATURE_SEPARATOR), [
         disabledCommandIds,
         handlerKeySignature,
-        keyboardShortcutsV2Enabled,
         overrides,
         platform,
-        enabledWhenDisabledCommandIds,
         ownedCommandIdsKey,
         singleKeyShortcutsEnabled,
         surface,
     ]);
     const dispatcherOptions = React.useMemo(() => ({
-        enabled: keyboardShortcutsV2Enabled === true,
-        enabledWhenDisabledCommandIds,
         ownedCommandIds,
         platform,
         surface,
@@ -454,10 +437,8 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
         disabledCommandIds,
         find,
         handlers,
-        keyboardShortcutsV2Enabled,
         overrides,
         platform,
-        enabledWhenDisabledCommandIds,
         ownedCommandIds,
         singleKeyShortcutsEnabled,
         surface,

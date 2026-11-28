@@ -462,7 +462,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
             read: async () => ({ value, version }),
             compareAndSet: async next => { value = next; version += 1; return { success: true, version }; },
         } });
-        getStorage().setState({ settings: { ...getStorage().getState().settings, keyboardShortcutsV2Enabled: true,
+        getStorage().setState({ settings: { ...getStorage().getState().settings,
             keyboardSingleKeyShortcutsEnabled: true, keyboardShortcutOverridesV1: {}, keyboardShortcutDisabledCommandIdsV1: [] } });
         function Review() {
             const [record, setRecord] = React.useState<import('@happier-dev/protocol/scm/reviewedMarks').ScmReviewedMarksRecord | null>(null);

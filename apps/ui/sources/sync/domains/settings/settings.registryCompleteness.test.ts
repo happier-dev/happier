@@ -139,8 +139,6 @@ describe('settings registry completeness', () => {
         const { ACCOUNT_SETTING_ARTIFACTS } = await import('./settings');
         const { LOCAL_SETTING_ARTIFACTS } = await import('./registry/local/localSettingDefinitions');
         const syncedKeys = [
-            'commandPaletteEnabled',
-            'keyboardShortcutsV2Enabled',
             'keyboardSingleKeyShortcutsEnabled',
             'keyboardShortcutDisabledCommandIdsV1',
             'keyboardShortcutOverridesV1',

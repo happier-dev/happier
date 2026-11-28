@@ -6,7 +6,7 @@ import type { KeyboardCommandId, KeyboardPlatform, KeyboardSurface, NormalizedKe
 function dispatcher(platform: KeyboardPlatform, surface: KeyboardSurface, editable = false) {
     const handler = vi.fn();
     const dispatch = createKeyboardShortcutDispatcher({
-        enabled: true, platform, surface, singleKeyShortcutsEnabled: false,
+        platform, surface, singleKeyShortcutsEnabled: false,
         disabledCommandIds: [], overrides: {}, handlers: { 'terminal.jump': handler },
         getContext: () => ({ isEditableTarget: editable, isComposing: false }),
     });
@@ -48,7 +48,7 @@ describe('terminal workspace shortcuts', () => {
             'terminal.toggle': toggle, 'terminal.newShell': shell, 'terminal.split': split,
         };
         const dispatch = createKeyboardShortcutDispatcher({
-            enabled: true, platform, surface: 'web', singleKeyShortcutsEnabled: false,
+            platform, surface: 'web', singleKeyShortcutsEnabled: false,
             disabledCommandIds: [], overrides: {}, handlers,
             getContext: () => ({ isEditableTarget: true, isComposing: false }),
         });

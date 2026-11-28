@@ -1126,9 +1126,9 @@ describe('useResolvedSettingsPageCatalog', () => {
             setting: expect.objectContaining({ anchor: 'features.commandPalette' }),
         });
 
-        // The test host is the web app: the command palette row renders there.
+        // Search is always available, so its retired master toggle is absent on web too.
         const webHook = await renderHook(() => useResolvedSettingsPageCatalog());
-        expect(webHook.getCurrent().search('commandPalette')).toContainEqual(commandPalette);
+        expect(webHook.getCurrent().search('commandPalette')).not.toContainEqual(commandPalette);
         // Live Activities render only on iOS, so the web app never offers them.
         expect(webHook.getCurrent().search('liveActivities').some((result: any) => result.setting?.anchor === 'notifications.liveActivitiesEnabled')).toBe(false);
         await webHook.unmount();

@@ -30,9 +30,7 @@ export function isFindKeyboardCommand(commandId: KeyboardCommandId): commandId i
 }
 
 export type KeyboardShortcutDispatcherOptions = Readonly<{
-    enabled: boolean;
-    enabledWhenDisabledCommandIds?: readonly KeyboardCommandId[];
-    /** Held by a registration that owns its keys while registered (the open media stage): no app-wide opt-in gates them. */
+    /** Held by a registration that owns its keys while registered (the open media stage): the single-key preference does not gate them. */
     ownedCommandIds?: readonly KeyboardCommandId[];
     platform: KeyboardPlatform;
     surface?: KeyboardSurface;
@@ -45,9 +43,7 @@ export type KeyboardShortcutDispatcherOptions = Readonly<{
 }>;
 
 export type KeyboardShortcutLabelOptions = Readonly<{
-    enabled?: boolean;
-    enabledWhenDisabledCommandIds?: readonly KeyboardCommandId[];
-    /** Held by a registration that owns its keys while registered (the open media stage): no app-wide opt-in gates them. */
+    /** Held by a registration that owns its keys while registered (the open media stage): the single-key preference does not gate them. */
     ownedCommandIds?: readonly KeyboardCommandId[];
     webHost?: KeyboardWebHost;
     disabledCommandIds?: readonly string[];
@@ -122,9 +118,7 @@ export function isKeybindingRuleAvailable(
         webHost?: KeyboardWebHost;
         singleKeyShortcutsEnabled: boolean;
         commandId?: KeyboardCommandId;
-        enabled?: boolean;
-        enabledWhenDisabledCommandIds?: readonly KeyboardCommandId[];
-        /** Held by a registration that owns its keys while registered (the open media stage): no app-wide opt-in gates them. */
+        /** Held by a registration that owns its keys while registered (the open media stage): the single-key preference does not gate them. */
         ownedCommandIds?: readonly KeyboardCommandId[];
     }>,
 ): boolean {
@@ -142,8 +136,6 @@ export function isKeybindingRuleAvailable(
     const focusedCommand = options.commandId !== undefined
         && (getKeyboardCommand(options.commandId)?.singleKeyScope === 'focused'
             || options.ownedCommandIds?.includes(options.commandId) === true);
-    if (options.enabled === false && !focusedCommand
-        && !(options.commandId && options.enabledWhenDisabledCommandIds?.includes(options.commandId))) return false;
     if (!options.singleKeyShortcutsEnabled && !focusedCommand && isSingleKeyRule(parsed) && rule.conflictScope !== 'findInput') return false;
     return true;
 }
@@ -193,9 +185,7 @@ function resolveNativeConsumableMod(platform: KeyboardPlatform): 'meta' | 'ctrl'
 
 export function commandHasAvailableKeyboardHandler(params: Readonly<{
     commandId: KeyboardCommandId;
-    enabled: boolean;
-    enabledWhenDisabledCommandIds?: readonly KeyboardCommandId[];
-    /** Held by a registration that owns its keys while registered (the open media stage): no app-wide opt-in gates them. */
+    /** Held by a registration that owns its keys while registered (the open media stage): the single-key preference does not gate them. */
     ownedCommandIds?: readonly KeyboardCommandId[];
     platform: KeyboardPlatform;
     surface: KeyboardSurface;
@@ -213,8 +203,6 @@ export function commandHasAvailableKeyboardHandler(params: Readonly<{
     if (command.when && !command.when(params.context)) return false;
     return getCommandBindings(params.commandId, params.overrides).some((rule) => isKeybindingRuleAvailable(rule, {
         commandId: command.id,
-        enabled: params.enabled,
-        enabledWhenDisabledCommandIds: params.enabledWhenDisabledCommandIds,
         ownedCommandIds: params.ownedCommandIds,
         platform: params.platform,
         surface: params.surface,
@@ -228,8 +216,6 @@ export function hasAnyAvailableKeyboardHandler(options: KeyboardShortcutDispatch
     const context = options.getContext();
     return resolveKeyboardCommands(options.overrides).some((command) => commandHasAvailableKeyboardHandler({
         commandId: command.id,
-        enabled: options.enabled,
-        enabledWhenDisabledCommandIds: options.enabledWhenDisabledCommandIds,
         ownedCommandIds: options.ownedCommandIds,
         platform: options.platform,
         surface,
@@ -252,8 +238,6 @@ export function resolveNativeHardwareKeyboardConsumableEventSignatures(
     for (const command of resolveKeyboardCommands(options.overrides)) {
         if (!commandHasAvailableKeyboardHandler({
             commandId: command.id,
-            enabled: options.enabled,
-            enabledWhenDisabledCommandIds: options.enabledWhenDisabledCommandIds,
             ownedCommandIds: options.ownedCommandIds,
             platform: options.platform,
             surface,
@@ -275,8 +259,6 @@ export function resolveNativeHardwareKeyboardConsumableEventSignatures(
                 && context.findInputFocused !== true) continue;
             if (!isKeybindingRuleAvailable(rule, {
                 commandId: command.id,
-                enabled: options.enabled,
-                enabledWhenDisabledCommandIds: options.enabledWhenDisabledCommandIds,
                 ownedCommandIds: options.ownedCommandIds,
                 platform: options.platform,
                 surface,
@@ -307,8 +289,6 @@ export function createKeyboardShortcutDispatcher(options: KeyboardShortcutDispat
         for (const command of commands) {
             if (!commandHasAvailableKeyboardHandler({
                 commandId: command.id,
-                enabled: options.enabled,
-                enabledWhenDisabledCommandIds: options.enabledWhenDisabledCommandIds,
                 ownedCommandIds: options.ownedCommandIds,
                 platform: options.platform,
                 surface,
@@ -323,8 +303,6 @@ export function createKeyboardShortcutDispatcher(options: KeyboardShortcutDispat
             for (const rule of getCommandBindings(command.id, options.overrides)) {
                 if (!isKeybindingRuleAvailable(rule, {
                     commandId: command.id,
-                    enabled: options.enabled,
-                    enabledWhenDisabledCommandIds: options.enabledWhenDisabledCommandIds,
                     ownedCommandIds: options.ownedCommandIds,
                     platform: options.platform,
                     surface,
@@ -433,8 +411,6 @@ export function buildKeyboardShortcutLabels(
                 const binding = getCommandBindings(command.id, options.overrides ?? {})
                     .find((rule) => isKeybindingRuleAvailable(rule, {
                         commandId: command.id,
-                        enabled: options.enabled,
-                        enabledWhenDisabledCommandIds: options.enabledWhenDisabledCommandIds,
                         ownedCommandIds: options.ownedCommandIds,
                         platform,
                         surface,

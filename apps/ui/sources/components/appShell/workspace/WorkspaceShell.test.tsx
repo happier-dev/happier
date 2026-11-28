@@ -227,7 +227,7 @@ async function renderWorkspace(initial: WorkspaceState, horizontalArea?: Horizon
     restoreLocks = installBrowserStorageLockBoundary();
     installDisconnectedServerSocketBoundary();
     fixture = await serveActionHomes({ homes: [{ key: 'home', serverUrl: 'https://workspace-shell.test', accountId: 'alice', currentAccount: true,
-        settings: { keyboardShortcutsV2Enabled: true } }], route: () => undefined });
+        settings: {} }], route: () => undefined });
     disconnect = await fixture.restoreActiveConnection();
     const { storage } = production[7];
     const scope = storage.getState().profileScope;
@@ -713,7 +713,7 @@ describe('WorkspaceShell', () => {
         await act(async () => storage.getState().applyLocalSettings({ paneArrangement: 'session' }, { source: 'ui' }));
         expect(minimum().width).toBe(420);
     });
-    it('shows the registered split-down shortcut in the tab menu and withdraws it when shortcuts are disabled', async () => {
+    it('shows the registered split-down shortcut in the tab menu and withdraws it when that command is disabled', async () => {
         // DropdownMenu shows key hints only on hardware-keyboard surfaces (dc841a167713).
         vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(pointer: fine)' }));
         onTestFinished(() => { vi.unstubAllGlobals(); });
@@ -726,7 +726,7 @@ describe('WorkspaceShell', () => {
         expect(splitHint()?.map(node => node.props.label)).toEqual(['Alt+Shift+\\']);
 
         const { storage } = production[7];
-        await act(async () => { storage.setState({ settings: { ...storage.getState().settings, keyboardShortcutsV2Enabled: false } }); });
+        await act(async () => { storage.setState({ settings: { ...storage.getState().settings, keyboardShortcutDisabledCommandIdsV1: ['workspace.splitDown'] } }); });
         expect(screen.findByTestId('workspace-tab-menu-split-down')).not.toBeNull();
         expect(splitHint()).toEqual([]);
     });

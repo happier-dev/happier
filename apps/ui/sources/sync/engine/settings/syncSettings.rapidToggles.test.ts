@@ -100,13 +100,13 @@ describe('rapid Account settings intents', () => {
     it('does not echo an unchanged stale preference during refresh or an unrelated write', async () => {
         const serverId = await harness.addHome({ name: 'Stale client', serverUrl: 'https://stale-client.example', accountId: 'owner', currentAccount: true });
         const scope = { serverId, accountId: 'owner' };
-        let raw: Record<string, unknown> = { keyboardShortcutsV2Enabled: false, analyticsOptOut: false };
+        let raw: Record<string, unknown> = { keyboardSingleKeyShortcutsEnabled: false, analyticsOptOut: false };
         let version = 2;
         let pending: Partial<Settings> = {};
         // Another client has already restored the preference. This client's
         // older projection is not an intent to restore its stale value.
         storage.setState({ settingsScope: scope, settingsVersion: 1,
-            settings: settingsParse({ keyboardShortcutsV2Enabled: true, analyticsOptOut: false }) });
+            settings: settingsParse({ keyboardSingleKeyShortcutsEnabled: true, analyticsOptOut: false }) });
         savePendingAccountSettings(scope, {});
         harness.answer(serverId, '/v2/account/settings', { select: () => ({ body: { content: { t: 'plain', v: raw }, version } }) });
         let posts = 0;
@@ -123,19 +123,19 @@ describe('rapid Account settings intents', () => {
             getPendingSettings: () => pending, clearPendingSettings: next => { pending = next; savePendingAccountSettings(scope, next); } });
         await sync();
         expect(posts).toBe(0);
-        expect(storage.getState().settings.keyboardShortcutsV2Enabled).toBe(false);
+        expect(storage.getState().settings.keyboardSingleKeyShortcutsEnabled).toBe(false);
         // Recreate the stale projection before a real unrelated local intent.
-        storage.setState({ settingsVersion: 1, settings: settingsParse({ keyboardShortcutsV2Enabled: true, analyticsOptOut: false }) });
+        storage.setState({ settingsVersion: 1, settings: settingsParse({ keyboardSingleKeyShortcutsEnabled: true, analyticsOptOut: false }) });
         applySettingsLocalDelta({ expectedSettingsScope: scope, delta: { analyticsOptOut: true }, settingsSecretsKey: null,
             getPendingSettings: () => pending, setPendingSettings: next => { pending = next; }, schedulePendingSettingsFlush: () => {} });
         expect(pending).toEqual({ analyticsOptOut: true });
         await sync();
         expect(posts).toBe(1);
-        expect(raw).toMatchObject({ keyboardShortcutsV2Enabled: false, analyticsOptOut: true });
+        expect(raw).toMatchObject({ keyboardSingleKeyShortcutsEnabled: false, analyticsOptOut: true });
         expect(pending).toEqual({});
         await sync();
         expect(posts).toBe(1);
-        expect(storage.getState().settings.keyboardShortcutsV2Enabled).toBe(false);
+        expect(storage.getState().settings.keyboardSingleKeyShortcutsEnabled).toBe(false);
     });
 
     it('reads the document once while the Home head stays at the version Sync already admitted', async () => {

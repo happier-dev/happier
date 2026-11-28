@@ -19,7 +19,6 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..', '..');
 const COMMANDS = join(REPO, 'apps', 'ui', 'sources', 'keyboard', 'commands.ts');
 const SOURCE_RUNTIME = join(REPO, 'packages', 'cli-common', 'registerSourceRuntime.mjs');
-const SETTINGS = join(REPO, 'packages', 'protocol', 'src', 'account', 'settings', 'accountSettings.ts');
 export const OUTPUT_PATH = join(HERE, '..', 'content', 'docs', 'apps', 'keyboard-shortcuts.mdx');
 
 /**
@@ -127,12 +126,6 @@ export async function readKeyboardCommands(commandsPath = COMMANDS) {
   return commands;
 }
 
-function readDefault(defaults, name) {
-  const value = defaults[name];
-  if (typeof value !== 'boolean') throw new Error(`Could not read the default for ${name}`);
-  return value;
-}
-
 function formatBindings(bindings) {
   if (!bindings || bindings.length === 0) return '_Unbound by default_';
   return bindings
@@ -142,13 +135,8 @@ function formatBindings(bindings) {
 
 export async function renderKeyboardReferenceMarkdown({
   commandsPath = COMMANDS,
-  settingsPath = SETTINGS,
 } = {}) {
   const commands = await readKeyboardCommands(commandsPath);
-  const { ACCOUNT_SETTING_ARTIFACTS } = await import(pathToFileURL(settingsPath).href);
-  const { defaults } = ACCOUNT_SETTING_ARTIFACTS;
-  const paletteOn = readDefault(defaults, 'commandPaletteEnabled');
-  const shortcutsOn = readDefault(defaults, 'keyboardShortcutsV2Enabled');
 
   const grouped = GROUPS.map((group) => {
     const rows = Object.entries(group.commands)
@@ -156,14 +144,6 @@ export async function renderKeyboardReferenceMarkdown({
       .map(([id, label]) => `| ${label} | ${formatBindings(commands.get(id))} |`);
     return rows.length ? `### ${group.title}\n\n| Action | Default |\n| --- | --- |\n${rows.join('\n')}` : null;
   }).filter(Boolean);
-
-  const gateNotice = !shortcutsOn
-    ? paletteOn
-      ? 'The general shortcut registry is **off by default**, so other commands remain off. The Open Search shortcut has its own switch, and its enabled binding still works.'
-      : 'Two independent controls are **off by default**: the Open Search shortcut has its own switch, while the general shortcut registry controls other commands. Search remains available from its other entry points.'
-    : paletteOn
-      ? 'Shortcuts are on by default.'
-      : 'The Open Search shortcut is **off by default** through its own switch. Search remains available from its other entry points, and other enabled commands still follow the general shortcut registry.';
 
   const covered = new Set(GROUPS.flatMap((g) => Object.keys(g.commands)));
   const uncovered = [...commands.keys()].filter((id) => !covered.has(id));
@@ -183,9 +163,8 @@ Happier has ${commands.size} keyboard commands. Every one can be rebound, and th
 differ between the web client and the native apps where the platform already
 claims a key.
 
-<Callout type="warn">
-  ${gateNotice}
-</Callout>
+In unreleased 0.3 development, shortcuts and Search are always available. Use
+**Settings → Keyboard shortcuts** to disable or rebind individual commands.
 
 \`Mod\` means Command on macOS and iOS, and Control everywhere else. Where a
 binding is written literally as \`Ctrl\`, it is Control on every platform
@@ -208,7 +187,7 @@ have no default binding and use the same execution path as their Search row.
 
 ${commands.has('search.files') ? `In unreleased 0.3 development source, file quick open uses this same Search
 surface, scoped to the workspace. Its registered shortcut is
-${formatBindings(commands.get('search.files'))}; the general shortcut registry must be enabled.
+${formatBindings(commands.get('search.files'))}.
 The browser or operating system may claim a binding before Happier receives it.
 See [Files and the editor](/code/files-and-editor) for the file workflow.
 
@@ -227,7 +206,7 @@ ${commands.has('workspace.tab.new') ? `The development-only 0.3 workspace adds t
 They work while editing: \`Mod+T\` opens an empty tab, \`Mod+W\` closes the active
 tab, \`Mod+Shift+W\` closes the pane's unpinned tabs, \`Mod+1\` through \`Mod+8\`
 select a position, and \`Mod+9\` selects the last
-tab. They require the general shortcut registry to be enabled. A browser may
+tab. A browser may
 claim these keys before Happier receives them; you can rebind them if needed.
 
 In multi-selectable lists, \`x\` toggles the focused row, Shift+Up/Down extends

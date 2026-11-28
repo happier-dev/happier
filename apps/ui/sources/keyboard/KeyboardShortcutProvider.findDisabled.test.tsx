@@ -32,7 +32,7 @@ beforeEach(async () => {
     boundary.subscribe.mockReset().mockReturnValue({ remove: vi.fn() });
     boundary.configure.mockReset();
     environment = await restoreServerAccountForTest({ serverUrl: 'http://find-keys.test' });
-    getStorage().setState(state => ({ settings: { ...state.settings, keyboardShortcutsV2Enabled: false,
+    getStorage().setState(state => ({ settings: { ...state.settings,
         keyboardSingleKeyShortcutsEnabled: false, keyboardShortcutDisabledCommandIdsV1: [], keyboardShortcutOverridesV1: {} } }));
     dom = new JSDOM('<!doctype html><textarea></textarea>', { url: 'http://find-keys.test' });
     vi.stubGlobal('window', dom.window);
@@ -47,7 +47,7 @@ afterEach(async () => {
     vi.unstubAllGlobals();
 });
 
-describe('Capture keys with general shortcuts disabled', () => {
+describe('Capture keys with single-key shortcuts disabled', () => {
     it('copies only with an active capture handler, leaving note and annotation text to their editor', async () => {
         const copy = vi.fn();
         let setActive: React.Dispatch<React.SetStateAction<boolean>> = () => {};
@@ -81,7 +81,7 @@ describe('Capture keys with general shortcuts disabled', () => {
     });
 });
 
-describe('Find keys with general shortcuts disabled', () => {
+describe('Find keys with single-key shortcuts disabled', () => {
     it('finds the last interacted surface when transcript text leaves BODY focused, and yields outside or on a second Find', async () => {
         const root = document.createElement('section');
         const transcript = document.createElement('span');

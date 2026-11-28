@@ -1390,7 +1390,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         theme, glass: isGlassComposer, surfaceGroup: props.surfaceGroup,
         embedded: embeddedPanel, customBackground: props.panelStyle?.backgroundColor,
     });
-    const keyboardShortcutsV2Enabled = useSetting('keyboardShortcutsV2Enabled') === true;
     const keyboardSingleKeyShortcutsEnabled = useSetting('keyboardSingleKeyShortcutsEnabled') === true;
     const keyboardShortcutOverridesV1 = useSetting('keyboardShortcutOverridesV1') ?? {};
     const keyboardShortcutDisabledCommandIdsV1 = useSetting('keyboardShortcutDisabledCommandIdsV1') ?? [];
@@ -1568,14 +1567,14 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const hasSendableNonText = props.hasSendableAttachments === true || props.hasSendableChanges === true;
     const hasSendableContent = hasText || hasSendableNonText;
     const sendMenuShortcuts = React.useMemo(() => buildComposerSendShortcutLabels({
-        alternateMode: props.alternateSendMode ?? 'agent_queue', keyboardShortcutsV2Enabled,
+        alternateMode: props.alternateSendMode ?? 'agent_queue',
         keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1,
         platformOS: Platform.OS,
-    }), [props.alternateSendMode, keyboardShortcutsV2Enabled, keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1]);
+    }), [props.alternateSendMode, keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1]);
     const afterSendShortcut = React.useMemo(() => buildComposerAfterSendShortcutLabel({
-        keyboardShortcutsV2Enabled, keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1,
+        keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1,
         platformOS: Platform.OS,
-    }), [keyboardShortcutsV2Enabled, keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1]);
+    }), [keyboardSingleKeyShortcutsEnabled, keyboardShortcutOverridesV1, keyboardShortcutDisabledCommandIdsV1]);
     const sendMenuItems = React.useMemo(() => buildAgentInputSendMenuItems({
         modes: props.sendMenuModes,
         shortcuts: sendMenuShortcuts,
@@ -4046,7 +4045,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             || props.armedContinuationTarget != null || props.armedRouteContinuation != null;
         const sendShortcutAction = !submitEnabled ? null : resolveComposerSendShortcutAction(event, {
             newSessionComposer: props.newSessionAfterSendMode != null,
-            keyboardShortcutsV2Enabled,
             keyboardSingleKeyShortcutsEnabled,
             keyboardShortcutOverridesV1,
             keyboardShortcutDisabledCommandIdsV1,

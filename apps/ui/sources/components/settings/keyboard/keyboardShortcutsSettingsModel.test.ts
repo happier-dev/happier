@@ -11,15 +11,11 @@ import {
 } from './keyboardShortcutsSettingsModel';
 
 const baseSettings = {
-    commandPaletteEnabled: true,
-    keyboardShortcutsV2Enabled: false,
     keyboardSingleKeyShortcutsEnabled: false,
     keyboardShortcutDisabledCommandIdsV1: [],
     keyboardShortcutOverridesV1: {},
 } as Pick<
     Settings,
-    | 'commandPaletteEnabled'
-    | 'keyboardShortcutsV2Enabled'
     | 'keyboardSingleKeyShortcutsEnabled'
     | 'keyboardShortcutDisabledCommandIdsV1'
     | 'keyboardShortcutOverridesV1'
@@ -160,11 +156,11 @@ describe('keyboardShortcutsSettingsModel', () => {
         ]);
     });
 
-    it('uses the legacy command palette setting as the command palette shortcut enable state', () => {
+    it('uses the disabled-command preference for the command palette shortcut enable state', () => {
         const model = buildKeyboardShortcutSettingsModel({
             settings: {
                 ...baseSettings,
-                commandPaletteEnabled: false,
+                keyboardShortcutDisabledCommandIdsV1: ['commandPalette.open'],
             },
             platform: 'macos',
             surface: 'native',
@@ -270,7 +266,6 @@ describe('keyboardShortcutsSettingsModel', () => {
         });
         expect(buildKeyboardShortcutToggleDelta(['commandPalette.open', 'session.new'], 'commandPalette.open', false)).toEqual({
             keyboardShortcutDisabledCommandIdsV1: ['session.new'],
-            commandPaletteEnabled: true,
         });
 
         expect(buildKeyboardShortcutResetDelta({
@@ -282,7 +277,6 @@ describe('keyboardShortcutsSettingsModel', () => {
             commandId: 'commandPalette.open',
         })).toEqual({
             keyboardShortcutDisabledCommandIdsV1: ['session.new'],
-            commandPaletteEnabled: true,
             keyboardShortcutOverridesV1: {
                 'session.new': [{ binding: 'Mod+Shift+N' }],
             },

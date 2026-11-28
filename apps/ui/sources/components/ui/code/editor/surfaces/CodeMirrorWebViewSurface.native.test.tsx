@@ -287,7 +287,7 @@ describe('CodeMirrorWebViewSurface (native)', () => {
         const { storage } = await import('@/sync/domains/state/storage');
         const previous = storage.getState().settings;
         try {
-            storage.setState({ settings: { ...previous, keyboardShortcutsV2Enabled: true } });
+            storage.setState({ settings: { ...previous } });
             await renderScreen(<KeyboardShortcutProvider handlers={{ 'files.editor.save': save }}>
                 <CodeMirrorWebViewSurface resetKey="save-shortcut" value="one" language="text" onChange={vi.fn()} />
             </KeyboardShortcutProvider>);

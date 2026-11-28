@@ -6,7 +6,7 @@ describe('editor change navigation commands', () => {
         const next = vi.fn();
         const previous = vi.fn();
         const dispatch = createKeyboardShortcutDispatcher({
-            enabled: true, platform: 'macos', surface: 'web', singleKeyShortcutsEnabled: false,
+            platform: 'macos', surface: 'web', singleKeyShortcutsEnabled: false,
             disabledCommandIds: [], overrides: {},
             handlers: { 'files.editor.change.next': next, 'files.editor.change.previous': previous },
             getContext: () => ({ isEditableTarget: true, isComposing: false }),

@@ -6,7 +6,7 @@ describe('media stage keyboard commands', () => {
     it.each([['media.zoomIn', '+', 'NumpadAdd'], ['media.zoomOut', '-', 'NumpadSubtract']] as const)(
         'accepts the numeric keypad for %s', (id, key, code) => {
             const run = vi.fn();
-            const dispatch = createKeyboardShortcutDispatcher({ enabled: true, platform: 'macos', surface: 'web',
+            const dispatch = createKeyboardShortcutDispatcher({ platform: 'macos', surface: 'web',
                 singleKeyShortcutsEnabled: true, disabledCommandIds: [], overrides: {}, handlers: { [id]: run },
                 getContext: () => ({ isEditableTarget: false, isComposing: false }) });
             expect(dispatch({ key, code, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false,
@@ -24,7 +24,7 @@ describe('media stage keyboard commands', () => {
         const code = key === ' ' ? 'Space' : key === '+' ? 'Equal' : /^[01]$/.test(key) ? `Digit${key}` : /^[a-z]$/.test(key) ? `Key${key.toUpperCase()}` : key;
         const event: NormalizedKeyboardEvent = { key, code, metaKey: false,
             ctrlKey: false, altKey: false, shiftKey: key === '+', repeat: false, isComposing: false };
-        const options = { enabled: true, platform: 'macos' as const, surface: 'web' as const,
+        const options = { platform: 'macos' as const, surface: 'web' as const,
             singleKeyShortcutsEnabled: true, disabledCommandIds: [], overrides: {},
             getContext: () => ({ isEditableTarget: false, isComposing: false }) };
         const handlers: Partial<Record<KeyboardCommandId, () => void>> = { [id]: run };

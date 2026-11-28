@@ -16,7 +16,7 @@ describe('mounted PDF shared Find registration', () => {
     it('opens and steps next/previous through the incumbent keyboard registry', async () => {
         Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' });
         const settings = storage.getState().settings;
-        storage.setState({ settings: { ...settings, keyboardShortcutsV2Enabled: true,
+        storage.setState({ settings: { ...settings,
             keyboardShortcutDisabledCommandIdsV1: [], keyboardShortcutOverridesV1: {} } });
         const revealed: number[] = [];
         const model = createPdfFindModel({ reveal: match => revealed.push(match.start) });

@@ -12,7 +12,7 @@ function copyEvent(platform: KeyboardPlatform): NormalizedKeyboardEvent {
 function options(platform: KeyboardPlatform, editable = false) {
     const copy = vi.fn();
     const value: KeyboardShortcutDispatcherOptions = {
-        enabled: true, platform, surface: 'web', webHost: 'desktop', singleKeyShortcutsEnabled: false,
+        platform, surface: 'web', webHost: 'desktop', singleKeyShortcutsEnabled: false,
         disabledCommandIds: [], overrides: {}, handlers: { 'screenCapture.copy': copy },
         getContext: () => ({ isEditableTarget: editable, isComposing: false }),
     };

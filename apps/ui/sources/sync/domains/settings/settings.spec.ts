@@ -251,8 +251,8 @@ describe('settings', () => {
                 },
             } as any);
 
-            expect(parsed.commandPaletteEnabled).toBe(false);
-            expect(parsed.keyboardShortcutsV2Enabled).toBe(true);
+            expect(parsed).not.toHaveProperty('commandPaletteEnabled');
+            expect(parsed).not.toHaveProperty('keyboardShortcutsV2Enabled');
             expect(parsed.keyboardSingleKeyShortcutsEnabled).toBe(true);
             expect(parsed.keyboardShortcutDisabledCommandIdsV1).toEqual(['commandPalette.open']);
             expect(parsed.keyboardShortcutOverridesV1).toEqual({

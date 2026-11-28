@@ -266,7 +266,7 @@ function BrowserAnnotatorCommentCard(props: Readonly<{
     const panel = React.useMemo(() => resolveAgentInputPanelStyle(theme), [theme]);
     const elements = useImageAnnotatorState(annotator, (state) => state.document.marks.reduce((count, mark) => (mark.kind === 'element' ? count + 1 : count), 0));
     const shortcuts = useSettingsValues([
-        'keyboardShortcutsV2Enabled', 'keyboardSingleKeyShortcutsEnabled',
+        'keyboardSingleKeyShortcutsEnabled',
         'keyboardShortcutOverridesV1', 'keyboardShortcutDisabledCommandIdsV1',
     ]);
     // Focus lands in the comment on the first frame (MIS §8b.1).
@@ -276,7 +276,6 @@ function BrowserAnnotatorCommentCard(props: Readonly<{
     // The field keeps its keys, so Attach resolves the way the composer's send does.
     const onKeyPress: OnKeyPressCallback = (event) => {
         const action = resolveComposerSendShortcutAction(event, {
-            keyboardShortcutsV2Enabled: shortcuts.keyboardShortcutsV2Enabled === true,
             keyboardSingleKeyShortcutsEnabled: shortcuts.keyboardSingleKeyShortcutsEnabled === true,
             keyboardShortcutOverridesV1: shortcuts.keyboardShortcutOverridesV1 ?? {},
             keyboardShortcutDisabledCommandIdsV1: shortcuts.keyboardShortcutDisabledCommandIdsV1 ?? [],

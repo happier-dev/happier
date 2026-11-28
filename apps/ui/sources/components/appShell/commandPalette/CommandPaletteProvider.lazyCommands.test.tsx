@@ -14,8 +14,6 @@ const testState = vi.hoisted(() => ({
     sessions: {} as Record<string, unknown>,
     enabledFeatures: new Set<string>(),
     settings: {
-        commandPaletteEnabled: true,
-        keyboardShortcutsV2Enabled: true,
         keyboardSingleKeyShortcutsEnabled: false,
         keyboardShortcutOverridesV1: {},
         keyboardShortcutDisabledCommandIdsV1: [],
@@ -144,8 +142,6 @@ describe('CommandPaletteProvider lazy command building', () => {
         testState.sessions = {};
         testState.enabledFeatures.clear();
         testState.settings = {
-            commandPaletteEnabled: true,
-            keyboardShortcutsV2Enabled: true,
             keyboardSingleKeyShortcutsEnabled: false,
             keyboardShortcutOverridesV1: {},
             keyboardShortcutDisabledCommandIdsV1: [],

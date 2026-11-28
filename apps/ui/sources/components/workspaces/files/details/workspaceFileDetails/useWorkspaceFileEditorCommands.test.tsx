@@ -134,16 +134,15 @@ describe('mounted file editor commands through the real editor, keyboard and Act
         await act(async () => { editorFor('a').onEditorChange('Alice a'); editorFor('b').onEditorChange('Alice b'); });
         // Seed through the settings owner so Account hydration retains this preference.
         await act(async () => {
-            storage.getState().applySettingsLocal({ keyboardShortcutsV2Enabled: true,
+            storage.getState().applySettingsLocal({
                 keyboardSingleKeyShortcutsEnabled: false, keyboardShortcutOverridesV1: {}, keyboardShortcutDisabledCommandIdsV1: [] });
         });
         expect(Platform.OS).toBe('web');
         expect(editorFor('a').readSnapshot()).toMatchObject({ isEditingFile: true, dirty: true });
         expect(editorFor('b').readSnapshot()).toMatchObject({ isEditingFile: true, dirty: true });
         expect(readWorkspaceFileEditorHolder(scope, 'account-a', 'src/b.ts')?.file?.read()).toEqual({ savedText: 'base b', text: 'Alice b', unsaved: true });
-        expect({ enabled: storage.getState().settings.keyboardShortcutsV2Enabled,
-            disabled: storage.getState().settings.keyboardShortcutDisabledCommandIdsV1,
-            overrides: storage.getState().settings.keyboardShortcutOverridesV1 }).toEqual({ enabled: true, disabled: [], overrides: {} });
+        expect({ disabled: storage.getState().settings.keyboardShortcutDisabledCommandIdsV1,
+            overrides: storage.getState().settings.keyboardShortcutOverridesV1 }).toEqual({ disabled: [], overrides: {} });
 
         const keyboardSave = async (id: FileId, hash: string) => {
             const expectedWrites = actionBoundary.calls.length + 1;

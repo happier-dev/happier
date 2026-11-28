@@ -12,7 +12,7 @@ describe('Appearance keyboard shortcut', () => {
         vi.stubGlobal('navigator', { userAgent });
         const toggle = vi.fn();
         const dispatch = createKeyboardShortcutDispatcher({
-            enabled: true, platform: 'macos', surface: 'web', webHost: 'browser',
+            platform: 'macos', surface: 'web', webHost: 'browser',
             singleKeyShortcutsEnabled: false, disabledCommandIds: [], overrides: {},
             handlers: { 'appearance.theme.toggle': toggle },
             getContext: () => ({ isEditableTarget: false, isComposing: false }),

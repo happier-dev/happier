@@ -13,7 +13,7 @@ describe('review commands through the shared dispatcher', () => {
         const calls: string[] = [];
         let context: KeyboardContext = { isEditableTarget: false, isComposing: false };
         const options = {
-            enabled: true, platform: 'macos' as const, surface: 'web' as const,
+            platform: 'macos' as const, surface: 'web' as const,
             singleKeyShortcutsEnabled: true, disabledCommandIds: [], overrides: {},
             handlers: {
                 'review.change.next': () => { calls.push('change+'); },
@@ -40,7 +40,7 @@ describe('review commands through the shared dispatcher', () => {
 
     it('asks only while a selection handler is registered and otherwise preserves composer focus', () => {
         const calls: string[] = [];
-        const options = { enabled: true, platform: 'macos' as const, surface: 'native' as const,
+        const options = { platform: 'macos' as const, surface: 'native' as const,
             singleKeyShortcutsEnabled: true, disabledCommandIds: [], overrides: {},
             getContext: () => ({ isEditableTarget: false, isComposing: false }),
         };

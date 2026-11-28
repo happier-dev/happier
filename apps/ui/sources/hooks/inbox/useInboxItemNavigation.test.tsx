@@ -63,12 +63,12 @@ describe('Inbox selection through the shared keyboard runtime', () => {
         opened.length = 0; read.length = 0; state = null;
         vi.stubGlobal('window', new EventTarget());
         vi.stubGlobal('navigator', { platform: 'Linux' });
-        storage.setState({ settings: { ...initialSettings, keyboardShortcutsV2Enabled: true, keyboardSingleKeyShortcutsEnabled: true } });
+        storage.setState({ settings: { ...initialSettings, keyboardSingleKeyShortcutsEnabled: true } });
     });
     afterEach(() => { standardCleanup(); vi.unstubAllGlobals(); storage.setState({ settings: initialSettings }); });
 
-    it('keeps local navigation available with general shortcuts off and respects the letter-key preference', async () => {
-        storage.setState({ settings: { ...initialSettings, keyboardShortcutsV2Enabled: false, keyboardSingleKeyShortcutsEnabled: false } });
+    it('keeps local navigation available and respects the letter-key preference', async () => {
+        storage.setState({ settings: { ...initialSettings, keyboardSingleKeyShortcutsEnabled: false } });
         await renderScreen(<KeyboardShortcutProvider handlers={{}}><Probe /></KeyboardShortcutProvider>);
         await act(async () => key('ArrowDown'));
         expect(state?.focus?.id).toBe('first');

@@ -8,7 +8,7 @@ const isProgramCommand = (id: string) => /^(panes\.|shell\.column\.toggle$|media
 describe('Files and Editor program bindings', () => {
   it('revives the message next/previous ids for the message cursor, honouring overrides saved for them', () => {
     const model = buildKeyboardShortcutSettingsModel({ platform: 'macos', surface: 'native', settings: {
-      commandPaletteEnabled: true, keyboardShortcutsV2Enabled: true, keyboardSingleKeyShortcutsEnabled: true,
+      keyboardSingleKeyShortcutsEnabled: true,
       keyboardShortcutDisabledCommandIdsV1: ['transcript.message.previous'],
       keyboardShortcutOverridesV1: { 'transcript.message.next': [{ binding: 'j' }] },
     } });
@@ -22,7 +22,7 @@ describe('Files and Editor program bindings', () => {
     for (const surface of ['native', 'web'] as const) {
       it.each([false, true])(`${platform}/${surface} has no program conflicts with single keys %s`, keyboardSingleKeyShortcutsEnabled => {
         const model = buildKeyboardShortcutSettingsModel({ platform, surface, settings: {
-          commandPaletteEnabled: true, keyboardShortcutsV2Enabled: true, keyboardSingleKeyShortcutsEnabled,
+          keyboardSingleKeyShortcutsEnabled,
           keyboardShortcutDisabledCommandIdsV1: [], keyboardShortcutOverridesV1: {},
         } });
         expect(model.conflicts.filter(conflict => conflict.commandIds.some(isProgramCommand))).toEqual([]);

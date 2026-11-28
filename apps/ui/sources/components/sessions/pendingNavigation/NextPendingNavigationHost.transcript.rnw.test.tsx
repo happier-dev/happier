@@ -186,7 +186,7 @@ describe('Next focus through the mounted RN-web transcript', () => {
             homes.answer(serverId, '/v2/sessions/active', { body: { sessions: wires, hasNext: false, nextCursor: null } });
             storage.setState({ isDataReady: true, profileScope: { serverId, accountId }, sessions: { ...sessions },
                 sessionMessages: transcript,
-                settings: { ...initialState.settings, keyboardShortcutsV2Enabled: true, transcriptGroupingMode: 'turns', transcriptGroupToolCalls: true },
+                settings: { ...initialState.settings, transcriptGroupingMode: 'turns', transcriptGroupToolCalls: true },
                 sessionListRowsByServerId: { [serverId]: Object.fromEntries(Object.values(sessions)
                     .map(session => [session.id, buildSessionListRenderableFromSession(session)])) },
                 ordinarySessionListMembershipByServerId: { [serverId]: Object.keys(sessions) },
@@ -230,7 +230,7 @@ describe('Next focus through the mounted RN-web transcript', () => {
         await waitForHomeGovernance(() => expect(bindingReady).toBe(true));
         // Account restoration publishes settings asynchronously; enable the real
         // shortcut only after that boundary has settled.
-        await React.act(async () => storage.setState({ settings: { ...storage.getState().settings, keyboardShortcutsV2Enabled: true } }));
+        await React.act(async () => storage.setState({ settings: { ...storage.getState().settings } }));
         const chord = new KeyboardEvent('keydown', { key: 'J', code: 'KeyJ', altKey: true, shiftKey: true, bubbles: true, cancelable: true });
         await React.act(async () => {
             window.dispatchEvent(chord);

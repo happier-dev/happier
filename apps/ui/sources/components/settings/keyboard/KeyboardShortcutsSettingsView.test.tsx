@@ -59,8 +59,6 @@ describe('KeyboardShortcutsSettingsView', () => {
     beforeEach(async () => {
         settingsFixture = {
             ...settingsDefaults,
-            commandPaletteEnabled: true,
-            keyboardShortcutsV2Enabled: false,
             keyboardSingleKeyShortcutsEnabled: true,
             keyboardShortcutDisabledCommandIdsV1: [],
             keyboardShortcutOverridesV1: {
@@ -90,7 +88,7 @@ describe('KeyboardShortcutsSettingsView', () => {
         const screen = await renderSettingsView(<KeyboardShortcutsSettingsView />);
 
         expect(screen.findByTestId('settings-keyboard-shortcuts-screen')).toBeTruthy();
-        expect(screen.findByTestId('settings-keyboard-shortcuts-enabled')).toBeTruthy();
+        expect(screen.findByTestId('settings-keyboard-shortcuts-enabled')).toBeFalsy();
         expect(screen.findByTestId('settings-keyboard-shortcuts-single-key-enabled')).toBeTruthy();
         expect(screen.findByTestId('settings-keyboard-shortcut-row-commandPalette.open')).toBeTruthy();
         expect(screen.findByTestId('settings-keyboard-shortcut-row-workspace.tab.closeAll')).toBeTruthy();
@@ -143,22 +141,18 @@ describe('KeyboardShortcutsSettingsView', () => {
         const { KeyboardShortcutsSettingsView } = await import('./KeyboardShortcutsSettingsView');
         const screen = await renderSettingsView(<KeyboardShortcutsSettingsView />);
 
-        const enabledSwitch = screen.findAllByType(Switch).find(node => node.props.testID === 'settings-keyboard-shortcuts-enabled');
-        await act(async () => { enabledSwitch?.props.onValueChange(true); });
-        await vi.waitFor(() => expect(storage.getState().settings.keyboardShortcutsV2Enabled).toBe(true));
+        expect(screen.findByTestId('settings-keyboard-shortcuts-enabled')).toBeFalsy();
 
         await screen.pressByTestIdAsync('settings-keyboard-shortcut-row-commandPalette.open');
         const disabledCommandSwitch = screen.findAllByType(Switch).find(node => node.props.testID === 'settings-keyboard-shortcut-enabled-commandPalette.open');
         await act(async () => { disabledCommandSwitch?.props.onValueChange(true); });
         await vi.waitFor(() => expect(storage.getState().settings).toMatchObject({
             keyboardShortcutDisabledCommandIdsV1: [],
-            commandPaletteEnabled: true,
         }));
 
         await screen.pressByTestIdAsync('settings-keyboard-shortcut-reset-commandPalette.open');
         await vi.waitFor(() => expect(storage.getState().settings).toMatchObject({
             keyboardShortcutDisabledCommandIdsV1: [],
-            commandPaletteEnabled: true,
             keyboardShortcutOverridesV1: {
                 'session.new': [{ binding: 'Mod+K' }],
             },
@@ -184,7 +178,6 @@ describe('KeyboardShortcutsSettingsView', () => {
 
         await vi.waitFor(() => expect(storage.getState().settings).toMatchObject({
             keyboardShortcutDisabledCommandIdsV1: [],
-            commandPaletteEnabled: true,
             keyboardShortcutOverridesV1: {
                 'commandPalette.open': [{ binding: 'Alt+S' }],
                 'session.new': [{ binding: 'Mod+K' }],

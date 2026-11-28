@@ -35,11 +35,12 @@ type CoupledSettings = Pick<AccountSettings, 'codingPromptBehaviorV1' | 'usageLi
     | 'peerMediationPreferencesV1' | 'favoriteProfiles' | 'experiments' | 'featureToggles'
     | 'glassBlurEnabled' | 'glassBlurIntensity' | 'glassTintIntensity' | 'glassSurfaceMaterials' | 'scmCommitMessageGeneratorRunnerV1'
     | 'machineRetentionDefaultsV1' | 'connectedServicesProviderStateSharingSettingsV1'
-    | 'keyboardShortcutDisabledCommandIdsV1' | 'keyboardShortcutOverridesV1' | 'commandPaletteEnabled'
+    | 'keyboardShortcutDisabledCommandIdsV1' | 'keyboardShortcutOverridesV1'
     | 'sessionTerminalHost' | 'sessionUseTmux' | 'sessionTmuxByMachineId' | 'sessionTerminalHostByMachineId'
     | 'sessionTmuxSessionName' | 'sessionTmuxIsolated' | 'sessionTmuxTmpDir' | 'actionsSettingsV1'
     | 'sessionDefaultPermissionModeByTargetKey' | 'backendEnabledByTargetKey' | 'backendCliSourcePreferenceByTargetKey'
     | 'sessionIdleCompactionEnabledByTargetKey' | 'sessionIdleCompactionMinContextTokensByTargetKey' | 'sessionIdleCompactionCacheWindowOverrideMsByTargetKey'
+    | 'connectedAccountStatusEnabledByTargetKey'
     | 'scmGitRepoPreferredBackend' | 'scmGitRepoPreferredBackendQualifiedId' | 'scmDefaultDiffModeByBackend'
     | 'toolViewDetailLevelByToolName' | 'toolViewExpandedDetailLevelByToolName' | 'sessionReminderPresetsV1'
     | 'externalSessionsSettingsV1' | 'collectionDisplayPreferencesV1' | 'sessionListDensity' | 'sessionListLayoutV1'
@@ -424,7 +425,7 @@ export const terminalHostStorage: PortableAccountSettingBindingV1 = { ...owner, 
 };
 const commandValueSchema = z.strictObject({ enabled: z.boolean(), binding: z.optional(z.nullable(z.string().check(z.trim()))) });
 export function commandStorage(commandId: string): PortableAccountSettingBindingV1 { return { ...owner,
-    read: settings => ({ enabled: !settings.keyboardShortcutDisabledCommandIdsV1.includes(commandId) && (commandId !== 'commandPalette.open' || settings.commandPaletteEnabled), binding: settings.keyboardShortcutOverridesV1[commandId]?.[0]?.binding ?? null }),
+    read: settings => ({ enabled: !settings.keyboardShortcutDisabledCommandIdsV1.includes(commandId), binding: settings.keyboardShortcutOverridesV1[commandId]?.[0]?.binding ?? null }),
     parse: (value): ReturnType<PortableAccountSettingBindingV1['parse']> => {
         const parsed = commandValueSchema.safeParse(value);
         if (!parsed.success || parsed.data.binding != null && !buildKeyboardShortcutSetDelta({ commandId, binding: parsed.data.binding, disabledCommandIds: [], overrides: {} })) return { success: false };

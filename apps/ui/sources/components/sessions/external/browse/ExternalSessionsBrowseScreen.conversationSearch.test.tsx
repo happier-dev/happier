@@ -584,7 +584,7 @@ describe('History unified conversation search', () => {
         function HandoffProbe() { handoff.current = useOptionalAppPaneContext()?.fileFindSeedHandoff; return null; }
         const routeServerId = custody === 'local Home alias' ? connection!.home.id : serverId;
         if (custody === 'local Home alias') expect(routeServerId).not.toBe(serverId);
-        storage.setState(state => ({ settings: { ...state.settings, keyboardShortcutsV2Enabled: false } }));
+
         const screen = await renderScreen(<AppPaneProvider><HandoffProbe /><ExternalSessionsBrowseScreen accountLifetime={custody === 'explicit Account' ? lifetime : undefined}
             lockScope={{ machineId: 'machine-1', serverId: routeServerId, providerId: 'acme.archive', source: { kind: 'archive' } }} initialSearchTarget="content" /></AppPaneProvider>);
         await waitForHomeGovernance(async () => { await flush(); expect(screen.findHostByTestId('direct-session-candidates-search-input')).not.toBeNull(); });

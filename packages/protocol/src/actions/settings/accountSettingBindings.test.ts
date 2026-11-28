@@ -266,11 +266,14 @@ describe('portable coupled Account setting mutations', () => {
         expect(delta?.glassSurfaceMaterials?.sidebar).toEqual({ blur: 'off', opacity: 1 });
         expect(glass.parse('opaque').success).toBe(false);
     });
-    it('updates the command palette pair and preserves another command override', () => {
-        const settings = accountSettingsParse({ keyboardShortcutOverridesV1: { 'composer.focus': [{ binding: 'Alt+J' }] } });
+    it('changes the palette command preference without rewriting retired gates or another override', () => {
+        const settings = accountSettingsParse({ commandPaletteEnabled: false,
+            keyboardShortcutOverridesV1: { 'composer.focus': [{ binding: 'Alt+J' }] } });
         const command = binding('commandStorage', 'commandPalette.open');
+        expect(command.read(settings)).toEqual({ enabled: true, binding: null });
         const delta = command.mutate(settings, { enabled: false, binding: 'Mod+P' });
-        expect(delta?.commandPaletteEnabled).toBe(false);
+        expect(delta).not.toHaveProperty('commandPaletteEnabled');
+        expect(delta?.keyboardShortcutDisabledCommandIdsV1).toEqual(['commandPalette.open']);
         expect(delta?.keyboardShortcutOverridesV1).toEqual({ 'composer.focus': [{ binding: 'Alt+J' }], 'commandPalette.open': [{ binding: 'Mod+P' }] });
         expect(command.parse({ enabled: true, binding: 'Mod+', unknown: true }).success).toBe(false);
         expect(command.parse({ enabled: true, binding: 'Mod+' }).success).toBe(false);
@@ -286,7 +289,7 @@ describe('portable coupled Account setting mutations', () => {
         expect(intent.success).toBe(true);
         if (!intent.success) throw new Error('Command toggles must not require a binding change');
         const delta = command.mutate(settings, intent.value);
-        expect(accountSettingsParse({ ...settings, ...delta })).toMatchObject({ commandPaletteEnabled: false,
+        expect(accountSettingsParse({ ...settings, ...delta })).toMatchObject({
             keyboardShortcutDisabledCommandIdsV1: ['commandPalette.open'],
             keyboardShortcutOverridesV1: settings.keyboardShortcutOverridesV1,
         });

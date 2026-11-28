@@ -221,7 +221,7 @@ describe('Voice default-target lifecycle', () => {
                 setMicMuted() {}, setVolume() {}, sendUserMessage() {}, sendContextualUpdate() {} };
         });
         seedVoiceSettings({ providerId: entry.providerId, welcome: { enabled: false }, ui: { activityFeedEnabled: false, scopeDefault }, providers: { [entry.providerId]: { schemaVersion: 2, config: ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS } } });
-        getStorage().setState(state => ({ settings: { ...state.settings, keyboardShortcutsV2Enabled: true,
+        getStorage().setState(state => ({ settings: { ...state.settings,
             keyboardShortcutOverridesV1: { 'voice.toggle': [{ binding: 'Ctrl+Alt+B' }] } } }));
         getStorage().setState((state) => ({ localSettings: { ...state.localSettings, voicePresenceContainer: 'top_bar' } }));
         getStorage().setState({ sessions: { 'keyboard-history': createSessionFixture({ id: 'keyboard-history', serverId: account.home.id, encryptionMode: 'plain', active: false,

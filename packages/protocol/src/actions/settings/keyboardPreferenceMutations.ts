@@ -6,16 +6,13 @@ type KeyboardSurface = NonNullable<KeybindingRule['blockedSurfaces']>[number];
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
 type KeyboardShortcutToggleDelta =
-    & Mutable<Pick<AccountSettings, 'keyboardShortcutDisabledCommandIdsV1'>>
-    & Partial<Mutable<Pick<AccountSettings, 'commandPaletteEnabled'>>>;
+    Mutable<Pick<AccountSettings, 'keyboardShortcutDisabledCommandIdsV1'>>;
 
 type KeyboardShortcutResetDelta =
-    & Mutable<Pick<AccountSettings, 'keyboardShortcutDisabledCommandIdsV1' | 'keyboardShortcutOverridesV1'>>
-    & Partial<Mutable<Pick<AccountSettings, 'commandPaletteEnabled'>>>;
+    Mutable<Pick<AccountSettings, 'keyboardShortcutDisabledCommandIdsV1' | 'keyboardShortcutOverridesV1'>>;
 
 type KeyboardShortcutSetDelta =
-    & Mutable<Pick<AccountSettings, 'keyboardShortcutDisabledCommandIdsV1' | 'keyboardShortcutOverridesV1'>>
-    & Partial<Mutable<Pick<AccountSettings, 'commandPaletteEnabled'>>>;
+    Mutable<Pick<AccountSettings, 'keyboardShortcutDisabledCommandIdsV1' | 'keyboardShortcutOverridesV1'>>;
 
 const codeByDisplayKey: Readonly<Record<string, string>> = {
     Enter: 'Enter',
@@ -112,9 +109,6 @@ export function buildKeyboardShortcutToggleDelta(
     const delta: KeyboardShortcutToggleDelta = {
         keyboardShortcutDisabledCommandIdsV1: Array.from(next),
     };
-    if (commandId === 'commandPalette.open') {
-        delta.commandPaletteEnabled = !disabled;
-    }
     return delta;
 }
 

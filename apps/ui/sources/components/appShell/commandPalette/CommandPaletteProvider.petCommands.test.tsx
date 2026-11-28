@@ -35,8 +35,6 @@ vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
     const settings: Settings = {
         ...settingsDefaults,
-        commandPaletteEnabled: true,
-        keyboardShortcutsV2Enabled: true,
         keyboardSingleKeyShortcutsEnabled: false,
         keyboardShortcutOverridesV1: {},
         keyboardShortcutDisabledCommandIdsV1: [],

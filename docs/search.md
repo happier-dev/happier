@@ -42,9 +42,18 @@ accessibility, and Lane 09 evidence.
 | Plugin declarations and execution | `contributes.searchProviders` in the contribution catalog + the existing Action dispatcher (`executeAction | openSurface`) |
 | Feature admission | `packages/protocol/src/features/catalog.ts` via `useMemorySearchProvider`; see `feature-gating.md` |
 
+In 0.3 development, the shortcut registry and Search are always available. The
+Keyboard settings page controls each command through
+`keyboardShortcutDisabledCommandIdsV1` and `keyboardShortcutOverridesV1`;
+`keyboardSingleKeyShortcutsEnabled` still controls global letter-key shortcuts.
+The Account settings parser retires the 0.2 `commandPaletteEnabled` and
+`keyboardShortcutsV2Enabled` roots, accepting their stored values without using
+them as decisions. Search's other entry points remain available when its
+individual keyboard command is disabled.
+
 ## Workspace replacement (0.3 development)
 
-Replacement extends the Text in files source. The Machine previews and applies
+Replacement extends the Text in files source. The selected workspace source previews and applies
 through `daemon.workspaceFiles.replace.preview.v1` and
 `daemon.workspaceFiles.replace.apply.v1`; clients do not loop over individual
 file reads and writes. `machines/workspaceFilesReplace.ts` owns the pure byte

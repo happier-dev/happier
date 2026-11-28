@@ -11,8 +11,6 @@ const testState = vi.hoisted(() => ({
     modalShow: vi.fn(),
     keyboardHandlers: null as KeyboardShortcutHandlers | null,
     settings: {
-        commandPaletteEnabled: true,
-        keyboardShortcutsV2Enabled: true,
         keyboardSingleKeyShortcutsEnabled: false,
         keyboardShortcutOverridesV1: {},
         keyboardShortcutDisabledCommandIdsV1: [],
@@ -126,8 +124,6 @@ describe('CommandPaletteProvider keyboard shortcuts', () => {
         testState.keyboardHandlers = null;
         testState.modalShow.mockReset();
         testState.settings = {
-            commandPaletteEnabled: true,
-            keyboardShortcutsV2Enabled: true,
             keyboardSingleKeyShortcutsEnabled: false,
             keyboardShortcutOverridesV1: {
                 'settings.open': [{ binding: 'Alt+S' }],
@@ -177,10 +173,10 @@ describe('CommandPaletteProvider keyboard shortcuts', () => {
         }));
     });
 
-    it('keeps Search available when only its keyboard shortcut is disabled', async () => {
+    it('keeps Search and its command available when the retired palette setting is false', async () => {
         testState.settings = {
             ...testState.settings,
-            commandPaletteEnabled: false,
+            ...{ commandPaletteEnabled: false },
         };
         const { useUniversalSearchRuntime } = await import('@/components/appShell/search/UniversalSearchRuntimeContext');
         const { CommandPaletteProvider } = await import('./CommandPaletteProvider');
@@ -195,7 +191,7 @@ describe('CommandPaletteProvider keyboard shortcuts', () => {
         );
         await act(async () => { await screen.findByType('OpenSearch')?.props.onPress(); });
 
-        expect(testState.keyboardHandlers?.['commandPalette.open']).toBeUndefined();
+        expect(testState.keyboardHandlers?.['commandPalette.open']).toBeTypeOf('function');
         expect(testState.modalShow).toHaveBeenCalledWith(expect.objectContaining({
             props: expect.objectContaining({ initialQuery: 'needle' }),
             webPlacement: 'top',

@@ -24,7 +24,6 @@ export type ComposerSendShortcutAction = 'sendAlternate' | 'sendPending' | 'send
 export type ComposerEscapeAction = 'armAbort' | 'confirmAbort';
 
 export type ComposerShortcutSettings = Readonly<{
-    keyboardShortcutsV2Enabled: boolean;
     keyboardSingleKeyShortcutsEnabled: boolean;
     keyboardShortcutDisabledCommandIdsV1: readonly string[];
     keyboardShortcutOverridesV1: Readonly<Record<string, readonly KeybindingRule[]>>;
@@ -110,8 +109,6 @@ export function resolveComposerSendShortcutAction(
 
     let action: ComposerSendShortcutAction | null = null;
     const dispatcher = createKeyboardShortcutDispatcher({
-        enabled: input.keyboardShortcutsV2Enabled,
-        enabledWhenDisabledCommandIds: ['composer.sendImmediate', 'composer.sendInterrupt', 'composer.sendAlternateAfterSend'],
         platform: resolveComposerKeyboardPlatform({
             platformOS: event.platformOS ?? input.platformOS,
             webPlatform: event.webPlatform ?? input.webPlatform,
@@ -164,7 +161,7 @@ export function buildComposerSendShortcutLabels(input: ComposerShortcutSettings 
         singleKeyShortcutsEnabled: input.keyboardSingleKeyShortcutsEnabled,
     });
     return {
-        ...(input.keyboardShortcutsV2Enabled && labels['composer.sendPending'] ? { server_pending: labels['composer.sendPending'] } : {}),
+        ...(labels['composer.sendPending'] ? { server_pending: labels['composer.sendPending'] } : {}),
         ...(labels['composer.sendImmediate'] ? { [input.alternateMode]: labels['composer.sendImmediate'] } : {}),
         ...(labels['composer.sendInterrupt'] ? { interrupt: labels['composer.sendInterrupt'] } : {}),
     };

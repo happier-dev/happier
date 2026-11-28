@@ -423,6 +423,8 @@ export const RETIRED_ACCOUNT_SETTINGS_SESSION_ORGANIZATION_KEYS = Object.freeze(
 export const RETIRED_ACCOUNT_SETTINGS_ROOT_KEYS = Object.freeze([
   ...RETIRED_ACCOUNT_SETTINGS_SESSION_ONLY_KEYS,
   ...RETIRED_ACCOUNT_SETTINGS_SESSION_ORGANIZATION_KEYS,
+  'commandPaletteEnabled',
+  'keyboardShortcutsV2Enabled',
   'composerPromptLibraryButtonEnabled',
   'defaultPermissionModeClaude',
   'defaultPermissionModeCodex',
@@ -1784,8 +1786,6 @@ const ACCOUNT_SESSION_AUTHORING_CATALOG_DEFINITIONS = {
     newSessionBackdropStrengthV1: accountPreference(z.enum(NEW_SESSION_BACKDROP_STRENGTHS), 'soft', 'session authoring'),
     newSessionWizardSectionPresentationV1: accountPreference(NewSessionWizardSectionPresentationByIdSchema, {}, 'session authoring'),
     newSessionWizardColumnsEnabled: accountPreference(z.boolean(), false, 'session authoring'),
-    commandPaletteEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'keyboard shortcuts'), trackAccountBoolean),
-    keyboardShortcutsV2Enabled: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'keyboard shortcuts'), trackAccountBoolean),
     keyboardSingleKeyShortcutsEnabled: withAccountSettingAnalytics(accountPreference(z.boolean(), false, 'keyboard shortcuts'), trackAccountBoolean),
     keyboardShortcutOverridesV1: withAccountSettingAnalytics(accountPreference(KeyboardShortcutOverridesSchema, {}, 'keyboard shortcuts', 64 * 1024), {
         trackCurrentState: true,

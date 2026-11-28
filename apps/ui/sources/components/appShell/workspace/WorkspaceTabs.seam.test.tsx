@@ -699,7 +699,7 @@ describe('workspace tabs production composition', () => {
         installDisconnectedServerSocketBoundary();
         const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'alice', encryptionMode: 'plain' });
         const homes = await serveActionHomes({ homes: [{ key: 'home', serverUrl: `https://workspace-close-${entry.replaceAll(' ', '-')}.test`, accountId: 'alice', currentAccount: true,
-            settings: { keyboardShortcutsV2Enabled: true } }], route: request => artifacts.handle(request.path, {
+            settings: {} }], route: request => artifacts.handle(request.path, {
                 method: request.method, ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
             }) ?? undefined });
         disposeHome = homes.dispose; disconnectHome = await homes.restoreActiveConnection();
@@ -900,7 +900,7 @@ describe('workspace tabs production composition', () => {
         restoreBrowserLocks = installBrowserStorageLockBoundary();
         installDisconnectedServerSocketBoundary();
         const homes = await serveActionHomes({ homes: [{ key: 'home', serverUrl: 'https://workspace-seam.test', accountId: 'alice', currentAccount: true,
-            settings: { keyboardShortcutsV2Enabled: true } }], route: () => undefined });
+            settings: {} }], route: () => undefined });
         disposeHome = homes.dispose;
         disconnectHome = await homes.restoreActiveConnection();
         const { storage } = await import('@/sync/domains/state/storage');
@@ -1006,7 +1006,6 @@ describe('workspace tabs production composition', () => {
             await screen.pressByTestIdAsync('workspace-overflow-close-all');
             await settle(() => { expect(group().tabIds).toEqual([sessionTab]); });
             await open(`/session/keyboard-all?serverId=${homeId}`);
-            expect(storage.getState().settings.keyboardShortcutsV2Enabled).toBe(true);
             const closeAllKey = new KeyboardEvent('keydown', { key: 'w', code: 'KeyW', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true });
             await act(async () => {
                 window.dispatchEvent(closeAllKey);

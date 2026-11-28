@@ -1004,7 +1004,7 @@ describe('InboxContent renders the canonical item model in three views (C1 L10, 
         const serverId = (await import('@/sync/domains/server/serverRuntime')).getActiveServerSnapshot().serverId;
         vi.stubGlobal('window', new EventTarget());
         vi.stubGlobal('navigator', { platform: 'Linux' });
-        storage.setState({ settings: { ...storage.getState().settings, keyboardShortcutsV2Enabled: true, keyboardSingleKeyShortcutsEnabled: true } });
+        storage.setState({ settings: { ...storage.getState().settings, keyboardSingleKeyShortcutsEnabled: true } });
         const base = createModel({ serverId, heldStep: { invocationId: 'inv-order', label: 'Review result' } });
         const decision = base.items.find(item => item.type === 'decision')!;
         const approvals = base.items.filter(item => item.type === 'approval');
@@ -1035,7 +1035,7 @@ describe('InboxContent renders the canonical item model in three views (C1 L10, 
         const { InboxContent } = await import('./InboxContent');
         vi.stubGlobal('window', new EventTarget());
         vi.stubGlobal('navigator', { platform: 'Linux' });
-        storage.setState({ settings: { ...storage.getState().settings, keyboardShortcutsV2Enabled: true, keyboardSingleKeyShortcutsEnabled: true } });
+        storage.setState({ settings: { ...storage.getState().settings, keyboardSingleKeyShortcutsEnabled: true } });
         const rows = [mentionItem('older'), mentionItem('newer'), mentionItem('middle')].map((item, index) => ({
             ...item, type: view === 'updates' ? 'update' as const : 'mention' as const, view,
             createdAt: NOW - [90_000_000, 1_000, 60_000][index]!,

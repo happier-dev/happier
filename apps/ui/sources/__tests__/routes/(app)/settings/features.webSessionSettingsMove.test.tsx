@@ -77,5 +77,6 @@ describe('FeaturesSettingsScreen (web settings moved)', () => {
         expect(titles).not.toContain('settingsFeatures.enterToSend');
         expect(titles).not.toContain('settingsFeatures.historyScope');
         expect(titles).not.toContain('settingsFeatures.enhancedSessionWizard');
+        expect(titles).not.toContain('settingsFeatures.commandPalette');
     });
 });

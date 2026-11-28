@@ -68,7 +68,7 @@ const [{ WorkspaceProvider }, { AppPaneProvider }, { resolveCompactAppDestinatio
     import('@/sync/domains/workspaces/files/recentWorkspaceFiles'), import('@/sync/domains/workspaces/workspaceScope'),
 ]);
 
-it('keeps the unopened Session menu available to scoped Search and its Mod binding from the composer', async () => {
+it('opens Search with legacy gates off while honoring individual command opt-out in the Session composer', async () => {
     const [{ SessionHeaderActionMenu }, { CurrentUiContextProvider }, { MainAppTabStateProvider },
         { PluginSurfaceFocusEligibilityProvider }, { createSessionFixture }, { TokenStorage }, { Modal },
         { CurrentUiContextActionHost }] = await Promise.all([
@@ -79,7 +79,7 @@ it('keeps the unopened Session menu available to scoped Search and its Mod bindi
         import('@/auth/storage/tokenStorage'), import('@/modal'),
         import('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort'),
     ]);
-    const settings = { ...settingsDefaults, commandPaletteEnabled: true, keyboardShortcutsV2Enabled: true,
+    const settings = { ...settingsDefaults, commandPaletteEnabled: false, keyboardShortcutsV2Enabled: false,
         keyboardShortcutOverridesV1: { 'session.action:ui.session.rename': [{ binding: 'Mod+Alt+U' }] } };
     const homes = await serveActionHomes({ homes: [{ key: 'session', serverUrl: 'https://session-menu-search.test',
         serverIdentityId: 'srv_session_menu_search', accountId: 'alice', currentAccount: true, settings }] });
@@ -121,6 +121,19 @@ it('keeps the unopened Session menu available to scoped Search and its Mod bindi
             input.dispatchEvent(new Event('input', { bubbles: true }));
         });
         await vi.waitFor(() => expect(host()?.textContent).toContain('Rename'));
+        await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'Escape', code: 'Escape', bubbles: true, cancelable: true,
+        })));
+        await vi.waitFor(() => expect(host()).toBeNull());
+        await act(async () => storage.setState({ settings: { ...storage.getState().settings,
+            keyboardShortcutDisabledCommandIdsV1: ['commandPalette.open'] } }));
+        composer.focus();
+        const optedOutOpen = new KeyboardEvent('keydown', {
+            key: 'k', code: 'KeyK', metaKey: command, ctrlKey: !command, bubbles: true, cancelable: true,
+        });
+        await act(async () => composer.dispatchEvent(optedOutOpen));
+        expect(optedOutOpen.defaultPrevented).toBe(false);
+        expect(host()).toBeNull();
     } finally {
         await act(async () => root.unmount());
         prompt.mockRestore(); container.remove(); route.pathname = '/'; route.params = {};
@@ -132,7 +145,7 @@ it.each(['checkout', 'idle', 'focus'] as const)('opens Text in files from the pr
     const restoreLocks = installBrowserStorageLockBoundary();
     const homes = await serveActionHomes({ homes: [{ key: 'home', serverUrl: 'https://project-text-search.test',
         serverIdentityId: 'srv_project_text_search', accountId: 'alice', currentAccount: true,
-        settings: { commandPaletteEnabled: true, keyboardShortcutsV2Enabled: true } }],
+        settings: {} }],
         route: request => request.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`
             ? Response.json(createPlainProjectAccountRowListFixture({ workspaceRefs: [{ id: 'search-project',
                 serverId: 'srv_project_text_search', machineId: 'studio', rootPath: '/repo', label: 'Search project', createdAtMs: 1 }] }))
@@ -157,8 +170,7 @@ it.each(['checkout', 'idle', 'focus'] as const)('opens Text in files from the pr
         // Project pages use the direct adapter, not a registered Session-style driver.
         const projectContext = readProjectWidgetAreaContextV1({ serverId: checkout.serverId,
             projectRef: checkout, activeCheckout: checkout, authority: account });
-        storage.setState({ isDataReady: true, settings: { ...settingsDefaults,
-            commandPaletteEnabled: true, keyboardShortcutsV2Enabled: true } });
+        storage.setState({ isDataReady: true, settings: { ...settingsDefaults } });
         await act(async () => root.render(<InjectedAuthProvider credentials={null}><ModalProvider><AppPaneProvider>
             <CommandPaletteProvider><AppPaneScopeHost scopeId={scopeId}
                 surfaceScope={{ targetKind: 'project', projectId: checkout.id, projectContext,
@@ -206,7 +218,7 @@ it('keeps the canonical file opener when Search renders in the global modal outs
         route.params = { workspaceRefId: 'portal-project', serverId: scope.serverId };
         window.history.replaceState(null, '', `${route.pathname}?serverId=${encodeURIComponent(scope.serverId)}`);
         replacePersistentUiStateForTest(recentWorkspaceFilesState, parseRecentWorkspaceFiles(recordRecentWorkspaceFile({}, recentWorkspaceFilesKey(scope, workspaceKey), 'from-search.ts')));
-        storage.setState({ isDataReady: true, settings: { ...storage.getState().settings, commandPaletteEnabled: true } });
+        storage.setState({ isDataReady: true, settings: { ...storage.getState().settings } });
         await vi.waitFor(() => expect(storage.getState().projectAccountRows).toMatchObject({ status: 'ready',
             workspaceRefs: [expect.objectContaining({ id: 'portal-project' })] }));
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
@@ -250,7 +262,7 @@ it('reopens Search through the app-shell shortcut after its route-modal host ret
     document.body.append(container);
     const root = createRoot(container);
     const before = storage.getState().settings;
-    storage.setState({ settings: { ...settingsDefaults, commandPaletteEnabled: true, keyboardShortcutsV2Enabled: true } });
+    storage.setState({ settings: { ...settingsDefaults } });
     const render = (routeFocused: boolean) => <InjectedAuthProvider credentials={null}>
         <ModalProvider><CommandPaletteProvider>
             <ModalProvider active={routeFocused}><button>Session</button></ModalProvider>
@@ -295,7 +307,7 @@ it('uses the presented File page for global quick open and symbols without focus
     const restoreLocks = installBrowserStorageLockBoundary();
     const homes = await serveActionHomes({ homes: [{ key: 'home', serverUrl: 'https://workspace-search-presented-file.test',
         serverIdentityId: 'srv_search_presented_file', accountId: 'alice', currentAccount: true,
-        settings: { commandPaletteEnabled: true, keyboardShortcutsV2Enabled: true } }],
+        settings: {} }],
         route: request => request.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`
             ? Response.json(createPlainProjectAccountRowListFixture({ workspaceRefs: [{ id: 'presented-project',
                 serverId: 'srv_search_presented_file', machineId: 'studio', rootPath: '/repo', label: null, createdAtMs: 1 }] }))
@@ -317,8 +329,7 @@ it('uses the presented File page for global quick open and symbols without focus
         const searchScope = { ...workspace, accountId: account.accountId, sessionId: null };
         await vi.waitFor(() => expect(storage.getState().projectAccountRows).toMatchObject({ status: 'ready',
             workspaceRefs: [expect.objectContaining({ id: 'presented-project' })] }));
-        storage.setState({ isDataReady: true, settings: { ...settingsDefaults,
-            commandPaletteEnabled: true, keyboardShortcutsV2Enabled: true } });
+        storage.setState({ isDataReady: true, settings: { ...settingsDefaults } });
         // No File route or focused element supplies scope. This is the mounted
         // page's existing command bridge, not a second Search registry.
         route.pathname = '/'; route.params = {};
@@ -382,7 +393,7 @@ it.each(['rail', 'railItem'] as const)('moves focus into the Search input when A
     document.body.append(container);
     const root = createRoot(container);
     const before = storage.getState().settings;
-    storage.setState({ settings: { ...settingsDefaults, commandPaletteEnabled: true, keyboardShortcutsV2Enabled: true } });
+    storage.setState({ settings: { ...settingsDefaults } });
     // The rail's own focus region, as AppRail attaches it: a labelled navigation landmark that F6 focuses.
     function Rail() {
         const boundary = usePaneRegionFocusBoundary('rail', true);
@@ -427,8 +438,7 @@ it('runs a configured plugin shortcut through the globally mounted palette catal
     const before = storage.getState().settings;
     let invoked = false;
     let release: (() => void) | undefined;
-    storage.setState({ settings: { ...settingsDefaults, commandPaletteEnabled: true, keyboardShortcutsV2Enabled: true,
-        keyboardShortcutOverridesV1: { 'action:acme.tools/actions/run': [{ binding: 'Ctrl+Shift+F12' }] } } });
+    storage.setState({ settings: { ...settingsDefaults, keyboardShortcutOverridesV1: { 'action:acme.tools/actions/run': [{ binding: 'Ctrl+Shift+F12' }] } } });
     try {
         await act(async () => root.render(<InjectedAuthProvider credentials={null}>
             <ModalProvider><CommandPaletteProvider><button>Session</button></CommandPaletteProvider></ModalProvider>

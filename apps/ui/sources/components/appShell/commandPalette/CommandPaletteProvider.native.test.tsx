@@ -11,15 +11,12 @@ const buildCommandPaletteCommands = vi.hoisted(() => vi.fn(() => []));
 const routerPushSpy = vi.hoisted(() => vi.fn());
 const capturedNative = vi.hoisted(() => ({
     handlers: null as Record<string, (() => void) | undefined> | null,
-    enabledWhenDisabledCommandIds: [] as readonly string[],
 }));
 
 const testState = vi.hoisted(() => ({
     segments: [] as string[],
     routeParams: {} as Record<string, string>,
     settings: {
-        commandPaletteEnabled: true,
-        keyboardShortcutsV2Enabled: true,
         keyboardSingleKeyShortcutsEnabled: false,
         keyboardShortcutOverridesV1: {},
         keyboardShortcutDisabledCommandIdsV1: [],
@@ -63,12 +60,10 @@ vi.mock('@/sync/domains/state/storage', async () => {
 });
 
 vi.mock('@/keyboard', () => ({
-    KeyboardShortcutProvider: ({ children, handlers, enabledWhenDisabledCommandIds }: React.PropsWithChildren<{
+    KeyboardShortcutProvider: ({ children, handlers }: React.PropsWithChildren<{
         handlers: Record<string, (() => void) | undefined>;
-        enabledWhenDisabledCommandIds?: readonly string[];
     }>) => {
         capturedNative.handlers = handlers;
-        capturedNative.enabledWhenDisabledCommandIds = enabledWhenDisabledCommandIds ?? [];
         return React.createElement('KeyboardShortcutProvider', null, children);
     },
     buildKeyboardShortcutLabels: vi.fn(() => ({})),
@@ -152,7 +147,6 @@ describe('CommandPaletteProvider native', () => {
         // empty handler that silently swallows a hardware keyboard shortcut.
         capturedNative.handlers?.['commandPalette.open']?.();
         expect(routerPushSpy).toHaveBeenCalledWith({ pathname: '/search', params: {} });
-        expect(capturedNative.enabledWhenDisabledCommandIds).toContain('commandPalette.open');
     });
 
     it('coalesces repeated native Search opens until the route lifecycle catches up', async () => {
@@ -304,8 +298,8 @@ describe('CommandPaletteProvider native', () => {
         expect(routerPushSpy).not.toHaveBeenCalled();
     });
 
-    it('leaves the shortcut uninstalled when the command palette setting is off', async () => {
-        testState.settings = { ...testState.settings, commandPaletteEnabled: false };
+    it('opens Search when the retired command palette setting is off', async () => {
+        testState.settings = { ...testState.settings, ...{ commandPaletteEnabled: false } };
         const { renderScreen } = await import('@/dev/testkit');
         const { CommandPaletteProvider } = await import('./CommandPaletteProvider');
 
@@ -315,8 +309,8 @@ describe('CommandPaletteProvider native', () => {
             </CommandPaletteProvider>,
         );
 
-        expect(capturedNative.handlers?.['commandPalette.open']).toBeUndefined();
-        testState.settings = { ...testState.settings, commandPaletteEnabled: true };
+        capturedNative.handlers?.['commandPalette.open']?.();
+        expect(routerPushSpy).toHaveBeenCalledWith({ pathname: '/search', params: {} });
     });
 
     it('defers command construction to the native Universal Search route', async () => {

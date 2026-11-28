@@ -15,8 +15,6 @@ const testState = vi.hoisted(() => ({
     segments: [] as string[],
     enabledFeatures: new Set<string>(),
     settings: {
-        commandPaletteEnabled: true,
-        keyboardShortcutsV2Enabled: true,
         keyboardSingleKeyShortcutsEnabled: false,
         keyboardShortcutOverridesV1: {},
         keyboardShortcutDisabledCommandIdsV1: [],

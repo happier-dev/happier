@@ -174,7 +174,7 @@ describe('rich markdown ready-panel boundary (web)', () => {
         const onChange = vi.fn();
         const value = '# Retries\n\nRetry **now**. Retry now.\n';
         try {
-            await act(async () => root.render(<KeyboardShortcutProvider handlers={{}} enabledWhenDisabledCommandIds={['find.open']}>
+            await act(async () => root.render(<KeyboardShortcutProvider handlers={{}}>
                 <PluginSurfaceFocusEligibilityProvider active><Probe /><CodeEditorWithFind
                     editorRef={editorRef} resetKey="rich-find" value={value} language="markdown" onChange={onChange} surfaceId="rich:file"
                     renderEditor={publish => <RichMarkdownEditorPanel editorRef={editorRef} onEditorHandleChange={publish}

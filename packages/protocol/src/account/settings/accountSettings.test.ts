@@ -674,6 +674,23 @@ describe('accountSettings', () => {
     expect(parsed.futureAccountSetting).toEqual({ preserve: true });
   });
 
+  it('ignores 0.2 shortcut gates while preserving individual command preferences', () => {
+    // ../0.2 4df6e9e1a1c50c60a470da7324adcced4b6eec28 stores these booleans.
+    const stored = AccountSettingsPersistedObjectSchema.parse({
+      commandPaletteEnabled: false,
+      keyboardShortcutsV2Enabled: false,
+      keyboardShortcutDisabledCommandIdsV1: ['commandPalette.open'],
+      keyboardShortcutOverridesV1: { 'session.new': [{ binding: 'Mod+Alt+N' }] },
+    });
+    const parsed = accountSettingsParse(stored);
+    expect(parsed).not.toHaveProperty('commandPaletteEnabled');
+    expect(parsed).not.toHaveProperty('keyboardShortcutsV2Enabled');
+    expect(parsed.keyboardShortcutDisabledCommandIdsV1).toEqual(['commandPalette.open']);
+    expect(parsed.keyboardShortcutOverridesV1).toEqual({ 'session.new': [{ binding: 'Mod+Alt+N' }] });
+    expect(ACCOUNT_SETTING_DEFINITIONS).not.toHaveProperty('commandPaletteEnabled');
+    expect(ACCOUNT_SETTING_DEFINITIONS).not.toHaveProperty('keyboardShortcutsV2Enabled');
+  });
+
   it('retains valid keyboard and SavedSecret rows when sibling rows are malformed', () => {
     const parsed = accountSettingsParse({
       keyboardShortcutDisabledCommandIdsV1: ['commandPalette.open', '', 123],

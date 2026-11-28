@@ -6,7 +6,7 @@ describe('embedded keyboard command boundary', () => {
     it('routes browser address shortcuts from guest editors through configured host bindings', () => {
         let focused = false;
         const options = {
-            enabled: true, platform: 'macos' as const, surface: 'web' as const, webHost: 'desktop' as const,
+            platform: 'macos' as const, surface: 'web' as const, webHost: 'desktop' as const,
             singleKeyShortcutsEnabled: false, disabledCommandIds: [], overrides: {},
             handlers: selectEmbeddedKeyboardHandlers({ 'browser.address.focus': () => { focused = true; }, 'composer.focus': () => {} }, 'browser'),
             getContext: () => ({ isEditableTarget: true, isComposing: false }),

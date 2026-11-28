@@ -18,7 +18,7 @@ const diff = '@@ -1,2 +1,2 @@\n-old\n+new\n context\n@@ -8 +8 @@\n-before\n+afte
 
 describe('Review keyboard bindings', () => {
     it('uses the real command dispatcher for changes, Shift files and rebinding, without taking editor typing', async () => {
-        storage.setState({ settings: { ...initialSettings, keyboardShortcutsV2Enabled: true,
+        storage.setState({ settings: { ...initialSettings,
             keyboardSingleKeyShortcutsEnabled: true, keyboardShortcutOverridesV1: {}, keyboardShortcutDisabledCommandIdsV1: [] } });
         const focusPath = vi.fn();
         const focusLine = vi.fn();

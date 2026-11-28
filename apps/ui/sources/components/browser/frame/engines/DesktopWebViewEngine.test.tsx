@@ -153,7 +153,7 @@ describe('DesktopWebViewEngine', () => {
         vi.stubGlobal('window', host.window);
         vi.stubGlobal('navigator', { platform: 'MacIntel' });
         vi.stubGlobal('isTauri', true);
-        storage.setState({ settings: { ...originalSettings, keyboardShortcutsV2Enabled: true,
+        storage.setState({ settings: { ...originalSettings,
             keyboardShortcutOverridesV1: { 'browser.address.focus': [{ binding: 'Mod+Shift+Y' }] },
             keyboardShortcutDisabledCommandIdsV1: [],
         } });

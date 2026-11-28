@@ -110,7 +110,7 @@ describe('mounted review Find', () => {
 
     it('focuses from its toolbar, decorates character ranges, restores focus and ignores parked surfaces', async () => {
         const settings = storage.getState().settings;
-        storage.setState({ settings: { ...settings, keyboardShortcutsV2Enabled: true,
+        storage.setState({ settings: { ...settings,
             keyboardShortcutDisabledCommandIdsV1: [], keyboardShortcutOverridesV1: {} } });
         const container = document.createElement('div'); document.body.appendChild(container);
         const root = createRoot(container);

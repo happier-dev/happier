@@ -33,7 +33,6 @@ export const WorkspaceRouteBody = React.memo(function FeaturesSettingsScreen() {
     const writeSetting = useSettingActionWriter();
     const featureToggles = useSetting('featureToggles');
     const [useProfiles, setUseProfiles] = useSettingMutable('useProfiles');
-    const [commandPaletteEnabled, setCommandPaletteEnabled] = useSettingMutable('commandPaletteEnabled');
     const [terminalRendererPreference, setTerminalRendererPreference] = useLocalSettingMutable('terminalRendererPreference');
     const [useMachinePickerSearch, setUseMachinePickerSearch] = useSettingMutable('useMachinePickerSearch');
     const [usePathPickerSearch, setUsePathPickerSearch] = useSettingMutable('usePathPickerSearch');
@@ -298,21 +297,6 @@ export const WorkspaceRouteBody = React.memo(function FeaturesSettingsScreen() {
                     })}
                 </ItemGroup>
                 </SettingSection>
-            )}
-
-            {/* Web-only features */}
-            {settingRendersOnHost(FEATURES_SETTINGS.settings.commandPalette) && (
-                <ItemGroup
-                    title={t(FEATURES_SETTINGS.sections.webFeatures.titleKey)}
-                    description={t('settingsFeatures.webFeaturesDescription')}
-                >
-                    <SettingRow
-                        setting={FEATURES_SETTINGS.settings.commandPalette}
-                        subtitle={commandPaletteEnabled ? t('settingsFeatures.commandPaletteEnabled') : t('settingsFeatures.commandPaletteDisabled')}
-                        rightElement={<Switch value={commandPaletteEnabled} onValueChange={setCommandPaletteEnabled} />}
-                        showChevron={false}
-                    />
-                </ItemGroup>
             )}
 
             {/* Experiments last: the switch, then the experimental features it unlocks. */}

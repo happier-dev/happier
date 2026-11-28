@@ -919,12 +919,15 @@ describe('AgentInput (history navigation)', () => {
     expect(mocks.onChangeText).not.toHaveBeenCalledWith('');
   });
 
-  it('preserves an explicitly rebound queue command', async () => {
-    localSettingState.values.keyboardShortcutOverridesV1 = { 'composer.sendPending': [{ binding: 'Alt+Enter' }] };
+  it('preserves an explicitly rebound Mod queue command', async () => {
+    localSettingState.values.keyboardShortcutOverridesV1 = { 'composer.sendPending': [{ binding: 'Mod+Alt+Enter' }] };
     const { AgentInput } = await import('./AgentInput');
     const screen = await renderScreen(<AgentInput sessionId="s1" value="draft" placeholder="p"
       onChangeText={mocks.onChangeText} onSend={mocks.onSend} autocompleteKinds={[]} autocompleteSuggestions={async () => []} />);
     await act(async () => { findMultiTextInput(screen).props.onKeyPress?.({ key: 'Enter', altKey: true,
+      platformOS: 'web', webPlatform: 'MacIntel' }); });
+    expect(mocks.onSend).not.toHaveBeenCalled();
+    await act(async () => { findMultiTextInput(screen).props.onKeyPress?.({ key: 'Enter', altKey: true, metaKey: true,
       platformOS: 'web', webPlatform: 'MacIntel' }); });
     expect(mocks.onSend).toHaveBeenCalledExactlyOnceWith({ deliveryIntent: 'server_pending' });
     await screen.unmount();
@@ -1002,37 +1005,6 @@ describe('AgentInput (history navigation)', () => {
 
   it('does not cycle permission mode when the mode cycle shortcut is disabled', async () => {
     localSettingState.values.keyboardShortcutDisabledCommandIdsV1 = ['mode.cycle'];
-    const onPermissionModeChange = vi.fn();
-    const { AgentInput } = await import('./AgentInput');
-    const screen = await renderScreen(
-      <AgentInput
-        sessionId="s1"
-        value="draft"
-        onChangeText={mocks.onChangeText}
-        placeholder="p"
-        onSend={mocks.onSend}
-        autocompleteKinds={[]}
-        autocompleteSuggestions={async () => []}
-        isSendDisabled={false}
-        disabled={false}
-        showAbortButton={false}
-        onPermissionModeChange={onPermissionModeChange}
-      />
-    );
-
-    const input = findMultiTextInput(screen);
-
-    let handled: any = null;
-    await act(async () => {
-      handled = input.props.onKeyPress?.({ key: 'Tab', code: 'Tab', shiftKey: true });
-    });
-
-    expect(handled).toBe(false);
-    expect(onPermissionModeChange).not.toHaveBeenCalled();
-  });
-
-  it('does not cycle permission mode when keyboard shortcuts V2 is disabled', async () => {
-    localSettingState.values.keyboardShortcutsV2Enabled = false;
     const onPermissionModeChange = vi.fn();
     const { AgentInput } = await import('./AgentInput');
     const screen = await renderScreen(

@@ -107,16 +107,14 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
     // is open (below). This provider is always mounted around the whole app shell: subscribing it to
     // every session update re-created its runtime context on each one and re-rendered every consumer.
     const {
-        commandPaletteEnabled,
         keyboardSingleKeyShortcutsEnabled,
         keyboardShortcutDisabledCommandIdsV1,
         keyboardShortcutOverridesV1,
     } = storage(useShallow((state) => ({
-        commandPaletteEnabled: state.settings.commandPaletteEnabled,
         keyboardSingleKeyShortcutsEnabled: state.settings.keyboardSingleKeyShortcutsEnabled,
         keyboardShortcutDisabledCommandIdsV1: state.settings.keyboardShortcutDisabledCommandIdsV1,
         keyboardShortcutOverridesV1: state.settings.keyboardShortcutOverridesV1,
-    })), { settings: ['commandPaletteEnabled', 'keyboardSingleKeyShortcutsEnabled',
+    })), { settings: ['keyboardSingleKeyShortcutsEnabled',
         'keyboardShortcutDisabledCommandIdsV1', 'keyboardShortcutOverridesV1'] });
     const navigateToSession = useNavigateToSession();
     const segments = useCurrentRouteSegments();
@@ -193,9 +191,9 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             ...Object.fromEntries(Object.values(TRANSCRIPT_MESSAGE_CURSOR_ACTION_COMMANDS).map(id => [id, () => undefined])),
             'search.files': () => undefined,
             'search.symbols': () => undefined,
-            ...(commandPaletteEnabled ? { 'commandPalette.open': () => undefined } : {}),
+            'commandPalette.open': () => undefined,
         }),
-        [commandPaletteEnabled, workflowsEnabled, derivedKeyboardCommands],
+        [workflowsEnabled, derivedKeyboardCommands],
     );
     const shortcutLabels = useMemo(
         () => buildKeyboardShortcutLabels(keyboardPlatform, Platform.OS === 'web' ? 'web' : 'native', {
@@ -607,7 +605,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
     const keyboardHandlers = useMemo<KeyboardShortcutHandlers>(
         () => ({
             ...Object.fromEntries(derivedKeyboardCommands.map(command => [command.id, () => executeCommandPaletteKeyboardCommand(command.id)])),
-            ...(commandPaletteEnabled ? { 'commandPalette.open': showCommandPalette } : {}),
+            'commandPalette.open': showCommandPalette,
             'appearance.theme.toggle': toggleTheme,
             'panes.arrangement.toggle': () => {
                 if (!readShellColumnActionOwner('main')?.arrangementAvailable) return 'pass';
@@ -629,17 +627,12 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                 router.push('/settings' as any);
             },
         }),
-        [commandPaletteEnabled, workflowsEnabled, derivedKeyboardCommands, fileViewControls, openNewSession, openNewWorkflow, openWorkflowAgentAuthoring, router, showCommandPalette, toggleTheme, togglePaneArrangement],
-    );
-    const keyboardEnabledWhenDisabledCommandIds = useMemo(
-        () => commandPaletteEnabled ? ['commandPalette.open'] as const : [],
-        [commandPaletteEnabled],
+        [workflowsEnabled, derivedKeyboardCommands, fileViewControls, openNewSession, openNewWorkflow, openWorkflowAgentAuthoring, router, showCommandPalette, toggleTheme, togglePaneArrangement],
     );
     return (
         <UniversalSearchRuntimeProvider value={universalSearchRuntime}>
             <KeyboardShortcutProvider
                 handlers={keyboardHandlers}
-                enabledWhenDisabledCommandIds={keyboardEnabledWhenDisabledCommandIds}
             >
                 <KeyboardCommandPaletteBridge target={keyboardCommandsRef} />
                 <NextPendingNavigationHost />

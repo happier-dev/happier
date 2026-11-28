@@ -1469,12 +1469,13 @@ describe('keyboard and desktop Settings Actions', () => {
             .toEqual({ anchor: 'keyboard.commandPalette.open', value });
         expect(await owner.action({ actionId: 'settings.get', input: { anchor: 'keyboard.commandPalette.open' } }))
             .toEqual({ anchor: 'keyboard.commandPalette.open', value });
-        expect(owner.account().commandPaletteEnabled).toBe(false);
+        expect(owner.account()).not.toHaveProperty('commandPaletteEnabled');
         expect(owner.account().keyboardShortcutDisabledCommandIdsV1).toEqual(['session.next', 'commandPalette.open']);
         expect(owner.account().keyboardShortcutOverridesV1['session.next']).toEqual([{ binding: 'Alt+N' }]);
         expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'keyboard.commandPalette.open', value: { enabled: true, binding: null } } }))
             .toMatchObject({ value: { enabled: true, binding: null } });
-        expect(owner.account().commandPaletteEnabled).toBe(true);
+        expect(owner.account()).not.toHaveProperty('commandPaletteEnabled');
+        expect(owner.account().keyboardShortcutDisabledCommandIdsV1).toEqual(['session.next']);
         expect(owner.account().keyboardShortcutOverridesV1['commandPalette.open']).toBeUndefined();
         const before = owner.account();
         expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'keyboard.commandPalette.open', value: { enabled: true, binding: ' ' } } }))

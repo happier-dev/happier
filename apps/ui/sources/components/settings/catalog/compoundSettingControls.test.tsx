@@ -182,16 +182,16 @@ describe('compound Settings controls through declared Action ingress', () => {
             const screen = await renderSettingsView(<KeyboardShortcutsSettingsView />);
             await screen.pressByTestIdAsync('settings-keyboard-shortcut-row-commandPalette.open');
             await screen.pressByTestIdAsync('settings-keyboard-shortcut-reset-commandPalette.open');
-            expect(account.persistedSettings.commandPaletteEnabled).toBe(false);
+            expect(account.persistedSettings.keyboardShortcutDisabledCommandIdsV1).toContain('commandPalette.open');
             expect(account.settingsWrites).toEqual([]);
             await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings,
                 actionsSettingsV1: { v: 1, actions: { 'settings.set': { approvalRequiredSurfaces: ['ui'] } } },
             })); });
             await screen.pressByTestIdAsync('settings-keyboard-shortcut-reset-commandPalette.open');
             await vi.waitFor(() => expect(account.artifacts.list()).toHaveLength(1));
-            expect(account.persistedSettings.commandPaletteEnabled).toBe(false);
+            expect(account.persistedSettings.keyboardShortcutDisabledCommandIdsV1).toContain('commandPalette.open');
             await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list()[0]!.id, 'approve');
-            await vi.waitFor(() => expect(account.persistedSettings).toMatchObject({ commandPaletteEnabled: true,
+            await vi.waitFor(() => expect(account.persistedSettings).toMatchObject({
                 keyboardShortcutDisabledCommandIdsV1: [], keyboardShortcutOverridesV1: { 'session.new': [{ binding: 'Alt+N' }] },
             }));
             expect(account.persistedSettings.keyboardShortcutOverridesV1['commandPalette.open']).toBeUndefined();
@@ -200,7 +200,7 @@ describe('compound Settings controls through declared Action ingress', () => {
             })); });
             await act(async () => { screen.findAll(node => node.props.testID === 'settings-keyboard-shortcut-enabled-commandPalette.open'
                 && typeof node.props.onValueChange === 'function')[0]!.props.onValueChange(false); });
-            await vi.waitFor(() => expect(account.persistedSettings.commandPaletteEnabled).toBe(false));
+            await vi.waitFor(() => expect(account.persistedSettings.keyboardShortcutDisabledCommandIdsV1).toContain('commandPalette.open'));
             expect(account.persistedSettings.keyboardShortcutOverridesV1['session.new']).toEqual([{ binding: 'Alt+N' }]);
             expect(account.artifacts.list()).toHaveLength(1);
         } finally { standardCleanup(); await account.dispose(); }

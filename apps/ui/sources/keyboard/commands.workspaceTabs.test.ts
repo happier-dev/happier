@@ -7,7 +7,7 @@ import type { KeyboardCommandId, KeyboardPlatform, KeyboardSurface, NormalizedKe
 function options(commandId: KeyboardCommandId, platform: KeyboardPlatform, surface: KeyboardSurface) {
     const handler = vi.fn();
     const value: KeyboardShortcutDispatcherOptions = {
-        enabled: true, platform, surface, singleKeyShortcutsEnabled: false,
+        platform, surface, singleKeyShortcutsEnabled: false,
         disabledCommandIds: [], overrides: {}, handlers: { [commandId]: handler },
         getContext: () => ({ isEditableTarget: true, isComposing: false }),
     };

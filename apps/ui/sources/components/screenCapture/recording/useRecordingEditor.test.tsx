@@ -61,7 +61,7 @@ describe('recording editor transport', () => {
         vi.stubGlobal('document', browser.window.document);
         vi.stubGlobal('requestAnimationFrame', () => 1);
         vi.stubGlobal('cancelAnimationFrame', () => {});
-        storage.setState({ settings: { ...initialSettings, keyboardShortcutsV2Enabled: true, keyboardSingleKeyShortcutsEnabled: true } });
+        storage.setState({ settings: { ...initialSettings, keyboardSingleKeyShortcutsEnabled: true } });
         const boundary = browserBoundary();
         const documentState = createRecordingDocument({ frameDurationMs: 1000 / 25, sourceCaptureRef: 'movie', durationMs: 20_000, includeWindowText: false });
         let editor: ReturnType<typeof useRecordingEditor> | undefined;
@@ -69,7 +69,7 @@ describe('recording editor transport', () => {
             editor = useRecordingEditor({ document: documentState, commitDocument: async () => {}, media: boundary.media, scale: 1 });
             return null;
         }
-        await renderScreen(<KeyboardShortcutProvider handlers={{}} enabledWhenDisabledCommandIds={['media.playPause']}><Editor /></KeyboardShortcutProvider>);
+        await renderScreen(<KeyboardShortcutProvider handlers={{}}><Editor /></KeyboardShortcutProvider>);
         await act(async () => editor!.setControls(boundary.controls));
         const space = () => document.dispatchEvent(new browser!.window.KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true, cancelable: true }));
         await act(async () => { space(); });

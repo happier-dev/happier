@@ -83,13 +83,12 @@ export function CaptureWindowNote(props: Readonly<{
     const chipText = resolveAgentInputActionChipTextStyle(theme);
     const panel = React.useMemo(() => resolveAgentInputPanelStyle(theme), [theme]);
     const shortcuts = useSettingsValues([
-        'keyboardShortcutsV2Enabled', 'keyboardSingleKeyShortcutsEnabled',
+        'keyboardSingleKeyShortcutsEnabled',
         'keyboardShortcutOverridesV1', 'keyboardShortcutDisabledCommandIdsV1',
     ]);
     // The field keeps its keys, so the send bindings are resolved the way the composer resolves them.
     const onKeyPress: OnKeyPressCallback = (event) => {
         const action = resolveComposerSendShortcutAction(event, {
-            keyboardShortcutsV2Enabled: shortcuts.keyboardShortcutsV2Enabled === true,
             keyboardSingleKeyShortcutsEnabled: shortcuts.keyboardSingleKeyShortcutsEnabled === true,
             keyboardShortcutOverridesV1: shortcuts.keyboardShortcutOverridesV1 ?? {},
             keyboardShortcutDisabledCommandIdsV1: shortcuts.keyboardShortcutDisabledCommandIdsV1 ?? [],

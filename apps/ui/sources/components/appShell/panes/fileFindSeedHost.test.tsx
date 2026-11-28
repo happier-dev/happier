@@ -140,7 +140,6 @@ describe('file Find destination memory', () => {
         { name: 'guarded prelinked reopen', retained: true, synchronous: true, guardDecision: 'discard' },
         { name: 'cancelled guarded reopen', retained: true, synchronous: true, guardDecision: 'keepEditing' },
     ] as const)('seeds $name after destination navigation and keeps Find through transcript hydration', async ({ retained, synchronous, guardDecision }) => {
-        getStorage().setState(state => ({ settings: { ...state.settings, keyboardShortcutsV2Enabled: false } }));
         const realID = makeExternalSessionHistoricalImportLocalId({ agentId: 'claude', remoteSessionId: 'native-chat', directItemId: 'matched-item' });
         const message = { kind: 'user-text' as const, id: 'loaded-row', realID, localId: null, createdAt: 1, seq: 1, text: 'violet harbor lantern' };
         const history = { isLoaded: true, hasOlder: false, isLoadingOlder: false };

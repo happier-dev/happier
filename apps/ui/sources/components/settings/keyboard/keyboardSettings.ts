@@ -46,7 +46,6 @@ export const KEYBOARD_SETTINGS: SettingsPageDeclaration = defineSettingsPage({
         generalGroup: {
             titleKey: 'settingsKeyboard.generalGroupTitle',
             settings: {
-                enableShortcuts: {},
                 singleKey: {},
             },
         },

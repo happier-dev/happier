@@ -7,9 +7,21 @@ import {
     resolveComposerEnterAction,
     resolveComposerEscapeAction,
     resolveComposerSendShortcutAction,
+    buildComposerSendShortcutLabels,
 } from './composer';
 
 describe('composer keyboard semantics', () => {
+    it('uses rebound pending-send commands and labels despite a stored legacy false preference', () => {
+        const settings = { keyboardShortcutsV2Enabled: false, keyboardSingleKeyShortcutsEnabled: false,
+            keyboardShortcutDisabledCommandIdsV1: [], keyboardShortcutOverridesV1: {
+                'composer.sendPending': [{ binding: 'Mod+Alt+Enter' }],
+            }, hasSendableInput: true, sendActionDisabled: false, platformOS: 'ios', alternateMode: 'agent_queue' } as const;
+        expect(resolveComposerSendShortcutAction({ key: 'Enter', metaKey: true, altKey: true }, settings)).toBe('sendPending');
+        expect(buildComposerSendShortcutLabels(settings).server_pending).toBe('Cmd+Option+Enter');
+        expect(resolveComposerSendShortcutAction({ key: 'Enter', metaKey: true, altKey: true }, {
+            ...settings, keyboardShortcutDisabledCommandIdsV1: ['composer.sendPending'],
+        })).toBeNull();
+    });
     it('uses Command as Mod on Apple platforms', () => {
         expect(isAppleKeyboardPlatform({ platformOS: 'ios' })).toBe(true);
         expect(isAppleKeyboardPlatform({ platformOS: 'web', webPlatform: 'MacIntel' })).toBe(true);

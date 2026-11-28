@@ -38,6 +38,8 @@ const testState = vi.hoisted(() => ({
     platformOS: 'web',
 }));
 const initialSettings = storage.getState().settings;
+// Simulate a retained 0.2 value; the runtime must ignore this retired preference.
+const legacyDisabledShortcuts = { keyboardShortcutsV2Enabled: false } as const;
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -130,7 +132,7 @@ describe('KeyboardShortcutProvider', () => {
     it('keeps browser hints aligned with disabled, rebound and unavailable commands', async () => {
         testState.platformOS = 'web';
         vi.stubGlobal('navigator', { platform: 'Win32' });
-        storage.setState({ settings: { ...initialSettings, keyboardShortcutsV2Enabled: false } });
+        storage.setState({ settings: { ...initialSettings, ...legacyDisabledShortcuts } });
         const back = vi.fn();
         let hints: BrowserKeyboardShortcutLabels = {};
         function Browser({ canGoBack }: { canGoBack: boolean }) {
@@ -143,20 +145,20 @@ describe('KeyboardShortcutProvider', () => {
         const element = (canGoBack: boolean) => <KeyboardShortcutProvider handlers={{}}><Browser canGoBack={canGoBack} /></KeyboardShortcutProvider>;
         const screen = await renderScreen(element(true));
         try {
-            expect(hints['browser.back']).toBeUndefined();
+            expect(hints['browser.back']).toBe('Alt+[');
             await act(async () => {
                 window.dispatchEvent(createKeyboardEvent({ key: '[', code: 'BracketLeft', altKey: true }));
             });
-            expect(back).not.toHaveBeenCalled();
+            expect(back).toHaveBeenCalledTimes(1);
             await act(async () => {
-                storage.setState({ settings: { ...initialSettings, keyboardShortcutsV2Enabled: true,
+                storage.setState({ settings: { ...initialSettings,
                     keyboardShortcutOverridesV1: { 'browser.back': [{ binding: 'Alt+B' }] } } });
             });
             expect(hints['browser.back']).toBe('Alt+B');
             await act(async () => {
                 window.dispatchEvent(createKeyboardEvent({ key: 'b', code: 'KeyB', altKey: true }));
             });
-            expect(back).toHaveBeenCalledTimes(1);
+            expect(back).toHaveBeenCalledTimes(2);
             await screen.update(element(false));
             expect(hints['browser.back']).toBeUndefined();
         } finally {
@@ -167,7 +169,7 @@ describe('KeyboardShortcutProvider', () => {
     it.each([false, true])('dispatches and labels the mounted annotator at default preferences, then releases its keys on exit (modal bridge: %s)', async bridged => {
         testState.platformOS = 'web';
         vi.stubGlobal('navigator', { platform: 'MacIntel' });
-        storage.setState({ settings: { ...initialSettings, keyboardShortcutsV2Enabled: false,
+        storage.setState({ settings: { ...initialSettings, ...legacyDisabledShortcuts,
             keyboardSingleKeyShortcutsEnabled: false } });
         let annotator: ImageAnnotator | undefined;
         let arrowLabel: string | undefined;
@@ -224,7 +226,7 @@ describe('KeyboardShortcutProvider', () => {
 
     it('does not execute keyboard selectors for unrelated settings and updates labels for a keyboard preference', async () => {
         testState.platformOS = 'ios';
-        storage.setState({ settings: { ...initialSettings, keyboardShortcutsV2Enabled: true } });
+        storage.setState({ settings: { ...initialSettings } });
         const selected = vi.fn();
         const { useStoreWithEqualityFn: useStore } = await vi.importActual<typeof zustandTraditional>('zustand/traditional');
         // Transparent instrumentation: the actual store, routing, selector and equality all run.
@@ -244,10 +246,11 @@ describe('KeyboardShortcutProvider', () => {
                 for (let index = 0; index < 10; index += 1) storage.setState(state => ({
                     settings: { ...state.settings, transcriptMessageCopyActionEnabled: index % 2 === 0 },
                 }));
+                storage.setState(state => ({ settings: { ...state.settings, ...legacyDisabledShortcuts } }));
             });
             expect(selected).not.toHaveBeenCalled();
             await act(async () => storage.setState(state => ({
-                settings: { ...state.settings, keyboardShortcutsV2Enabled: false },
+                settings: { ...state.settings, keyboardShortcutDisabledCommandIdsV1: ['settings.open'] },
             })));
             expect(selected).toHaveBeenCalled();
             expect(label).toBeUndefined();
@@ -261,7 +264,7 @@ describe('KeyboardShortcutProvider', () => {
 
     it('publishes shortcut labels only when their content changes, not on every provider render', async () => {
         testState.platformOS = 'web';
-        storage.setState({ settings: { ...initialSettings, keyboardShortcutsV2Enabled: true } });
+        storage.setState({ settings: { ...initialSettings } });
         let snapshot: KeyboardShortcutContextSnapshot | undefined;
         let rerender: (() => void) | undefined;
         function Probe() {
@@ -292,7 +295,7 @@ describe('KeyboardShortcutProvider', () => {
 
     it('keeps label consumers from re-rendering when the provider recomputes identical labels', async () => {
         testState.platformOS = 'web';
-        storage.setState({ settings: { ...initialSettings, keyboardShortcutsV2Enabled: true } });
+        storage.setState({ settings: { ...initialSettings } });
         let rerender: (() => void) | undefined;
         let consumerRenders = 0;
         const consumer = <Consumer />;
@@ -598,7 +601,7 @@ describe('KeyboardShortcutProvider', () => {
         expect(markOpened).not.toHaveBeenCalled();
     });
     it('keeps advertising the keys that still run with general shortcuts off, and only those', async () => {
-        storage.setState({ settings: { ...initialSettings, keyboardShortcutsV2Enabled: false } });
+        storage.setState({ settings: { ...initialSettings, ...legacyDisabledShortcuts } });
         let inboxNext: string | undefined;
         let settings: string | undefined;
         function Labels() {
@@ -699,8 +702,6 @@ describe('KeyboardShortcutProvider', () => {
         testState.platformOS = 'web';
         storage.setState({ settings: {
             ...initialSettings,
-            commandPaletteEnabled: true,
-            keyboardShortcutsV2Enabled: true,
             keyboardSingleKeyShortcutsEnabled: true,
             keyboardShortcutOverridesV1: {},
             keyboardShortcutDisabledCommandIdsV1: [],
@@ -718,9 +719,9 @@ describe('KeyboardShortcutProvider', () => {
         storage.setState({ settings: initialSettings });
     });
 
-    it('lets only the registration that owns its keys (the open media stage) take them while shortcuts and letter keys are off', async () => {
+    it('lets only the registration that owns its keys (the open media stage) take them while letter keys are off', async () => {
         vi.stubGlobal('navigator', { platform: 'MacIntel' });
-        storage.setState({ settings: { ...storage.getState().settings, keyboardShortcutsV2Enabled: false, keyboardSingleKeyShortcutsEnabled: false } });
+        storage.setState({ settings: { ...storage.getState().settings, ...legacyDisabledShortcuts, keyboardSingleKeyShortcutsEnabled: false } });
         const filesVideo = vi.fn();
         const stageNext = vi.fn();
         const stagePlay = vi.fn();
@@ -747,7 +748,7 @@ describe('KeyboardShortcutProvider', () => {
 
     it('moves unhandled printable typing into the current composer on every web platform without cancelling the key', async () => {
         vi.stubGlobal('navigator', { platform: 'MacIntel' });
-        storage.setState({ settings: { ...storage.getState().settings, keyboardShortcutsV2Enabled: false } });
+        storage.setState({ settings: { ...storage.getState().settings, ...legacyDisabledShortcuts } });
         let focused = '';
         function Composer({ name }: { name: string }) {
             useKeyboardShortcutHandlers({ 'composer.focus': () => { focused = name; } });
@@ -892,8 +893,8 @@ describe('KeyboardShortcutProvider', () => {
         expect(toggles).toBe(1);
     });
 
-    it('invokes the current scoped command from an explicit action even when shortcuts are disabled', async () => {
-        storage.setState({ settings: { ...storage.getState().settings, keyboardShortcutsV2Enabled: false } });
+    it('invokes the current scoped command from an explicit action despite a stored legacy false preference', async () => {
+        storage.setState({ settings: { ...storage.getState().settings, ...legacyDisabledShortcuts } });
         const { renderScreen } = await import('@/dev/testkit');
         const module = await import('./KeyboardShortcutProvider');
         let focused = '';
@@ -918,7 +919,7 @@ describe('KeyboardShortcutProvider', () => {
 
     it('hands review back to mobile chat before focusing, preserving tabs without sending', async () => {
         testState.platformOS = 'ios';
-        storage.setState({ settings: { ...storage.getState().settings, keyboardShortcutsV2Enabled: false } });
+        storage.setState({ settings: { ...storage.getState().settings, ...legacyDisabledShortcuts } });
         const { renderScreen } = await import('@/dev/testkit');
         const { KeyboardShortcutProvider } = await import('./KeyboardShortcutProvider');
         type Surface = import('@/components/workspaceCockpit/session/sessionCockpitState').SessionMobileSurface;
@@ -1125,11 +1126,11 @@ describe('KeyboardShortcutProvider', () => {
         expect(nativeKeyboardState.consumableSignatures).toEqual([]);
     });
 
-    it('does not subscribe to native keyboard events when V2 is disabled and no compatibility handler can run', async () => {
+    it('subscribes to native commands despite a stored legacy false preference', async () => {
         testState.platformOS = 'ios';
         storage.setState({ settings: {
             ...storage.getState().settings,
-            keyboardShortcutsV2Enabled: false,
+            ...legacyDisabledShortcuts,
         } });
 
         await renderScreen(
@@ -1138,9 +1139,9 @@ describe('KeyboardShortcutProvider', () => {
             </KeyboardShortcutProvider>,
         );
 
-        expect(nativeKeyboardState.listeners.size).toBe(0);
-        expect(nativeKeyboardState.enabled).toBe(false);
-        expect(nativeKeyboardState.consumableSignatures).toBeNull();
+        expect(nativeKeyboardState.listeners.size).toBe(1);
+        expect(nativeKeyboardState.enabled).toBe(true);
+        expect(nativeKeyboardState.consumableSignatures).not.toEqual([]);
     });
 
     it('does not subscribe to native keyboard events when no effective handler can match', async () => {

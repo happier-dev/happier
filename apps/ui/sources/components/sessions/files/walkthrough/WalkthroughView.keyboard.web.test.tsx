@@ -23,7 +23,7 @@ const reading = buildWalkthroughReading({ comparison: SPECIMEN_COMPARISON,
 
 const initialSettings = storage.getState().settings;
 beforeEach(() => { storage.setState({ settings: { ...initialSettings,
-    keyboardShortcutsV2Enabled: true, keyboardSingleKeyShortcutsEnabled: true,
+    keyboardSingleKeyShortcutsEnabled: true,
     keyboardShortcutOverridesV1: {}, keyboardShortcutDisabledCommandIdsV1: [],
 } }); });
 afterEach(() => { standardCleanup(); storage.setState({ settings: initialSettings }); document.body.replaceChildren(); });

@@ -733,7 +733,6 @@ describe('workflow composer admission', () => {
     });
 
     it('starts from the workflow command while open and respects the same required-input admission', async () => {
-        getStorage().getState().applySettingsLocal({ keyboardShortcutsV2Enabled: true });
         const onRun = vi.fn();
         let executeCommand: ReturnType<typeof useKeyboardCommand> = () => false;
         function Commands() { executeCommand = useKeyboardCommand(); return null; }
@@ -759,7 +758,6 @@ describe('workflow composer admission', () => {
     });
 
     it('names the run key once: hung from a trigger that already shows it, Start keeps the command but drops its hint', async () => {
-        getStorage().getState().applySettingsLocal({ keyboardShortcutsV2Enabled: true });
         const onRun = vi.fn();
         let executeCommand: ReturnType<typeof useKeyboardCommand> = () => false;
         function Commands() { executeCommand = useKeyboardCommand(); return null; }

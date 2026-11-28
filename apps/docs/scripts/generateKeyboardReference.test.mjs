@@ -43,11 +43,10 @@ export const defaultKeyboardCommands = [
   }
 });
 
-test('documents Search independent gating and account-synced shortcut preferences', async () => {
+test('renders shortcut defaults when retired global settings are absent', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-keyboard-reference-'));
   try {
     const commandsPath = join(root, 'commands.ts');
-    const settingsPath = join(root, 'accountSettings.ts');
     await writeFile(commandsPath, `export const defaultKeyboardCommands = [
     {
       id: 'commandPalette.open',
@@ -58,14 +57,10 @@ test('documents Search independent gating and account-synced shortcut preference
       defaultBinding: { binding: 'Alt+N' },
     },
 ];\n`);
-    await writeFile(settingsPath, `export const ACCOUNT_SETTING_ARTIFACTS = {
-  defaults: { commandPaletteEnabled: true, keyboardShortcutsV2Enabled: false },
-};\n`);
+    const markdown = await renderKeyboardReferenceMarkdown({ commandsPath });
 
-    const markdown = await renderKeyboardReferenceMarkdown({ commandsPath, settingsPath });
-
-    assert.match(markdown, /Open Search shortcut has its own switch/u);
-    assert.match(markdown, /other commands remain off/u);
+    assert.match(markdown, /`Alt\+K`/u);
+    assert.match(markdown, /`Alt\+N`/u);
     assert.match(markdown, /sync with your account/u);
     assert.doesNotMatch(markdown, /before any binding below does anything/u);
     assert.doesNotMatch(markdown, /stored per device rather than synced/u);

@@ -32,7 +32,6 @@ function dispatchWith(params: Readonly<{
     isComposing?: boolean;
 }>): boolean {
     const dispatch = createKeyboardShortcutDispatcher({
-        enabled: true,
         platform: 'macos',
         surface: params.surface,
         singleKeyShortcutsEnabled: false,
@@ -61,15 +60,11 @@ function availableBindings(commandId: KeyboardCommandId, surface: KeyboardSurfac
 }
 
 const baseSettings = {
-    commandPaletteEnabled: true,
-    keyboardShortcutsV2Enabled: true,
     keyboardSingleKeyShortcutsEnabled: false,
     keyboardShortcutDisabledCommandIdsV1: [],
     keyboardShortcutOverridesV1: {},
 } as Pick<
     Settings,
-    | 'commandPaletteEnabled'
-    | 'keyboardShortcutsV2Enabled'
     | 'keyboardSingleKeyShortcutsEnabled'
     | 'keyboardShortcutDisabledCommandIdsV1'
     | 'keyboardShortcutOverridesV1'

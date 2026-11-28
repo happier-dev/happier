@@ -12,7 +12,7 @@ function harness(platform: KeyboardPlatform, webHost: KeyboardWebHost, editable 
     const open = vi.fn();
     const tab = vi.fn();
     const dispatch = createKeyboardShortcutDispatcher({
-        enabled: true, platform, surface: 'web', webHost, singleKeyShortcutsEnabled: false,
+        platform, surface: 'web', webHost, singleKeyShortcutsEnabled: false,
         disabledCommandIds: [], overrides,
         handlers: { 'sessionList.space.select1': select, 'sessionList.filter.open': open, 'workspace.tab.select1': tab },
         getContext: () => ({ isEditableTarget: editable, isComposing: false }),

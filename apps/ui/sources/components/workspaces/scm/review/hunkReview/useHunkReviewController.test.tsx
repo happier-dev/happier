@@ -662,7 +662,6 @@ describe('hunk review through the shared keyboard and Account port', () => {
     storage.setState({
       settings: {
         ...initialSettings,
-        keyboardShortcutsV2Enabled: true,
         keyboardSingleKeyShortcutsEnabled: true,
         keyboardShortcutOverridesV1: {},
         keyboardShortcutDisabledCommandIdsV1: [],

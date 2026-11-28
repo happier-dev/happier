@@ -39,13 +39,6 @@ export const FEATURES_SETTINGS = defineSettingsPage({
                 terminalRenderer: { host: settingsHosts.notWeb },
             } satisfies Readonly<Record<string, SettingDeclaration>>),
         },
-        webFeatures: {
-            titleKey: 'settingsFeatures.webFeatures',
-            host: settingsHosts.web,
-            settings: {
-                commandPalette: {},
-            },
-        },
         experiments: {
             titleKey: 'settingsFeatures.experiments',
             settings: Object.assign({

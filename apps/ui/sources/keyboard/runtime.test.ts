@@ -37,7 +37,7 @@ describe('createKeyboardShortcutDispatcher', () => {
         'runs a saved Mod binding for %s while typing, while preserving editable exclusions', commandId => {
             const run = vi.fn();
             const dispatch = (binding: string, allowInEditable?: boolean) => createKeyboardShortcutDispatcher({
-                enabled: true, platform: 'macos', surface: 'web', singleKeyShortcutsEnabled: false,
+                platform: 'macos', surface: 'web', singleKeyShortcutsEnabled: false,
                 disabledCommandIds: [], overrides: { [commandId]: [{ binding, ...(allowInEditable == null ? {} : { allowInEditable }) }] },
                 handlers: { [commandId]: run },
                 getContext: () => ({ isEditableTarget: true, isComposerTarget: true, isComposing: false }),
@@ -55,7 +55,7 @@ describe('createKeyboardShortcutDispatcher', () => {
         const permission = vi.fn();
         const attach = vi.fn();
         const dispatcher = createKeyboardShortcutDispatcher({
-            enabled: true, platform: 'macos', surface: 'web', singleKeyShortcutsEnabled: false,
+            platform: 'macos', surface: 'web', singleKeyShortcutsEnabled: false,
             disabledCommandIds: [], overrides: {},
             handlers: { 'mode.cycle': mode, 'session.model.choose': model, 'permission.open': permission, 'composer.attachFile': attach },
             getContext: () => ({ isEditableTarget: true, isComposerTarget: true, isComposing: false }),
@@ -73,7 +73,7 @@ describe('createKeyboardShortcutDispatcher', () => {
         let target: EventTarget | null = dom.window.document.querySelector('input');
         const mode = vi.fn();
         const dispatcher = createKeyboardShortcutDispatcher({
-            enabled: true, platform: 'macos', surface: 'web', singleKeyShortcutsEnabled: true,
+            platform: 'macos', surface: 'web', singleKeyShortcutsEnabled: true,
             disabledCommandIds: [], overrides: {}, handlers: { 'mode.cycle': mode },
             getContext: () => readKeyboardContextFromEventTarget(target),
         });
@@ -86,7 +86,7 @@ describe('createKeyboardShortcutDispatcher', () => {
     });
     it('consumes configured qualified plugin and catalog Action shortcuts on native hardware', () => {
         for (const commandId of ['action:review.start', 'action:acme.tools/actions/run'] as const) {
-            expect(resolveNativeHardwareKeyboardConsumableEventSignatures({ enabled: true, platform: 'ios', surface: 'native',
+            expect(resolveNativeHardwareKeyboardConsumableEventSignatures({ platform: 'ios', surface: 'native',
                 singleKeyShortcutsEnabled: false, disabledCommandIds: [], overrides: { [commandId]: [{ binding: 'Mod+Shift+9' }] },
                 handlers: { [commandId]: () => {} }, getContext: () => context }))
                 .toContain('9|shift=true|ctrl=false|meta=true|alt=false');
@@ -97,7 +97,7 @@ describe('createKeyboardShortcutDispatcher', () => {
         const run = vi.fn();
         const overrides = { [commandId]: [{ binding: 'Mod+Shift+9' }] };
         const handlers = { [commandId]: run };
-        const dispatch = createKeyboardShortcutDispatcher({ enabled: true, platform: 'macos', surface: 'web', singleKeyShortcutsEnabled: false,
+        const dispatch = createKeyboardShortcutDispatcher({ platform: 'macos', surface: 'web', singleKeyShortcutsEnabled: false,
             disabledCommandIds: [], overrides, handlers, getContext: () => context });
         expect(dispatch(keyEvent({ key: '9', code: 'Digit9', metaKey: true, shiftKey: true }))).toBe(true);
         expect(run).toHaveBeenCalledOnce();
@@ -108,18 +108,18 @@ describe('createKeyboardShortcutDispatcher', () => {
         const commandId = 'action:review.start';
         const overrides = { [commandId]: [{ binding: 'Mod+Shift+9' }] };
         const handlers = { [commandId]: () => { invoked = true; } };
-        const dispatch = createKeyboardShortcutDispatcher({ enabled: true, platform: 'macos', surface: 'web', singleKeyShortcutsEnabled: false,
+        const dispatch = createKeyboardShortcutDispatcher({ platform: 'macos', surface: 'web', singleKeyShortcutsEnabled: false,
             disabledCommandIds: [], overrides, handlers, getContext: () => context });
         expect(dispatch(keyEvent({ key: '9', code: 'Digit9', metaKey: true, shiftKey: true }))).toBe(true);
         expect(invoked).toBe(true);
         expect(buildKeyboardShortcutLabels('macos', 'web', { overrides, handlers })[commandId]).toBe('Cmd+Shift+9');
     });
-    it('advertises only registered focused commands to native hardware when both global preferences are off', () => {
+    it('advertises registered focused commands to native hardware with single-key shortcuts off', () => {
         const options = {
-            enabled: false, platform: 'ios' as const, surface: 'native' as const,
+            platform: 'ios' as const, surface: 'native' as const,
             singleKeyShortcutsEnabled: false, disabledCommandIds: [], overrides: {},
             handlers: { 'annotation.arrow': () => {}, 'annotation.undo': () => {},
-                'screenCapture.copy': () => {}, 'screenCapture.chooseSession': () => {}, 'session.new': () => {} },
+                'screenCapture.copy': () => {}, 'screenCapture.chooseSession': () => {} },
             getContext: () => context,
         };
         expect(resolveNativeHardwareKeyboardConsumableEventSignatures(options)).toEqual(expect.arrayContaining([
@@ -148,7 +148,7 @@ describe('createKeyboardShortcutDispatcher', () => {
             const calls: string[] = [];
             let target: EventTarget | null = dom.window.document.querySelector('[role="textbox"] span');
             const dispatch = createKeyboardShortcutDispatcher({
-                enabled: true, platform, surface, webHost, singleKeyShortcutsEnabled: false,
+                platform, surface, webHost, singleKeyShortcutsEnabled: false,
                 disabledCommandIds: [], overrides: {},
                 // Both surfaces can stay mounted without competing for a chord.
                 handlers: {
@@ -171,12 +171,12 @@ describe('createKeyboardShortcutDispatcher', () => {
             expect(dispatch(formatChord)).toBe(true);
             expect(calls).toEqual(['format', 'moveToFolder', 'format']);
             expect(resolveNativeHardwareKeyboardConsumableEventSignatures({
-                enabled: true, platform, surface: 'native', singleKeyShortcutsEnabled: false,
+                platform, surface: 'native', singleKeyShortcutsEnabled: false,
                 disabledCommandIds: [], overrides: {}, handlers: { 'code.format': () => {} },
                 getContext: () => ({ isEditableTarget: false, isComposing: false }),
             })).toContain('f|shift=true|ctrl=false|meta=false|alt=true');
             const rebound = createKeyboardShortcutDispatcher({
-                enabled: true, platform, surface, webHost, singleKeyShortcutsEnabled: false,
+                platform, surface, webHost, singleKeyShortcutsEnabled: false,
                 disabledCommandIds: [],
                 overrides: {
                     'code.format': [{ binding: 'Mod+Alt+Shift+F' }],
@@ -203,7 +203,7 @@ describe('createKeyboardShortcutDispatcher', () => {
             let kept = 0;
             let target: EventTarget | null = dom.window.document.querySelector('[role="textbox"]');
             const dispatch = createKeyboardShortcutDispatcher({
-                enabled: true, platform: 'linux', surface: 'web', singleKeyShortcutsEnabled: true,
+                platform: 'linux', surface: 'web', singleKeyShortcutsEnabled: true,
                 disabledCommandIds: [], overrides: {}, handlers: { 'review.change.keep': () => { kept++; } },
                 getContext: () => readKeyboardContextFromEventTarget(target),
             });
@@ -220,7 +220,7 @@ describe('createKeyboardShortcutDispatcher', () => {
     it.each(['macos', 'windows', 'linux', 'ios', 'android'] as const)('opens Files and Symbols from editable focus on %s without consuming IME', (platform) => {
         for (const [id, key, shiftKey] of [['search.files', 'p', false], ['search.symbols', 'o', true]] as const) {
             const open = vi.fn();
-            const options = { enabled: true, platform, surface: 'native' as const, singleKeyShortcutsEnabled: false,
+            const options = { platform, surface: 'native' as const, singleKeyShortcutsEnabled: false,
                 disabledCommandIds: [], overrides: {}, handlers: { [id]: open }, getContext: () => ({ ...context, isEditableTarget: true }) };
             const chord = keyEvent({ key, code: `Key${key.toUpperCase()}`, shiftKey,
                 metaKey: platform === 'macos' || platform === 'ios', ctrlKey: platform !== 'macos' && platform !== 'ios' });
@@ -232,7 +232,7 @@ describe('createKeyboardShortcutDispatcher', () => {
     });
     it('admits literal Ctrl+R for prompt picking on macOS web and every desktop/native host', () => {
         for (const platform of ['macos', 'windows', 'linux', 'ios', 'android'] as const) {
-            const options = { enabled: true, platform, singleKeyShortcutsEnabled: false,
+            const options = { platform, singleKeyShortcutsEnabled: false,
                 disabledCommandIds: [], overrides: {}, handlers: { 'composer.prompts.open': () => 'handled' as const },
                 getContext: () => ({ ...context, isEditableTarget: true }) };
             const chord = keyEvent({ key: 'r', code: 'KeyR', ctrlKey: true });
@@ -250,7 +250,7 @@ describe('createKeyboardShortcutDispatcher', () => {
     it('opens Find from the composer on Windows, Linux and macOS and respects overrides, disabling and IME', () => {
         for (const platform of ['macos', 'windows', 'linux'] as const) {
             let opened = false;
-            const options = { enabled: true, platform, surface: 'web' as const, singleKeyShortcutsEnabled: false,
+            const options = { platform, surface: 'web' as const, singleKeyShortcutsEnabled: false,
                 disabledCommandIds: [], overrides: {}, handlers: { 'find.open': () => { opened = true; } },
                 getContext: () => ({ ...context, isEditableTarget: true }) };
             const chord = keyEvent({ key: 'f', code: 'KeyF', metaKey: platform === 'macos', ctrlKey: platform !== 'macos' });
@@ -265,14 +265,14 @@ describe('createKeyboardShortcutDispatcher', () => {
     });
     it('leaves browser defaults and PTY input untouched when the matching handler passes', () => {
         const dispatch = createKeyboardShortcutDispatcher({
-            enabled: true, platform: 'macos', surface: 'web', singleKeyShortcutsEnabled: false,
+            platform: 'macos', surface: 'web', singleKeyShortcutsEnabled: false,
             disabledCommandIds: [], overrides: {}, handlers: { 'voice.toggle': () => 'pass' }, getContext: () => context,
         });
         expect(dispatch(keyEvent({ key: 'v', code: 'KeyV', metaKey: true, altKey: true }))).toBe(false);
     });
     it.each(['macos', 'windows', 'linux', 'ios', 'android'] as const)('opens text in files from editable app focus on %s while respecting disablement', (platform) => {
         const open = vi.fn();
-        const options = { enabled: true, platform, surface: platform === 'ios' || platform === 'android' ? 'native' as const : 'web' as const, singleKeyShortcutsEnabled: false, disabledCommandIds: [], overrides: {}, handlers: { 'search.textInFiles': open }, getContext: () => ({ ...context, isEditableTarget: true }) };
+        const options = { platform, surface: platform === 'ios' || platform === 'android' ? 'native' as const : 'web' as const, singleKeyShortcutsEnabled: false, disabledCommandIds: [], overrides: {}, handlers: { 'search.textInFiles': open }, getContext: () => ({ ...context, isEditableTarget: true }) };
         const chord = keyEvent({ key: 'f', code: 'KeyF', shiftKey: true, metaKey: platform === 'macos' || platform === 'ios', ctrlKey: platform !== 'macos' && platform !== 'ios' });
         const dispatch = createKeyboardShortcutDispatcher(options);
         expect(dispatch(chord)).toBe(true);
@@ -283,7 +283,7 @@ describe('createKeyboardShortcutDispatcher', () => {
     it.each(['macos', 'windows', 'linux'] as const)('invokes Next from editable app-shell focus on %s with surface-appropriate keys', (platform) => {
         let navigations = 0;
         const options = {
-            enabled: true, platform, singleKeyShortcutsEnabled: false, disabledCommandIds: [], overrides: {},
+            platform, singleKeyShortcutsEnabled: false, disabledCommandIds: [], overrides: {},
             handlers: { 'session.pending.next': () => { navigations += 1; } },
             getContext: () => ({ ...context, isEditableTarget: true }),
         };
@@ -304,7 +304,6 @@ describe('createKeyboardShortcutDispatcher', () => {
     it.each(['macos', 'windows', 'linux', 'ios', 'android'] as const)('toggles Voice while editing on %s without consuming paste, repeat or composition', (platform) => {
         let attempts = 0;
         const options = {
-            enabled: true,
             platform,
             surface: platform === 'ios' || platform === 'android' ? 'native' as const : 'web' as const,
             singleKeyShortcutsEnabled: false,
@@ -324,7 +323,6 @@ describe('createKeyboardShortcutDispatcher', () => {
         expect(dispatcher({ ...chord, altKey: false, shiftKey: true })).toBe(false);
         expect(dispatcher(chord)).toBe(true);
         expect(attempts).toBe(1);
-        expect(createKeyboardShortcutDispatcher({ ...options, enabled: false })(chord)).toBe(false);
         expect(createKeyboardShortcutDispatcher({ ...options, disabledCommandIds: ['voice.toggle'] })(chord)).toBe(false);
         if (options.surface === 'native') {
             expect(resolveNativeHardwareKeyboardConsumableEventSignatures(options)).toContain(
@@ -340,7 +338,7 @@ describe('createKeyboardShortcutDispatcher', () => {
     it('uses the rebound Voice chord and its label with editable admission preserved', () => {
         let attempts = 0;
         const options = {
-            enabled: true, platform: 'macos' as const, surface: 'web' as const,
+            platform: 'macos' as const, surface: 'web' as const,
             singleKeyShortcutsEnabled: false, disabledCommandIds: [],
             overrides: { 'voice.toggle': [{ binding: 'Mod+Alt+B' }] },
             handlers: { 'voice.toggle': () => { attempts += 1; } },
@@ -365,7 +363,7 @@ describe('createKeyboardShortcutDispatcher', () => {
         let query = 'not opened';
         const open = (initialQuery?: string) => { query = initialQuery ?? ''; };
         const dispatcher = createKeyboardShortcutDispatcher({
-            enabled: true, platform: 'macos', surface: 'web', singleKeyShortcutsEnabled: true,
+            platform: 'macos', surface: 'web', singleKeyShortcutsEnabled: true,
             disabledCommandIds: [], overrides: {}, handlers: { 'commandPalette.open': open },
             getContext: () => context,
         });
@@ -380,7 +378,7 @@ describe('createKeyboardShortcutDispatcher', () => {
     ] as const)('opens the one Search palette from Cmd/Ctrl+K in a browser on %s, beside Alt+K', (platform, modifier) => {
         const open = vi.fn();
         const dispatcher = createKeyboardShortcutDispatcher({
-            enabled: true, platform, surface: 'web', webHost: 'browser', singleKeyShortcutsEnabled: true,
+            platform, surface: 'web', webHost: 'browser', singleKeyShortcutsEnabled: true,
             disabledCommandIds: [], overrides: {}, handlers: { 'commandPalette.open': open },
             getContext: () => context,
         });
@@ -396,7 +394,7 @@ describe('createKeyboardShortcutDispatcher', () => {
     ] as const)('opens the palette while typing on %s, including overrides, without consuming Alt+K', (platform, modifier) => {
         const open = vi.fn();
         const options = {
-            enabled: true, platform, surface: 'web' as const, webHost: 'browser' as const,
+            platform, surface: 'web' as const, webHost: 'browser' as const,
             singleKeyShortcutsEnabled: true, disabledCommandIds: [],
             handlers: { 'commandPalette.open': open },
             getContext: () => ({ ...context, isEditableTarget: true }),
@@ -410,28 +408,10 @@ describe('createKeyboardShortcutDispatcher', () => {
         expect(overridden(keyEvent({ key: 'j', code: 'KeyJ', ...modifier }))).toBe(true);
     });
 
-    it('does not dispatch registry commands when the kill switch is disabled', () => {
-        const open = vi.fn();
-        const dispatcher = createKeyboardShortcutDispatcher({
-            enabled: false,
-            platform: 'macos',
-            singleKeyShortcutsEnabled: true,
-            disabledCommandIds: [],
-            overrides: {},
-            handlers: { 'commandPalette.open': open },
-            getContext: () => context,
-        });
-
-        expect(dispatcher(keyEvent({ key: 'k', code: 'KeyK', metaKey: true }))).toBe(false);
-        expect(open).not.toHaveBeenCalled();
-    });
-
-    it('preserves command palette compatibility through the web-safe default when the registry kill switch is disabled', () => {
+    it('dispatches command palette defaults through the shared registry', () => {
         const open = vi.fn();
         const newSession = vi.fn();
         const dispatcher = createKeyboardShortcutDispatcher({
-            enabled: false,
-            enabledWhenDisabledCommandIds: ['commandPalette.open'],
             platform: 'macos',
             surface: 'web',
             singleKeyShortcutsEnabled: true,
@@ -454,7 +434,6 @@ describe('createKeyboardShortcutDispatcher', () => {
     it('does not dispatch browser-reserved defaults on web surfaces', () => {
         const newSession = vi.fn();
         const dispatcher = createKeyboardShortcutDispatcher({
-            enabled: true,
             platform: 'macos',
             surface: 'web',
             singleKeyShortcutsEnabled: true,
@@ -471,7 +450,6 @@ describe('createKeyboardShortcutDispatcher', () => {
     it('uses the web-safe default for new session instead of the browser private-window shortcut', () => {
         const newSession = vi.fn();
         const dispatcher = createKeyboardShortcutDispatcher({
-            enabled: true,
             platform: 'macos',
             surface: 'web',
             singleKeyShortcutsEnabled: true,
@@ -490,7 +468,6 @@ describe('createKeyboardShortcutDispatcher', () => {
         const next = vi.fn();
         const previous = vi.fn();
         const dispatcher = createKeyboardShortcutDispatcher({
-            enabled: true,
             platform: 'macos',
             surface: 'web',
             singleKeyShortcutsEnabled: true,
@@ -514,7 +491,6 @@ describe('createKeyboardShortcutDispatcher', () => {
         const sessionVisibleNext = vi.fn();
         const splitCanvasFocusDown = vi.fn();
         const dispatcher = createKeyboardShortcutDispatcher({
-            enabled: true,
             platform: 'macos',
             surface: 'native',
             singleKeyShortcutsEnabled: true,
@@ -537,7 +513,6 @@ describe('createKeyboardShortcutDispatcher', () => {
     it('does not dispatch during IME composition', () => {
         const open = vi.fn();
         const dispatcher = createKeyboardShortcutDispatcher({
-            enabled: true,
             platform: 'macos',
             surface: 'web',
             singleKeyShortcutsEnabled: true,
@@ -565,7 +540,6 @@ describe('createKeyboardShortcutDispatcher', () => {
     it('requires the single-key toggle for shortcut help', () => {
         const openHelp = vi.fn();
         const dispatcher = createKeyboardShortcutDispatcher({
-            enabled: true,
             platform: 'macos',
             surface: 'web',
             singleKeyShortcutsEnabled: false,
@@ -662,7 +636,6 @@ describe('createKeyboardShortcutDispatcher', () => {
     ] as const)('dispatches %s from the editable Browser address with its default binding', (commandId, key, code) => {
         const navigate = vi.fn();
         const dispatcher = createKeyboardShortcutDispatcher({
-            enabled: true,
             platform: 'linux',
             surface: 'web',
             singleKeyShortcutsEnabled: true,
@@ -679,7 +652,6 @@ describe('createKeyboardShortcutDispatcher', () => {
     it('keeps editable-safe commands editable when their shortcut is overridden', () => {
         const sendImmediate = vi.fn();
         const dispatcher = createKeyboardShortcutDispatcher({
-            enabled: true,
             platform: 'macos',
             surface: 'web',
             singleKeyShortcutsEnabled: true,
@@ -700,7 +672,6 @@ describe('createKeyboardShortcutDispatcher', () => {
 
     it('derives native consumable signatures from active editable-safe commands', () => {
         const signatures = resolveNativeHardwareKeyboardConsumableEventSignatures({
-            enabled: true,
             platform: 'ios',
             surface: 'native',
             singleKeyShortcutsEnabled: true,
@@ -725,7 +696,6 @@ describe('createKeyboardShortcutDispatcher', () => {
 
     it('derives the native Mod+K signature for the canonical Search command', () => {
         const signatures = resolveNativeHardwareKeyboardConsumableEventSignatures({
-            enabled: true,
             platform: 'ios',
             surface: 'native',
             singleKeyShortcutsEnabled: true,
@@ -745,7 +715,6 @@ describe('createKeyboardShortcutDispatcher', () => {
 
     it('preserves native Search consumption for a user-configured printable-key override', () => {
         const signatures = resolveNativeHardwareKeyboardConsumableEventSignatures({
-            enabled: true,
             platform: 'android',
             surface: 'native',
             singleKeyShortcutsEnabled: true,
@@ -767,11 +736,10 @@ describe('createKeyboardShortcutDispatcher', () => {
 
     it('does not derive native consumable signatures when the command cannot run', () => {
         const signatures = resolveNativeHardwareKeyboardConsumableEventSignatures({
-            enabled: false,
             platform: 'ios',
             surface: 'native',
             singleKeyShortcutsEnabled: true,
-            disabledCommandIds: [],
+            disabledCommandIds: ['composer.sendImmediate'],
             overrides: {},
             handlers: {
                 'composer.sendImmediate': vi.fn(),

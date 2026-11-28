@@ -20,7 +20,7 @@ describe('code intelligence commands', () => {
             'code.showProblems': () => { calls.push('problems'); },
             'code.restart': () => { calls.push('restart'); },
         };
-        const base = { enabled: true, platform: 'macos' as const, surface: 'web' as const, webHost: 'desktop' as const,
+        const base = { platform: 'macos' as const, surface: 'web' as const, webHost: 'desktop' as const,
             singleKeyShortcutsEnabled: false, disabledCommandIds: [], handlers,
             getContext: () => ({ isEditableTarget: false, isComposing: false }) };
         const event: NormalizedKeyboardEvent = { key: 'i', code: 'KeyI', metaKey: true, ctrlKey: false, shiftKey: false, altKey: true, repeat: false, isComposing: false };
@@ -41,7 +41,7 @@ describe('code intelligence commands', () => {
     ] satisfies Array<[KeyboardSurface, KeyboardWebHost | undefined]>)('routes navigation and problem traversal in editable code on %s/%s', (surface, webHost) => {
         const calls: string[] = [];
         const dispatch = createKeyboardShortcutDispatcher({
-            enabled: true, platform: 'macos', surface, webHost, singleKeyShortcutsEnabled: false,
+            platform: 'macos', surface, webHost, singleKeyShortcutsEnabled: false,
             disabledCommandIds: [], overrides: {},
             handlers: {
                 'code.goToDefinition': () => { calls.push('definition'); }, 'code.findReferences': () => { calls.push('references'); },

@@ -11,7 +11,7 @@ describe('file editor Save shortcut', () => {
     ] satisfies Array<[KeyboardPlatform, KeyboardSurface, KeyboardWebHost | undefined, boolean, boolean, string]>)
     ('saves in an editable field on %s/%s/%s and yields the other host chord', (platform, surface, webHost, altKey, metaKey, label) => {
         let saves = 0;
-        const options = { enabled: true, platform, surface, webHost, singleKeyShortcutsEnabled: false,
+        const options = { platform, surface, webHost, singleKeyShortcutsEnabled: false,
             disabledCommandIds: [], overrides: {}, handlers: { 'files.editor.save': () => { saves += 1; } },
             getContext: () => ({ isEditableTarget: true, isComposing: false }) };
         const dispatch = createKeyboardShortcutDispatcher(options);

@@ -83,7 +83,7 @@ it.each(['code', 'markdown'])('passes focused Monaco shortcuts and reopens %s Fi
     const editorRef = { current: null as CodeEditorHandle | null };
     let open: ReturnType<typeof useFindSurfaceRuntime>['open'] = () => false;
     function Probe() { open = useFindSurfaceRuntime().open; return null; }
-    const screen = await renderScreen(<KeyboardShortcutProvider handlers={{}} enabledWhenDisabledCommandIds={['find.open']}>
+    const screen = await renderScreen(<KeyboardShortcutProvider handlers={{}}>
         <PluginSurfaceFocusEligibilityProvider active={true}>
             <Probe />
             {kind === 'code' ? <FileEditorPanel theme={createThemeFixture()} resetKey="a.ts" editorRef={editorRef}

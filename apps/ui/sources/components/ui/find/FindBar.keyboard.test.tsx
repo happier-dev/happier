@@ -45,7 +45,7 @@ describe('core Find field keyboard ownership', () => {
 
     it('routes a committed native submit through current preferences without dispatching the keyPress twice', async () => {
         const originalSettings = storage.getState().settings;
-        storage.setState({ settings: { ...originalSettings, keyboardShortcutsV2Enabled: true,
+        storage.setState({ settings: { ...originalSettings,
             keyboardSingleKeyShortcutsEnabled: false, keyboardShortcutDisabledCommandIdsV1: [], keyboardShortcutOverridesV1: {} } });
         const container = document.createElement('div'); document.body.appendChild(container);
         const root = createRoot(container);
@@ -75,8 +75,8 @@ describe('core Find field keyboard ownership', () => {
                 keyboardShortcutDisabledCommandIdsV1: [], keyboardShortcutOverridesV1: { 'find.next': [{ binding: 'Mod+H' }] } } }); });
             submit(); expect(current).toBe(2);
             await act(async () => { storage.setState({ settings: { ...storage.getState().settings,
-                keyboardShortcutOverridesV1: {}, keyboardShortcutsV2Enabled: false } }); });
-            // Find remains a surface interaction when general optional shortcuts are off.
+                keyboardShortcutOverridesV1: {} } }); });
+            // Restoring the registry defaults re-enables Find.
             submit(); expect(current).toBe(3);
         } finally {
             await act(async () => { root.unmount(); }); container.remove(); storage.setState({ settings: originalSettings });
@@ -86,7 +86,7 @@ describe('core Find field keyboard ownership', () => {
     it('steps once, respects disabled and rebound commands, ignores composition and closes once to the origin', async () => {
         Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' });
         const originalSettings = storage.getState().settings;
-        storage.setState({ settings: { ...originalSettings, keyboardShortcutsV2Enabled: true,
+        storage.setState({ settings: { ...originalSettings,
             keyboardSingleKeyShortcutsEnabled: false, keyboardShortcutDisabledCommandIdsV1: [], keyboardShortcutOverridesV1: {} } });
         const state = { current: 1, open: true, inputFocused: false, closes: 0 };
         const container = document.createElement('div'); document.body.appendChild(container);

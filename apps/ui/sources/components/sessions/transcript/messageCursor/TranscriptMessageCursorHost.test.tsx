@@ -146,7 +146,7 @@ describe('TranscriptMessageCursorHost', () => {
     storage.setState({
       settings: {
         ...initialSettings,
-        keyboardShortcutsV2Enabled: true,
+
         keyboardSingleKeyShortcutsEnabled: false,
         keyboardShortcutOverridesV1: {},
         keyboardShortcutDisabledCommandIdsV1: [],

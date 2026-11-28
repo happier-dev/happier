@@ -83,7 +83,6 @@ export function resolveKeyboardShortcutCommandGroupId(commandId: KeyboardCommand
 }
 
 export type KeyboardShortcutSettingsModel = Readonly<{
-    shortcutsEnabled: boolean;
     singleKeyShortcutsEnabled: boolean;
     commandRows: readonly KeyboardShortcutSettingsCommandRow[];
     commandGroups: readonly KeyboardShortcutSettingsCommandGroup[];
@@ -92,8 +91,6 @@ export type KeyboardShortcutSettingsModel = Readonly<{
 
 type ShortcutSettingsSubset = Pick<
     Settings,
-    | 'commandPaletteEnabled'
-    | 'keyboardShortcutsV2Enabled'
     | 'keyboardSingleKeyShortcutsEnabled'
     | 'keyboardShortcutDisabledCommandIdsV1'
     | 'keyboardShortcutOverridesV1'
@@ -212,9 +209,6 @@ export function buildKeyboardShortcutSettingsModel(params: Readonly<{
     surface: KeyboardSurface;
 }>): KeyboardShortcutSettingsModel {
     const disabledIds = new Set(params.settings.keyboardShortcutDisabledCommandIdsV1);
-    if (params.settings.commandPaletteEnabled !== true) {
-        disabledIds.add('commandPalette.open');
-    }
     const overrides = params.settings.keyboardShortcutOverridesV1;
     const commands = params.commands ?? resolveKeyboardCommands(overrides);
     const singleKeyShortcutsEnabled = params.settings.keyboardSingleKeyShortcutsEnabled === true;
@@ -249,7 +243,6 @@ export function buildKeyboardShortcutSettingsModel(params: Readonly<{
     });
 
     return {
-        shortcutsEnabled: params.settings.keyboardShortcutsV2Enabled === true,
         singleKeyShortcutsEnabled,
         commandRows,
         commandGroups: KEYBOARD_SHORTCUT_COMMAND_GROUP_ORDER

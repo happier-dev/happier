@@ -7,9 +7,8 @@ Happier has 277 keyboard commands. Every one can be rebound, and the defaults
 differ between the web client and the native apps where the platform already
 claims a key.
 
-<Callout type="warn">
-  Two independent controls are **off by default**: the Open Search shortcut has its own switch, while the general shortcut registry controls other commands. Search remains available from its other entry points.
-</Callout>
+In unreleased 0.3 development, shortcuts and Search are always available. Use
+**Settings → Keyboard shortcuts** to disable or rebind individual commands.
 
 `Mod` means Command on macOS and iOS, and Control everywhere else. Where a
 binding is written literally as `Ctrl`, it is Control on every platform
@@ -32,7 +31,7 @@ have no default binding and use the same execution path as their Search row.
 
 In unreleased 0.3 development source, file quick open uses this same Search
 surface, scoped to the workspace. Its registered shortcut is
-`Mod+P` (desktop) · `Mod+P` (browser) · `Mod+P` (everywhere else); the general shortcut registry must be enabled.
+`Mod+P` (desktop) · `Mod+P` (browser) · `Mod+P` (everywhere else).
 The browser or operating system may claim a binding before Happier receives it.
 See [Files and the editor](/code/files-and-editor) for the file workflow.
 
@@ -361,7 +360,7 @@ The development-only 0.3 workspace adds tab shortcuts for the focused pane.
 They work while editing: `Mod+T` opens an empty tab, `Mod+W` closes the active
 tab, `Mod+Shift+W` closes the pane's unpinned tabs, `Mod+1` through `Mod+8`
 select a position, and `Mod+9` selects the last
-tab. They require the general shortcut registry to be enabled. A browser may
+tab. A browser may
 claim these keys before Happier receives them; you can rebind them if needed.
 
 In multi-selectable lists, `x` toggles the focused row, Shift+Up/Down extends

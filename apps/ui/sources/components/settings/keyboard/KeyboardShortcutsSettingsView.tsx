@@ -39,12 +39,10 @@ import { showKeyboardShortcutCapturePrompt } from './showKeyboardShortcutCapture
 export const KeyboardShortcutsSettingsView = React.memo(function KeyboardShortcutsSettingsView() {
     const { theme } = useUnistyles();
     const settings = useSettingsSelector((settings) => ({
-        commandPaletteEnabled: settings.commandPaletteEnabled,
-        keyboardShortcutsV2Enabled: settings.keyboardShortcutsV2Enabled,
         keyboardSingleKeyShortcutsEnabled: settings.keyboardSingleKeyShortcutsEnabled,
         keyboardShortcutDisabledCommandIdsV1: settings.keyboardShortcutDisabledCommandIdsV1,
         keyboardShortcutOverridesV1: settings.keyboardShortcutOverridesV1,
-    }), ["commandPaletteEnabled","keyboardShortcutsV2Enabled","keyboardSingleKeyShortcutsEnabled","keyboardShortcutDisabledCommandIdsV1","keyboardShortcutOverridesV1"]);
+    }), ["keyboardSingleKeyShortcutsEnabled","keyboardShortcutDisabledCommandIdsV1","keyboardShortcutOverridesV1"]);
     const { setSetting } = useSettingActionFeedback();
     const reducedMotion = useReducedMotionPreference();
     const platform = React.useMemo(() => resolveKeyboardPlatform(), []);
@@ -138,18 +136,6 @@ export const KeyboardShortcutsSettingsView = React.memo(function KeyboardShortcu
                 title={t('settingsKeyboard.generalGroupTitle')}
                 description={t('settingsKeyboard.generalGroupFooter')}
             >
-                <SettingRow
-                    testID="settings-keyboard-shortcuts-enabled-row"
-                    setting={KEYBOARD_SETTINGS.settings.enableShortcuts}
-                    rightElement={(
-                        <Switch
-                            testID="settings-keyboard-shortcuts-enabled"
-                            value={model.shortcutsEnabled}
-                            onValueChange={(value) => { void setSetting(KEYBOARD_SETTINGS.settings.enableShortcuts, value); }}
-                        />
-                    )}
-                    showChevron={false}
-                />
                 <SettingRow
                     testID="settings-keyboard-shortcuts-single-key-enabled-row"
                     setting={KEYBOARD_SETTINGS.settings.singleKey}

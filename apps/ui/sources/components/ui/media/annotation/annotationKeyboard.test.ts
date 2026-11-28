@@ -10,7 +10,7 @@ describe('annotation keyboard through the shared dispatcher', () => {
     annotator.apply([{ kind: 'mark.add', mark: { id: 'selected', kind: 'step', at: { x: 10, y: 10 }, color: 'red', size: 's' } }], 'selected');
     let isEditableTarget = false;
     let entered = 0;
-    const options = { enabled: false, platform: 'macos' as const, surface: 'web' as const, webHost: 'desktop' as const,
+    const options = { platform: 'macos' as const, surface: 'web' as const, webHost: 'desktop' as const,
       singleKeyShortcutsEnabled: false, disabledCommandIds: [], overrides: {},
       getContext: () => ({ isEditableTarget, isComposing: false }) };
     const dispatch = createKeyboardShortcutDispatcher({ ...options, handlers: createAnnotationKeyboardHandlers(annotator) });
@@ -37,7 +37,7 @@ describe('annotation keyboard through the shared dispatcher', () => {
   it('offers the full tools, preserves text editing and cycles/nudges/duplicates/deletes only on the canvas', () => {
     const annotator = createImageAnnotator({ source: { uri: 'blob:picture', width: 100, height: 100, scale: 1 } });
     let isEditableTarget = false;
-    const dispatch = createKeyboardShortcutDispatcher({ enabled: true, platform: 'macos', surface: 'web', webHost: 'desktop',
+    const dispatch = createKeyboardShortcutDispatcher({ platform: 'macos', surface: 'web', webHost: 'desktop',
       singleKeyShortcutsEnabled: true, disabledCommandIds: [], overrides: {}, handlers: createAnnotationKeyboardHandlers(annotator),
       getContext: () => ({ isEditableTarget, isComposing: false }) });
     const key = (key: string, modifiers: { shiftKey?: boolean; metaKey?: boolean } = {}) => dispatch({ key, code: key.length === 1 ? `Key${key.toUpperCase()}` : key, altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, repeat: false, isComposing: false, ...modifiers });
