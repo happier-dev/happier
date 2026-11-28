@@ -583,6 +583,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     return await runner.observe({
       actionId: request.actionId,
       ...(request.response ? { response: request.response } : {}),
+      cancellation: request.operation.cancellation,
       action: {
         actionId: request.actionId,
         title: request.title,

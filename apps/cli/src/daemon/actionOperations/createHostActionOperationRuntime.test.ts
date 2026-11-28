@@ -980,6 +980,29 @@ describe('finite host operation custody', () => {
       }
     });
 
+  it.each(['supported', 'unsupported'] as const)('retains contributed cancellation %s on the admitted receipt and native signal', async cancellation => {
+    const operationId = 'database-operation';
+    const runtime = createHostActionOperationRuntime({ machineId: 'machine',
+      resolveAccountId: async () => 'account', generateOperationId: () => operationId });
+    const entered = Promise.withResolvers<AbortSignal>();
+    const released = Promise.withResolvers<void>();
+    const pending = runtime.observePluginExecution({ actionId: 'external.database/read', title: 'Database read',
+      operation: { version: 1, visibility: 'activity', progress: 'indeterminate', cancellation }, input: {},
+      execute: async ({ signal }) => {
+        entered.resolve(signal);
+        await released.promise;
+        return { ok: true, result: {} };
+      } });
+    try {
+      const signal = await entered.promise;
+      expect(await runtime.handlers.getV2({ operationId }))
+        .toMatchObject({ kind: 'found', operation: { state: 'running', cancellation } });
+      expect(await runtime.handlers.cancel({ operationId }))
+        .toEqual({ kind: cancellation === 'supported' ? 'requested' : 'unsupported' });
+      expect(signal.aborted).toBe(cancellation === 'supported');
+    } finally { released.resolve(); await pending; }
+  });
+
   it.each(['returned', 'thrown'] as const)('projects native contributed settlement unknown alongside %s handler failure without an invalid terminal snapshot', async kind => {
     const runtime = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'account',
       generateOperationId: () => 'unknown-effect' });
