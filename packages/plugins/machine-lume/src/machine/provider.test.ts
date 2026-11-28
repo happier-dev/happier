@@ -11,6 +11,34 @@ const details = {
   cpuCount: 2, memorySize: 4294967296, diskSize: { allocated: 1073741824, total: 21474836480 }, display: '1024x768',
 };
 
+describe('Lume acquisition availability', () => {
+  it('reports an unreachable native route when the listener disappears after Check', async () => {
+    let listening = true;
+    const native = createLumeNativeClient({
+      baseUrl: 'http://localhost:7777',
+      fetch: async input => {
+        if (!listening) {
+          throw new TypeError('fetch failed', { cause: Object.assign(new Error('Connection refused'), { code: 'ECONNREFUSED' }) });
+        }
+        const path = new URL(String(input)).pathname;
+        if (path === '/lume/host/status') return Response.json({ version: '0.6.1' });
+        if (path === '/lume/config') return Response.json({ cachingEnabled: true });
+        throw new Error(`Unexpected native request: ${path}`);
+      },
+    });
+    const provider = createLumeProvider({ native, observedAt: 1 });
+    expect(await provider.check()).toMatchObject({ available: true });
+
+    listening = false;
+    await expect(provider.acquire({
+      storage: 'home', image: { kind: 'catalog', id: 'ghcr.io/trycua/macos:26-slim' },
+      cpu: 4, memoryBytes: 8 * 1024 ** 3, diskBytes: 150 * 1024 ** 3,
+    }, 'managed-1')).resolves.toEqual({
+      kind: 'rejected', code: 'provider_unavailable', nativeCause: { localCause: 'native_route_unavailable' },
+    });
+  });
+});
+
 describe('Lume prepared launch', () => {
   it.each(['personal-vm', 'happier-prepared-a/b', 'happier-prepared-a:b'])('rejects a non-owned or aliased prepared source (%s) before native effects', async vmName => {
     let effects = 0;

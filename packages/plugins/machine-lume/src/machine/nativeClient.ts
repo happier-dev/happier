@@ -95,7 +95,7 @@ export function createLumeNativeClient(options: { baseUrl: string; fetch?: typeo
           const notSent = code === 'ECONNREFUSED' || code === 'ENETUNREACH' || code === 'EHOSTUNREACH' || code === 'ENOTFOUND';
           return { kind: 'unknown', reason: 'transport',
             ...(notSent ? { delivery: 'not-sent' as const } : {}),
-            ...(route === 'run' ? { nativeCause: { localCause: 'native_route_unavailable' as const } } : {}) };
+            ...(notSent || route === 'run' ? { nativeCause: { localCause: 'native_route_unavailable' as const } } : {}) };
         };
       return projectMachineProvisionerActionFailure(error, transportFailure);
     }
