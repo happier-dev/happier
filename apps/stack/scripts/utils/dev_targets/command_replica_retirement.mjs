@@ -8,7 +8,7 @@ import {
   MUTAGEN_SYNC_LIST_JSON_TEMPLATE,
   resolveDevTargetMutagenRuntime,
 } from './mutagen_runtime.mjs';
-import { posixQuote } from './remote_commands.mjs';
+import { posixQuote, renderCommandReplicaOwner } from './remote_commands.mjs';
 import { runDevTargetControlProcess } from './sync_project.mjs';
 
 const COMMAND_STATE_PREFIX = 'commands-';
@@ -40,19 +40,34 @@ function isSiblingReplicaTarget(target, name) {
 
 // The worker-side producer writes .happier/command-replica.json naming the
 // replica root. A directory without that exact owner record is never deleted.
-function buildRemoteCommandReplicaRemovalCommand(repoDirs) {
+function buildRemoteCommandReplicaRemovalCommand(targets, dryRun) {
+  const argumentsFor = ({ repoDir, executorRepoDir }) => [
+    posixQuote(repoDir), posixQuote(renderCommandReplicaOwner({ repoDir, executorRepoDir })),
+  ].join(' ');
   return [
     'set -u',
-    ...repoDirs.map((repoDir) => {
-      const dir = posixQuote(repoDir);
-      const owner = posixQuote(`"repoDir":${JSON.stringify(repoDir)}`);
-      const absent = `[ ! -e ${dir} ] && [ ! -L ${dir} ]`;
-      return (
-        `if ${absent}; then :; elif grep -qF -- ${owner} ${posixQuote(`${repoDir}/.happier/command-replica.json`)} 2>/dev/null; ` +
-        `then rm -rf -- ${dir} || exit 1; else printf '%s\\n' ${posixQuote(`unowned ${repoDir}`)} >&2; fi\n` +
-        `if ${absent}; then printf '%s\\n' ${posixQuote(`removed ${repoDir}`)}; fi`
-      );
+    'set --',
+    'replica_absent() { [ ! -e "$1" ] && [ ! -L "$1" ]; }',
+    'replica_owned() {',
+    '  marker="$1/.happier/command-replica.json"',
+    '  [ -d "$1" ] && [ ! -L "$1" ] && [ ! -L "$1/.happier" ] && [ -f "$marker" ] && [ ! -L "$marker" ] &&',
+    '    [ "$(cat -- "$marker")" = "$2" ]',
+    '}',
+    'list_replica() {',
+    '  if replica_absent "$1"; then printf "absent %s\\n" "$1";',
+    '  elif replica_owned "$1" "$2"; then printf "candidate %s\\n" "$1"; return 0;',
+    '  else printf "unowned %s\\n" "$1" >&2; fi',
+    '  return 1',
+    '}',
+    'remove_replica() {',
+    '  if replica_owned "$1" "$2"; then rm -rf -- "$1" || exit 1; fi',
+    '  if replica_absent "$1"; then printf "removed %s\\n" "$1"; fi',
+    '}',
+    ...targets.map(target => {
+      const args = argumentsFor(target);
+      return `if list_replica ${args}; then set -- "$@" ${args}; fi`;
     }),
+    ...(dryRun ? [] : ['while [ "$#" -gt 0 ]; do remove_replica "$1" "$2"; shift 2; done']),
   ].join('\n');
 }
 
@@ -110,7 +125,7 @@ async function removedRepositorySources(stackDir, executor, runtime) {
 // retires them. Each pass verifies every worker share, including previously
 // completed ones: replicas can reappear while other workers remain pending.
 export async function retireRemovedCommandRepositories(
-  { stackDir, executorRepoRoot, env = process.env, repositories },
+  { stackDir, executorRepoRoot, env = process.env, repositories, dryRun = false },
   { runProcess = runDevTargetControlProcess } = {},
 ) {
   const executor = resolve(executorRepoRoot);
@@ -135,7 +150,9 @@ export async function retireRemovedCommandRepositories(
       targets: selection.sessionIds ? [] : (selection.targets ?? config?.targets ?? [])
         .filter(target => isSiblingReplicaTarget(target, name)) });
   }
-  if (removed.length === 0) return { retired: [], pending: {}, terminated: [] };
+  if (removed.length === 0) {
+    return dryRun ? { candidates: [], sessions: [], pending: {} } : { retired: [], pending: {}, terminated: [] };
+  }
 
   const listed = await runProcess({ label: '', command: 'mutagen',
     args: ['sync', 'list', '--template', MUTAGEN_SYNC_LIST_JSON_TEMPLATE], env: runtime.env });
@@ -146,16 +163,19 @@ export async function retireRemovedCommandRepositories(
     && resolve(session.alpha.path ?? '') === repository.sourceDir && session.mode === 'one-way-replica'
     && session.labels?.['io.mutagen.project'] && session.identifier
     && (!repository.sessionIds || repository.sessionIds.includes(session.identifier)));
-  // Record exact writers and destinations before either termination or removal.
-  await appendFile(join(stackDir, 'command-replica-retirement.manifest.jsonl'), `${JSON.stringify({
-    at: new Date().toISOString(), repositories: removed.map(({ sourceDir, targets, sessionIds }) => ({ sourceDir, targets, sessionIds })),
-    sessions: removed.flatMap(repository => ownedSessions(repository).map(session => ({
-      identifier: session.identifier, sourceDir: repository.sourceDir, beta: { host: session.beta?.host, path: session.beta?.path },
-    }))),
-  })}\n`);
-  const terminated = [];
   const pending = {};
-  for (const repository of removed) {
+  const candidates = [];
+  if (!dryRun) {
+    // Record exact writers and destinations before either termination or removal.
+    await appendFile(join(stackDir, 'command-replica-retirement.manifest.jsonl'), `${JSON.stringify({
+      at: new Date().toISOString(), repositories: removed.map(({ sourceDir, targets, sessionIds }) => ({ sourceDir, targets, sessionIds })),
+      sessions: removed.flatMap(repository => ownedSessions(repository).map(session => ({
+        identifier: session.identifier, sourceDir: repository.sourceDir, beta: { host: session.beta?.host, path: session.beta?.path },
+      }))),
+    })}\n`);
+  }
+  const terminated = [];
+  for (const repository of dryRun ? [] : removed) {
     // Same ownership predicate as the project owner's orphan reconciliation.
     const sourceRuntime = resolveDevTargetMutagenRuntime({ stackBaseDir: stackDir, sourceDir: repository.sourceDir, env });
     for (const session of ownedSessions(repository)) {
@@ -183,13 +203,28 @@ export async function retireRemovedCommandRepositories(
     const result = await runProcess({ label: `remote:${target.name}`, command: 'ssh', args: [
       ...(target.sshConfigFile ? ['-F', target.sshConfigFile] : []), '-o', 'BatchMode=yes', target.ssh,
       'sh -s',
-    ], input: buildRemoteCommandReplicaRemovalCommand(entries.map(entry => entry.target.repoDir)), env });
+    ], input: buildRemoteCommandReplicaRemovalCommand(entries.map(entry => entry.target), dryRun), env });
     const verified = new Set((result?.out ?? '').split('\n'));
-    for (const entry of entries) {
-      if (result?.code === 0 && verified.has(`removed ${entry.target.repoDir}`)) entry.repository.doneTargets.add(entry.target.name);
-      else pending[entry.target.name] = (pending[entry.target.name] ?? 0) + 1;
+    for (const { repository, target: replica } of entries) {
+      if (result?.code === 0) {
+        if (dryRun) {
+          if (verified.has(`candidate ${replica.repoDir}`)) {
+            candidates.push({ target: replica.name, repoDir: replica.repoDir });
+            continue;
+          }
+          if (verified.has(`absent ${replica.repoDir}`)) continue;
+        } else if (verified.has(`removed ${replica.repoDir}`) || verified.has(`absent ${replica.repoDir}`)) {
+          repository.doneTargets.add(replica.name);
+          continue;
+        }
+      }
+      pending[replica.name] = (pending[replica.name] ?? 0) + 1;
     }
   }));
+  if (dryRun) {
+    candidates.sort((left, right) => left.repoDir.localeCompare(right.repoDir) || left.target.localeCompare(right.target));
+    return { candidates, sessions: removed.flatMap(repository => ownedSessions(repository).map(session => session.identifier)), pending };
+  }
 
   const retired = [];
   for (const repository of removed) {
@@ -225,7 +260,12 @@ function processAlive(pid) {
   catch (error) { return error.code === 'EPERM'; }
 }
 
-async function main([stackDir, executorRepoRoot]) {
+async function main([stackDir, executorRepoRoot, mode]) {
+  if (mode === '--dry-run') {
+    const report = await retireRemovedCommandRepositories({ stackDir, executorRepoRoot, dryRun: true });
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    return;
+  }
   const lock = join(stackDir, 'command-replica-retirement.lock');
   const holder = Number((await readFile(lock, 'utf8').catch(() => '')).trim());
   if (Number.isSafeInteger(holder) && holder > 0 && processAlive(holder)) return;

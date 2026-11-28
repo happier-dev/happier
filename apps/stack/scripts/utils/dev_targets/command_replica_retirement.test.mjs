@@ -180,6 +180,36 @@ test('bulk retirement streams the removal body through the control transport wit
   assert.equal(await exists(join(f.workerRoot('worker'), '0.3')), true);
 });
 
+test('dry run lists exactly recorded worker replicas and leaves all owners in place', { skip: process.platform === 'win32' }, async t => {
+  const f = await fixture(t);
+  const goneSource = join(f.root, 'source/gone');
+  const owned = f.target('worker', 'gone');
+  const wrongOwner = f.target('other', 'gone');
+  await writeFile(join(wrongOwner.repoDir, '.happier/command-replica.json'), JSON.stringify({
+    version: 1, repoDir: wrongOwner.repoDir, executorRepoDir: f.target('worker', 'gone').executorRepoDir,
+  }));
+  const marker = join(owned.repoDir, 'fixture-bytes');
+  await writeFile(marker, Buffer.alloc(4096));
+
+  const result = await f.retire(undefined, { dryRun: true });
+
+  assert.deepEqual(result.candidates, [{ target: 'worker', repoDir: owned.repoDir }]);
+  assert.deepEqual(result.sessions, ['gone-session']);
+  assert.deepEqual(result.pending, { other: 2, worker: 1 });
+  assert.equal((await readFile(marker)).length, 4096);
+  assert.ok(f.sessions.some(session => session.identifier === 'gone-session'));
+  assert.equal(await exists(wrongOwner.repoDir), true);
+  assert.equal(await exists(f.projectDir('gone')), true);
+  assert.equal(await exists(join(f.stackDir, 'commands-gone')), true);
+  assert.equal(await exists(join(f.stackDir, 'command-replica-retirement.manifest.jsonl')), false);
+
+  const applied = await f.retire(undefined, { repositories: [{ sourceDir: goneSource }] });
+  assert.equal(await exists(marker), false);
+  assert.equal(await exists(wrongOwner.repoDir), true);
+  assert.deepEqual(applied.pending, { other: 1 });
+  t.diagnostic('4096 fixture payload bytes eligible and retired after the separate listing');
+});
+
 test('session termination uses its own source environment and a previously written manifest', { skip: process.platform === 'win32' }, async t => {
   const f = await fixture(t);
   await f.retire();
@@ -333,7 +363,7 @@ test('recorded-done replicas are re-evaluated with one batch per worker when a d
   await f.retire(new Set(['worker']));
   const restored = join(f.workerRoot('other'), 'gone');
   await mkdir(join(restored, '.happier'), { recursive: true });
-  await writeFile(join(restored, '.happier/command-replica.json'), JSON.stringify({ version: 1, repoDir: restored }));
+  await writeFile(join(restored, '.happier/command-replica.json'), JSON.stringify({ version: 1, repoDir: restored, executorRepoDir: f.target('other', 'gone').executorRepoDir }));
   f.calls.length = 0;
   const result = await f.retire();
   assert.equal(await exists(restored), false);

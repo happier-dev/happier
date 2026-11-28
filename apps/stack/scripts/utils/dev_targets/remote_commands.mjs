@@ -2045,6 +2045,10 @@ function buildWindowsOrphanedMutagenCleanupScript() {
   ].join(' ');
 }
 
+export function renderCommandReplicaOwner({ repoDir, executorRepoDir }) {
+  return JSON.stringify({ version: 1, repoDir, executorRepoDir });
+}
+
 export function buildRemoteEnsureDirectoriesCommand(target, options = {}) {
   const additional = usesRetainedRemoteStackState(options.runtimeMode)
     ? (() => { const paths = resolveRemoteStackStatePaths(target, options); return [paths.stackBaseDir, paths.cliHomeDir, paths.workspaceDir]; })()
@@ -2089,7 +2093,7 @@ export function buildRemoteEnsureDirectoriesCommand(target, options = {}) {
   }
   const replicaSetup = commandReplica ? [
     `mkdir -p -- ${posixQuote(posix.dirname(replicaOwner))}`,
-    `replica_temporary=${posixQuote(`${replicaOwner}.tmp`)}.$$; printf '%s\\n' ${posixQuote(JSON.stringify({ version: 1, repoDir: target.repoDir, executorRepoDir: target.executorRepoDir }))} > "$replica_temporary"; mv -- "$replica_temporary" ${posixQuote(replicaOwner)}`,
+    `replica_temporary=${posixQuote(`${replicaOwner}.tmp`)}.$$; printf '%s\\n' ${posixQuote(renderCommandReplicaOwner(target))} > "$replica_temporary"; mv -- "$replica_temporary" ${posixQuote(replicaOwner)}`,
     `touch -- ${posixQuote(target.repoDir)}`,
     `[ -f ${posixQuote(posix.join(target.repoDir, 'package.json'))} ] || printf '%s\\n' '__HAPPIER_COMMAND_REPLICA_UNMATERIALIZED__'`,
   ] : options.commandReplica === false || options.runtimeMode
