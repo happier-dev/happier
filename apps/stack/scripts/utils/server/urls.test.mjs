@@ -27,16 +27,19 @@ async function writeStackEnvAtStorageRoot(storageDir, stackName, contents) {
   await writeFile(join(stackDir, 'env'), contents, 'utf-8');
 }
 
-test('passive named-stack URL resolution leaves the Tailscale command unloaded', async (t) => {
+test('passive named-stack URL resolution leaves the Tailscale command and unconfigured relay providers unloaded', async (t) => {
   const { storageDir, stackName } = await createIsolatedStackStorage(t);
   const urlsModule = new URL('./urls.mjs', import.meta.url).href;
   const commandModule = new URL('../../tailscale.mjs', import.meta.url).href;
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
     import { registerHooks } from 'node:module';
     let commandLoads = 0;
+    let relayImplementationLoads = 0;
     registerHooks({
       load(url, context, nextLoad) {
         if (url === ${JSON.stringify(commandModule)}) commandLoads++;
+        if (['/relayAccess/catalog.js', '/relayAccess/registry.js', '/plugins/contributions/accessProviders.js']
+          .some(suffix => url.endsWith(suffix))) relayImplementationLoads++;
         return nextLoad(url, context);
       },
     });
@@ -44,7 +47,7 @@ test('passive named-stack URL resolution leaves the Tailscale command unloaded',
     const { internalServerUrl, publicServerUrlSource } = await resolveServerUrls({
       serverPort: 43123, allowEnable: false,
     });
-    console.log(JSON.stringify({ internalServerUrl, publicServerUrlSource, commandLoads }));
+    console.log(JSON.stringify({ internalServerUrl, publicServerUrlSource, commandLoads, relayImplementationLoads }));
   `], { encoding: 'utf8', env: {
     ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: storageDir }),
     HOME: join(storageDir, 'home'),
@@ -57,6 +60,7 @@ test('passive named-stack URL resolution leaves the Tailscale command unloaded',
     internalServerUrl: 'http://127.0.0.1:43123',
     publicServerUrlSource: 'default',
     commandLoads: 0,
+    relayImplementationLoads: 0,
   });
 });
 

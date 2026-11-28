@@ -1,8 +1,7 @@
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isRecord } from '@happier-dev/protocol/common/records';
-import { AccessProviderRouteV1Schema, AccessProviderSelectionV1Schema,
-    type AccessProviderRouteV1, type AccessProviderSelectionV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
+import type { AccessProviderRouteV1, AccessProviderSelectionV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 
 export type LocalRelayAccessConfig = Readonly<{ selection: AccessProviderSelectionV1; route?: AccessProviderRouteV1 }>;
 
@@ -13,6 +12,8 @@ export async function readLocalRelayAccessConfig(homeDir: string): Promise<Local
     let value: unknown;
     try { value = JSON.parse(raw); } catch { return null; }
     if (!isRecord(value)) return null;
+    const { AccessProviderRouteV1Schema, AccessProviderSelectionV1Schema } =
+        await import('@happier-dev/protocol/plugins/contributions/accessProviders');
     const { route, ...input } = value;
     const selection = AccessProviderSelectionV1Schema.safeParse(input);
     if (!selection.success) return null;

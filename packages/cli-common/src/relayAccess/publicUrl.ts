@@ -3,8 +3,6 @@ export { normalizeRelayAccessCanonicalPublicServerUrl } from './normalizePublicS
 
 import { resolveHappyHomeDirFromEnvironment } from '../agents/resolveHappyHomeDir.js';
 
-import { getRelayAccessProvider, getRelayAccessProviderDescriptor } from './registry.js';
-import { parseRelayAccessConfig, relayAccessProviderDescriptors } from './catalog.js';
 import { readLocalRelayAccessConfig } from './localConfig.js';
 import type { RelayAccessConfig, RelayAccessProviderExposure, RelayAccessStatus } from './types.js';
 
@@ -22,6 +20,7 @@ async function resolveRelayAccessStatusShareUrlWithEnv(
     env: NodeJS.ProcessEnv,
     upstreamUrl: string | null,
 ): Promise<string | null> {
+    const { getRelayAccessProvider } = await import('./registry.js');
     try {
         const provider = getRelayAccessProvider(config.provider);
         const status = await provider.status({ config, ctx: { env, upstreamUrl } });
@@ -33,15 +32,6 @@ async function resolveRelayAccessStatusShareUrlWithEnv(
 
 function resolveRelayAccessStatusShareUrlFromStatus(status: RelayAccessStatus): string | null {
     return normalizeRelayAccessCanonicalPublicServerUrl(status.shareUrl);
-}
-
-async function readPersistedRelayAccessConfigFromEnv(
-    env: RelayAccessConfigEnv,
-): Promise<RelayAccessConfig | null> {
-    const happyHomeDir = resolveHappyHomeDirFromEnvironment(env as NodeJS.ProcessEnv);
-    const record = await readLocalRelayAccessConfig(happyHomeDir);
-    return parseRelayAccessConfig(record?.selection, relayAccessProviderDescriptors.filter(descriptor =>
-        descriptor.definition.targets.includes('homeRelay')));
 }
 
 /**
@@ -59,7 +49,13 @@ export async function resolveRelayAccessConfiguredPublicAccess(
     env: RelayAccessConfigEnv = defaultRelayAccessConfigEnv,
     options: ResolveRelayAccessConfiguredCanonicalPublicServerUrlOptions = defaultResolveRelayAccessConfiguredCanonicalPublicServerUrlOptions,
 ): Promise<RelayAccessConfiguredPublicAccess | null> {
-    const config = await readPersistedRelayAccessConfigFromEnv(env);
+    const happyHomeDir = resolveHappyHomeDirFromEnvironment(env);
+    const record = await readLocalRelayAccessConfig(happyHomeDir);
+    if (!record) return null;
+    const { getRelayAccessProviderDescriptor, parseRelayAccessConfig, relayAccessProviderDescriptors } =
+        await import('./catalog.js');
+    const config = parseRelayAccessConfig(record.selection, relayAccessProviderDescriptors.filter(descriptor =>
+        descriptor.definition.targets.includes('homeRelay')));
     if (!config) return null;
     const descriptor = getRelayAccessProviderDescriptor(config.provider);
     const { exposure } = descriptor;

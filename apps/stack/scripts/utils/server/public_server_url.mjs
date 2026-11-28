@@ -28,7 +28,7 @@ export async function resolvePublicServerUrl({
     (normalizedEnvPublicUrl === defaultPublicUrl || normalizedEnvPublicUrl === internalServerUrl);
   let relayAccessPublicUrl = null;
   if (!normalizedEnvPublicUrl || envPublicUrlIsLocalDefault) {
-    const { resolveRelayAccessConfiguredCanonicalPublicServerUrl } = await import('@happier-dev/cli-common/relayAccess');
+    const { resolveRelayAccessConfiguredCanonicalPublicServerUrl } = await import('@happier-dev/cli-common/relayAccess/publicUrl');
     relayAccessPublicUrl = await resolveRelayAccessConfiguredCanonicalPublicServerUrl(env, {
       upstreamUrl: internalServerUrl,
       allowTailscaleProviders: preferTailscalePublicUrl,

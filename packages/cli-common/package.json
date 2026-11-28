@@ -607,6 +607,12 @@
       "import": "./dist/relayAccess/index.js",
       "default": "./dist/relayAccess/index.js"
     },
+    "./relayAccess/publicUrl": {
+      "happier-source": "./src/relayAccess/publicUrl.ts",
+      "types": "./dist/relayAccess/publicUrl.d.ts",
+      "import": "./dist/relayAccess/publicUrl.js",
+      "default": "./dist/relayAccess/publicUrl.js"
+    },
     "./relayAccess/normalizePublicServerUrl": {
       "happier-source": "./src/relayAccess/normalizePublicServerUrl.ts",
       "types": "./dist/relayAccess/normalizePublicServerUrl.d.ts",
