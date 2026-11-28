@@ -1,4 +1,4 @@
-import { isSessionRuntimeRunning } from '@/sync/domains/session/attention/runtimePresentation';
+import { isLiveSessionRuntime, isSessionRuntimeRunning } from '@/sync/domains/session/attention/runtimePresentation';
 import { DEFAULT_SESSION_INACTIVE_RESUME_POLICY } from '@happier-dev/protocol/account/settings/accountSettings';
 import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
 import { normalizeParticipantRecipientRoutingIdentityV1, withParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
@@ -32,6 +32,7 @@ import { SESSION_INPUT_TARGET_UPDATE_REQUIRED_ERROR_CODE } from './types';
 import { SESSION_INPUT_ACCOUNT_SCOPE_RETIRED_ERROR_CODE } from './types';
 import { recordSessionMessageDeliveryDecision } from './sessionMessageDeliveryTelemetry';
 import { isSessionHeldByPersonStop } from '@/sync/domains/session/control/sessionStopHold';
+import { readSessionRuntimeObservation } from '@/sync/domains/session/sessionRuntimeObservation';
 import {
     canSendUserMessageToSession,
     SESSION_MESSAGE_SEND_NOT_RESUMABLE_ERROR_CODE,
@@ -421,6 +422,10 @@ function requestedActionRequiresRuntimeActivation(action: PendingRequestedAction
     return action.kind === 'send_now' || action.kind === 'steer_now';
 }
 
+function hasObservedLiveRuntimeForPendingInput(opts: SubmitSessionUserMessageOptions): boolean {
+    return isLiveSessionRuntime(readSessionRuntimeObservation(opts.session)) && !isSendCrossingStopHold(opts);
+}
+
 function selectInactiveSessionResumePolicy(
     opts: SubmitSessionUserMessageOptions,
     decision: SessionMessageDeliveryDecision,
@@ -571,7 +576,9 @@ async function enqueuePending(
     const inactiveResumePolicy = !isExecutionRun && decision !== undefined
         ? selectInactiveSessionResumePolicy(opts, decision, requestedAction)
         : null;
-    const wakeRequested = !isExecutionRun && (requestedActionRequiresRuntimeActivation(requestedAction) || inactiveResumePolicy !== null);
+    const immediateAction = !isExecutionRun && requestedActionRequiresRuntimeActivation(requestedAction);
+    const usesLiveRuntime = immediateAction && hasObservedLiveRuntimeForPendingInput(opts);
+    const wakeRequested = inactiveResumePolicy !== null || (immediateAction && !usesLiveRuntime);
     const wakeOpts = wakeRequested ? getPendingQueueWakeResumeOptions({
         sessionId: opts.sessionId,
         session: opts.session,
@@ -670,6 +677,11 @@ async function enqueuePending(
             wake: { attempted: false, state: 'not_needed' },
             localId,
         };
+    }
+    if (usesLiveRuntime) {
+        await switchRemoteAfterPendingEnqueueIfNeeded(port, opts);
+        if (!reportHandoffIfCurrent()) return accountScopeRetiredResult('send_failed', 'pending', localId);
+        return { type: 'success', persistence: 'pending', wake: { attempted: false, state: 'not_needed' }, localId };
     }
     if (!wakeOpts) {
         if (!reportHandoffIfCurrent()) return accountScopeRetiredResult('send_failed', 'pending', localId);
@@ -907,7 +919,8 @@ export async function submitSessionUserMessage(
                 localId,
             };
         }
-        const wakeRequested = requestedActionRequiresRuntimeActivation(requestedAction);
+        const wakeRequested = requestedActionRequiresRuntimeActivation(requestedAction)
+            && !hasObservedLiveRuntimeForPendingInput(effectiveOpts);
         const wakeOpts = wakeRequested ? getPendingQueueWakeResumeOptions({
             sessionId: effectiveOpts.sessionId,
             session: effectiveOpts.session,
