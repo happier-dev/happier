@@ -53,7 +53,7 @@ individual keyboard command is disabled.
 
 ## Workspace replacement (0.3 development)
 
-Replacement extends the Text in files source. The selected workspace source previews and applies
+Replacement extends the Text in files source. The Machine previews and applies
 through `daemon.workspaceFiles.replace.preview.v1` and
 `daemon.workspaceFiles.replace.apply.v1`; clients do not loop over individual
 file reads and writes. `machines/workspaceFilesReplace.ts` owns the pure byte
