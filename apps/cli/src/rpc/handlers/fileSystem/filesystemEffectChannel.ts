@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
 import { z } from 'zod/mini';
@@ -6,6 +7,7 @@ import { FilesystemEntryTreeDescriptorSchema } from '@happier-dev/protocol/actio
 import type { DirectTransferImportSessionManager } from '@/machines/transfer/directTransferImportSession';
 import type { TransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
 import type { NativeTransferSessionOwner } from '@happier-dev/transfers/node';
+import { createEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
 import type { FilesystemEffectConfiguration } from './filesystemEffectOperation';
 import type { createWorkspaceEntryExportSource } from '@/machines/transfer/prepareWorkspaceFileExport';
 import type { createFilesystemEffectEntryOwner } from './filesystemEffectEntries';
@@ -138,6 +140,33 @@ export function createFilesystemEffectImportAdapter(channel: FilesystemEffectCha
       return undefined;
     },
   };
+}
+
+/** Session media bytes the parent already holds, persisted by the member's own media owner.
+ * The bytes cross through the existing upload staging into the operation's private custody. */
+export async function persistFilesystemEffectSessionMedia(channel: FilesystemEffectChannel, input: Readonly<{
+  bytes: Buffer;
+  media: Readonly<{ sessionId: string; messageLocalId: string; role: 'input' | 'output';
+    category: 'attachment' | 'generated' | 'tool-artifact'; origin: Readonly<Record<string, unknown>> & Readonly<{ source: string }>;
+    mimeType: string; fileNameHint?: string; suggestedName?: string; createdAtMs?: number }>;
+}>): Promise<unknown> {
+  const { stageId } = z.strictObject({ stageId: z.string() }).parse(await channel.request({ kind: 'session.media.prepare' }));
+  const uploads = createFilesystemEffectImportAdapter(channel, stageId);
+  const rejected = (result: Readonly<{ error: string; errorCode?: string }>) =>
+    Object.assign(new Error(result.error), { code: result.errorCode ?? 'session_media_stage_failed' });
+  // The stage lives as long as this operation's process: its disposal removes the staged payload.
+  const opened = await uploads.openTrustedImportSession({ t: 'session_file_upload_v1', workingDirectory: '/', path: 'payload',
+    sizeBytes: input.bytes.byteLength, overwrite: false, sha256: createHash('sha256').update(input.bytes).digest('hex') });
+  if (!opened.success) throw rejected(opened);
+  const { uploadId, chunkSizeBytes, recipientPublicKeyBase64 } = opened.response;
+  for (let offset = 0, index = 0; offset < input.bytes.byteLength; offset += chunkSizeBytes, index += 1) {
+    const written = await uploads.writeImportTransferChunk({ uploadId, index, ...createEncryptedTransferChunkEnvelope({
+      transferId: uploadId, sequence: index, payload: input.bytes.subarray(offset, offset + chunkSizeBytes), recipientPublicKeyBase64 }) });
+    if (!written.success) throw rejected(written);
+  }
+  const finalized = await uploads.finalizeImportTransferSession({ uploadId });
+  if (!finalized.success) throw rejected(finalized);
+  return await channel.request({ kind: 'session.media.persist', stageId, uploadId, input: input.media });
 }
 
 export type NativeFilesystemPayloadSource = Extract<TransferPayloadSource, { kind: 'native' }> & Readonly<{ name: string; dispose: () => Promise<void> }>;

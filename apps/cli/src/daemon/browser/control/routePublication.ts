@@ -648,6 +648,8 @@ setBrowserRecordingComposerAttachHandler?: (handler: BrowserRecordingDaemonRunti
             machineId: params.machineId, currentMachineHost: params.currentMachineHost ?? '',
             currentMachineHomeDir: params.currentMachineHomeDir ?? '', signal: shutdownSignal,
             mutationCustody: params.daemonSessionMutationCustody, sessionAccounts, title: 'Browser recording',
+            resolveMediaPlacement: (context, workingDirectory) => params.getApiMachineForSessions()
+              ?.resolveRecordingMediaPlacement(context, workingDirectory, shutdownSignal),
           }),
           liveStreamCaptureRegistry: params.liveStreamCaptureRegistry,
           streamFrameEncoderFactory: recordingEncoderFactory,

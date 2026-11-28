@@ -3226,6 +3226,15 @@ cleanup runs with the folder member's execution identity. The child performs
 the destructive Git effect only after cleanup allows it. The host publishes
 removal settlement once after the child reports success. No Account credentials
 or encryption material cross into the child.
+Browser and Computer recording saves follow the same placement. Record START
+(`daemon/recording/sessionMediaHost.ts`) asks the filesystem-effect owner where
+the requester's effects run (`resolveActionEffectPlacement`). For a native
+placement, the recording file and a later draft discard are written by the
+requester's own `filesystem-effect` child, confined to the Session workspace.
+The daemon reads its captured bytes, stages them through the child's private
+`upload.*` custody, and the child's `session.media.persist` runs the usual
+Session media owner. The file is then owned by, and readable to, that person's
+OS user. Authorization and the `recording_session_not_owned` refusal are unchanged.
 Other hosting work runs as it does elsewhere:
 methods on an existing repository are refused by the daemon Git's ownership
 check before any hosting call, and address resolution reads no folder.

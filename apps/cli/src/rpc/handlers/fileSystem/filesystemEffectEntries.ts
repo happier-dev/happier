@@ -16,7 +16,7 @@ const destinationSchema = z.strictObject({ operationId: text, rootPath: text, pa
   overwrite: z.boolean(), recursive: z.boolean(), expectation: WorkspaceSyncEntryExpectationV1Schema });
 type Destination = z.infer<typeof destinationSchema>;
 type PayloadDescriptor = Readonly<{ sourceId: string; name: string; sizeBytes: number; manifestHash: string }>;
-type Stage = { directory: string; input: Destination; payloads: Map<string, { path: string; finalized: boolean }>; retained: boolean };
+type Stage = { directory: string; input: Destination | null; payloads: Map<string, { path: string; finalized: boolean }>; retained: boolean };
 
 /** The existing entry source/apply owners run in this same selected native
  * process. Stage IDs refer only to its existing temporary custody directories;
@@ -52,6 +52,19 @@ export function createFilesystemEffectEntryOwner(configuration: FilesystemEffect
       stages.set(stageId, { directory, input, payloads: new Map(), retained: false });
       return { stageId };
     },
+    /** Private byte custody with no entry destination: its finalized payload feeds another owner in this process. */
+    prepareStaging() {
+      const stageId = randomUUID();
+      stages.set(stageId, { directory: createHappierTempDir({ purpose: 'filesystem-staged-payload' }), input: null,
+        payloads: new Map(), retained: false });
+      return { stageId };
+    },
+    readFinalizedPayloadPath(stageId: string, uploadId: string) {
+      const stage = stages.get(stageId);
+      const payload = stage?.payloads.get(uploadId);
+      if (!stage || stage.input || !payload?.finalized) throw invalidOperation();
+      return { directory: stage.directory, path: payload.path };
+    },
     async openUpload(stageId: string, input: DirectTransferImportOpenRequest) {
       const stage = stages.get(stageId);
       if (!stage || input.t !== 'session_file_upload_v1') throw invalidOperation();
@@ -70,7 +83,8 @@ export function createFilesystemEffectEntryOwner(configuration: FilesystemEffect
     },
     async apply(stageId: string, raw: unknown) {
       const stage = stages.get(stageId);
-      if (!stage) throw invalidOperation();
+      if (!stage?.input) throw invalidOperation();
+      const input = stage.input;
       const payloads = z.array(z.strictObject({ transferId: text, uploadId: text })).parse(raw);
       const byTransfer = new Map(payloads.map(payload => [payload.transferId, payload.uploadId]));
       if (byTransfer.size !== payloads.length) throw invalidOperation();
@@ -79,7 +93,7 @@ export function createFilesystemEffectEntryOwner(configuration: FilesystemEffect
         accessPolicy: configuration.accessPolicy,
         getAdditionalAllowedReadDirs: () => configuration.additionalAllowedReadDirs ?? [],
         getAdditionalAllowedWriteDirs: () => configuration.additionalAllowedWriteDirs ?? [],
-      })({ ...stage.input, stagingDirectory: join(stage.directory, 'stage'), recoveryDirectory: join(stage.directory, 'recovery'),
+      })({ ...input, stagingDirectory: join(stage.directory, 'stage'), recoveryDirectory: join(stage.directory, 'recovery'),
         assertCurrentAuthority, signal, requestPayload: async request => {
           const uploadId = byTransfer.get(request.transferId);
           const payload = uploadId ? stage.payloads.get(uploadId) : undefined;

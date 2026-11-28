@@ -170,6 +170,8 @@ export async function activateDevicesRole(ctx: DevicesRoleContext): Promise<Devi
             signal: ctx.shutdownSignal,
             mutationCustody: params.daemonSessionMutationCustody, sessionAccounts: ctx.sessionAccounts,
             title: 'Computer recording',
+            resolveMediaPlacement: (context, workingDirectory) => params.getApiMachineForSessions()
+              ?.resolveRecordingMediaPlacement(context, workingDirectory, ctx.shutdownSignal),
           }),
         },
         requesterHost: ctx.computerRequesterHost,

@@ -246,6 +246,7 @@ import {
 import { registerScmHandlers } from '@/rpc/handlers/scm';
 import { registerFileSystemHandlers } from '@/rpc/handlers/fileSystem';
 import { prepareNativeFilesystemEffect } from '@/rpc/handlers/fileSystem/prepareNativeFilesystemEffect';
+import { randomUUID } from 'node:crypto';
 import { createFilesystemEffectRpcOwner, createFilesystemEffectTransferAdapter } from '@/rpc/handlers/fileSystem/filesystemEffectChannel';
 import type { FilesystemEffectRequester } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import type { NativeTransferSessionOwner } from '@happier-dev/transfers/node';
@@ -1216,6 +1217,18 @@ export class ApiMachineClient {
             identity: input.preparedIdentity.requesterIdentity, preparedIdentity: input.preparedIdentity,
             operationKey: input.operationKey, signal: input.signal,
             configuration: this.filesystemEffectConfiguration(input.preparedIdentity.requesterIdentity.requester.accountId) });
+    }
+
+    /** Recording media: Record START's requester placement from the incumbent filesystem-effect owner.
+     * A separated requester's Session files are then written in that requester's native process. */
+    async resolveRecordingMediaPlacement(context: import('@/daemon/recording/sessionMediaHost').RecordingOperationContext | undefined,
+        workingDirectory: string, signal: AbortSignal): Promise<import('@/daemon/recording/sessionMediaHost').RecordingMediaPlacement> {
+        const { selectRecordingMediaPlacement } = await import('@/daemon/recording/sessionMediaHost');
+        return await selectRecordingMediaPlacement({ admission: this.filesystemEffectAdmission, context, workingDirectory,
+            openNative: (identity, confined) => prepareNativeFilesystemEffect({
+                prepareNativeOperation: args => this.prepareNativeOperation(args), identity, operationKey: randomUUID(), signal,
+                configuration: { ...this.filesystemEffectConfiguration(identity.requester.accountId), ...confined,
+                    additionalAllowedReadDirs: [], additionalAllowedWriteDirs: [], additionalAllowedReadFiles: [] } }) });
     }
 
     /** Consumes the already admitted requester and existing selected-material lease. */

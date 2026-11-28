@@ -12,7 +12,13 @@ import {
 import type { SessionMediaIngestionSource } from '@/session/media/_types';
 import type { TransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 import { attachSessionMediaMeta } from '@/api/session/client/transcript/sessionMediaBridge';
-import type { RecordingOperationContext, RecordingSaveAdmission } from './sessionMediaHost';
+import { configuration } from '@/configuration';
+import { prepareSource } from '@/session/media/source';
+import { SessionMediaItemV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
+import { persistFilesystemEffectSessionMedia } from '@/rpc/handlers/fileSystem/filesystemEffectChannel';
+import { logger } from '@/ui/logger';
+import type { FilesystemMutationActionId } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import type { RecordingMemberMedia, RecordingOperationContext, RecordingSaveAdmission } from './sessionMediaHost';
 import { RecordingSaveError } from './service';
 
 import type {
@@ -62,12 +68,45 @@ function convertPersistedItemToMediaRef(
   });
 }
 
+/** Runs one requester-owned operation; its process cleanup is reported beside, never instead of, the result. */
+async function withMemberOperation<T>(member: RecordingMemberMedia, effect: (channel: Awaited<ReturnType<RecordingMemberMedia['open']>>) => Promise<T>): Promise<T> {
+  const channel = await member.open();
+  try { return await effect(channel); }
+  finally {
+    await channel.dispose().catch(error => {
+      logger.debug('[Recording] Member media operation cleanup is unconfirmed', { error: error instanceof Error ? error.name : 'unknown' });
+    });
+  }
+}
+
+/** A separated requester's media file is written by that requester's own OS user, from bytes this daemon captured. */
+async function persistSessionMediaAsMember(member: RecordingMemberMedia, params: Readonly<{
+  workingDirectory: string;
+  sourceAccessPolicy: FilesystemAccessPolicy;
+  input: Parameters<typeof persistSessionMedia>[0]['input'];
+}>): Promise<PersistSessionMediaResult> {
+  const { source, ...media } = params.input;
+  const prepared = await prepareSource({ source, workingDirectory: params.workingDirectory,
+    accessPolicy: params.sourceAccessPolicy, maxBytes: configuration.filesUploadMaxFileBytes, suggestedName: media.suggestedName });
+  if ('success' in prepared) return prepared;
+  const raw = await withMemberOperation(member, channel => persistFilesystemEffectSessionMedia(channel, {
+    bytes: prepared.bytes,
+    media: { ...media, mimeType: prepared.mimeType, ...(prepared.suggestedName ? { fileNameHint: prepared.suggestedName } : {}) },
+  }));
+  const result = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
+  if (result.success === false) return { success: false, code: String(result.code), error: String(result.error) };
+  const item = SessionMediaItemV1Schema.safeParse(result.item);
+  if (result.success !== true || !item.success) throw new Error('Member media persistence returned an invalid result');
+  return { success: true, created: result.created === true, item: item.data as Extract<PersistSessionMediaResult, { success: true }>['item'] };
+}
+
 export function createBrowserRecordingSessionMediaWriter<R extends RecordingSession = BrowserRecordingSessionV1>(
   options: BrowserRecordingSessionMediaWriterOptions<R>,
 ): BrowserRecordingMediaWriter<R> {
   const accessPolicy = options.accessPolicy ?? { kind: 'osUser' as const };
   const sourceAccessPolicy = options.sourceAccessPolicy ?? { kind: 'osUser' as const };
-  const workspacePathByRecordingId = new Map<string, Readonly<{ path: string; workingDirectory: string; attached: boolean }>>();
+  const workspacePathByRecordingId = new Map<string, Readonly<{ path: string; workingDirectory: string; attached: boolean;
+    member?: RecordingMemberMedia }>>();
 
   async function discardWorkspaceDraft(recordingId: string, beforeEffect?: () => Promise<void>): Promise<void> {
     const workspacePath = workspacePathByRecordingId.get(recordingId);
@@ -81,7 +120,15 @@ export function createBrowserRecordingSessionMediaWriter<R extends RecordingSess
       });
       if (!authorized.valid) throw new Error(authorized.error);
       await beforeEffect?.();
-      await rm(authorized.resolvedPath, { force: true });
+      const member = workspacePath.member;
+      if (member) {
+        // The member's own filesystem owner removes the draft it wrote.
+        const removed = await withMemberOperation(member, channel => channel.request({ kind: 'action',
+          actionId: 'daemon.filesystem.delete' satisfies FilesystemMutationActionId, input: { rootPath: workspacePath.workingDirectory, path: authorized.resolvedPath, recursive: false } }));
+        if (!removed || typeof removed !== 'object' || Reflect.get(removed, 'success') !== true) {
+          throw new Error('Browser recording draft could not be removed from the Session workspace.');
+        }
+      } else await rm(authorized.resolvedPath, { force: true });
     }
     workspacePathByRecordingId.delete(recordingId);
   }
@@ -125,28 +172,30 @@ export function createBrowserRecordingSessionMediaWriter<R extends RecordingSess
           workingDirectory = await (options.resolveWorkingDirectory?.(target, ...(context ? [context] as const : [])) ?? options.workingDirectory);
         } catch (error) { throw notWritten(error); }
         if (control?.isObservationHeld()) throw confidential();
-        const persisted = await persistSessionMedia({
-          workingDirectory,
-          accessPolicy,
-          sourceAccessPolicy,
-          pathAllowanceRegistry: options.pathAllowanceRegistry,
-          input: {
-            sessionId: target.sessionId,
-            messageLocalId: target.messageLocalId,
-            role: 'output',
-            category: 'tool-artifact',
-            source: buildSessionMediaSource(artifact),
-            origin: {
-              source: 'tool-output',
-              toolCallId: recording.recordingId,
-            },
-            suggestedName: artifact.source.fileNameHint,
-            createdAtMs: recording.stoppedAtMs ?? recording.startedAtMs,
+        const input: Parameters<typeof persistSessionMedia>[0]['input'] = {
+          sessionId: target.sessionId,
+          messageLocalId: target.messageLocalId,
+          role: 'output',
+          category: 'tool-artifact',
+          source: buildSessionMediaSource(artifact),
+          origin: {
+            source: 'tool-output',
+            toolCallId: recording.recordingId,
           },
-        }).catch(error => { throw notWritten(error); });
+          suggestedName: artifact.source.fileNameHint,
+          createdAtMs: recording.stoppedAtMs ?? recording.startedAtMs,
+        };
+        // Record START decided who writes this Session's files; the save follows that decision.
+        const save = context?.recordingSave;
+        const member = save?.sessionId === target.sessionId ? save.member : undefined;
+        const persisted = await (member
+          ? persistSessionMediaAsMember(member, { workingDirectory, sourceAccessPolicy, input })
+          : persistSessionMedia({ workingDirectory, accessPolicy, sourceAccessPolicy,
+            pathAllowanceRegistry: options.pathAllowanceRegistry, input })).catch(error => { throw notWritten(error); });
         if (!persisted.success) throw notWritten(new Error(`Browser recording media persistence failed: ${persisted.code}`));
         const mediaRef = convertPersistedItemToMediaRef(persisted);
-        workspacePathByRecordingId.set(recording.recordingId, { path: persisted.item.path, workingDirectory, attached: false });
+        const stored = { path: persisted.item.path, workingDirectory, ...(member ? { member } : {}) };
+        workspacePathByRecordingId.set(recording.recordingId, { ...stored, attached: false });
         if (control?.isObservationHeld()) {
           await discardWorkspaceDraft(recording.recordingId);
           throw confidential();
@@ -163,7 +212,7 @@ export function createBrowserRecordingSessionMediaWriter<R extends RecordingSess
           }, ...(context ? [context] as const : [])).catch(error => {
             throw new RecordingSaveError('transcript_attach_failed', { cause: error });
           });
-          workspacePathByRecordingId.set(recording.recordingId, { path: persisted.item.path, workingDirectory, attached: true });
+          workspacePathByRecordingId.set(recording.recordingId, { ...stored, attached: true });
         }
         return mediaRef;
       };

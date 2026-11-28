@@ -68,6 +68,11 @@ function readFilesystemEffectPlacement(context: FilesystemEffectSessionContext |
   return { ...placement, requesterAccountId: readFilesystemEffectRequesterAccountId(context) };
 }
 
+export type FilesystemEffectPlacement =
+  | Readonly<{ kind: 'daemon' }>
+  | Readonly<{ kind: 'native'; identity: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>; requester: FilesystemEffectRequester }>
+  | Readonly<{ kind: 'unavailable' }>;
+
 /** Host-private effect prerequisite; never a caller-selected path or OS user. */
 export type FilesystemEffectAdmission = Readonly<{
   /** `source` is the request's selected workspace source (this Machine's disk when omitted). */
@@ -75,6 +80,11 @@ export type FilesystemEffectAdmission = Readonly<{
   action(context?: RpcActionExecutorContext, alreadySelectedIdentity?: HostRequesterExecutionIdentity, source?: WorkspaceSource): Promise<FilesystemEffectFailure | null>;
   resolveRpcRequester?(context?: RpcHandlerContext): Promise<FilesystemEffectRequester>;
   resolveActionRequester?(context?: RpcActionExecutorContext): Promise<FilesystemEffectRequester>;
+  /**
+   * Where an admitted Action's own effect on this Machine's disk runs: the daemon process, or the
+   * requester's native member process (which then owns `requester` until it is disposed).
+   */
+  resolveActionEffectPlacement?(context?: RpcActionExecutorContext): Promise<FilesystemEffectPlacement>;
   executeRpc?(method: string, input: unknown, context: RpcHandlerContext | undefined,
     ownerEffect: () => Promise<unknown>, projectFailure: (failure: FilesystemEffectFailure) => unknown,
     source?: WorkspaceSource): Promise<unknown>;
@@ -161,6 +171,10 @@ export function createFilesystemEffectAdmission(params: Readonly<{
    */
   const admitsTargetSessionMember = (context: FilesystemEffectSessionContext | undefined, source: WorkspaceSource | undefined) =>
     source !== undefined && source.kind !== 'local' && readFilesystemEffectPlacement(context, undefined).sessionId !== undefined;
+  /** The one decision that an identity's effects run in this daemon process rather than a native member process. */
+  const runsOnDaemon = (policy: typeof import('@/daemon/agentIsolation/agentIsolationLaunchPolicy'), identity: HostRequesterExecutionIdentity) =>
+    policy.isHostRequesterUnrestrictedOwner(identity) || params.readAgentIsolation !== undefined && identity.kind === 'isolated'
+      && policy.resolveHostRequesterAgentPlacementForHost({ identity, snapshot: params.readAgentIsolation() }) === 'daemon';
   const admit = async (input: Readonly<{ rpcContext?: RpcHandlerContext; actionContext?: RpcActionExecutorContext }>,
     alreadySelectedIdentity?: HostRequesterExecutionIdentity, source?: WorkspaceSource) => {
     if (input.actionContext) input = { ...input,
@@ -184,8 +198,7 @@ export function createFilesystemEffectAdmission(params: Readonly<{
         await requester.dispose();
       }
       const policy = await import('@/daemon/agentIsolation/agentIsolationLaunchPolicy');
-      if (!policy.isHostRequesterUnrestrictedOwner(identity) && !admitsTargetSessionMember(context, source) && !(params.readAgentIsolation && identity.kind === 'isolated'
-        && policy.resolveHostRequesterAgentPlacementForHost({ identity, snapshot: params.readAgentIsolation?.() }) === 'daemon'))
+      if (!runsOnDaemon(policy, identity) && !admitsTargetSessionMember(context, source))
         return refuse('requester_identity_unavailable');
       // The selector consumed receiving admission or authenticated local-root
       // custody. Finite effects observe cancellation, not a second admission.
@@ -205,6 +218,18 @@ export function createFilesystemEffectAdmission(params: Readonly<{
     action: (actionContext, alreadySelectedIdentity, source) => admit({ actionContext }, alreadySelectedIdentity, source),
     resolveRpcRequester: rpcContext => resolveRequester({ rpcContext }),
     resolveActionRequester: actionContext => resolveRequester({ actionContext }),
+    resolveActionEffectPlacement: async (actionContext): Promise<FilesystemEffectPlacement> => {
+      const requester = await resolveRequester({ actionContext });
+      let placement: FilesystemEffectPlacement = { kind: 'unavailable' };
+      try {
+        const policy = await import('@/daemon/agentIsolation/agentIsolationLaunchPolicy');
+        const identity = requester.identity;
+        if (actionContext?.signal?.aborted) placement = { kind: 'unavailable' };
+        else if (runsOnDaemon(policy, identity)) placement = { kind: 'daemon' };
+        else if (identity.kind === 'isolated') placement = { kind: 'native', identity, requester };
+        return placement;
+      } finally { if (placement.kind !== 'native') await requester.dispose(); }
+    },
     ...(params.executeNativeRpc ? { executeRpc: async (method: string, input: unknown, context: RpcHandlerContext | undefined,
       ownerEffect: () => Promise<unknown>, projectFailure: (failure: FilesystemEffectFailure) => unknown, source?: WorkspaceSource) => {
       if ((await import('@happier-dev/protocol/machines/managed/actionsV1'))
@@ -226,9 +251,7 @@ export function createFilesystemEffectAdmission(params: Readonly<{
         // Ingress has already admitted this arrival. Never invoke an opaque
         // currentness callback here: only its local cancellation is relevant.
         context.signal.throwIfAborted();
-        if (policy.isHostRequesterUnrestrictedOwner(identity) || params.readAgentIsolation && identity.kind === 'isolated'
-          && policy.resolveHostRequesterAgentPlacementForHost({ identity, snapshot: params.readAgentIsolation?.() }) === 'daemon')
-          return await ownerEffect();
+        if (runsOnDaemon(policy, identity)) return await ownerEffect();
         // The native requester channel is this Machine's disk; a target without admitted Session access is refused.
         if (identity.kind !== 'isolated' || source && source.kind !== 'local') return projectFailure(refuse('requester_identity_unavailable'));
         try { return await params.executeNativeRpc!({ method, input, context, identity, requester: { ...requester, identity } }); }

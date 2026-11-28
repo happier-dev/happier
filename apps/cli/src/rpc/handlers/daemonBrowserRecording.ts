@@ -37,8 +37,11 @@ export function registerDaemonBrowserRecordingHandlers(
             return DaemonBrowserRecordingStartResponseV1Schema.parse({
                 protocolVersion: 1,
                 // Machine admission names the caller; the save admission binds it to the Session's own custody.
+                // The receiving admission also selects whose OS user writes the saved files.
                 result: await browserRecording.startRecording(request.input, { runtimeAccountId,
-                    ...(context?.machineAdmission ? { machineAdmission: context.machineAdmission } : {}) }),
+                    ...(context?.machineAdmission ? { machineAdmission: context.machineAdmission,
+                        verifyMachineAdmissionCurrent: context.verifyMachineAdmissionCurrent,
+                        authority: context.callerAuthority } : {}) }),
             });
         },
     );

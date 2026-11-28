@@ -33,6 +33,9 @@ import { registerWorkspaceFileSearchHandler } from '../workspaceFileSearch';
 import { registerWorkspaceFileListHandler } from '../workspaceFileList';
 import { registerSessionCreationDirectoryPreflightRpc } from '@/session/creation/registerSessionCreationTargetPreparationRpc';
 import type { DirectoryPreflightRefusal } from '@/session/creation/directoryPreflightDiagnostic';
+import { persistSessionMedia } from '@/session/media/persistSessionMedia';
+import { SessionMediaOriginV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
+import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
 
 const integer = z.number().check(z.int(), z.nonnegative());
 const id = z.string().check(z.minLength(1));
@@ -60,6 +63,14 @@ const commandSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('entry.prepare'), input: z.unknown() }),
   z.strictObject({ kind: z.literal('entry.apply'), stageId: id, payloads: z.unknown() }),
   z.strictObject({ kind: z.literal('entry.close'), stageId: id, retain: z.boolean() }),
+  z.strictObject({ kind: z.literal('session.media.prepare') }),
+  // The staged payload is the source; the member persists it into its own Session workspace.
+  z.strictObject({ kind: z.literal('session.media.persist'), stageId: id, uploadId: id, input: z.strictObject({
+    sessionId: id, messageLocalId: id, role: z.enum(['input', 'output']),
+    category: z.enum(['attachment', 'generated', 'tool-artifact']), origin: asHostProtocolZod(SessionMediaOriginV1Schema),
+    mimeType: z.string(), fileNameHint: z.optional(z.string()), suggestedName: z.optional(z.string()),
+    createdAtMs: z.optional(z.number()),
+  }) }),
 ]);
 
 /** A retained byte owner inside the already admitted native process. Only its
@@ -258,6 +269,16 @@ export function createFilesystemEffectByteOwner(configuration: FilesystemEffectC
         case 'entry.prepare': return await entries.prepare(command.input);
         case 'entry.apply': return await entries.apply(command.stageId, command.payloads);
         case 'entry.close': return await entries.close(command.stageId, command.retain);
+        case 'session.media.prepare': return entries.prepareStaging();
+        case 'session.media.persist': {
+          const staged = entries.readFinalizedPayloadPath(command.stageId, command.uploadId);
+          const { mimeType, fileNameHint, ...input } = command.input;
+          return await persistSessionMedia({ workingDirectory: configuration.workingDirectory,
+            accessPolicy: configuration.accessPolicy, sourceAccessPolicy: { kind: 'restrictedRoots', roots: [staged.directory] },
+            pathAllowanceRegistry: createTransferPathAllowanceRegistry(),
+            input: { ...input, source: { kind: 'local-file', path: staged.path, mimeType,
+              ...(fileNameHint === undefined ? {} : { fileNameHint }) } } });
+        }
       }
     },
     async dispose(): Promise<void> {
