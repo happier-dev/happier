@@ -208,6 +208,8 @@ describe('activated roborev reviewer', () => {
     expect(result.output).toMatchObject({ reviewOutcome: 'complete', findings: [{ extensions: { 'happier.review.roborev': {
       verdict: 'fail', sources: [1], members: [{ name: 'first' }, { name: 'second' }],
     } } }] });
+    // The overview is the reviewers' prose; the verdict and member states are structured facts the page shows itself.
+    expect(result.output?.overviewMarkdown).toBe(result.output?.summary);
     expect(result.run.mock.calls.find(([request]) => request.args?.[0] === 'review')?.[0].args)
       .toEqual(['review', '--dirty', '--panel', 'fixture', '--type', 'security', '--agent', 'codex', '--reasoning', 'high', '--quiet']);
     expect(result.run.mock.calls[0]?.[0].env).toMatchObject({ SELECTED_OVERLAY: '' });

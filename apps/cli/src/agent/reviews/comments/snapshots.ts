@@ -14,6 +14,7 @@ import {
     reviewCommentTextSnapshotIsLikelyMinifiedV1,
 } from '@happier-dev/protocol/reviews/comments/snapshots';
 import { parseUnifiedDiffHunks } from '@happier-dev/protocol/diff/hunks';
+import type { ScmComparisonFile } from '@happier-dev/protocol/scm/comparison';
 import { runGitCheckpointCommand } from '@/scm/checkpoints/gitCheckpointCommands';
 import { logger } from '@/ui/logger';
 
@@ -154,6 +155,35 @@ async function readComparisonBlob(repository: string, blobId: string): Promise<B
     }
 }
 
+/** A hosted pull request is read on its head, except a file it deletes or renames away from. */
+function hostedPatchSide(file: ScmComparisonFile, anchor: ReviewCommentAnchorV1, filePath: string): 'before' | 'after' {
+    return 'side' in anchor && anchor.side ? anchor.side
+        : file.changeKind === 'deleted' || file.previousPath === filePath ? 'before' : 'after';
+}
+
+/**
+ * The side a reported line sits on when a transported file index defers a hosted pull request's patch (a
+ * Workflow Session reviewer receives that index): the captured hunk coordinates place the lines in the change
+ * without the patch text. Null when the patch is retained here, or the lines fall outside every captured hunk.
+ */
+export function resolveDeferredHostedPatchSide(params: Readonly<{
+    comparison: ScmComparison | null | undefined;
+    anchor: ReviewCommentAnchorV1;
+}>): 'before' | 'after' | null {
+    const { comparison, anchor } = params;
+    if (comparison?.source.kind !== 'pullRequest' || (anchor.kind !== 'line' && anchor.kind !== 'range')) return null;
+    const filePath = anchor.filePath;
+    const files = comparison.inventory.files.filter(file => file.path === filePath || file.previousPath === filePath);
+    if (files.length !== 1) return null;
+    const file = files[0]!;
+    if (file.evidence.state !== 'deferred' || file.beforeBlobId || file.afterBlobId) return null;
+    const side = hostedPatchSide(file, anchor, filePath);
+    const start = anchor.kind === 'line' ? anchor.line : anchor.startLine;
+    const end = anchor.kind === 'line' ? anchor.line : anchor.endLine;
+    return file.occurrences.some(occurrence => start >= occurrence[side].startLine
+        && end < occurrence[side].startLine + occurrence[side].lineCount) ? side : null;
+}
+
 async function resolveComparisonSnapshot(params: Readonly<{
     comparison: ScmComparison;
     anchor: ReviewCommentAnchorV1;
@@ -171,8 +201,7 @@ async function resolveComparisonSnapshot(params: Readonly<{
     if (!blobId && comparison.source.kind === 'pullRequest' && file.evidence.state === 'available'
         && (anchor.kind === 'line' || anchor.kind === 'range' || anchor.kind === 'file')) {
         // Hosted comparisons retain immutable patch lines rather than local Git objects.
-        const patchSide = 'side' in anchor && anchor.side ? anchor.side
-            : file.changeKind === 'deleted' || file.previousPath === filePath ? 'before' : 'after';
+        const patchSide = hostedPatchSide(file, anchor, filePath);
         const reportedStart = anchor.kind === 'line' ? anchor.line : anchor.kind === 'range' ? anchor.startLine : null;
         const reportedEnd = anchor.kind === 'line' ? anchor.line : anchor.kind === 'range' ? anchor.endLine : null;
         for (const hunk of parseUnifiedDiffHunks(file.evidence.unifiedDiff)) {

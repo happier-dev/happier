@@ -380,16 +380,16 @@ export function ReviewDetailHost(props: Readonly<{
     ...(round.reviewerDisplayNames ? { reviewerDisplayNames: round.reviewerDisplayNames } : {}) }, comments: comments.comments,
     roster: reviewRosterOf(record.rounds) } : undefined,
   [comments.comments, record, round]);
+  // Every reviewer the Review named across its rounds: one name per reviewer in every round, notice and Retry title.
+  const roster = React.useMemo(() => record ? reviewRosterOf(record.rounds) : undefined, [record]);
   // The round's reviewer runs: questions on Findings, who ran and how it ended on Runs and Activity, and which
   // reviewer didn't finish on the page's notice line.
-  const questionRuns = useReviewQuestionRuns({ runs: round?.runs, round, accountLifetime: binding,
+  const questionRuns = useReviewQuestionRuns({ runs: round?.runs, round, roster, accountLifetime: binding,
     enabled: presented && (activeTab === 'findings' || (round?.state === 'running' && (activeTab === 'runs' || activeTab === 'activity'))) });
   // The reviewers' overview paragraphs lead the Findings tab; the findings open one section gap below them, or at the
   // panel's own gap under the tabs when there is none (one decision for both the overviews and the gap).
   const overviewMembers = questionRuns.members.filter(member => member.overviewMarkdown.trim() !== '');
   const findingsFollowOverview = overviewMembers.length > 0;
-  // Every reviewer the Review named across its rounds: one name per reviewer in every round, notice and Retry title.
-  const roster = React.useMemo(() => record ? reviewRosterOf(record.rounds) : undefined, [record]);
   const rounds = React.useMemo(() => record?.rounds.map(item => {
     // Only the selected round's runs are read; other rounds name their reviewers from their own record.
     const projected = projectRound(item, item.ordinal === round?.ordinal ? questionRuns.runs : undefined, roster);

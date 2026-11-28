@@ -109,6 +109,15 @@ it('names the admitted requester on a Review whose Machine belongs to another pe
   } finally { await screen.unmount(); }
 });
 
+it('omits the requester byline on the viewer\'s own Review instead of "Requested by Your account"', async () => {
+  const screen = await renderReview({ reviewId: 'own-review', state: 'completed', comments: [],
+    requestedBy: { actorKind: 'person', accountId: 'alice' } });
+  try {
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain('Round 1'));
+    expect(screen.getTextContent()).not.toContain('Requested by');
+  } finally { await screen.unmount(); }
+});
+
 it.each([
   { requestedBy: undefined },
   { requestedBy: { actorKind: 'agent', sessionId: 'agent-session' } },

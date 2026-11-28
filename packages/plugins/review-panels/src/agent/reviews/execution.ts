@@ -78,7 +78,8 @@ export function createRoborevExecutionRunFactory(): AgentExecutionRunRuntimeFact
             runRef: { runId: request.runId, callId: `roborev:${request.runId}`, backendId: 'roborev' },
             ...(comparison ? { comparisonId: comparison.id } : {}), reviewOutcome: result.outcome,
             summary: result.summary,
-            overviewMarkdown: `${result.summary}\n\nNative verdict: ${result.verdict ?? 'unavailable'}.${result.members.length ? `\n\n${result.members.map(member => `${member.name}: ${member.status} (${member.verdict ?? 'unavailable'})`).join('\n')}` : ''}`,
+            // Prose only: the verdict and each member's state stay structured (the finding extension) for the page to present.
+            overviewMarkdown: result.summary,
             findings: result.findings.map((finding, index) => {
               const evidence = result.findingEvidence[index]!;
               return { ...finding, extensions: { 'happier.review.roborev': {

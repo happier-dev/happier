@@ -14,6 +14,7 @@ import { isExecutionRunTargetUnavailable } from '@/sync/runtime/executionRuns/ex
 import { subscribeExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import type { ReviewFindingsMember } from '../finding/useReviewFindingsModel';
+import { reviewRoundReviewerName, reviewRoundRunReviewerId } from '../reviewRoundReviewers';
 
 type Reference = Extract<ReviewRunReferenceV1, { kind: 'execution' }>;
 type ReviewRunMember = ReviewFindingsMember & Readonly<{ overviewMarkdown: string }>;
@@ -56,10 +57,13 @@ const referenceKey = (reference: Reference) => JSON.stringify([reference.machine
 export function useReviewQuestionRuns(params: Readonly<{
     runs: readonly ReviewRunReferenceV1[] | undefined;
     round?: ReviewArtifactV1['rounds'][number];
+    /** The whole Review's roster (`reviewRosterOf`), so a reviewer keeps the name its round card gives it. */
+    roster?: Parameters<typeof reviewRoundReviewerName>[2];
     accountLifetime: ServerAccountScopeLifetime | null;
     enabled: boolean;
 }>) {
     const round = params.round;
+    const roster = params.roster;
     const summaries = round?.state !== 'running' ? round?.reviewerQuestionSummaries : undefined;
     const liveEnabled = params.enabled && summaries === undefined;
     const storedMembers = React.useMemo((): readonly ReviewRunMember[] => {
@@ -68,12 +72,12 @@ export function useReviewQuestionRuns(params: Readonly<{
             const reference = round?.runs.find(run => run.kind === 'execution' && run.runId === summary.runRef.runId);
             const sessionId = reference?.kind === 'execution' ? reference.sessionId ?? null : null;
             return { runId: summary.runRef.runId, backendId: summary.runRef.backendId,
-                reviewerLabel: round?.reviewerDisplayNames?.[summary.reviewerId] ?? summary.runRef.backendId,
+                reviewerLabel: round ? reviewRoundReviewerName(round, summary.reviewerId, roster) : summary.runRef.backendId,
                 sessionId, followUp: resolveReviewFollowUpAvailability(summary.runRef, { sessionId }),
                 overviewMarkdown: summary.overviewMarkdown ?? '', questions: summary.questions, assumptions: summary.assumptions,
                 findings: [], commentByFindingId: EMPTY_COMMENTS, originalByFindingId: {}, threadsByFindingId: {}, threadRefsByFindingId: {} };
         });
-    }, [params.enabled, summaries, round]);
+    }, [params.enabled, summaries, round, roster]);
     const runs = params.runs ?? EMPTY_RUNS;
     const references = React.useMemo(() => runs.filter((run): run is Reference => run.kind === 'execution'), [runs]);
     const lifetime = params.accountLifetime;
@@ -148,7 +152,12 @@ export function useReviewQuestionRuns(params: Readonly<{
         return () => { controller.abort(); activity.forEach(dispose => dispose()); reconnect(); };
     }, [liveEnabled, lifetime, references, key, retryVersion]);
     const reads = liveEnabled && snapshot.key === key ? snapshot.reads : EMPTY_READS;
-    const members = React.useMemo(() => reads.length > 0 ? reads.flatMap(read => read.member ? [read.member] : []) : EMPTY_MEMBERS, [reads]);
+    // One reviewer name wherever it is shown: the round card's (`reviewRoundReviewers`), never the engine's id.
+    const members = React.useMemo(() => reads.length > 0 ? reads.flatMap(read => {
+        if (!read.member) return [];
+        const reviewerId = round ? reviewRoundRunReviewerId(round, read.runId) : null;
+        return [round && reviewerId ? { ...read.member, reviewerLabel: reviewRoundReviewerName(round, reviewerId, roster) } : read.member];
+    }) : EMPTY_MEMBERS, [reads, round, roster]);
     const runReads = React.useMemo(() => reads.length > 0 ? new Map(reads.map(read => [read.runId, read])) : EMPTY_RUN_READS, [reads]);
     const unavailableReason = reads.find(read => read.unavailableReason === 'temporarily_unavailable')?.unavailableReason
         ?? reads.find(read => read.unavailableReason !== null)?.unavailableReason;

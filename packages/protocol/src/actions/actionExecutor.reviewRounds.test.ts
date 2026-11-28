@@ -136,6 +136,8 @@ describe('Review round preparation', () => {
     expect(captures).toBe(0);
     if (!request || request.source.kind !== 'inline') throw new Error('Expected actual admitted Review Workflow');
     const admitted = request;
+    // Titles reach other people (Team shared Reviews): the folder name, never the absolute local path.
+    expect(admitted.metadata?.title).toBe('review-repo');
     const prepare = admitted.source.definition.blocks.find(block => block.kind === 'action' && block.id === 'prepare');
     if (prepare?.kind !== 'action') throw new Error('Expected round preparation');
     const prepareInput = Object.fromEntries(await Promise.all(Object.entries(prepare.input ?? {}).map(async ([key, binding]) =>

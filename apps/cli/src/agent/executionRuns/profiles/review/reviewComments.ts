@@ -20,7 +20,7 @@ import { createCliReviewCommentActionExecutorFromCredentials, resolveCliReviewCo
 import { createAcknowledgedAccountArtifactTransport, createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { AdmittedRequesterSessionBootstrap } from '@/daemon/sessionEncryption/requesterSessionCredentials';
-import { createReviewCommentSnapshotResolver } from '@/agent/reviews/comments/snapshots';
+import { createReviewCommentSnapshotResolver, resolveDeferredHostedPatchSide } from '@/agent/reviews/comments/snapshots';
 import type { ExecutionRunActionResult, ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 import { captureScmComparison, readCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
 import { runWithScmExecutionRunAccountScope } from '@/agent/runtime/bridges/executionRun/profileStart';
@@ -192,8 +192,11 @@ export function createReviewRunCommentService(deps: Readonly<{
           const resolvedSnapshot = await resolveSnapshot({ cwd, anchor, comparison });
           // Preserve the finding and its original location in the Review payload,
           // without inventing a code location when its evidence cannot be verified.
-          if (!resolvedSnapshot && 'filePath' in anchor) anchor = { kind: 'finding', runId: producingRunId, findingId: finding.id };
-          else if (resolvedSnapshot?.kind === 'text' && resolvedSnapshot.diffContext
+          if (!resolvedSnapshot && 'filePath' in anchor) {
+            const deferredSide = resolveDeferredHostedPatchSide({ comparison, anchor });
+            anchor = deferredSide && (anchor.kind === 'line' || anchor.kind === 'range') ? { ...anchor, side: deferredSide }
+              : { kind: 'finding', runId: producingRunId, findingId: finding.id };
+          } else if (resolvedSnapshot?.kind === 'text' && resolvedSnapshot.diffContext
             && (anchor.kind === 'line' || anchor.kind === 'range')) anchor = { ...anchor, side: resolvedSnapshot.diffContext.side };
           const snapshot = resolvedSnapshot ?? { kind: 'none' as const, capturedAt: Date.now() };
           const fingerprint: ReviewCommentFingerprintV1 = {

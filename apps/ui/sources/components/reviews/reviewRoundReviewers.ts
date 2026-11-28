@@ -155,6 +155,19 @@ export function reviewRoundReviewerName(round: NamedRound, reviewerId: string, r
   return reviewRoundReviewerIdentity(round, reviewerId, roster).name;
 }
 
+/**
+ * The reviewer a round's run belongs to: its settled result's, else its place among the round's reviewer runs (the
+ * same pairing the Runs rows use while the round runs). Null when the run is no reviewer's.
+ */
+export function reviewRoundRunReviewerId(
+  round: Pick<ReviewRound, 'reviewerIds' | 'reviewerOutcomes' | 'runs'>, runId: string,
+): string | null {
+  const settled = round.reviewerOutcomes?.find(outcome => outcome.runId === runId)?.reviewerId;
+  if (settled) return settled;
+  const index = round.runs.filter(run => run.kind === 'execution').findIndex(run => run.runId === runId);
+  return index >= 0 ? round.reviewerIds[index] ?? null : null;
+}
+
 /** How many reviewer rows the round's Runs draws: its settled results, or its reviewers while it runs. */
 export function reviewRoundReviewerRowCount(
   round: Pick<ReviewRound, 'state' | 'reviewerIds' | 'reviewerOutcomes' | 'runs'>,

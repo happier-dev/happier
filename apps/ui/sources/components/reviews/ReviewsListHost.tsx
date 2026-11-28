@@ -127,7 +127,9 @@ export function ReviewsListHost({ surface = 'home' }: Readonly<{ surface?: 'home
         // No fact, no lead: an empty lead would still draw its separator.
         const factOf = (item: ReviewRow) => reviewRowFact(item)
             ? <ReviewRowFactText item={item} suffix={narrowRows ? roundOf(item) : undefined} /> : null;
-        const bylineOf = (item: ReviewRow) => [reviewSubjectLabel(item.subjectKind), reviewStateLabel(item.state), roundOf(item)]
+        // A fact that already says the state ("Couldn't finish") is not repeated in the byline.
+        const bylineOf = (item: ReviewRow) => [reviewSubjectLabel(item.subjectKind),
+            reviewRowFact(item)?.saysState ? null : reviewStateLabel(item.state), roundOf(item)]
             .filter(Boolean).join(' · ');
         return {
             wrapItem: (item, children) => <WorkspaceDestinationRow href={artifactViewRoute(item.reviewId)} existingMenu

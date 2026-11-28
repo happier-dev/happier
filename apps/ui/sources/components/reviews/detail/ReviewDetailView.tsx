@@ -260,8 +260,10 @@ function ReviewQualityLines(props: Readonly<{
   const presentation = quality ? presentReviewRoundQualityV1(quality) : null;
   const [expanded, setExpanded] = React.useState(false);
   const count = reviewers.length;
-  // Individual scores remain useful when coverage does not permit an overall score.
-  const basis = !quality ? props.total === undefined ? null : t('reviewWalkthrough.detail.qualityCoverage', { count, total: props.total })
+  // Individual scores remain useful when coverage does not permit an overall score. When only some of the round's
+  // reviewers scored, the coverage ("2 of 3 reviewers scored") is the basis, so it never reads as a miscount.
+  const partialCoverage = props.total !== undefined && count < props.total;
+  const basis = !quality || partialCoverage ? props.total === undefined ? null : t('reviewWalkthrough.detail.qualityCoverage', { count, total: props.total })
     : count > 1 ? t(quality.aggregation === 'median' ? 'reviewWalkthrough.detail.qualityMedian'
       : 'reviewWalkthrough.detail.qualityLowest', { count }) : null;
   const disclosure = count === 0 ? null : expanded ? t('reviewWalkthrough.detail.qualityShowLess')

@@ -92,3 +92,28 @@ it.each(['settled', 'running', 'legacy'] as const)('%s round reads only the requ
         expect(fixture.requests.filter(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_GET)).toHaveLength(kind === 'settled' ? 0 : 2);
     } finally { await screen.unmount(); }
 });
+
+it('heads a panel reviewer\'s overview with the name the round card gives it, never its engine id', async () => {
+    const runs = ['r1', 'r2', 'r3'].map(runId => ({ kind: 'execution' as const, machineId: 'm1', runId }));
+    fixture = await createSessionFilesViewFixture({ serverUrl: 'https://review-panel-names.test', rpc: request => {
+        if (request.method === RPC_METHODS.CAPABILITIES_DESCRIBE) return EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE;
+        return undefined;
+    } });
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { useReviewQuestionRuns } = await import('./useReviewQuestionRuns');
+    const { reviewRoundReviewerName } = await import('../reviewRoundReviewers');
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    // Three Claude reviewers, one of them run through a review panel engine ("roborev").
+    const reviewerIds = ['step-1-reviewer-1', 'step-1-reviewer-2', 'step-1-reviewer-3'];
+    const round = { ordinal: 1, state: 'completed' as const, startedAt: 1, finishedAt: 2, reviewerIds, runs,
+        reviewerAgentIds: Object.fromEntries(reviewerIds.map(id => [id, 'claude'])),
+        reviewerQuestionSummaries: [{ reviewerId: 'step-1-reviewer-2', runRef: { runId: 'r2', callId: 'call', backendId: 'roborev' },
+            overviewMarkdown: 'Deduplicates invoice lines before summing.', questions: [], assumptions: [] }] };
+    let latest: ReturnType<typeof useReviewQuestionRuns> | undefined;
+    function Reader() { latest = useReviewQuestionRuns({ runs, round, accountLifetime: lifetime, enabled: true }); return null; }
+    const screen = await fixture.render(<Reader />);
+    try {
+        expect(latest?.members.map(member => member.reviewerLabel)).toEqual([reviewRoundReviewerName(round, 'step-1-reviewer-2')]);
+        expect(latest?.members[0]?.reviewerLabel).not.toBe('roborev');
+    } finally { await screen.unmount(); }
+});

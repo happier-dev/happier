@@ -15,7 +15,8 @@ export function formatReviewRequesterByline(
   names: ReadonlyMap<string, string> | null | undefined,
   viewerAccountId: string | null | undefined,
 ): string | null {
-  if (!principal) return null;
+  // A person's own Review needs no byline ("Requested by Your account" says nothing).
+  if (!principal || (viewerAccountId && principal.accountId === viewerAccountId)) return null;
   const name = presentSharePrincipal({
     ref: principal,
     name: names?.get(sharePrincipalKey(principal)) ?? null,

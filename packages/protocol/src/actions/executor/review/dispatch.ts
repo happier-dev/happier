@@ -520,7 +520,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
               ...reviewReviewerIdentitiesForStartV1(reviewInput, undefined,
                 reviewer => sessionIdentities.get(sessionKey(reviewer.session)), reviewer => modelNames.get(reviewer)),
             },
-          }, { reviewRecords: records, startedAt: Date.now(), signal: ctx.signal,
+          }, { reviewRecords: records, ...(comparisonCwd ? { cwd: comparisonCwd } : {}), startedAt: Date.now(), signal: ctx.signal,
             captureComparison: request => captureReviewComparisonV1({ ctx, executeHostChild }, request) });
           const people = (reviewInput.steps ?? [{ reviewers: reviewInput.reviewers }]).flatMap(step =>
             step.reviewers.flatMap(reviewer => reviewer.kind === 'person'
@@ -555,7 +555,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             parent: { actionId, input: parsed.data as JsonObject }, context: workflowContext,
             child: { action: 'workflow.run.start', role: 'workflow.run.start', input: {
               runId: composedRunId, source: { kind: 'inline', definition: built.definition }, inputs: built.inputs,
-              metadata: { title: preparedReviewTitleV1(reviewInput, initialComparison, comparisonCapture?.input.source) },
+              metadata: { title: preparedReviewTitleV1(reviewInput, initialComparison, comparisonCapture?.input.source, comparisonCwd) },
             } as JsonObject },
             execute: (input, context, childId) => executeHostChild(childId, input, context),
           });
@@ -714,7 +714,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             reviewerIds: reviewReviewerIdsForStartV1(reviewInput),
             ...reviewReviewerIdentitiesForStartV1(reviewInput, (_selection, id) => selectedReviewEngineItems.get(id)?.label),
           },
-        }, { reviewRecords: reviewRecords!, startedAt: Date.now(), signal: ctx.signal,
+        }, { reviewRecords: reviewRecords!, ...(comparisonCwd ? { cwd: comparisonCwd } : {}), startedAt: Date.now(), signal: ctx.signal,
           captureComparison: request => captureReviewComparisonV1({ ctx, executeHostChild }, request) })).reviewRound;
         const reviewGroupId = reviewRound.reviewId;
         const reviewLaunchOptions = executionRunDispatchOpts;

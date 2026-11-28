@@ -20,7 +20,7 @@ afterEach(async () => {
 });
 
 /** A completed round whose three model reviewers each recorded a 1–5 score and its reason. */
-function reviewArtifact(serverId: string, state: 'completed' | 'partial'): DecryptedArtifact {
+function reviewArtifact(serverId: string, state: 'completed' | 'partial', scored = 3): DecryptedArtifact {
   const rounds = [
     {
       ordinal: 1,
@@ -64,7 +64,8 @@ function reviewArtifact(serverId: string, state: 'completed' | 'partial'): Decry
       reviewId: 'review-quality',
       title: 'Retry reconnect with backoff',
     },
-    body: JSON.stringify({ v: 1, rounds: state === 'partial' ? rounds.map(round => ({ ...round, reviewerIds: round.reviewerIds.slice(0, 2), reviewerQuality: round.reviewerQuality.slice(0, 1) })) : rounds }),
+    body: JSON.stringify({ v: 1, rounds: state === 'partial' ? rounds.map(round => ({ ...round, reviewerIds: round.reviewerIds.slice(0, 2), reviewerQuality: round.reviewerQuality.slice(0, 1) }))
+      : rounds.map(round => ({ ...round, reviewerQuality: round.reviewerQuality.slice(0, scored) })) }),
     ownerAccountId: 'alice',
     access: 'owner',
     storageMode: 'plain',
@@ -79,6 +80,7 @@ function reviewArtifact(serverId: string, state: 'completed' | 'partial'): Decry
 async function renderReview(
   settings?: Readonly<{ reviewQualityAggregation: 'lowest' | 'median' }>,
   state: 'completed' | 'partial' = 'completed',
+  scored = 3,
 ) {
   fixture = await createSessionFilesViewFixture({
     serverUrl: 'https://review-quality.test',
@@ -87,7 +89,7 @@ async function renderReview(
   const { ReviewDetailHost } = await import('./ReviewDetailHost');
   return await fixture.render(
     <ReviewDetailHost
-      artifact={reviewArtifact(fixture.scope.serverId, state)}
+      artifact={reviewArtifact(fixture.scope.serverId, state, scored)}
       bodyState="ready"
       onRetry={() => {}}
     />,
@@ -175,6 +177,17 @@ it('shows score coverage without a duplicate partial warning (UI refinements 112
     expect(textOf(screen, 'review-detail:quality-reviewer:step-1-reviewer-1')).toContain('Codex');
     // A reviewer without a recorded name gets the generic label, never its positional id.
     expect(textOf(screen, 'review-detail:quality')).not.toContain('step-1-reviewer');
+  } finally {
+    await screen.unmount();
+  }
+});
+
+it('says how many of the round\'s reviewers scored when not all of them did (DESIGN-REVIEWS-OPUS-1128 C)', async () => {
+  const screen = await renderReview(undefined, 'completed', 2);
+  try {
+    await vi.waitFor(() => expect(textOf(screen, 'review-detail:quality-score')).toBe('Quality 2/5'));
+    // "Lowest of 2 reviewers" beside "3 reviewers" read as a miscount: name the round's coverage instead.
+    expect(textOf(screen, 'review-detail:quality-basis')).toBe('2 of 3 reviewers scored');
   } finally {
     await screen.unmount();
   }

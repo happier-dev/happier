@@ -78,8 +78,24 @@ type ReviewRoundPreparationInputV1 = Omit<ReviewPrepareRoundInputV1, 'reviewRoun
   | Readonly<{ reviewStart: Omit<ReviewRoundStartV1, 'title' | 'startedAt' | 'signal'> }>
 );
 
-/** The admitted comparison names a new Review; later rounds retain its stored title. */
-export function preparedReviewTitleV1(input: ReviewStartInput, comparison?: ScmComparison, captureSource?: ScmComparisonSource): string {
+const FULL_OID = /^[0-9a-f]{40,64}$/i;
+
+/** A full commit id reads as its short form, as the Review subject fact shows it. */
+function shortReviewRefV1(ref: string): string {
+  return FULL_OID.test(ref) ? ref.slice(0, 7) : ref;
+}
+
+/** A working folder is named by its own folder name; an absolute local path never becomes a title. */
+function reviewFolderNameV1(path: string | undefined): string | undefined {
+  return path?.split(/[\\/]+/).filter(Boolean).at(-1);
+}
+
+/**
+ * The admitted comparison names a new Review; later rounds retain its stored title. Titles are shown to other
+ * people (Team shared Reviews), so they carry names and short commit ids, never local paths.
+ */
+export function preparedReviewTitleV1(input: ReviewStartInput, comparison?: ScmComparison, captureSource?: ScmComparisonSource,
+  admittedCwd?: string): string {
   const pullRequest = input.scmPullRequestReviewScope?.pullRequest;
   const knownTitle = readRecord(pullRequest).title;
   if (typeof knownTitle === 'string' && knownTitle.trim()) return knownTitle.trim();
@@ -88,9 +104,9 @@ export function preparedReviewTitleV1(input: ReviewStartInput, comparison?: ScmC
   if (source?.kind === 'pullRequest' && capturedTitle) return capturedTitle;
   switch (source?.kind) {
     case 'pullRequest': return `${source.locator.repository}#${source.locator.number}`;
-    case 'branch': return source.head;
-    case 'commit': return source.commit;
-    case 'revisionRange': return `${source.baseOid}..${source.headOid}`;
+    case 'branch': return shortReviewRefV1(source.head);
+    case 'commit': return shortReviewRefV1(source.commit);
+    case 'revisionRange': return `${shortReviewRefV1(source.baseOid)} → ${shortReviewRefV1(source.headOid)}`;
     case 'workingTree': return 'Working tree changes';
     case 'session': return 'Session changes';
     case 'turnCheckpoint': return 'Turn changes';
@@ -98,7 +114,9 @@ export function preparedReviewTitleV1(input: ReviewStartInput, comparison?: ScmC
   const reference = readRecord(pullRequest);
   if (typeof reference.number === 'number') return `Pull request #${reference.number}`;
   if (typeof reference.headBranch === 'string') return reference.headBranch;
-  return input.headRef ?? input.cwd ?? 'Repository';
+  if (input.headRef) return shortReviewRefV1(input.headRef);
+  return reviewFolderNameV1(input.cwd ?? comparison?.repository.rootPath ?? admittedCwd)
+    ?? (input.scope === 'repository' ? 'Whole repository' : 'Changes');
 }
 
 /** One initial admission and round/comparison preparation owner for every reviewer path. */
@@ -135,7 +153,7 @@ export async function prepareReviewRoundV1(input: ReviewRoundPreparationInputV1,
   const { projection: _projection, ...retainedCaptureInput } = comparisonCapture ?? {};
   const roster = reviewReviewerIdsForStartV1(input.reviewInput);
   const retried = isNewRound ? readRetriedReviewerIds(input.previousRoundContext, roster) : undefined;
-  const title = preparedReviewTitleV1(input.reviewInput, comparison, comparisonCapture?.source);
+  const title = preparedReviewTitleV1(input.reviewInput, comparison, comparisonCapture?.source, comparisonCapture?.cwd ?? deps.cwd);
   const reviewRound = 'reviewStart' in input ? await deps.reviewRecords.start({ ...input.reviewStart,
     title,
     startedAt: deps.startedAt, signal: deps.signal,

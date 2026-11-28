@@ -22,7 +22,7 @@ import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentat
 import { AppShellColumnContext } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { WorkspaceRouteBody } from '@/app/(app)/reviews';
 import { ReviewsListHost } from './ReviewsListHost';
-import { reviewRowFact } from './list/reviewRowFact';
+import { reviewRowFact, ReviewRowFactText } from './list/reviewRowFact';
 import { findHomeHubBuiltinSection } from '@/components/hub/homeHubSections';
 import { presentReadyHome } from '@/components/hub/homeArrival';
 import { HOME_HUB_BUILTIN_DEFINITIONS, getHomeHubDefaultLayoutV1, resolveHomeHubLayout } from '@/components/hub/layout/homeHubLayout';
@@ -81,6 +81,16 @@ describe('reviewRowFact', () => {
         expect(reviewRowFact(row({ counts: { total: 0, needsDecision: 0 } }))?.label).toBe(t('reviewWalkthrough.detail.glanceNoFindings'));
         expect(reviewRowFact(row({}))?.label).toBe(t('reviewWalkthrough.detail.glanceAllDecided'));
         expect(reviewRowFact(row({ state: 'running', counts: { total: 0, needsDecision: 0 } }))).toBeNull();
+    });
+    it('marks a failed Review as failed, with its state word and the semantic failure glyph (DESIGN-REVIEWS-OPUS-1128 D)', async () => {
+        const failed = row({ state: 'failed', counts: { total: 0, needsDecision: 0 } });
+        expect(reviewRowFact(failed)).toEqual(
+            { label: t('reviewWalkthrough.collection.stateFailed'), tone: 'danger', saysState: true });
+        const screen = await renderScreen(<ReviewRowFactText item={failed} />);
+        try {
+            expect(screen.findAll(node => node.props.name === 'warning')).not.toHaveLength(0);
+            expect(screen.getTextContent()).toContain(t('reviewWalkthrough.collection.stateFailed'));
+        } finally { await screen.unmount(); }
     });
 });
 
