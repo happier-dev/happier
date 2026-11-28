@@ -7,7 +7,7 @@ import { registerTransferUploadRpcHandlers } from '@/transfers/rpc/registerTrans
 import { registerTransferDownloadRpcHandlers } from '@/transfers/rpc/registerTransferDownloadRpcHandlers';
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 import { resolveServerRoutedTransferMaxBytes } from '@/transfers/policy/serverRoutedTransferPolicy';
-export { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
+export { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/sessions/creation/spawnSessionErrorCode';
 export type { SpawnSessionErrorCode, SpawnSessionErrorDetail } from '@happier-dev/protocol';
 export type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { registerCapabilitiesHandlers } from './capabilities';

@@ -8,7 +8,7 @@ import { readReplayTextLimitFromEnv } from '@/session/replay/readReplayTextLimit
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { createSpawnedSession } from '@/session/services/createSpawnedSession';
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
-import { SpawnSessionErrorCodeSchema } from '@happier-dev/protocol/spawnSession';
+import { SpawnSessionErrorCodeSchema } from '@happier-dev/protocol/sessions/creation/spawnSessionErrorCode';
 import type { BackendTargetRefV2Input } from '@happier-dev/protocol';
 import type { LlmTaskRunnerChoiceV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import { isAuthenticationError } from '@/api/client/httpStatusError';

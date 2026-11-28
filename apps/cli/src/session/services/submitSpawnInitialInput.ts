@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
-import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/sessions/creation/spawnSessionErrorCode';
 import { DEFAULT_SPAWN_INITIAL_INPUT_ADMISSION_TIMEOUT_MS } from '@happier-dev/protocol/sessions/creation/sessionSpawnBudget';
 import { hasSessionInputContentV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAuthoringV1';
 import { SessionInputAdmissionRejectionCodeV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';

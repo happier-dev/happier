@@ -1,4 +1,4 @@
-import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/sessions/creation/spawnSessionErrorCode';
 
 export const AGENT_CLI_MISSING_PREVIEW =
   'Agent CLI is unavailable. Install the CLI or fix its configured path, then restart the daemon.';

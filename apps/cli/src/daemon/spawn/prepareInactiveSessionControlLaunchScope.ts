@@ -1,6 +1,6 @@
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import { createMemberAgentCliLaunchContext } from '@/plugins/runtime/exec/system/tools/agentCliBinding';
-import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/sessions/creation/spawnSessionErrorCode';
 import { readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';

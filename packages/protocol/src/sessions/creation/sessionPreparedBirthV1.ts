@@ -1,5 +1,5 @@
 import type { SessionSpawnNewInitialInputDispositionV1 } from './sessionSpawnNewResultV1.js';
-import { SPAWN_SESSION_ERROR_CODES } from '../spawnSession.js';
+import { SPAWN_SESSION_ERROR_CODES } from './spawnSessionErrorCode.js';
 import { SessionInputRequestV1Schema, SessionMessageProvenanceV1Schema, type SessionInputRequestV1, type SessionMessageProvenanceV1 } from '../messages/sessionInputAdmission.js';
 import type { SessionCreationHostContinuationV1 } from '../../actions/executor/types.js';
 import type { SessionSpawnNewInitialInputV1 } from './sessionSpawnNewInputV2.js';

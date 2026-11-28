@@ -2,7 +2,7 @@ import { isBackendTargetDisabledByAccountSettings } from '@happier-dev/protocol/
 import { readBackendTargetKeyV2, type BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/sessions/creation/spawnSessionErrorCode';
 import type { AgentId } from '@happier-dev/agents';
 
 function formatBackendDisabledMessage(label: string): string {

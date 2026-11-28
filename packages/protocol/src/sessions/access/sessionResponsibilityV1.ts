@@ -109,15 +109,7 @@ export const SessionResponsibilityCandidatesResponseSchema = lazyZodSchema(() =>
 export type SessionResponsibilityCandidatesResponse =
   z.infer<typeof SessionResponsibilityCandidatesResponseSchema>;
 
-/**
- * The typed reason one desired assignment is refused. It deliberately does not
- * distinguish an absent Account, an inactive Account and an Account without
- * current read access, so the mutation cannot be used to enumerate identities
- * or access sources.
- */
-export const SESSION_RESPONSIBILITY_ASSIGNEE_UNAVAILABLE_V1 =
-  'session_responsibility_assignee_unavailable' as const;
-
-/** Canonical keyset-decoder rejection for candidate continuation. */
-export const SESSION_RESPONSIBILITY_CANDIDATES_INVALID_CURSOR_V1 =
-  'invalid_cursor' as const;
+export {
+  SESSION_RESPONSIBILITY_ASSIGNEE_UNAVAILABLE_V1,
+  SESSION_RESPONSIBILITY_CANDIDATES_INVALID_CURSOR_V1,
+} from './sessionAccessErrorCodeV1.js';

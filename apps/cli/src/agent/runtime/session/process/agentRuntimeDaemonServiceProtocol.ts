@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { z } from 'zod/mini';
-import { SessionSpawnLaunchErrorV1Schema } from '@happier-dev/protocol/spawnSession';
+import { SessionSpawnLaunchErrorV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnLaunchErrorV1';
 import { AgentSessionConnectedAccountIdentityObservedEventV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import { SessionAgentSpawnPolicyV1StrictSchema } from '@happier-dev/protocol/account/settings/sessionAgentSpawnPolicyV1';
 import { SessionAgentStartAllowListsV1StrictSchema } from '@happier-dev/protocol/account/settings/sessionAgentStartAllowListsV1';

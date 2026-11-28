@@ -14,7 +14,7 @@ import type { AcpProbeBackend } from '@/agent/acp/runtime/acpRuntimeBackendContr
 import { readSessionModelStateFromConfigOptions } from '@/agent/acp/sessionSettings/sessionSettingsState';
 import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
 import { resolveAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
-import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/sessions/creation/spawnSessionErrorCode';
 import {
   getAgentModelConfig,
   getAgentStaticModels,

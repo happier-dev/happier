@@ -17,7 +17,7 @@ import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessi
 import { enrichCliActionApprovalContext } from '@/session/actions/enrichCliActionApprovalContext';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
-import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/sessions/creation/spawnSessionErrorCode';
 import type { MachineActionDirectTargetTransport } from '@/session/actions/createCliActionDeps';
 import type { CliActionDepsParams } from '@/session/actions/cliActionDeps/types';
 import type { CurrentMachineInstallation } from '@/daemon/identity/currentMachineInstallation';

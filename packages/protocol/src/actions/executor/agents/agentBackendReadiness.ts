@@ -8,7 +8,7 @@ import {
   type MachineAgentExecutionStateV1,
   type MachineAgentInventoryTargetV1,
 } from '../../../capabilities/machineAgentInventory.js';
-import { SPAWN_SESSION_ERROR_CODES } from '../../../sessions/spawnSession.js';
+import { SPAWN_SESSION_ERROR_CODES } from '../../../sessions/creation/spawnSessionErrorCode.js';
 import type { AgentBackendInventoryItem, AgentsBackendsListOutput } from '../../agentBackendInventory.js';
 import type { ActionExecuteFailure, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
 import { withExecutionRunStartFailureDetails } from '../../../execution/runs/responseSchemas.js';

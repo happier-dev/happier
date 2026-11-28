@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { ManagedWakeTargetV1Schema } from '../../machines/managed/managedIntentV1.js';
 import { SessionInputMachineTargetV1Schema } from '../messages/sessionInputAdmission.js';
-import { SpawnSessionErrorCodeSchema } from '../spawnSession.js';
+import { SpawnSessionErrorCodeSchema } from '../creation/spawnSessionErrorCode.js';
 
 export const PendingActivationFailureCodeV1Schema = lazyZodSchema(() => z.enum([
   'runtime_start_failed', 'managed_start_refused', 'managed_start_denied', 'managed_start_expired', 'managed_start_failed',

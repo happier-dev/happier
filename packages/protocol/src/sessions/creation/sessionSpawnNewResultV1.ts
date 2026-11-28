@@ -6,7 +6,7 @@ import { ProviderErrorV1Schema } from '../../providers/errors.js';
 import { TerminalHostUnavailableSpawnErrorDetailSchema } from '../spawnSession.js';
 
 import { SessionInputAdmissionRejectionCodeV1Schema } from '../messages/sessionInputAdmissionRejectionV1.js';
-import { SessionAccessErrorCodeV1Schema } from '../access/sessionAccessOperationsV1.js';
+import { SessionAccessErrorCodeV1Schema } from '../access/sessionAccessErrorCodeV1.js';
 import { SessionTeamCredentialBindingMutationRejectionV1Schema } from '../../teams/credentials/sessionBindingRejectionV1.js';
 import {
   SESSION_ORGANIZATION_MAX_ASSIGNMENTS_PER_MUTATION,
@@ -16,7 +16,7 @@ import { SessionIdSchema } from '../idsV1.js';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 import { SessionFollowSourceKeyPreparationResultV1Schema } from '../follow/sessionFollowSourceKeyPreparationV1.js';
 import { SessionAttestedContextV1Schema } from './sessionAttestedContextV1.js';
-import { SessionSpawnLaunchErrorV1Schema } from '../spawnSession.js';
+import { SessionSpawnLaunchErrorV1Schema } from './sessionSpawnLaunchErrorV1.js';
 import { ActionOperationAddressV1Schema } from '../../actions/operations/addressV1.js';
 import {
   SessionCreationOpaqueIdV1Schema,

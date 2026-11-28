@@ -1,5 +1,5 @@
 import { ok } from '@happier-dev/cli-common/output';
-import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/sessions/creation/spawnSessionErrorCode';
 import { readActionCliPresentationEnvelopeKind } from '@/cli/actions/commandPresentationMetadata';
 
 import type {

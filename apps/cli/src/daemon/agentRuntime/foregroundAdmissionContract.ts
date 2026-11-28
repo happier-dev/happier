@@ -6,7 +6,7 @@ import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/execu
 import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import { BackendTargetRefV2Schema } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
-import { SessionSpawnLaunchErrorV1Schema } from '@happier-dev/protocol/spawnSession';
+import { SessionSpawnLaunchErrorV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnLaunchErrorV1';
 import { SessionProviderBindingMetadataV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import { PluginSourceCustodyV1Schema } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { SecretReferenceOverlayV1Schema } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';

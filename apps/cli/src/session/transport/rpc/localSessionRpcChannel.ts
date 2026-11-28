@@ -1,6 +1,6 @@
 import { SessionLifecycleStateReasonSchema, type SessionLifecycleStateReason } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import { SessionRuntimeFailureCauseV1Schema, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
-import { SessionSpawnLaunchErrorV1Schema, type SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
+import { SessionSpawnLaunchErrorV1Schema, type SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnLaunchErrorV1';
 import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readdir, rename, rm, writeFile } from 'node:fs/promises';

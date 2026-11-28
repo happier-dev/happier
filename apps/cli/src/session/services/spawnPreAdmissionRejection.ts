@@ -1,4 +1,4 @@
-import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/sessions/creation/spawnSessionErrorCode';
 
 const DEFINITE_SPAWN_PRE_ADMISSION_ERROR_CODES = new Set<string>([
   SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,

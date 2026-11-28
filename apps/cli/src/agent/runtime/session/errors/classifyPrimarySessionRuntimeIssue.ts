@@ -11,7 +11,7 @@ import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev
 import { readConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol/connect/connected-service-limit-category';
 import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { createProviderErrorV1, ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
-import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/sessions/creation/spawnSessionErrorCode';
 import { PromptStackPreparationError } from '@happier-dev/protocol/prompts/library/resolvePromptStackSystemAppendBlocksV1';
 import { HomeTargetResolutionError } from '@happier-dev/cli-common/homeTarget';
 import { AGENT_STARTUP_FAILURE_PREVIEWS, readAgentStartupFailureCode, readSessionPreparationFailureCode, readSessionRuntimeIssueNativeAuthAgentId, SESSION_PREPARATION_FAILURE_PREVIEWS, SessionRuntimeIssueSourceV1Schema, SessionRuntimeTeamCredentialDenialDetailsV1Schema, SessionRuntimeUsageLimitDetailsV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';

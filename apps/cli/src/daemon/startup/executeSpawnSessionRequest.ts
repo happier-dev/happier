@@ -118,7 +118,7 @@ import { settleCommittedSessionLaunchFailure } from '@/session/services/settleCo
 import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
 import { bindAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
 import { AgentCliNotFoundError } from '@/packagedRuntime/managedTools/agentCliNotFoundError';
-import { SessionSpawnLaunchErrorV1Schema } from '@happier-dev/protocol/spawnSession';
+import { SessionSpawnLaunchErrorV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnLaunchErrorV1';
 import {
     resolveRunnerAgentSessionDescriptorForLease,
 } from '../spawn/prepareAgentRuntimeSessionBridge';
