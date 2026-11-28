@@ -6,7 +6,10 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { expect, it } from 'vitest';
 
 import { DeploymentActionOutputSchemasV1 } from '@happier-dev/protocol';
-import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
+import {
+  databaseActionLocalIdV1,
+  TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1, TELEMETRY_REGRESSIONS_SCHEDULE_ACTION_ID_V1,
+} from '@happier-dev/database-protocol';
 import { TELEMETRY_EXPORT_ENVIRONMENT_KEYS_V1 } from '@happier-dev/deployments/telemetry';
 import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/automations/event-setup-result';
 import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1, DeploymentReceiptEventSetupV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
@@ -15,11 +18,15 @@ import { MachineResourcesPolicyGetResultV1Schema, MachineResourcesPolicyMutation
 import { DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1, MachineRolesGetResultV1Schema } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { WORKFLOW_TRIGGER_ADD_ACTION_ID } from '@happier-dev/protocol/actions/workflowTriggerActionIds';
+import { USAGE_EXPORT_ACTION_ID_V1, USAGE_PRICE_ACTION_IDS, USAGE_QUERY_ACTION_ID_V1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
+import { UsageFileResultSchema } from '@happier-dev/protocol/usage/usageExport';
+import { UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { UsageModelPriceReadResultSchema } from '@happier-dev/protocol/usage/usageModelPriceDelivery';
+import { usageAppCallsSourceId } from '@happier-dev/plugin-sdk/usage';
 import { WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { formatWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionRefV1';
 import { projectWorkflowPluginSourceV1 } from '@happier-dev/protocol/workflows/workflowPluginSourceContractV1';
 import { createOwnServerDockerBoundary } from '../../../../apps/cli/src/deployments/targets/ownServer/ownServerDeployment.testkit';
-import { TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1, TELEMETRY_REGRESSIONS_SCHEDULE_ACTION_ID_V1 } from '@happier-dev/database-protocol';
 import { regressionCompareResultSchema } from '../../../plugins/telemetry/src/regressionSchemas';
 import { TELEMETRY_REGRESSION_WORKFLOW_ID_V1 } from '../../../plugins/telemetry/src/regressionWorkflow';
 import { startDatabaseWorkbenchFixture } from '../../src/testkit/databaseWorkbench';
@@ -28,6 +35,7 @@ import { fetchJson } from '../../src/testkit/http';
 import { FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS } from '../../src/testkit/fakeClaude';
 import { repoRootDir } from '../../src/testkit/paths';
 import { createRunDirs } from '../../src/testkit/runDir';
+import { settleReviewedSessionMcpAction, startSessionMcpAgent } from '../../src/testkit/sessionMcpAgent';
 import { runFreshDeploymentSourceSmoke } from '../../src/scenarios/deployments.scenario';
 import { waitFor } from '../../src/testkit/timing';
 
@@ -114,8 +122,10 @@ it('P7-F16 a deployment schedules one check that treats a repeated release as on
   const docker = await createOwnServerDockerBoundary(join(testDir, 'docker-boundary'));
   const image = await docker.registerImage('checkout', 'f16');
   const fixture = await startDatabaseWorkbenchFixture({ testDir,
-    serverEnv: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1', HAPPIER_FEATURE_WORKFLOWS__ENABLED: '1' } });
+    serverEnv: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1', HAPPIER_FEATURE_WORKFLOWS__ENABLED: '1',
+      HAPPIER_USAGE_MODEL_PRICE_FETCH_ENABLED: 'false' } });
   let stopWorkload: (() => Promise<void>) | undefined;
+  let agent: Awaited<ReturnType<typeof startSessionMcpAgent>> | undefined;
   try {
     const { account, machine, sourceId } = await runFreshDeploymentSourceSmoke(fixture, { env: {
       PATH: `${join(testDir, 'docker-boundary')}${delimiter}${process.env.PATH ?? ''}`,
@@ -196,7 +206,7 @@ it('P7-F16 a deployment schedules one check that treats a repeated release as on
     const target = DeploymentActionOutputSchemasV1['deployments.targets.link'].parse(linked.result);
     if (!target.ok) throw new Error(`F16 target unavailable (${target.error})`);
     expect(await account.executeReviewed('deployments.environments.telemetry.set', { ...address, expectedRevision: target.revision,
-      collector: { machineId }, capabilities: { metrics: true, appLlmCost: false, exceptions: false },
+      collector: { machineId }, capabilities: { metrics: true, appLlmCost: true, exceptions: false },
     }, { ...onMachine, presentUserConfirmation: { actionId: 'deployments.environments.telemetry.set' } }))
       .toMatchObject({ ok: true, result: { ok: true, state: 'redeploy_required' } });
     async function deploy() {
@@ -344,28 +354,31 @@ it('P7-F16 a deployment schedules one check that treats a repeated release as on
 
     let lastExportStatus: number | undefined;
     let lastExportAt = 0;
+    async function exportTelemetry(signal: 'metrics' | 'traces', body: unknown) {
+      const env = await docker.readRuntimeEnvironment('checkout');
+      const collector = new URL(`/v1/${signal}`, env.OTEL_EXPORTER_OTLP_ENDPOINT);
+      const socketPath = await docker.readPrivateRelaySocketPath(collector.hostname);
+      const headers = Object.fromEntries((env.OTEL_EXPORTER_OTLP_HEADERS ?? '').split(',').filter(Boolean).map(header => {
+        const equals = header.indexOf('=');
+        return [header.slice(0, equals), decodeURIComponent(header.slice(equals + 1))];
+      }));
+      return new Promise<number>((resolve, reject) => {
+        const exporter = requestHttp({ socketPath, method: 'POST', path: collector.pathname, signal: traffic.signal,
+          headers: { ...headers, Host: collector.host, 'Content-Type': 'application/json' } }, exported => {
+          exported.once('error', reject);
+          exported.once('end', () => resolve(exported.statusCode ?? 502));
+          exported.resume();
+        });
+        exporter.once('error', reject);
+        exporter.end(JSON.stringify(body));
+      });
+    }
     const exporting = (async () => {
       while (!traffic.signal.aborted) {
         const batch = samples.slice();
         if (batch.length) {
           try {
-            const env = await docker.readRuntimeEnvironment('checkout');
-            const collector = new URL('/v1/metrics', env.OTEL_EXPORTER_OTLP_ENDPOINT);
-            const socketPath = await docker.readPrivateRelaySocketPath(collector.hostname);
-            const headers = Object.fromEntries((env.OTEL_EXPORTER_OTLP_HEADERS ?? '').split(',').filter(Boolean).map(header => {
-              const equals = header.indexOf('=');
-              return [header.slice(0, equals), decodeURIComponent(header.slice(equals + 1))];
-            }));
-            lastExportStatus = await new Promise<number>((resolve, reject) => {
-              const exporter = requestHttp({ socketPath, method: 'POST', path: collector.pathname, signal: traffic.signal,
-                headers: { ...headers, Host: collector.host, 'Content-Type': 'application/json' } }, exported => {
-                exported.once('error', reject);
-                exported.once('end', () => resolve(exported.statusCode ?? 502));
-                exported.resume();
-              });
-              exporter.once('error', reject);
-              exporter.end(JSON.stringify({ resourceMetrics: batch.map(sample => sample.metric) }));
-            });
+            lastExportStatus = await exportTelemetry('metrics', { resourceMetrics: batch.map(sample => sample.metric) });
             // Retry rejected and ambiguous responses with unchanged point IDs.
             // App requests continue to record their own intervals during export.
             if (lastExportStatus === 200) {
@@ -539,7 +552,80 @@ it('P7-F16 a deployment schedules one check that treats a repeated release as on
       expect.objectContaining({ remainingOccurrences: 0, nextRunAt: null }),
     ]);
     console.info('P7-F16 both once triggers spent; disarm and fixed deployment verified');
+
+    const session = agent = await startSessionMcpAgent({ testDir, directory: machine.workspaceDir,
+      daemonState: machine.daemon.state, executeAsPerson: account.executeAsPerson });
+    const reviewed = async (actionId: string, payload: unknown) => settleReviewedSessionMcpAction(await session.execute(actionId, payload), {
+      serverId: fixture.serverId, serverHttpBaseUrl: fixture.actionServerApiUrl, token: account.credentials.token,
+      execute: account.execute,
+      decide: artifactId => account.executeAsPerson('approval.request.decide', { artifactId, decision: 'approve' }),
+    });
+    const resultOf = (actionId: string, result: Awaited<ReturnType<typeof session.execute>>) => {
+      if (!result.ok) {
+        const issues = result.details && typeof result.details === 'object' && 'issues' in result.details ? result.details.issues : undefined;
+        const diagnostics = JSON.stringify({ issues, failureCause: result.failureCause });
+        throw new Error(`F16 ${actionId} refused (${result.errorCode}) ${diagnostics}`);
+      }
+      return result.result;
+    };
+
+    const accepted = async (actionId: string, input: unknown) => resultOf(actionId, await session.execute(actionId, input));
+    const acceptedReviewed = async (actionId: string, input: unknown) => resultOf(actionId, await reviewed(actionId, input));
+    const attributes = (record: Record<string, string>) => Object.entries(record).map(([key, stringValue]) => ({ key, value: { stringValue } }));
+    const outside = randomUUID();
+    const modelId = 'dbw-f16-selected-model';
+    const priced = { anchor: 'usage.modelPrices', value: { [modelId]: {
+      kind: 'rates', inputUsdPerMillion: 2, outputUsdPerMillion: 4, cacheReadUsdPerMillion: 0, cacheWriteUsdPerMillion: 0,
+    } } };
+    expect(await account.executeReviewed('settings.set', priced, { presentUserConfirmation: { actionId: 'settings.set' } }))
+      .toMatchObject({ ok: true });
+    const callAt = Date.now();
+    const timeUnixNano = String(BigInt(callAt) * 1_000_000n);
+    const callTraceId = randomUUID().replaceAll('-', '');
+    expect(await exportTelemetry('traces', { resourceSpans: [{
+      resource: { attributes: attributes({ 'service.name': 'checkout', 'service.version': exporterVersion }) },
+      scopeSpans: [{ spans: [{ traceId: callTraceId, spanId: callTraceId.slice(0, 16), kind: 3, name: 'chat',
+        startTimeUnixNano: timeUnixNano, endTimeUnixNano: timeUnixNano, attributes: [
+          ...attributes({ 'gen_ai.provider.name': 'openai', 'gen_ai.operation.name': 'chat', 'gen_ai.request.model': modelId }),
+          ...Object.entries({ 'gen_ai.usage.input_tokens': '100', 'gen_ai.usage.output_tokens': '50',
+            'gen_ai.usage.cache_read.input_tokens': '0', 'gen_ai.usage.cache_creation.input_tokens': '0',
+            'gen_ai.usage.reasoning.output_tokens': '0' }).map(([key, intValue]) => ({ key, value: { intValue } })),
+        ] }] }],
+    }] })).toBe(200);
+    const query = { sources: [usageAppCallsSourceId(environmentId)], period: { startMs: callAt - 1, endMs: callAt + 1 },
+      granularity: 'hour', costBasis: 'api_equivalent', metric: 'cost', includeComparison: false, includeQuota: false, includeQuotaHistory: false,
+      includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false, includeCoach: false };
+    const outsideQuery = { ...query, sources: [usageAppCallsSourceId(outside)] };
+    const totals = { eventCount: 1, tokens: { input: 100, output: 50 }, cost: { apiEquivalentUsd: 0.0004 } };
+    const exportInput = { query, fields: ['totals'], format: 'json' };
+    const file = UsageFileResultSchema.parse(await accepted(USAGE_EXPORT_ACTION_ID_V1, exportInput));
+    expect(JSON.parse(Buffer.from(file.base64, 'base64').toString('utf8'))).toMatchObject({
+      query: { sources: query.sources }, fields: ['totals'], accounting: { totals },
+    });
+    expect(await session.execute(USAGE_EXPORT_ACTION_ID_V1, { ...exportInput, query: outsideQuery }))
+      .toMatchObject({ ok: false, errorCode: 'telemetry_collector_unavailable' });
+    console.info('P7-F16 Session Usage export returned the selected priced totals and refused the outside environment');
+
+    const usage = UsageQueryBatchResultSchema.parse(await accepted(USAGE_QUERY_ACTION_ID_V1, { queries: [query, outsideQuery] }));
+    const exact = usage.results.find(slice => slice.shownQuery.sources.includes(query.sources[0]!));
+    const unavailable = usage.results.find(slice => slice.shownQuery.sources.includes(outsideQuery.sources[0]!));
+    expect(exact?.accounting?.totals).toMatchObject(totals);
+    expect(unavailable?.sources).toContainEqual(expect.objectContaining({ source: 'accounting', status: 'error', errorCode: 'telemetry_collector_unavailable' }));
+    console.info('P7-F16 Session App accounting query returned the selected priced call and refused the outside environment');
+
+    expect(await accepted('settings.get', { anchor: priced.anchor })).toMatchObject(priced);
+    const catalogModelId = 'gpt-4o-mini';
+    const prices = UsageModelPriceReadResultSchema.parse(await accepted(USAGE_PRICE_ACTION_IDS.get,
+      { modelIds: [catalogModelId, modelId] }));
+    if (!('models' in prices)) throw new Error('F16 exact Session price request returned only the catalog summary');
+    expect(Object.keys(prices.models)).toEqual([catalogModelId]);
+    const refreshed = UsageModelPriceReadResultSchema.parse(await acceptedReviewed(USAGE_PRICE_ACTION_IDS.refresh,
+      { modelIds: [catalogModelId] }));
+    expect(refreshed).toMatchObject({ models: prices.models, provenance: { fetchStatus: 'disabled' } });
+    console.info('P7-F16 Session public price get and refresh returned only the selected known model');
   } finally {
-    try { await stopWorkload?.(); } finally { await fixture.stop(); }
+    try { await agent?.stop(); } finally {
+      try { await stopWorkload?.(); } finally { await fixture.stop(); }
+    }
   }
 }, 0);

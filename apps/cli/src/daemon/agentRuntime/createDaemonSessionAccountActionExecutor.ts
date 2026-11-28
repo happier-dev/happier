@@ -14,7 +14,7 @@ import { ActionIdSchema, ACTION_ID_FAMILIES_V1, ACTION_INVOKE_ACTION_ID_V1 } fro
 import { isWorkspaceSyncStopAction, prepareWorkspaceSyncStopPlacement } from '@/workspaces/sync/resolveWorkspaceSyncStopController';
 import { TELEMETRY_COSTS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { USAGE_SOURCE_DISMISS_ACTION_ID, USAGE_SOURCE_GET_ACTION_ID } from '@happier-dev/protocol/usage/usageSources';
-import { USAGE_QUERY_ACTION_ID_V1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
+import { isUsageAppCallsReadParentActionIdV1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { MACHINE_ACTIVITY_LIST_ACTION_ID } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
 import { readPluginActionExecutionReference } from '@/session/actions/createDaemonPluginActionExecutor';
 import { blocksPublicProviderComment, INTERNAL_DISCUSSION_REPLY_MESSAGE, INTERNAL_DISCUSSION_REPLY_REQUIRED }
@@ -610,6 +610,7 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
       && external.authorization.binding.requestId === operation.requestId
       && sameStrictJsonValue(external.authorization.binding.sessionActionOrigin, sessionActionOrigin)
       ? external.authorization.binding.sessionActionSource : undefined;
+    const readsUsageAppCalls = isUsageAppCallsReadParentActionIdV1(operation.actionId);
     const executionContext: RpcActionExecutorContext = {
       ...context,
       ...(source ? { defaultSessionMachineId: source.machineId } : {}),
@@ -645,15 +646,15 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
           options.signal ? { ...authority, signal: options.signal } : authority, undefined, target.machineId);
         },
       } : {}),
-      ...(operation.actionId === WORKFLOW_AUTHORING_ACTION_ID.draftSave || operation.actionId === USAGE_QUERY_ACTION_ID_V1 ? {
+      ...(operation.actionId === WORKFLOW_AUTHORING_ACTION_ID.draftSave || readsUsageAppCalls ? {
         executeOrdinaryChildAction: (actionId, input, options) => {
           const parsed = StrictJsonValueSchema.safeParse(input);
           const setupRead = isWorkflowObservationSetupChildActionV1(operation.actionId, actionId);
-          const costsReference = operation.actionId === USAGE_QUERY_ACTION_ID_V1 && actionId === ACTION_INVOKE_ACTION_ID_V1
+          const costsReference = readsUsageAppCalls && actionId === ACTION_INVOKE_ACTION_ID_V1
             ? readPluginActionExecutionReference(actionId, input) : null;
           const costsTarget = costsReference && formatQualifiedPluginActionId(costsReference) === TELEMETRY_COSTS_READ_ACTION_ID_V1
             && options?.externalActionTarget?.kind === 'machine' ? options.externalActionTarget.machineId : undefined;
-          const allowed = operation.actionId === USAGE_QUERY_ACTION_ID_V1 ? costsTarget !== undefined
+          const allowed = readsUsageAppCalls ? costsTarget !== undefined
             : setupRead || isWorkflowHostAdmittedChildActionIdV1(actionId);
           if (!allowed || !options?.actionRequestId || !parsed.success) {
             return Promise.resolve({ ok: false, errorCode: 'invalid_action_input', error: 'invalid_action_input' });
