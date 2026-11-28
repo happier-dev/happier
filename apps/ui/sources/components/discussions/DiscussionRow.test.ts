@@ -1,9 +1,12 @@
 import * as React from 'react';
 import type { DiscussionOpenedSummaryV1 } from '@happier-dev/protocol/discussions/actions';
 import { HAPPIER_COLLECTION_ROW_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { createSessionFixture, renderScreen } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '@/components/settings/settingsViewTestHelpers';
+import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
+import { storage } from '@/sync/domains/state/storageStore';
 
 installSettingsViewCommonModuleMocks({
     storage: async () => {
@@ -44,6 +47,51 @@ function discussionFixture(): DiscussionOpenedSummaryV1 {
 afterEach(() => vi.restoreAllMocks());
 
 describe('DiscussionRow presentation', () => {
+    it('updates only rows displaying a Session mention when its recording visibility changes', async () => {
+        const previous = storage.getState();
+        const serverId = 'discussion-row-privacy-home';
+        const session = createSessionFixture({ id: 'mentioned-session', serverId,
+            metadata: { name: 'Private review queue', path: '/repo', host: 'tester.local' } });
+        const plain = { ...discussionFixture(), latestMessage: { ...discussionFixture().latestMessage,
+            content: { v: 1 as const, parts: [{ t: 'text' as const, text: 'Read the findings' }] },
+        } };
+        const mentioning = { ...plain, latestMessage: { ...plain.latestMessage,
+            content: { v: 1 as const, parts: [{ t: 'mention' as const,
+                participant: { kind: 'session' as const, sessionId: session.id } }] },
+        } };
+        const rows = [
+            ...Array.from({ length: 12 }, (_, index) => ({ id: `plain-${index}`, discussion: plain, geometry: 'column' as const })),
+            { id: 'pane', discussion: mentioning, geometry: 'pane' as const },
+            { id: 'mentioned', discussion: mentioning, geometry: 'column' as const },
+        ];
+        const updates: string[] = [];
+        storage.setState({ sessions: { [session.id]: session } });
+        storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { [serverId]: ['private'] } });
+        storage.getState().setSessionTagAssignmentsOptimistic(serverId, session.id, ['private']);
+        try {
+            const screen = await renderScreen(React.createElement(React.Fragment, null, rows.map(({ id, discussion, geometry }) =>
+                React.createElement(React.Profiler, { key: id, id, onRender: (rowId, phase) => {
+                    if (phase !== 'mount') updates.push(rowId);
+                } }, React.createElement(DiscussionRow, { discussion: { ...discussion, id }, geometry, serverId,
+                    viewerAccountId: 'viewer', onOpenDiscussion: () => {}, attentionReason: null, attentionType: null })),
+            )));
+            expect(screen.getTextContent()).toContain('Private review queue');
+            updates.length = 0;
+            await act(async () => setScreenSharingPrivacyActive(true));
+            expect(screen.getTextContent()).not.toContain('Private review queue');
+            expect(updates).toEqual(['mentioned']);
+            updates.length = 0;
+            await act(async () => setScreenSharingPrivacyActive(false));
+            expect(screen.getTextContent()).toContain('Private review queue');
+            expect(updates).toEqual(['mentioned']);
+        } finally {
+            await act(async () => {
+                setScreenSharingPrivacyActive(false);
+                storage.setState(previous);
+            });
+        }
+    });
+
     it('uses the shared phone page card and chevron while preserving the approval action and row facts', async () => {
         vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
         const screen = await renderScreen(React.createElement(CollectionList, {

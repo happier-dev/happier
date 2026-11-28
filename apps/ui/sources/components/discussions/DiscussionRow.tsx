@@ -149,9 +149,6 @@ export function readDiscussionRowAccountAvatar(
         actor?.accountId === accountId ? { ...actor, serverId: viewerScope.serverId } : null, viewerScope);
 }
 
-/** The last message as one quiet line, "Mei: let's ask the bot…" (lab T2-A); null when it can't be opened. */
-const EMPTY_SESSION_ADDRESSES: readonly Readonly<{ sessionId: string; serverId: string | null }>[] = Object.freeze([]);
-
 /** The Sessions the last message mentions, so the row can name them through the participant name owner. */
 function readLatestMentionedSessionIds(discussion: DiscussionOpenedSummaryV1): string[] {
     const content = discussion.latestMessage.content;
@@ -161,8 +158,9 @@ function readLatestMentionedSessionIds(discussion: DiscussionOpenedSummaryV1): s
     return [...ids];
 }
 
+/** The last message as one quiet line, "Mei: let's ask the bot…" (lab T2-A); null when it can't be opened. */
 function readLatestPreview(discussion: DiscussionOpenedSummaryV1, viewerAccountId: string,
-    sessionName: (sessionId: string) => string | null): string | null {
+    sessionName?: (sessionId: string) => string | null): string | null {
     const content = discussion.latestMessage.content;
     if (!content) return null;
     const accountName = (accountId: string) => {
@@ -177,6 +175,37 @@ function readLatestPreview(discussion: DiscussionOpenedSummaryV1, viewerAccountI
         ? rowLabels.you
         : readLatestSpeakerName(discussion);
     return author ? `${author}: ${text}` : text;
+}
+
+function readConversationLine(discussion: DiscussionOpenedSummaryV1, conversation: string): string {
+    return discussion.anchor?.kind === 'doc' ? [rowLabels.onDoc, conversation].filter(Boolean).join(' · ') : conversation;
+}
+
+/** Only a visible subtitle that names a Session needs the Session name and privacy subscriptions. */
+function DiscussionSessionMentionPreview(props: Readonly<{
+    discussion: DiscussionOpenedSummaryV1;
+    viewerAccountId: string;
+    fallback: string;
+    addresses: ReadonlyArray<Readonly<{ sessionId: string; serverId: string }>>;
+}>): string {
+    const names = useSessionDisplayNameProjections(props.addresses, useDiscussionSessionLabelProjection());
+    const preview = readLatestPreview(props.discussion, props.viewerAccountId, (sessionId) => {
+        const index = props.addresses.findIndex((address) => address.sessionId === sessionId);
+        return names[index] ?? null;
+    });
+    return readConversationLine(props.discussion, preview ?? props.fallback);
+}
+
+function renderColumnPreview(discussion: DiscussionOpenedSummaryV1, viewerAccountId: string, serverId: string, fallback: string): React.ReactNode {
+    // A mentioned agent reads by its name, as the thread names it, never as "Session participant" (R2-5).
+    const sessionIds = readLatestMentionedSessionIds(discussion);
+    if (sessionIds.length > 0) return <DiscussionSessionMentionPreview
+        discussion={discussion}
+        viewerAccountId={viewerAccountId}
+        addresses={sessionIds.map((sessionId) => ({ sessionId, serverId }))}
+        fallback={fallback}
+    />;
+    return readConversationLine(discussion, readLatestPreview(discussion, viewerAccountId) ?? fallback);
 }
 
 /**
@@ -274,15 +303,6 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
     // In the column the second line is the conversation itself (its latest message); what needs the viewer
     // is the row's calm status mark at its end (ruling 2026-11-01: approval and draft the amber dot, a mention the
     // ink dot); unread news is the bold title alone.
-    // A mentioned agent reads by its name, as the thread names it, never as "Session participant" (R2-5).
-    const mentionedSessionKey = column ? readLatestMentionedSessionIds(discussion).join('\n') : '';
-    const mentionedSessions = React.useMemo(() => mentionedSessionKey ? mentionedSessionKey.split('\n')
-        .map(sessionId => ({ sessionId, serverId: props.serverId ?? null })) : EMPTY_SESSION_ADDRESSES, [mentionedSessionKey, props.serverId]);
-    const mentionedNames = useSessionDisplayNameProjections(mentionedSessions, useDiscussionSessionLabelProjection());
-    const preview = column ? readLatestPreview(discussion, props.viewerAccountId, (sessionId) => {
-        const index = mentionedSessions.findIndex(address => address.sessionId === sessionId);
-        return index >= 0 ? mentionedNames[index] ?? null : null;
-    }) : null;
     // The amber dot alone says it needs the viewer (ruling 2026-11-01): the "Needs you" heading carries the meaning,
     // and the word sits beside the dot only with status words on; the dot is also the request's peek.
     const statusGlyph = (column || requestRef !== null) && resolveWorkStatusRowMark(workStatus) !== 'none'
@@ -290,10 +310,8 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
     // The second line is what the Discussion is, from the list's summary facts (round outcome, open comments); a Doc
     // conversation without one says so before its latest message (lab T2-L "On a doc").
     const summaryLine = column ? resolveDiscussionRowSummary(discussion, rowLabels) : null;
-    const conversation = preview ?? subtitle.join(' · ');
-    const secondLine = summaryLine ?? (column && discussion.anchor?.kind === 'doc'
-        ? [rowLabels.onDoc, conversation].filter(Boolean).join(' · ')
-        : conversation);
+    const fallback = subtitle.join(' · ');
+    const secondLine = summaryLine ?? (column ? renderColumnPreview(discussion, props.viewerAccountId, props.serverId, fallback) : fallback);
     const statusContent = statusGlyph ? <View style={styles.trailing}>
         {props.statusWords && statusGlyph.word ? <Text testID={`session-discussion-row-status-word-${discussion.id}`}
             variant="meta" numberOfLines={1} style={workStatusWordStyle(statusGlyph.tone)}>{statusGlyph.word}</Text> : null}
