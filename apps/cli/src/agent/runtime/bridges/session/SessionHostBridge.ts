@@ -12,11 +12,9 @@ import { SessionStateCapabilitiesV1Schema } from '@happier-dev/protocol/sessions
 import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
 import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtimeDescriptorV1';
 
-import {
+import type {
+  BackendExecutionSurfaces,
   resolveBackendEngineAdapterResolution,
-  resolveBackendExecutionSurfaces,
-  resolveEngineBackendIdForCatalogAgent,
-  type BackendExecutionSurfaces,
 } from '@/agent/runtime/registry/engineRegistry';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { buildRuntimePublicationFromEngineResolution } from '@/agent/runtime/identity/buildRuntimePublicationFromEngineResolution';
@@ -51,14 +49,9 @@ import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/plan';
 import { throwIfPluginRuntimeStartBlocked } from '@/agent/runtime/registry/throwIfPluginRuntimeStartBlocked';
 import { withHostSessionRuntimeIdentityPublication } from '@/agent/runtime/identity/publication/withHostSession';
 import {
-  HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY,
-} from '@/agent/runtime/session/process/agentRuntimeRunnerProtocol';
-import {
   HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY,
-} from '@/daemon/agentRuntime/sessionBridgeAuthorization';
-import {
-  createRunnerAgentSessionRuntimeBootstrap,
-} from '@/agent/runtime/session/process/runnerAgentSessionRuntimeSource';
+  HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY,
+} from '@/agent/runtime/session/process/agentRuntimeRunnerEnvironment';
 import { configuration } from '@/configuration';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
@@ -106,12 +99,14 @@ export class SessionHostBridge implements SessionHostBridgeContract {
   }
 
   async resolveExecutionSurfaces(backendId?: string | null): Promise<BackendExecutionSurfaces> {
+    const { resolveBackendExecutionSurfaces } = await import('@/agent/runtime/registry/engineRegistry');
     return await resolveBackendExecutionSurfaces(backendId);
   }
 
   async resolveCurrentExecutionSurfacesForCatalogAgent(
     agentId: string,
   ): Promise<CurrentCatalogAgentExecutionSurfaces | null> {
+    const { resolveEngineBackendIdForCatalogAgent } = await import('@/agent/runtime/registry/engineRegistry');
     const initialSnapshot = readAgentCatalogSnapshot();
     const backendId = resolveEngineBackendIdForCatalogAgent(initialSnapshot, agentId);
     const agentTarget = AgentExecutionTargetV1Schema.safeParse({
@@ -216,6 +211,7 @@ export class SessionHostBridge implements SessionHostBridgeContract {
         && readAuthorityFilePath()
         && resolutionParams.happyHomeDir
       ) {
+        const { createRunnerAgentSessionRuntimeBootstrap } = await import('@/agent/runtime/session/process/runnerAgentSessionRuntimeSource');
         const source = await createRunnerAgentSessionRuntimeBootstrap({
           happyHomeDir: resolutionParams.happyHomeDir,
           publicReleaseRing: configuration.publicReleaseRing,
@@ -282,6 +278,7 @@ export class SessionHostBridge implements SessionHostBridgeContract {
         if (attach) params = { ...record, sessionAttachSecret: attach, sessionAttachFilePath: undefined };
       }
     }
+    const { resolveBackendEngineAdapterResolution } = await import('@/agent/runtime/registry/engineRegistry');
     const resolution = await resolveBackendEngineAdapterResolution(
       backendId,
       await this.resolveEngineResolutionParams(backendId, params, hostOptions),

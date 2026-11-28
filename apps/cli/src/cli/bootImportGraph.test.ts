@@ -12,7 +12,9 @@ const { build } = createRequire(join(cliRoot, 'package.json'))('esbuild') as typ
 // modules (P03-RUNTIME-SHAPE: 85-93 % of the code each process loads). V8 precise coverage
 // (P03-CODE-COVERAGE) runs ~10 % of it; every loaded module keeps its source text, module record
 // and loader cache entries for the process lifetime (P03-BOOT-STRUCTURE).
+const SESSION_RUNNER_PRELOAD = 'src/agent/runtime/lifecycle/sessionRunnerPreload.ts';
 const ROLE_ROOTS = {
+  preload: [SESSION_RUNNER_PRELOAD],
   host: ['src/agent/runtime/session/loop/runHostSessionRuntime.ts'],
   daemon: ['src/daemon/startDaemon.ts', 'src/api/apiMachine.ts'],
 } as const;
@@ -47,6 +49,7 @@ const HOST_NEVER_RUN_DAEMON_OWNERS = [
 // consumer; anything else belongs behind a dynamic import.
 const HEADROOM = { modules: 45, sourceBytes: 0.29 * 1024 * 1024 };
 const MEASURED_START: Record<Role, { modules: number; sourceBytes: number }> = {
+  preload: { modules: 4_193, sourceBytes: 36_700_000 },
   host: { modules: 6_333, sourceBytes: 58_570_255 },
   daemon: { modules: 8_613, sourceBytes: 83_953_821 },
 };
@@ -67,6 +70,12 @@ beforeAll(async () => {
   for (const [role, roots] of Object.entries(START_ROOTS) as [StartRole, readonly string[]][]) {
     const eager = new Set<string>();
     const pending = [...roots];
+    if (role === 'preload') {
+      // Every direct import() is awaited by preloadSessionRunner's Promise.all.
+      for (const dependency of inputs[SESSION_RUNNER_PRELOAD]!.imports) {
+        if (dependency.kind === 'dynamic-import' && !dependency.external) pending.push(dependency.path);
+      }
+    }
     while (pending.length > 0) {
       const path = pending.pop()!;
       if (eager.has(path)) continue;
@@ -82,12 +91,12 @@ beforeAll(async () => {
 const roleGraph = (role: StartRole) => eagerGraphs.get(role)!;
 const endsWithAny = (path: string, suffixes: readonly string[]) => suffixes.some((suffix) => normalize(path).endsWith(suffix));
 
-describe('daemon, session host and finite Action start graphs', () => {
+describe('daemon, session host, Session runner preload and finite Action start graphs', () => {
   it('have no runtime importer of a Protocol barrel', () => {
     const importerCounts = Object.fromEntries((Object.keys(START_ROOTS) as StartRole[]).map((role) => [role,
       roleGraph(role).filter((path) => (inputs[path]?.imports ?? []).some((dependency) =>
         dependency.kind !== 'dynamic-import' && !dependency.external && endsWithAny(dependency.path, PROTOCOL_BARRELS))).length]));
-    expect(importerCounts).toEqual({ host: 0, daemon: 0, actions: 0 });
+    expect(importerCounts).toEqual({ preload: 0, host: 0, daemon: 0, actions: 0 });
   });
 
   it('keep never-run daemon owners out of the session host', () => {
@@ -104,6 +113,7 @@ describe('daemon, session host and finite Action start graphs', () => {
       sourceBytes: Math.max(0, measured[role]!.sourceBytes - MEASURED_START[role].sourceBytes - HEADROOM.sourceBytes),
     }]));
     expect(over, `measured ${JSON.stringify(measured)}`).toEqual({
+      preload: { modules: 0, sourceBytes: 0 },
       host: { modules: 0, sourceBytes: 0 },
       daemon: { modules: 0, sourceBytes: 0 },
     });

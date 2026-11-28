@@ -10,8 +10,6 @@ import { BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS } from '../sources/gene
 import { getAllAgentDefinitionContracts } from '@happier-dev/agents/definitions';
 import { readAdmittedPluginRegistryStateSync, resolveBundledPluginMachineEnablement } from '@/plugins/store/registry/admittedState';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
-import { projectActionFailureCauseV1, readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ExternalActionRequestIdV1Schema } from '@happier-dev/protocol/actions/externalActionHttpError';
 import { logger } from '@/ui/logger';
 
 /** Read desired scope facts once for this admission, never from its consumers. */
@@ -53,6 +51,10 @@ export async function readCurrentBundledPluginEnablement(params?: Readonly<{
       accountIntents = intents;
     }
   } catch (error) {
+    const [{ projectActionFailureCauseV1, readActionErrorCodeV1 }, { ExternalActionRequestIdV1Schema }] = await Promise.all([
+      import('@happier-dev/protocol/actions/actionExecutionResult'),
+      import('@happier-dev/protocol/actions/externalActionHttpError'),
+    ]);
     // No exception prose, request configuration or payload leaves this boundary.
     // Keep the read failure distinct from an authoritative Account refusal.
     const response: unknown = error && typeof error === 'object' && 'response' in error ? error.response : undefined;
