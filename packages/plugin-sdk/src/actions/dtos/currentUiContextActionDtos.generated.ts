@@ -2,11 +2,10 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
+import type { ActionDtoShape_68e32215229391a8, ActionDtoShape_7ca625e638d2d7de } from './pluginActionDtoShapes.generated.js';
 
 export type CurrentUiContextActionInputById = {
-    readonly "ui.current_context.read": Record<string, never> & {
-        clientId?: string | undefined;
-    };
+    readonly "ui.current_context.read": ActionDtoShape_68e32215229391a8;
     readonly "ui.current_context.command.invoke": {
         commandId: string;
         input?: unknown;
@@ -15,26 +14,7 @@ export type CurrentUiContextActionInputById = {
     };
 };
 export type CurrentUiContextActionResultById = {
-    readonly "ui.current_context.read": {
-        navigation: {
-            area: string;
-            screen: string;
-            title?: string | undefined;
-            presentation?: 'modal' | 'pane' | 'screen' | undefined;
-        };
-        commands: {
-            id: string;
-            title: string;
-            description?: string | undefined;
-        }[];
-        entity?: undefined | {
-            kind: string;
-            label: string;
-            summary?: string | undefined;
-            reference?: JsonValue | undefined;
-        };
-        detail?: JsonValue | undefined;
-    };
+    readonly "ui.current_context.read": ActionDtoShape_7ca625e638d2d7de;
     readonly "ui.current_context.command.invoke": {
         value: JsonValue;
         commandTitle?: string | undefined;

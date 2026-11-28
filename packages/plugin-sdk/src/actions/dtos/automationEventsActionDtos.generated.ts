@@ -2,6 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue, PluginJsonValueV2 } from '../../identity.js';
+import type { ActionDtoShape_018910fcd2e0151c, ActionDtoShape_075b2603cbc4a72f, ActionDtoShape_0de21da4479caadb, ActionDtoShape_107987b54ce4c274, ActionDtoShape_2fa1b73bf6d2473e, ActionDtoShape_39c4227db2b73075, ActionDtoShape_5e22a1995f03822f, ActionDtoShape_5ef720c2dc43a3ff, ActionDtoShape_a996694cf5cc36ac, ActionDtoShape_c9945676b1505c83, ActionDtoShape_ced0351403049665, ActionDtoShape_ee35e0cc99bde877 } from './pluginActionDtoShapes.generated.js';
 
 export type AutomationEventsActionInputById = {
     readonly "automation.event.sources.list": {
@@ -13,10 +14,7 @@ export type AutomationEventsActionInputById = {
             kind: 'socket';
         };
         source?: undefined | {
-            eventRef: {
-                pluginId: string;
-                localId: string;
-            };
+            eventRef: ActionDtoShape_ced0351403049665;
             sourceInstanceId: string;
             sourceContractVersion: number;
         };
@@ -29,148 +27,18 @@ export type AutomationEventsActionInputById = {
             kind: 'retry';
             retryAt: number;
         };
-        checkpointRetirementCandidates?: undefined | {
-            automationId: string;
-            triggerId: string;
-            triggerRevision: number;
-            eventRef: {
-                pluginId: string;
-                localId: string;
-            };
-            sourceSelectorId: string;
-            sourceContractVersion: number;
-        }[];
+        checkpointRetirementCandidates?: ActionDtoShape_075b2603cbc4a72f;
     };
     readonly "automation.event.admit": {
-        definitions: {
-            automationId: string;
-            triggerId: string;
-            triggerRevision: number;
-            sourceSelectorId: string;
-        }[];
-        eventRef: {
-            pluginId: string;
-            localId: string;
-        };
+        definitions: ActionDtoShape_107987b54ce4c274[];
+        eventRef: ActionDtoShape_ced0351403049665;
         occurrenceId: string;
         occurredAt: number;
         observationReceivedAt: number;
         payload: JsonValue;
         subjectContexts?: undefined | {
             role: 'context' | 'operand';
-            subject: {
-                checkId: string;
-                sourceInstanceId: string;
-                kind: 'healthCheck';
-                serverId: string;
-            } | {
-                kind: 'app';
-                serverId: string;
-                projectSourceId: string;
-            } | {
-                kind: 'approvalProfile';
-                serverId: string;
-                profileId: string;
-            } | {
-                kind: 'backup';
-                serverId: string;
-                environmentId: string;
-            } | {
-                kind: 'database';
-                serverId: string;
-                target: {
-                    kind: 'environment';
-                    environmentId: string;
-                    service: string;
-                    database: string;
-                } | {
-                    kind: 'managed_deployment';
-                    environmentId: string;
-                    targetLinkId: string;
-                    databaseName: string;
-                } | {
-                    savedSecretId: string;
-                    accountId: string;
-                    workspace: {
-                        serverId: string;
-                        workspaceId: string;
-                        machineId: string;
-                        rootPath: string;
-                        kind?: undefined;
-                    } | {
-                        v: 2;
-                        kind: 'managed';
-                        serverId: string;
-                        workspaceId: string;
-                        managedId: string;
-                        controller: {
-                            machineId: string;
-                            installationId: string;
-                        };
-                        rootPath: string;
-                    };
-                    installationId: string;
-                    projectKey: string;
-                    kind: 'manual';
-                } | {
-                    source: {
-                        kind: 'env_file';
-                        path: string;
-                        variable: string;
-                    } | {
-                        kind: 'service';
-                        serviceId: string;
-                        variable: string;
-                    } | {
-                        kind: 'sqlite_file';
-                        path: string;
-                    };
-                    accountId: string;
-                    workspace: {
-                        serverId: string;
-                        workspaceId: string;
-                        machineId: string;
-                        rootPath: string;
-                        kind?: undefined;
-                    } | {
-                        v: 2;
-                        kind: 'managed';
-                        serverId: string;
-                        workspaceId: string;
-                        managedId: string;
-                        controller: {
-                            machineId: string;
-                            installationId: string;
-                        };
-                        rootPath: string;
-                    };
-                    installationId: string;
-                    projectKey: string;
-                    kind: 'worktree';
-                };
-            } | {
-                kind: 'environment';
-                serverId: string;
-                environmentId: string;
-            } | {
-                kind: 'plugin';
-                serverId: string;
-                pluginId: string;
-                subjectKindId: string;
-                identity: unknown;
-            } | {
-                kind: 'session';
-                serverId: string;
-                sessionId: string;
-            } | {
-                serverId: string;
-                machineId: string;
-                kind: 'machine';
-            } | {
-                serverId: string;
-                projectKey: string;
-                kind: 'project';
-            };
+            subject: ActionDtoShape_c9945676b1505c83;
         }[];
         sourceInstanceId?: string | undefined;
         originRunId?: string | undefined;
@@ -195,10 +63,7 @@ export type AutomationEventsActionInputById = {
         automationId: string;
         triggerId: string;
         triggerRevision: number;
-        eventRef: {
-            pluginId: string;
-            localId: string;
-        };
+        eventRef: ActionDtoShape_ced0351403049665;
         sourceSelectorId: string;
         state: 'attention' | 'backingOff' | 'baselined' | 'observing' | 'uninitialized';
         code: string;
@@ -221,184 +86,21 @@ export type AutomationEventsActionResultById = {
             automationId: string;
             triggerId: string;
             triggerRevision: number;
-            eventRef: {
-                pluginId: string;
-                localId: string;
-            };
+            eventRef: ActionDtoShape_ced0351403049665;
             sourceInstanceId: string;
             sourceSelectorId: string;
             sourceContractVersion: number;
             sourceConfig: PluginJsonValueV2;
-            observationTransport: {
-                kind: 'checkpointedPull';
-                watcherMaterializationRef: {
-                    machineId: string;
-                    materializationId: string;
-                    pluginId: string;
-                };
-            } | {
+            observationTransport: ActionDtoShape_2fa1b73bf6d2473e | {
                 kind: 'durablePush';
                 webhookEndpointId: string;
-                endpointMaterializationRef: {
-                    machineId: string;
-                    materializationId: string;
-                    pluginId: string;
-                };
+                endpointMaterializationRef: ActionDtoShape_0de21da4479caadb;
                 observationStartsAt: number;
-            } | {
-                kind: 'socket';
-                watcherMaterializationRef: {
-                    machineId: string;
-                    materializationId: string;
-                    pluginId: string;
-                };
-            };
-            filter: null | {
-                v: 1;
-                all: ({
-                    op: 'contains';
-                    field: string;
-                    value: boolean | null | number | string;
-                } | {
-                    op: 'eq';
-                    field: string;
-                    value: boolean | null | number | string;
-                } | {
-                    op: 'gt' | 'gte' | 'lt' | 'lte';
-                    field: string;
-                    value: number | string;
-                } | {
-                    op: 'in';
-                    field: string;
-                    values: (boolean | null | number | string)[];
-                })[];
-            };
+            } | ActionDtoShape_a996694cf5cc36ac;
+            filter: ActionDtoShape_5e22a1995f03822f;
             maximumObservationAgeMs: null | number;
-            deploymentPreview?: undefined | {
-                serverId: string;
-                environmentId: string;
-            };
-            subject?: undefined | {
-                checkId: string;
-                sourceInstanceId: string;
-                kind: 'healthCheck';
-                serverId: string;
-            } | {
-                kind: 'app';
-                serverId: string;
-                projectSourceId: string;
-            } | {
-                kind: 'approvalProfile';
-                serverId: string;
-                profileId: string;
-            } | {
-                kind: 'backup';
-                serverId: string;
-                environmentId: string;
-            } | {
-                kind: 'database';
-                serverId: string;
-                target: {
-                    kind: 'environment';
-                    environmentId: string;
-                    service: string;
-                    database: string;
-                } | {
-                    kind: 'managed_deployment';
-                    environmentId: string;
-                    targetLinkId: string;
-                    databaseName: string;
-                } | {
-                    savedSecretId: string;
-                    accountId: string;
-                    workspace: ({
-                        serverId: string;
-                        workspaceId: string;
-                        machineId: string;
-                        rootPath: string;
-                        kind?: undefined;
-                    } & {
-                        readonly [key: string]: JsonValue;
-                    }) | ({
-                        v: 2;
-                        kind: 'managed';
-                        serverId: string;
-                        workspaceId: string;
-                        managedId: string;
-                        controller: {
-                            machineId: string;
-                            installationId: string;
-                        };
-                        rootPath: string;
-                    } & {
-                        readonly [key: string]: JsonValue;
-                    });
-                    installationId: string;
-                    projectKey: string;
-                    kind: 'manual';
-                } | {
-                    source: {
-                        kind: 'env_file';
-                        path: string;
-                        variable: string;
-                    } | {
-                        kind: 'service';
-                        serviceId: string;
-                        variable: string;
-                    } | {
-                        kind: 'sqlite_file';
-                        path: string;
-                    };
-                    accountId: string;
-                    workspace: ({
-                        serverId: string;
-                        workspaceId: string;
-                        machineId: string;
-                        rootPath: string;
-                        kind?: undefined;
-                    } & {
-                        readonly [key: string]: JsonValue;
-                    }) | ({
-                        v: 2;
-                        kind: 'managed';
-                        serverId: string;
-                        workspaceId: string;
-                        managedId: string;
-                        controller: {
-                            machineId: string;
-                            installationId: string;
-                        };
-                        rootPath: string;
-                    } & {
-                        readonly [key: string]: JsonValue;
-                    });
-                    installationId: string;
-                    projectKey: string;
-                    kind: 'worktree';
-                };
-            } | {
-                kind: 'environment';
-                serverId: string;
-                environmentId: string;
-            } | {
-                kind: 'plugin';
-                serverId: string;
-                pluginId: string;
-                subjectKindId: string;
-                identity: JsonValue;
-            } | {
-                kind: 'session';
-                serverId: string;
-                sessionId: string;
-            } | {
-                serverId: string;
-                machineId: string;
-                kind: 'machine';
-            } | {
-                serverId: string;
-                projectKey: string;
-                kind: 'project';
-            };
+            deploymentPreview?: ActionDtoShape_ee35e0cc99bde877;
+            subject?: ActionDtoShape_018910fcd2e0151c;
             observationOnly?: undefined | {
                 kind: 'observationOnly';
             };
@@ -407,24 +109,10 @@ export type AutomationEventsActionResultById = {
     } | {
         kind: 'unchanged';
         revision: string;
-        checkpointRetirements?: undefined | {
-            automationId: string;
-            triggerId: string;
-            triggerRevision: number;
-            eventRef: {
-                pluginId: string;
-                localId: string;
-            };
-            sourceSelectorId: string;
-            sourceContractVersion: number;
-        }[];
+        checkpointRetirements?: ActionDtoShape_075b2603cbc4a72f;
     };
     readonly "automation.event.admit": {
-        results: ({
-            kind: 'admitted';
-            runId: string;
-            checkpointSafe: true;
-        } | {
+        results: (ActionDtoShape_5ef720c2dc43a3ff | {
             kind: 'blocked';
             reason: 'capacity' | 'noEnabledAssignment' | 'occurrenceConflict' | 'temporarilyUnavailable';
             checkpointSafe: false;
@@ -435,11 +123,7 @@ export type AutomationEventsActionResultById = {
             kind: 'refreshDefinition';
             reason: 'definitionStale' | 'observationTargetChanged';
             checkpointSafe: false;
-        } | {
-            kind: 'rejoined';
-            runId: string;
-            checkpointSafe: true;
-        } | {
+        } | ActionDtoShape_39c4227db2b73075 | {
             kind: 'skipped';
             reason: 'beforeObservationStart' | 'bot_paused' | 'definitionRetired' | 'filtered' | 'occurrenceRejected' | 'outsideFreshness';
             checkpointSafe: true;

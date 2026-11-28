@@ -2,6 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
+import type { ActionDtoShape_c0f24743413aee41 } from './pluginActionDtoShapes.generated.js';
 
 export type SubagentRegistryActionInputById = {
     readonly "sessions.subagents.list": {
@@ -9,12 +10,7 @@ export type SubagentRegistryActionInputById = {
         sessionId?: string | undefined;
         beforeSeq?: number | undefined;
     };
-    readonly "sessions.subagents.get": {
-        sessionId: string;
-        entryId: string;
-        toolId: string;
-        beforeSeq?: number | undefined;
-    };
+    readonly "sessions.subagents.get": ActionDtoShape_c0f24743413aee41;
     readonly "sessions.subagents.watch": {
         [x: string]: unknown;
         parentSessionId?: string | undefined;
@@ -30,12 +26,7 @@ export type SubagentRegistryActionResultById = {
             startedAtMs: null | number;
             endedAtMs: null | number;
             parentId: null | string;
-            operand: {
-                sessionId: string;
-                entryId: string;
-                toolId: string;
-                beforeSeq?: number | undefined;
-            };
+            operand: ActionDtoShape_c0f24743413aee41;
         }[];
         nextBeforeSeq: null | number;
     };
@@ -46,12 +37,7 @@ export type SubagentRegistryActionResultById = {
         startedAtMs: null | number;
         endedAtMs: null | number;
         parentId: null | string;
-        operand: {
-            sessionId: string;
-            entryId: string;
-            toolId: string;
-            beforeSeq?: number | undefined;
-        };
+        operand: ActionDtoShape_c0f24743413aee41;
         detail: null | {
             sidechainId: null | string;
             tool: {

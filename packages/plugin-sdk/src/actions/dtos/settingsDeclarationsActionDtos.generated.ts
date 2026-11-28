@@ -2,7 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
-import type { ExtensionSelectionV1, QualifiedAudienceSelection, UpdatedSelectionV1 } from './pluginActionDtoSupport.generated.js';
+import type { ActionDtoShape_05bc170385783006, ActionDtoShape_09289db93288d708, ActionDtoShape_144054498f51a3a3, ActionDtoShape_1465bd24f1fa9b9c, ActionDtoShape_146a3e8a0a779998, ActionDtoShape_1a441713069d57cf, ActionDtoShape_1ce8b92cf4984047, ActionDtoShape_20e2fcfef772cf38, ActionDtoShape_426c6e36b655cd3f, ActionDtoShape_486d1830eb4a64f4, ActionDtoShape_4aca10a60374cec6, ActionDtoShape_5079ee49636b2cb7, ActionDtoShape_53d2b19e1b90534c, ActionDtoShape_58a12b5988b5b063, ActionDtoShape_68d6494d798ab013, ActionDtoShape_6be9952c34399ad9, ActionDtoShape_7cab77162fd539e8, ActionDtoShape_849249031cf82048, ActionDtoShape_8cbd98038a249511, ActionDtoShape_91d3e24d1a5cbbd6, ActionDtoShape_968a7793d24a089b, ActionDtoShape_a7382b3cec03b76b, ActionDtoShape_ab65e2059d765d1a, ActionDtoShape_b50c6f80daba47cb, ActionDtoShape_b783485f8f2010f3, ActionDtoShape_c57a0130b952d464, ActionDtoShape_c5f96cf0a8278563, ActionDtoShape_c7c572abcdd66f45, ActionDtoShape_db1113cf9f687014, ActionDtoShape_e1f335a6ed747447, ActionDtoShape_e4d56a8ca1756262, ActionDtoShape_e568ba6e19b4b0d8, ActionDtoShape_fb2c38b9154d2468, ActionDtoShape_fe9439cfe2141f75 } from './pluginActionDtoShapes.generated.js';
 
 export type SettingsDeclarationsActionInputById = {
     readonly "settings.list": {
@@ -14,26 +14,7 @@ export type SettingsDeclarationsActionInputById = {
     readonly "settings.get": {
         anchor: string;
         key?: string | undefined;
-        target?: undefined | {
-            kind: 'home';
-            serverId: string;
-        } | {
-            kind: 'project';
-            serverId: string;
-            projectKey: string;
-        } | {
-            kind: 'public_profile_draft';
-            serverId: string;
-        } | {
-            kind: 'team';
-            serverId: string;
-            teamId: string;
-        } | {
-            kind: 'team_identity_connection';
-            serverId: string;
-            teamId: string;
-            connectionId: string;
-        };
+        target?: ActionDtoShape_fe9439cfe2141f75;
         includeVersion?: true | undefined;
     } & {
         clientId?: string | undefined;
@@ -42,63 +23,18 @@ export type SettingsDeclarationsActionInputById = {
         anchor: string;
         value: unknown;
         key?: string | undefined;
-        target?: undefined | {
-            kind: 'home';
-            serverId: string;
-        } | {
-            kind: 'project';
-            serverId: string;
-            projectKey: string;
-        } | {
-            kind: 'public_profile_draft';
-            serverId: string;
-        } | {
-            kind: 'team';
-            serverId: string;
-            teamId: string;
-        } | {
-            kind: 'team_identity_connection';
-            serverId: string;
-            teamId: string;
-            connectionId: string;
-        };
+        target?: ActionDtoShape_fe9439cfe2141f75;
         expectedSettingsVersion?: number | undefined;
         reversal?: undefined | {
-            before: {
-                unset: true;
-            } | {
-                value: unknown;
-            };
-            applied: {
-                unset: true;
-            } | {
-                value: unknown;
-            };
-            scope: {
-                serverId: string;
-                accountId: string;
-            };
+            before: ActionDtoShape_486d1830eb4a64f4;
+            applied: ActionDtoShape_486d1830eb4a64f4;
+            scope: ActionDtoShape_e1f335a6ed747447;
             beforeVersion: number;
             appliedVersion: number;
             kind: 'restore';
         } | {
-            changes: {
-                before: {
-                    unset: true;
-                } | {
-                    value: unknown;
-                };
-                applied: {
-                    unset: true;
-                } | {
-                    value: unknown;
-                };
-                key: string;
-            }[];
-            scope: {
-                serverId: string;
-                accountId: string;
-            };
+            changes: ActionDtoShape_ab65e2059d765d1a[];
+            scope: ActionDtoShape_e1f335a6ed747447;
             beforeVersion: number;
             appliedVersion: number;
             kind: 'restore';
@@ -111,34 +47,11 @@ export type SettingsDeclarationsActionInputById = {
     readonly "settings.reset": {
         anchor: string;
         key?: string | undefined;
-        target?: undefined | {
-            kind: 'home';
-            serverId: string;
-        } | {
-            kind: 'project';
-            serverId: string;
-            projectKey: string;
-        } | {
-            kind: 'public_profile_draft';
-            serverId: string;
-        } | {
-            kind: 'team';
-            serverId: string;
-            teamId: string;
-        } | {
-            kind: 'team_identity_connection';
-            serverId: string;
-            teamId: string;
-            connectionId: string;
-        };
+        target?: ActionDtoShape_fe9439cfe2141f75;
         expected?: undefined | {
             changes: {
                 key: string;
-                applied: {
-                    unset: true;
-                } | {
-                    value: unknown;
-                };
+                applied: ActionDtoShape_486d1830eb4a64f4;
             }[];
         } | {
             unset: true;
@@ -183,60 +96,21 @@ export type SettingsDeclarationsActionInputById = {
                 space: {
                     id: string;
                     name: string;
-                    icon: {
-                        kind: 'icon';
-                        name: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'chart' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'database' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'pulse' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'table' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'view' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow';
-                    } | {
-                        kind: 'project';
-                        project: {
-                            serverId: string;
-                            projectKey: string;
-                        };
-                    };
-                    filter: {
-                        projects?: unknown;
-                        states?: undefined | {
-                            include: ('deployed' | 'deploying' | 'needsYou' | 'notDeployed')[];
-                            exclude: ('deployed' | 'deploying' | 'needsYou' | 'notDeployed')[];
-                        };
-                        machines?: unknown;
-                    };
+                    icon: ActionDtoShape_1a441713069d57cf;
+                    filter: ActionDtoShape_426c6e36b655cd3f;
                     includeNeedsYouEverywhere: boolean;
                     entityKind: 'deploymentEnvironment';
                 };
-            } | {
-                op: 'delete';
-                spaceId: string;
-            } | {
+            } | ActionDtoShape_c5f96cf0a8278563 | {
                 op: 'edit';
                 spaceId: string;
                 changes: {
                     name?: string | undefined;
-                    icon?: undefined | {
-                        kind: 'icon';
-                        name: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'chart' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'database' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'pulse' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'table' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'view' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow';
-                    } | {
-                        kind: 'project';
-                        project: {
-                            serverId: string;
-                            projectKey: string;
-                        };
-                    };
-                    filter?: undefined | {
-                        projects?: unknown;
-                        states?: undefined | {
-                            include: ('deployed' | 'deploying' | 'needsYou' | 'notDeployed')[];
-                            exclude: ('deployed' | 'deploying' | 'needsYou' | 'notDeployed')[];
-                        };
-                        machines?: unknown;
-                    };
+                    icon?: ActionDtoShape_1465bd24f1fa9b9c;
+                    filter?: undefined | ActionDtoShape_426c6e36b655cd3f;
                     includeNeedsYouEverywhere?: boolean | undefined;
                 };
-            } | {
-                op: 'reorder';
-                spaceId: string;
-                beforeSpaceId: null | string;
-            } | {
+            } | ActionDtoShape_09289db93288d708 | {
                 op: 'resetDefault';
             };
         } | {
@@ -247,98 +121,21 @@ export type SettingsDeclarationsActionInputById = {
                 space: {
                     id: string;
                     name: string;
-                    icon: {
-                        kind: 'icon';
-                        name: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'chart' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'database' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'pulse' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'table' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'view' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow';
-                    } | {
-                        kind: 'project';
-                        project: {
-                            serverId: string;
-                            projectKey: string;
-                        };
-                    };
-                    filter: {
-                        state: 'active' | 'archived';
-                        attention: 'any' | 'needs_you';
-                        unreadOnly: boolean;
-                        commentsOnItems?: boolean | undefined;
-                        extensions?: Record<string, {
-                            kind: 'boolean';
-                            value: boolean;
-                        } | {
-                            kind: 'set';
-                            include: string[];
-                            exclude: string[];
-                        } | {
-                            kind: 'time';
-                            selection: {
-                                op: 'after';
-                                atMs: number;
-                            } | {
-                                op: 'before';
-                                atMs: number;
-                            } | {
-                                op: 'between';
-                                fromMs: number;
-                                toMs: number;
-                            };
-                        }> | undefined;
-                    };
+                    icon: ActionDtoShape_1a441713069d57cf;
+                    filter: ActionDtoShape_fb2c38b9154d2468;
                     includeNeedsYouEverywhere: boolean;
                     entityKind: 'discussion';
                 };
-            } | {
-                op: 'delete';
-                spaceId: string;
-            } | {
+            } | ActionDtoShape_c5f96cf0a8278563 | {
                 op: 'edit';
                 spaceId: string;
                 changes: {
                     name?: string | undefined;
-                    icon?: undefined | {
-                        kind: 'icon';
-                        name: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'chart' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'database' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'pulse' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'table' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'view' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow';
-                    } | {
-                        kind: 'project';
-                        project: {
-                            serverId: string;
-                            projectKey: string;
-                        };
-                    };
-                    filter?: undefined | {
-                        state: 'active' | 'archived';
-                        attention: 'any' | 'needs_you';
-                        unreadOnly: boolean;
-                        commentsOnItems?: boolean | undefined;
-                        extensions?: Record<string, {
-                            kind: 'boolean';
-                            value: boolean;
-                        } | {
-                            kind: 'set';
-                            include: string[];
-                            exclude: string[];
-                        } | {
-                            kind: 'time';
-                            selection: {
-                                op: 'after';
-                                atMs: number;
-                            } | {
-                                op: 'before';
-                                atMs: number;
-                            } | {
-                                op: 'between';
-                                fromMs: number;
-                                toMs: number;
-                            };
-                        }> | undefined;
-                    };
+                    icon?: ActionDtoShape_1465bd24f1fa9b9c;
+                    filter?: undefined | ActionDtoShape_fb2c38b9154d2468;
                     includeNeedsYouEverywhere?: boolean | undefined;
                 };
-            } | {
-                op: 'reorder';
-                spaceId: string;
-                beforeSpaceId: null | string;
-            } | {
+            } | ActionDtoShape_09289db93288d708 | {
                 op: 'resetDefault';
             };
         } | {
@@ -349,94 +146,23 @@ export type SettingsDeclarationsActionInputById = {
                 space: {
                     id: string;
                     name: string;
-                    icon: {
-                        kind: 'icon';
-                        name: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'chart' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'database' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'pulse' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'table' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'view' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow';
-                    } | {
-                        kind: 'project';
-                        project: {
-                            serverId: string;
-                            projectKey: string;
-                        };
-                    };
-                    filter: {
-                        projectSourceId?: string | undefined;
-                        subjectKind?: 'comparison' | 'pull_request' | 'repository' | undefined;
-                        sourceKind?: 'direct' | 'workflow' | undefined;
-                        state?: 'cancelled' | 'completed' | 'failed' | 'partial' | 'running' | undefined;
-                        workflowId?: string | undefined;
-                        needsDecision?: boolean | undefined;
-                        sharedWithTeamId?: string | undefined;
-                        workflowRunId?: string | undefined;
-                        sourceSessionId?: string | undefined;
-                        updated?: undefined | {
-                            op: 'after';
-                            atMs: number;
-                        } | {
-                            op: 'before';
-                            atMs: number;
-                        } | {
-                            op: 'between';
-                            fromMs: number;
-                            toMs: number;
-                        };
-                    };
+                    icon: ActionDtoShape_1a441713069d57cf;
+                    filter: ActionDtoShape_c7c572abcdd66f45;
                     includeNeedsYouEverywhere: boolean;
                     entityKind: 'review';
-                    membership?: undefined | {
-                        mode: 'filter_or_manual' | 'manual_only';
-                    };
+                    membership?: ActionDtoShape_53d2b19e1b90534c;
                 };
-            } | {
-                op: 'delete';
-                spaceId: string;
-            } | {
+            } | ActionDtoShape_c5f96cf0a8278563 | {
                 op: 'edit';
                 spaceId: string;
                 changes: {
-                    membership?: undefined | {
-                        mode: 'filter_or_manual' | 'manual_only';
-                    };
+                    membership?: ActionDtoShape_53d2b19e1b90534c;
                     name?: string | undefined;
-                    icon?: undefined | {
-                        kind: 'icon';
-                        name: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'chart' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'database' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'pulse' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'table' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'view' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow';
-                    } | {
-                        kind: 'project';
-                        project: {
-                            serverId: string;
-                            projectKey: string;
-                        };
-                    };
-                    filter?: undefined | {
-                        projectSourceId?: string | undefined;
-                        subjectKind?: 'comparison' | 'pull_request' | 'repository' | undefined;
-                        sourceKind?: 'direct' | 'workflow' | undefined;
-                        state?: 'cancelled' | 'completed' | 'failed' | 'partial' | 'running' | undefined;
-                        workflowId?: string | undefined;
-                        needsDecision?: boolean | undefined;
-                        sharedWithTeamId?: string | undefined;
-                        workflowRunId?: string | undefined;
-                        sourceSessionId?: string | undefined;
-                        updated?: undefined | {
-                            op: 'after';
-                            atMs: number;
-                        } | {
-                            op: 'before';
-                            atMs: number;
-                        } | {
-                            op: 'between';
-                            fromMs: number;
-                            toMs: number;
-                        };
-                    };
+                    icon?: ActionDtoShape_1465bd24f1fa9b9c;
+                    filter?: undefined | ActionDtoShape_c7c572abcdd66f45;
                     includeNeedsYouEverywhere?: boolean | undefined;
                 };
-            } | {
-                op: 'reorder';
-                spaceId: string;
-                beforeSpaceId: null | string;
-            } | {
+            } | ActionDtoShape_09289db93288d708 | {
                 op: 'resetDefault';
             };
         } | {
@@ -447,96 +173,8 @@ export type SettingsDeclarationsActionInputById = {
                 space: {
                     id: string;
                     name: string;
-                    icon: {
-                        kind: 'icon';
-                        name: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'chart' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'database' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'pulse' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'table' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'view' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow';
-                    } | {
-                        kind: 'project';
-                        project: {
-                            serverId: string;
-                            projectKey: string;
-                        };
-                    };
-                    filter: Readonly<{
-                        show: 'both' | 'runs' | 'sessions';
-                        startedBy: readonly ('agents' | 'triggers' | 'you')[];
-                        scope: 'all_accessible' | 'assigned_to_me' | 'following' | 'involving_me' | 'my_work';
-                        attention: 'any' | 'needs_my_attention';
-                        bot?: 'bot' | 'ordinary' | undefined;
-                        coordinator?: 'coordinator' | undefined;
-                        projects?: Readonly<{
-                            include: readonly {
-                                serverId: string;
-                                projectKey: string;
-                            }[];
-                            exclude: readonly {
-                                serverId: string;
-                                projectKey: string;
-                            }[];
-                        }> | undefined;
-                        statuses?: Readonly<{
-                            include: readonly ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[];
-                            exclude: readonly ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[];
-                        }> | undefined;
-                        machines?: Readonly<{
-                            include: readonly Readonly<{
-                                serverId: string;
-                                machineId: string;
-                            }>[];
-                            exclude: readonly Readonly<{
-                                serverId: string;
-                                machineId: string;
-                            }>[];
-                        }> | undefined;
-                        agents?: Readonly<{
-                            include: readonly string[];
-                            exclude: readonly string[];
-                        }> | undefined;
-                        sections?: Readonly<{
-                            include: readonly {
-                                serverId: string;
-                                sectionId: string;
-                            }[];
-                            exclude: readonly {
-                                serverId: string;
-                                sectionId: string;
-                            }[];
-                        }> | undefined;
-                        owners?: Readonly<{
-                            include: readonly Readonly<{
-                                serverId: string;
-                                accountId: string;
-                            }>[];
-                            exclude: readonly Readonly<{
-                                serverId: string;
-                                accountId: string;
-                            }>[];
-                        }> | undefined;
-                        branches?: Readonly<{
-                            include: readonly string[];
-                            exclude: readonly string[];
-                        }> | undefined;
-                        updated?: UpdatedSelectionV1<true> | undefined;
-                        includeInactive?: boolean | undefined;
-                        extensions?: Readonly<Record<string, ExtensionSelectionV1<true>>> | undefined;
-                        underSessionId?: string | undefined;
-                        homeServerIds: readonly string[];
-                        audiences: Readonly<{
-                            include: readonly QualifiedAudienceSelection<true>[];
-                            exclude: readonly QualifiedAudienceSelection<true>[];
-                        }>;
-                        tagIds: Readonly<{
-                            include: readonly Readonly<{
-                                serverId: string;
-                                tagId: string;
-                            }>[];
-                            exclude: readonly Readonly<{
-                                serverId: string;
-                                tagId: string;
-                            }>[];
-                        }>;
-                        source: 'all' | 'direct' | 'persisted';
-                    }>;
+                    icon: ActionDtoShape_1a441713069d57cf;
+                    filter: Readonly<ActionDtoShape_a7382b3cec03b76b>;
                     includeNeedsYouEverywhere: boolean;
                     entityKind: 'sessionWork';
                     membership?: undefined | {
@@ -548,114 +186,17 @@ export type SettingsDeclarationsActionInputById = {
                         }[];
                     };
                 };
-            } | {
-                op: 'delete';
-                spaceId: string;
-            } | {
+            } | ActionDtoShape_c5f96cf0a8278563 | {
                 op: 'edit';
                 spaceId: string;
                 changes: {
-                    membership?: undefined | {
-                        mode: 'filter_or_manual' | 'manual_only';
-                    };
+                    membership?: ActionDtoShape_53d2b19e1b90534c;
                     name?: string | undefined;
-                    icon?: undefined | {
-                        kind: 'icon';
-                        name: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'chart' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'database' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'pulse' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'table' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'view' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow';
-                    } | {
-                        kind: 'project';
-                        project: {
-                            serverId: string;
-                            projectKey: string;
-                        };
-                    };
-                    filter?: Readonly<{
-                        show: 'both' | 'runs' | 'sessions';
-                        startedBy: readonly ('agents' | 'triggers' | 'you')[];
-                        scope: 'all_accessible' | 'assigned_to_me' | 'following' | 'involving_me' | 'my_work';
-                        attention: 'any' | 'needs_my_attention';
-                        bot?: 'bot' | 'ordinary' | undefined;
-                        coordinator?: 'coordinator' | undefined;
-                        projects?: Readonly<{
-                            include: readonly {
-                                serverId: string;
-                                projectKey: string;
-                            }[];
-                            exclude: readonly {
-                                serverId: string;
-                                projectKey: string;
-                            }[];
-                        }> | undefined;
-                        statuses?: Readonly<{
-                            include: readonly ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[];
-                            exclude: readonly ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[];
-                        }> | undefined;
-                        machines?: Readonly<{
-                            include: readonly Readonly<{
-                                serverId: string;
-                                machineId: string;
-                            }>[];
-                            exclude: readonly Readonly<{
-                                serverId: string;
-                                machineId: string;
-                            }>[];
-                        }> | undefined;
-                        agents?: Readonly<{
-                            include: readonly string[];
-                            exclude: readonly string[];
-                        }> | undefined;
-                        sections?: Readonly<{
-                            include: readonly {
-                                serverId: string;
-                                sectionId: string;
-                            }[];
-                            exclude: readonly {
-                                serverId: string;
-                                sectionId: string;
-                            }[];
-                        }> | undefined;
-                        owners?: Readonly<{
-                            include: readonly Readonly<{
-                                serverId: string;
-                                accountId: string;
-                            }>[];
-                            exclude: readonly Readonly<{
-                                serverId: string;
-                                accountId: string;
-                            }>[];
-                        }> | undefined;
-                        branches?: Readonly<{
-                            include: readonly string[];
-                            exclude: readonly string[];
-                        }> | undefined;
-                        updated?: UpdatedSelectionV1<true> | undefined;
-                        includeInactive?: boolean | undefined;
-                        extensions?: Readonly<Record<string, ExtensionSelectionV1<true>>> | undefined;
-                        underSessionId?: string | undefined;
-                        homeServerIds: readonly string[];
-                        audiences: Readonly<{
-                            include: readonly QualifiedAudienceSelection<true>[];
-                            exclude: readonly QualifiedAudienceSelection<true>[];
-                        }>;
-                        tagIds: Readonly<{
-                            include: readonly Readonly<{
-                                serverId: string;
-                                tagId: string;
-                            }>[];
-                            exclude: readonly Readonly<{
-                                serverId: string;
-                                tagId: string;
-                            }>[];
-                        }>;
-                        source: 'all' | 'direct' | 'persisted';
-                    }> | undefined;
+                    icon?: ActionDtoShape_1465bd24f1fa9b9c;
+                    filter?: Readonly<ActionDtoShape_a7382b3cec03b76b> | undefined;
                     includeNeedsYouEverywhere?: boolean | undefined;
                 };
-            } | {
-                op: 'reorder';
-                spaceId: string;
-                beforeSpaceId: null | string;
-            } | {
+            } | ActionDtoShape_09289db93288d708 | {
                 op: 'resetDefault';
             };
         } | {
@@ -666,92 +207,21 @@ export type SettingsDeclarationsActionInputById = {
                 space: {
                     id: string;
                     name: string;
-                    icon: {
-                        kind: 'icon';
-                        name: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'chart' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'database' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'pulse' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'table' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'view' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow';
-                    } | {
-                        kind: 'project';
-                        project: {
-                            serverId: string;
-                            projectKey: string;
-                        };
-                    };
-                    filter: {
-                        view: 'all' | 'hunts' | 'running' | 'triggered';
-                        extensions?: Record<string, {
-                            kind: 'boolean';
-                            value: boolean;
-                        } | {
-                            kind: 'set';
-                            include: string[];
-                            exclude: string[];
-                        } | {
-                            kind: 'time';
-                            selection: {
-                                op: 'after';
-                                atMs: number;
-                            } | {
-                                op: 'before';
-                                atMs: number;
-                            } | {
-                                op: 'between';
-                                fromMs: number;
-                                toMs: number;
-                            };
-                        }> | undefined;
-                    };
+                    icon: ActionDtoShape_1a441713069d57cf;
+                    filter: ActionDtoShape_5079ee49636b2cb7;
                     includeNeedsYouEverywhere: boolean;
                     entityKind: 'workflow';
                 };
-            } | {
-                op: 'delete';
-                spaceId: string;
-            } | {
+            } | ActionDtoShape_c5f96cf0a8278563 | {
                 op: 'edit';
                 spaceId: string;
                 changes: {
                     name?: string | undefined;
-                    icon?: undefined | {
-                        kind: 'icon';
-                        name: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'chart' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'database' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'pulse' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'table' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'view' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow';
-                    } | {
-                        kind: 'project';
-                        project: {
-                            serverId: string;
-                            projectKey: string;
-                        };
-                    };
-                    filter?: undefined | {
-                        view: 'all' | 'hunts' | 'running' | 'triggered';
-                        extensions?: Record<string, {
-                            kind: 'boolean';
-                            value: boolean;
-                        } | {
-                            kind: 'set';
-                            include: string[];
-                            exclude: string[];
-                        } | {
-                            kind: 'time';
-                            selection: {
-                                op: 'after';
-                                atMs: number;
-                            } | {
-                                op: 'before';
-                                atMs: number;
-                            } | {
-                                op: 'between';
-                                fromMs: number;
-                                toMs: number;
-                            };
-                        }> | undefined;
-                    };
+                    icon?: ActionDtoShape_1465bd24f1fa9b9c;
+                    filter?: undefined | ActionDtoShape_5079ee49636b2cb7;
                     includeNeedsYouEverywhere?: boolean | undefined;
                 };
-            } | {
-                op: 'reorder';
-                spaceId: string;
-                beforeSpaceId: null | string;
-            } | {
+            } | ActionDtoShape_09289db93288d708 | {
                 op: 'resetDefault';
             };
         } | {
@@ -762,98 +232,21 @@ export type SettingsDeclarationsActionInputById = {
                 space: {
                     id: string;
                     name: string;
-                    icon: {
-                        kind: 'icon';
-                        name: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'chart' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'database' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'pulse' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'table' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'view' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow';
-                    } | {
-                        kind: 'project';
-                        project: {
-                            serverId: string;
-                            projectKey: string;
-                        };
-                    };
-                    filter: {
-                        workflows?: unknown;
-                        results?: unknown;
-                        startedBy?: unknown;
-                        projects?: unknown;
-                        extensions?: Record<string, {
-                            kind: 'boolean';
-                            value: boolean;
-                        } | {
-                            kind: 'set';
-                            include: string[];
-                            exclude: string[];
-                        } | {
-                            kind: 'time';
-                            selection: {
-                                op: 'after';
-                                atMs: number;
-                            } | {
-                                op: 'before';
-                                atMs: number;
-                            } | {
-                                op: 'between';
-                                fromMs: number;
-                                toMs: number;
-                            };
-                        }> | undefined;
-                    };
+                    icon: ActionDtoShape_1a441713069d57cf;
+                    filter: ActionDtoShape_146a3e8a0a779998;
                     includeNeedsYouEverywhere: boolean;
                     entityKind: 'workflowRun';
                 };
-            } | {
-                op: 'delete';
-                spaceId: string;
-            } | {
+            } | ActionDtoShape_c5f96cf0a8278563 | {
                 op: 'edit';
                 spaceId: string;
                 changes: {
                     name?: string | undefined;
-                    icon?: undefined | {
-                        kind: 'icon';
-                        name: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'chart' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'database' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'pulse' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'table' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'view' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow';
-                    } | {
-                        kind: 'project';
-                        project: {
-                            serverId: string;
-                            projectKey: string;
-                        };
-                    };
-                    filter?: undefined | {
-                        workflows?: unknown;
-                        results?: unknown;
-                        startedBy?: unknown;
-                        projects?: unknown;
-                        extensions?: Record<string, {
-                            kind: 'boolean';
-                            value: boolean;
-                        } | {
-                            kind: 'set';
-                            include: string[];
-                            exclude: string[];
-                        } | {
-                            kind: 'time';
-                            selection: {
-                                op: 'after';
-                                atMs: number;
-                            } | {
-                                op: 'before';
-                                atMs: number;
-                            } | {
-                                op: 'between';
-                                fromMs: number;
-                                toMs: number;
-                            };
-                        }> | undefined;
-                    };
+                    icon?: ActionDtoShape_1465bd24f1fa9b9c;
+                    filter?: ActionDtoShape_7cab77162fd539e8;
                     includeNeedsYouEverywhere?: boolean | undefined;
                 };
-            } | {
-                op: 'reorder';
-                spaceId: string;
-                beforeSpaceId: null | string;
-            } | {
+            } | ActionDtoShape_09289db93288d708 | {
                 op: 'resetDefault';
             };
         } | {
@@ -878,48 +271,14 @@ export type SettingsDeclarationsActionInputById = {
         } | {
             kind: 'voice_connected_services';
             expectedSettingsVersion: number;
-            value: null | {
-                v: 1;
-                bindingsByServiceId: Record<string, {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
-                } | {
-                    source: 'connected';
-                    selection: 'group';
-                    groupId: string;
-                    profileId?: string | undefined;
-                    appliedProfileId?: string | undefined;
-                } | {
-                    source: 'native';
-                }>;
-            };
+            value: null | ActionDtoShape_144054498f51a3a3;
         } | {
             kind: 'voice_credential_source';
             credentialSlotId: string;
             expectedSettingsVersion: number;
             selection: {
                 kind: 'connectedAccount';
-                target: {
-                    kind: 'account';
-                    account: {
-                        service: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        accountId: string;
-                    };
-                } | {
-                    kind: 'group';
-                    service: {
-                        pluginId: 'happier';
-                        localId: 'mcp-sign-in';
-                    } | {
-                        pluginId: string;
-                        localId: string;
-                    };
-                    groupId: string;
-                };
+                target: ActionDtoShape_db1113cf9f687014;
             } | {
                 kind: 'none';
             } | {
@@ -948,205 +307,44 @@ export type SettingsDeclarationsActionInputById = {
             machineId?: null | string | undefined;
             expectedRecipientContractDigest?: string | undefined;
         };
-        target?: undefined | {
-            kind: 'home';
-            serverId: string;
-        } | {
-            kind: 'project';
-            serverId: string;
-            projectKey: string;
-        } | {
-            kind: 'public_profile_draft';
-            serverId: string;
-        } | {
-            kind: 'team';
-            serverId: string;
-            teamId: string;
-        } | {
-            kind: 'team_identity_connection';
-            serverId: string;
-            teamId: string;
-            connectionId: string;
-        };
+        target?: ActionDtoShape_fe9439cfe2141f75;
     } & {
         clientId?: string | undefined;
     };
-    readonly "actions.policy.get": {
-        actionId: string;
-        audience: 'agent' | 'api' | 'cli' | 'foreign_session_html' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
-    } | {
-        actionId: string;
-        audience: 'agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
-        session: {
-            sessionId: string;
-        };
-        scope?: undefined | {
-            kind: 'environment';
-            environmentId: string;
-        } | {
-            kind: 'machine';
-            machineId: string;
-        };
-    } | {
-        audience: 'agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
-        scope: {
-            kind: 'environment';
-            environmentId: string;
-        } | {
-            kind: 'machine';
-            machineId: string;
-        };
-        actionId: string;
-    } | {
+    readonly "actions.policy.get": ActionDtoShape_58a12b5988b5b063 | ActionDtoShape_849249031cf82048 | ActionDtoShape_20e2fcfef772cf38 | {
         profiles: true;
     } | {
         session: {
             sessionId: string;
         };
     };
-    readonly "actions.policy.set": {
-        actionId: 'capture.view';
-        change: {
-            kind: 'plugin_host_capture';
-            pluginId: string;
-            approvalRequired: boolean;
-        };
-    } | {
-        actionId: string;
-        change: {
-            kind: 'audience_enabled';
-            audience: 'agent' | 'api' | 'cli' | 'foreign_session_html' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
-            enabled: boolean;
-        } | {
-            kind: 'enabled';
-            enabled: boolean;
-        } | {
-            kind: 'placement';
-            placement: 'agent_input_chips' | 'browser_context' | 'command_palette' | 'pending_messages' | 'run_card' | 'run_list' | 'session_action_menu' | 'session_header' | 'session_info' | 'slash_command' | 'voice_panel';
-            enabled: boolean;
-        } | {
-            kind: 'placement_policy';
-            placement: 'slash_command';
-            mode: 'allowed' | 'ask_first' | 'default' | 'off';
-        } | {
-            kind: 'tool_exposure';
-            surface: 'agent' | 'cli' | 'mcp';
-            mode: 'default' | 'direct' | 'discoverable_only';
-        };
-    } | {
-        actionId: string;
-        change: {
-            kind: 'scoped_approval_remove';
-            scope: {
-                kind: 'environment';
-                environmentId: string;
-            } | {
-                kind: 'machine';
-                machineId: string;
-            };
-        };
-    } | {
+    readonly "actions.policy.set": ActionDtoShape_c57a0130b952d464 | ActionDtoShape_e568ba6e19b4b0d8 | ActionDtoShape_6be9952c34399ad9 | {
         mode: 'allowed' | 'ask_first' | 'default' | 'off';
         actionId: string;
         audience: 'agent' | 'api' | 'cli' | 'foreign_session_html' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
-    } | {
-        mode: 'allowed' | 'ask_first' | 'default';
-        actionId: string;
-        audience: 'agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
-        session: {
-            sessionId: string;
-        };
-        scope?: undefined | {
-            kind: 'environment';
-            environmentId: string;
-        } | {
-            kind: 'machine';
-            machineId: string;
-        };
-    } | {
+    } | ActionDtoShape_1ce8b92cf4984047 | {
         mode: 'allowed' | 'ask_first' | 'default';
         audience: 'agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
-        scope: {
-            kind: 'environment';
-            environmentId: string;
-        } | {
-            kind: 'machine';
-            machineId: string;
-        };
+        scope: ActionDtoShape_b783485f8f2010f3;
         actionId: string;
     } | {
         profileChange: {
             kind: 'create';
-            profile: {
-                name: string;
-                actions?: Record<string, {
-                    enabled?: boolean | undefined;
-                    disabledSurfaces?: ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[] | undefined;
-                    approvalRequiredSurfaces?: ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[] | undefined;
-                }> | undefined;
-                approvalWaivedSurfaces?: Record<string, ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[]> | undefined;
-            };
+            profile: ActionDtoShape_e4d56a8ca1756262;
         } | {
             kind: 'delete';
             id: string;
-            expectedRevision: {
-                headerVersion: number;
-                bodyVersion: number;
-            };
-        } | {
-            kind: 'machine_default';
-            machineId: string;
-            id: null | string;
-        } | {
+            expectedRevision: ActionDtoShape_968a7793d24a089b;
+        } | ActionDtoShape_05bc170385783006 | {
             kind: 'update';
             id: string;
-            expectedRevision: {
-                headerVersion: number;
-                bodyVersion: number;
-            };
-            profile: {
-                name: string;
-                actions?: Record<string, {
-                    enabled?: boolean | undefined;
-                    disabledSurfaces?: ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[] | undefined;
-                    approvalRequiredSurfaces?: ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[] | undefined;
-                }> | undefined;
-                approvalWaivedSurfaces?: Record<string, ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[]> | undefined;
-            };
+            expectedRevision: ActionDtoShape_968a7793d24a089b;
+            profile: ActionDtoShape_e4d56a8ca1756262;
         };
     } | {
-        sessionConsentsMove: {
-            fromSessionId: string;
-            toSessionId: string;
-        };
+        sessionConsentsMove: ActionDtoShape_68d6494d798ab013;
     };
-    readonly "actions.policy.reset": {
-        actionId: string;
-        audience: 'agent' | 'api' | 'cli' | 'foreign_session_html' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
-    } | {
-        actionId: string;
-        audience: 'agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
-        session: {
-            sessionId: string;
-        };
-        scope?: undefined | {
-            kind: 'environment';
-            environmentId: string;
-        } | {
-            kind: 'machine';
-            machineId: string;
-        };
-    } | {
-        audience: 'agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
-        scope: {
-            kind: 'environment';
-            environmentId: string;
-        } | {
-            kind: 'machine';
-            machineId: string;
-        };
-        actionId: string;
-    };
+    readonly "actions.policy.reset": ActionDtoShape_58a12b5988b5b063 | ActionDtoShape_849249031cf82048 | ActionDtoShape_20e2fcfef772cf38;
 };
 export type SettingsDeclarationsActionResultById = {
     readonly "settings.list": {
@@ -1185,87 +383,13 @@ export type SettingsDeclarationsActionResultById = {
         anchor: string;
         unset: true;
         settingsVersion?: number | undefined;
-        reversal?: undefined | {
-            before: {
-                unset: true;
-            } | {
-                value: JsonValue;
-            };
-            applied: {
-                unset: true;
-            } | {
-                value: JsonValue;
-            };
-            scope: {
-                serverId: string;
-                accountId: string;
-            };
-            beforeVersion: number;
-            appliedVersion: number;
-        } | {
-            changes: {
-                before: {
-                    unset: true;
-                } | {
-                    value: JsonValue;
-                };
-                applied: {
-                    unset: true;
-                } | {
-                    value: JsonValue;
-                };
-                key: string;
-            }[];
-            scope: {
-                serverId: string;
-                accountId: string;
-            };
-            beforeVersion: number;
-            appliedVersion: number;
-        };
+        reversal?: ActionDtoShape_b50c6f80daba47cb;
         reversalUnavailableReason?: 'no_change' | undefined;
     } | {
         anchor: string;
         value: JsonValue;
         settingsVersion?: number | undefined;
-        reversal?: undefined | {
-            before: {
-                unset: true;
-            } | {
-                value: JsonValue;
-            };
-            applied: {
-                unset: true;
-            } | {
-                value: JsonValue;
-            };
-            scope: {
-                serverId: string;
-                accountId: string;
-            };
-            beforeVersion: number;
-            appliedVersion: number;
-        } | {
-            changes: {
-                before: {
-                    unset: true;
-                } | {
-                    value: JsonValue;
-                };
-                applied: {
-                    unset: true;
-                } | {
-                    value: JsonValue;
-                };
-                key: string;
-            }[];
-            scope: {
-                serverId: string;
-                accountId: string;
-            };
-            beforeVersion: number;
-            appliedVersion: number;
-        };
+        reversal?: ActionDtoShape_b50c6f80daba47cb;
         reversalUnavailableReason?: 'no_change' | undefined;
     };
     readonly "settings.reset": {
@@ -1281,51 +405,17 @@ export type SettingsDeclarationsActionResultById = {
         reason?: string | undefined;
         value?: JsonValue | undefined;
     };
-    readonly "actions.policy.get": {
-        mode: 'allowed' | 'ask_first' | 'default' | 'off';
-        actionEnabled: boolean;
-        enabled: boolean;
-        actionId: string;
-        audience: 'agent' | 'api' | 'cli' | 'foreign_session_html' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
-        scope?: undefined | {
-            kind: 'environment';
-            environmentId: string;
-        } | {
-            kind: 'machine';
-            machineId: string;
-        };
-    } | {
-        mode: 'allowed' | 'ask_first' | 'default';
-        actionId: string;
-        audience: 'agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
-        session: {
-            sessionId: string;
-        };
-        scope?: undefined | {
-            kind: 'environment';
-            environmentId: string;
-        } | {
-            kind: 'machine';
-            machineId: string;
-        };
-    } | {
+    readonly "actions.policy.get": ActionDtoShape_91d3e24d1a5cbbd6 | ActionDtoShape_1ce8b92cf4984047 | {
         profiles: {
             id: string;
             profile: {
                 id: string;
                 name: string;
-                actions?: Record<string, {
-                    enabled?: boolean | undefined;
-                    disabledSurfaces?: ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[] | undefined;
-                    approvalRequiredSurfaces?: ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[] | undefined;
-                }> | undefined;
+                actions?: ActionDtoShape_8cbd98038a249511;
                 approvalWaivedSurfaces?: Record<string, ('agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice')[]> | undefined;
             };
             access: 'admin' | 'edit' | 'owner' | 'view';
-            revision: {
-                headerVersion: number;
-                bodyVersion: number;
-            };
+            revision: ActionDtoShape_968a7793d24a089b;
             ownerAccountId?: string | undefined;
             ownerDisplayName?: null | string | undefined;
         }[];
@@ -1337,129 +427,18 @@ export type SettingsDeclarationsActionResultById = {
             actionId: string;
             audience: 'agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
             mode: 'allowed' | 'ask_first';
-            scope?: undefined | {
-                kind: 'environment';
-                environmentId: string;
-            } | {
-                kind: 'machine';
-                machineId: string;
-            };
+            scope?: ActionDtoShape_4aca10a60374cec6;
         }[];
     };
-    readonly "actions.policy.set": {
-        actionId: 'capture.view';
-        change: {
-            kind: 'plugin_host_capture';
-            pluginId: string;
-            approvalRequired: boolean;
-        };
-    } | {
-        actionId: string;
-        change: {
-            kind: 'audience_enabled';
-            audience: 'agent' | 'api' | 'cli' | 'foreign_session_html' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
-            enabled: boolean;
-        } | {
-            kind: 'enabled';
-            enabled: boolean;
-        } | {
-            kind: 'placement';
-            placement: 'agent_input_chips' | 'browser_context' | 'command_palette' | 'pending_messages' | 'run_card' | 'run_list' | 'session_action_menu' | 'session_header' | 'session_info' | 'slash_command' | 'voice_panel';
-            enabled: boolean;
-        } | {
-            kind: 'placement_policy';
-            placement: 'slash_command';
-            mode: 'allowed' | 'ask_first' | 'default' | 'off';
-        } | {
-            kind: 'tool_exposure';
-            surface: 'agent' | 'cli' | 'mcp';
-            mode: 'default' | 'direct' | 'discoverable_only';
-        };
-    } | {
-        actionId: string;
-        change: {
-            kind: 'scoped_approval_remove';
-            scope: {
-                kind: 'environment';
-                environmentId: string;
-            } | {
-                kind: 'machine';
-                machineId: string;
-            };
-        };
-    } | {
-        mode: 'allowed' | 'ask_first' | 'default' | 'off';
-        actionEnabled: boolean;
-        enabled: boolean;
-        actionId: string;
-        audience: 'agent' | 'api' | 'cli' | 'foreign_session_html' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
-        scope?: undefined | {
-            kind: 'environment';
-            environmentId: string;
-        } | {
-            kind: 'machine';
-            machineId: string;
-        };
-    } | {
-        mode: 'allowed' | 'ask_first' | 'default';
-        actionId: string;
-        audience: 'agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
-        session: {
-            sessionId: string;
-        };
-        scope?: undefined | {
-            kind: 'environment';
-            environmentId: string;
-        } | {
-            kind: 'machine';
-            machineId: string;
-        };
-    } | {
+    readonly "actions.policy.set": ActionDtoShape_c57a0130b952d464 | ActionDtoShape_e568ba6e19b4b0d8 | ActionDtoShape_6be9952c34399ad9 | ActionDtoShape_91d3e24d1a5cbbd6 | ActionDtoShape_1ce8b92cf4984047 | {
         profileChange: {
             kind: 'create' | 'delete' | 'update';
             id: string;
-            revision: {
-                headerVersion: number;
-                bodyVersion: number;
-            };
-        } | {
-            kind: 'machine_default';
-            machineId: string;
-            id: null | string;
-        };
+            revision: ActionDtoShape_968a7793d24a089b;
+        } | ActionDtoShape_05bc170385783006;
     } | {
-        sessionConsentsMove: {
-            fromSessionId: string;
-            toSessionId: string;
-        };
+        sessionConsentsMove: ActionDtoShape_68d6494d798ab013;
         moved: boolean;
     };
-    readonly "actions.policy.reset": {
-        mode: 'allowed' | 'ask_first' | 'default' | 'off';
-        actionEnabled: boolean;
-        enabled: boolean;
-        actionId: string;
-        audience: 'agent' | 'api' | 'cli' | 'foreign_session_html' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
-        scope?: undefined | {
-            kind: 'environment';
-            environmentId: string;
-        } | {
-            kind: 'machine';
-            machineId: string;
-        };
-    } | {
-        mode: 'allowed' | 'ask_first' | 'default';
-        actionId: string;
-        audience: 'agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
-        session: {
-            sessionId: string;
-        };
-        scope?: undefined | {
-            kind: 'environment';
-            environmentId: string;
-        } | {
-            kind: 'machine';
-            machineId: string;
-        };
-    };
+    readonly "actions.policy.reset": ActionDtoShape_91d3e24d1a5cbbd6 | ActionDtoShape_1ce8b92cf4984047;
 };

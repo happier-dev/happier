@@ -2,6 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { PluginJsonValueV2 } from '../../identity.js';
+import type { ActionDtoShape_017a2f45ed9c909a, ActionDtoShape_0b407b549a3822d0, ActionDtoShape_27b2f7d3619e116c, ActionDtoShape_2fc6475cae02a67b, ActionDtoShape_3cb81a16e86d58a5, ActionDtoShape_5228407ad52f3d2a, ActionDtoShape_57e2be8e9f18bb9f, ActionDtoShape_704d4b90b8d35bae, ActionDtoShape_763a74aa0ffb3850, ActionDtoShape_901c8b63664846f2, ActionDtoShape_b0ff97e09b112702, ActionDtoShape_e0f1aade99028fea, ActionDtoShape_e1f335a6ed747447, ActionDtoShape_efd0bc42bd921845, ActionDtoShape_fe1f6677f1782332 } from './pluginActionDtoShapes.generated.js';
 
 export type ComposerIngressActionInputById = {
     readonly "composer.transaction.apply": {
@@ -10,304 +11,35 @@ export type ComposerIngressActionInputById = {
             operations: ({
                 kind: 'attachment.add';
                 attachmentLocalId: string;
-                value: {
-                    key: string;
-                    value: unknown;
-                    presentation: {
-                        label: string;
-                        description?: string | undefined;
-                        icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'chart' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'database' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'pulse' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'table' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'view' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
-                        tone?: 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
-                        source?: undefined | {
-                            kind: 'session';
-                            session: {
-                                serverId: string;
-                                sessionId: string;
-                            };
-                            messageId: string;
-                        };
-                    };
-                };
-                content?: undefined | {
-                    kind: 'stagedMedia';
-                    handle: {
-                        v: 1;
-                        id: string;
-                        executionTarget: {
-                            serverId: string;
-                            machineId: string;
-                        };
-                        owner: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        mediaKind: 'image' | 'video';
-                        mimeType: 'image/gif' | 'image/jpeg' | 'image/png' | 'image/webp' | 'video/mp4' | 'video/webm';
-                        name: string;
-                        sizeBytes: number;
-                        sha256: string;
-                    };
-                };
-                mentionAt?: undefined | {
-                    start: number;
-                    end: number;
-                };
-            } | {
-                kind: 'attachment.remove';
-                instanceId: string;
-            } | {
+                value: ActionDtoShape_fe1f6677f1782332;
+                content?: ActionDtoShape_5228407ad52f3d2a;
+                mentionAt?: ActionDtoShape_b0ff97e09b112702;
+            } | ActionDtoShape_efd0bc42bd921845 | {
                 kind: 'attachment.update';
                 instanceId: string;
                 update: {
                     value: unknown;
-                    presentation?: undefined | {
-                        label: string;
-                        description?: string | undefined;
-                        icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'chart' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'database' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'pulse' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'table' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'view' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
-                        tone?: 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
-                        source?: undefined | {
-                            kind: 'session';
-                            session: {
-                                serverId: string;
-                                sessionId: string;
-                            };
-                            messageId: string;
-                        };
-                    };
+                    presentation?: ActionDtoShape_017a2f45ed9c909a;
                 };
-            } | {
-                kind: 'reference.insert';
-                reference: {
-                    kind: string;
-                    ref: string;
-                    token: string;
-                    start: number;
-                    end: number;
-                    label?: string | undefined;
-                    composerReference?: undefined | {
-                        pluginId: string;
-                        localId: string;
-                    };
-                    composerReferenceTrigger?: '$' | '/' | '@' | undefined;
-                };
-            } | {
-                kind: 'reference.remove';
-                reference: {
-                    ref: string;
-                    start: number;
-                    end: number;
-                };
-            } | {
-                kind: 'reviewComment.add';
-                comment: {
-                    id: string;
-                    filePath: string;
-                    source: 'diff' | 'file';
-                    anchor: {
-                        kind: 'diffLine';
-                        startLine: number;
-                        side: 'after' | 'before';
-                        oldLine: null | number;
-                        newLine: null | number;
-                        lineHash?: `lh1:${string}` | undefined;
-                    } | {
-                        kind: 'fileLine';
-                        startLine: number;
-                        lineHash?: `lh1:${string}` | undefined;
-                    } | {
-                        kind: 'line';
-                        filePath: string;
-                        line: number;
-                        side?: 'after' | 'before' | undefined;
-                        lineHash?: `lh1:${string}` | undefined;
-                    } | {
-                        kind: 'range';
-                        filePath: string;
-                        startLine: number;
-                        endLine: number;
-                        side?: 'after' | 'before' | undefined;
-                        startLineHash?: `lh1:${string}` | undefined;
-                        endLineHash?: `lh1:${string}` | undefined;
-                        selectedTextHash?: `lh1:${string}` | undefined;
-                    };
-                    snapshot: {
-                        selectedLines: string[];
-                        beforeContext: string[];
-                        afterContext: string[];
-                    };
-                    body: string;
-                    createdAt: number;
-                    anchorResolution?: undefined | {
-                        filePath: string;
-                        originalAnchor: {
-                            kind: 'diffLine';
-                            startLine: number;
-                            side: 'after' | 'before';
-                            oldLine: null | number;
-                            newLine: null | number;
-                            lineHash?: `lh1:${string}` | undefined;
-                        } | {
-                            kind: 'fileLine';
-                            startLine: number;
-                            lineHash?: `lh1:${string}` | undefined;
-                        } | {
-                            kind: 'line';
-                            filePath: string;
-                            line: number;
-                            side?: 'after' | 'before' | undefined;
-                            lineHash?: `lh1:${string}` | undefined;
-                        } | {
-                            kind: 'range';
-                            filePath: string;
-                            startLine: number;
-                            endLine: number;
-                            side?: 'after' | 'before' | undefined;
-                            startLineHash?: `lh1:${string}` | undefined;
-                            endLineHash?: `lh1:${string}` | undefined;
-                            selectedTextHash?: `lh1:${string}` | undefined;
-                        };
-                        status: 'ambiguous' | 'context' | 'exact' | 'hash' | 'missing' | 'stale' | 'unsupported';
-                        confidence: number;
-                        id?: string | undefined;
-                        resolvedAnchor?: undefined | {
-                            kind: 'diffLine';
-                            startLine: number;
-                            side: 'after' | 'before';
-                            oldLine: null | number;
-                            newLine: null | number;
-                            lineHash?: `lh1:${string}` | undefined;
-                        } | {
-                            kind: 'fileLine';
-                            startLine: number;
-                            lineHash?: `lh1:${string}` | undefined;
-                        } | {
-                            kind: 'line';
-                            filePath: string;
-                            line: number;
-                            side?: 'after' | 'before' | undefined;
-                            lineHash?: `lh1:${string}` | undefined;
-                        } | {
-                            kind: 'range';
-                            filePath: string;
-                            startLine: number;
-                            endLine: number;
-                            side?: 'after' | 'before' | undefined;
-                            startLineHash?: `lh1:${string}` | undefined;
-                            endLineHash?: `lh1:${string}` | undefined;
-                            selectedTextHash?: `lh1:${string}` | undefined;
-                        };
-                        reason?: string | undefined;
-                        preview?: undefined | {
-                            selectedLines: string[];
-                            beforeContext: string[];
-                            afterContext: string[];
-                        };
-                    };
-                    includeInPrompt?: boolean | undefined;
-                };
-            } | {
+            } | ActionDtoShape_3cb81a16e86d58a5 | ActionDtoShape_57e2be8e9f18bb9f | ActionDtoShape_901c8b63664846f2 | {
                 kind: 'text.clear';
-            } | {
-                kind: 'text.insert';
-                position: {
-                    offset: number;
-                };
-                text: string;
-            } | {
-                kind: 'text.replaceRange';
-                range: {
-                    start: number;
-                    end: number;
-                };
-                text: string;
-            } | {
-                kind: 'text.set';
-                text: string;
-            })[];
+            } | ActionDtoShape_704d4b90b8d35bae | ActionDtoShape_e0f1aade99028fea | ActionDtoShape_2fc6475cae02a67b)[];
         };
-        scope: {
-            serverId: string;
-            accountId: string;
-        };
-        ref: {
-            kind: 'automationAuthoring';
-            sessionId: string;
-            instanceId: string;
-        } | {
-            kind: 'discussion';
-            discussionId: string;
-        } | {
-            kind: 'newSession';
-            instanceId: string;
-        } | {
-            kind: 'participantMessage';
-            sessionId: string;
-            instanceId: string;
-        } | {
-            kind: 'pendingMessage';
-            sessionId: string;
-            localId: string;
-        } | {
-            kind: 'session';
-            sessionId: string;
-        } | {
-            kind: 'workflowAuthoring';
-            draftId: string;
-            blockId: string;
-            instanceId: string;
-        };
-        attachmentContributor?: undefined | {
-            pluginId: string;
-            localId: string;
-        };
+        scope: ActionDtoShape_e1f335a6ed747447;
+        ref: ActionDtoShape_27b2f7d3619e116c;
+        attachmentContributor?: ActionDtoShape_0b407b549a3822d0;
     } & {
         clientId?: string | undefined;
     };
     readonly "composer.attachments.pick": {
-        scope: {
-            serverId: string;
-            accountId: string;
-        };
-        ref: {
-            kind: 'automationAuthoring';
-            sessionId: string;
-            instanceId: string;
-        } | {
-            kind: 'discussion';
-            discussionId: string;
-        } | {
-            kind: 'newSession';
-            instanceId: string;
-        } | {
-            kind: 'participantMessage';
-            sessionId: string;
-            instanceId: string;
-        } | {
-            kind: 'pendingMessage';
-            sessionId: string;
-            localId: string;
-        } | {
-            kind: 'session';
-            sessionId: string;
-        } | {
-            kind: 'workflowAuthoring';
-            draftId: string;
-            blockId: string;
-            instanceId: string;
-        };
+        scope: ActionDtoShape_e1f335a6ed747447;
+        ref: ActionDtoShape_27b2f7d3619e116c;
     } & {
         clientId?: string | undefined;
     };
     readonly "repository.upload.pick": {
-        scope: {
-            serverId: string;
-            accountId: string;
-        };
-        workspace: {
-            serverId: string;
-            machineId: string;
-            rootPath: string;
-        };
+        scope: ActionDtoShape_e1f335a6ed747447;
+        workspace: ActionDtoShape_763a74aa0ffb3850;
         destinationDir: string;
         kind: 'files' | 'folder';
     } & {

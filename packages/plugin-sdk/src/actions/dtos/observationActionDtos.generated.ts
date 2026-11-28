@@ -2,44 +2,12 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
+import type { ActionDtoShape_c437381d10502263, ActionDtoShape_d39cf9e70c8d120c } from './pluginActionDtoShapes.generated.js';
 
 export type ObservationActionInputById = {
     readonly "wait": {
-        target: {
-            kind: 'action_operation';
-            serverId: string;
-            machineId: string;
-            operationId: string;
-        } | {
-            kind: 'execution_run';
-            serverId: string;
-            machineId: string;
-            runId: string;
-            sessionId?: string | undefined;
-        } | {
-            kind: 'plugin_source';
-            serverId: string;
-            pluginId: string;
-            sourceId: string;
-        } | {
-            kind: 'session';
-            serverId: string;
-            sessionId: string;
-        } | {
-            kind: 'workflow_run';
-            serverId: string;
-            runId: string;
-        };
-        condition: {
-            kind: 'idle' | 'needs_attention' | 'ready' | 'terminal' | 'terminal_or_needs_attention';
-        } | {
-            kind: 'plugin';
-            actionLocalId: string;
-            condition: string;
-        } | {
-            kind: 'turn_terminal';
-            turnId: string;
-        };
+        target: ActionDtoShape_c437381d10502263;
+        condition: ActionDtoShape_d39cf9e70c8d120c;
         timeout?: undefined | {
             durationMs: number;
         };
@@ -47,41 +15,8 @@ export type ObservationActionInputById = {
 };
 export type ObservationActionResultById = {
     readonly "wait": {
-        target: {
-            kind: 'action_operation';
-            serverId: string;
-            machineId: string;
-            operationId: string;
-        } | {
-            kind: 'execution_run';
-            serverId: string;
-            machineId: string;
-            runId: string;
-            sessionId?: string | undefined;
-        } | {
-            kind: 'plugin_source';
-            serverId: string;
-            pluginId: string;
-            sourceId: string;
-        } | {
-            kind: 'session';
-            serverId: string;
-            sessionId: string;
-        } | {
-            kind: 'workflow_run';
-            serverId: string;
-            runId: string;
-        };
-        condition: {
-            kind: 'idle' | 'needs_attention' | 'ready' | 'terminal' | 'terminal_or_needs_attention';
-        } | {
-            kind: 'plugin';
-            actionLocalId: string;
-            condition: string;
-        } | {
-            kind: 'turn_terminal';
-            turnId: string;
-        };
+        target: ActionDtoShape_c437381d10502263;
+        condition: ActionDtoShape_d39cf9e70c8d120c;
         disposition: 'cancelled' | 'disconnected' | 'matched' | 'observation_timeout' | 'outcome_uncertain' | 'permission_denied' | 'target_unavailable' | 'unsupported_condition';
         snapshot?: JsonValue | undefined;
     };

@@ -2,6 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
+import type { ActionDtoShape_01939cfe953d4209, ActionDtoShape_39c4227db2b73075, ActionDtoShape_5ef720c2dc43a3ff, ActionDtoShape_ced0351403049665, ActionDtoShape_dcff2cf46c035031 } from './pluginActionDtoShapes.generated.js';
 
 export type AutomationConversationActionInputById = {
     readonly "automation.conversation.targets.list": {
@@ -15,10 +16,7 @@ export type AutomationConversationActionInputById = {
             triggerId: string;
             triggerRevision: number;
             triggerKind: 'ciFailed' | 'prComment';
-            pullRequest: {
-                repository: string;
-                number: number;
-            };
+            pullRequest: ActionDtoShape_01939cfe953d4209;
         };
         resultDelivery?: 'finalResult' | undefined;
     };
@@ -31,10 +29,7 @@ export type AutomationConversationActionInputById = {
         text: string;
         resultDelivery: {
             kind: 'finalResult';
-            actionRef: {
-                pluginId: string;
-                localId: string;
-            };
+            actionRef: ActionDtoShape_ced0351403049665;
             opaqueContext: JsonValue;
         } | {
             kind: 'none';
@@ -45,26 +40,17 @@ export type AutomationConversationActionInputById = {
             triggerId: string;
             triggerRevision: number;
             triggerKind: 'ciFailed' | 'prComment';
-            pullRequest: {
-                repository: string;
-                number: number;
-            };
+            pullRequest: ActionDtoShape_01939cfe953d4209;
             bindingId: string;
             observationActorPrincipalId: string;
-            actor: {
-                principalId: string;
-                repositoryWriteAccess: boolean | null;
-            };
+            actor: ActionDtoShape_dcff2cf46c035031;
             eventActors?: undefined | {
                 occurrenceId: string;
                 sender: {
                     principalId: string;
                 };
                 observationActorPrincipalId: string;
-                actor: {
-                    principalId: string;
-                    repositoryWriteAccess: boolean | null;
-                };
+                actor: ActionDtoShape_dcff2cf46c035031;
             }[];
         };
     };
@@ -87,11 +73,7 @@ export type AutomationConversationActionResultById = {
     } | {
         kind: 'verified';
     };
-    readonly "automation.conversation.admit": {
-        kind: 'admitted';
-        runId: string;
-        checkpointSafe: true;
-    } | {
+    readonly "automation.conversation.admit": ActionDtoShape_5ef720c2dc43a3ff | {
         kind: 'blocked';
         reason: 'capacity' | 'noEnabledAssignment' | 'occurrenceConflict' | 'resultDeliveryUnsupported' | 'temporarilyUnavailable';
         checkpointSafe: false;
@@ -99,9 +81,5 @@ export type AutomationConversationActionResultById = {
         kind: 'refused';
         reason: 'bot_paused' | 'repositoryWriteAccessDenied' | 'repositoryWriteAccessUnknown' | 'scopedTriggerIdentityMismatch' | 'watchCompleted';
         checkpointSafe: true;
-    } | {
-        kind: 'rejoined';
-        runId: string;
-        checkpointSafe: true;
-    };
+    } | ActionDtoShape_39c4227db2b73075;
 };

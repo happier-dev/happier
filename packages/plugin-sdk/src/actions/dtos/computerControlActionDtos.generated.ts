@@ -2,6 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { ActionFailureCauseV1 } from '../../errors/index.js';
+import type { ActionDtoShape_18d82ea2481c929f, ActionDtoShape_25faab656a26ee80, ActionDtoShape_3128d0f702a707ba, ActionDtoShape_35693e0100483c46, ActionDtoShape_47fdd306c8f540dd, ActionDtoShape_611e53e9ae424252, ActionDtoShape_67bb29e1e5e4d69b, ActionDtoShape_9372d2aaf5e56dd8, ActionDtoShape_9b5701f87e1e8d3e, ActionDtoShape_a4d42991ae6475f8, ActionDtoShape_a50a8f5f92f0bc74, ActionDtoShape_a6d56f9a5d8c9b4c, ActionDtoShape_b312890baf85d4ad, ActionDtoShape_b88c3950f28bb73d, ActionDtoShape_bf1652f02ae710ed, ActionDtoShape_c86dee5e02cf6265, ActionDtoShape_cce8ac2fca556210, ActionDtoShape_d2fd43c9cdda0ffc, ActionDtoShape_f7c802bc8bcea2f3, ActionDtoShape_f9447da0f1407966 } from './pluginActionDtoShapes.generated.js';
 
 export type ComputerControlActionInputById = {
     readonly "computer.targets.list": {
@@ -16,15 +17,7 @@ export type ComputerControlActionInputById = {
     readonly "computer.target.select": {
         machineId: string;
         provider?: 'agent-desktop' | 'cua' | undefined;
-        target?: undefined | {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
+        target?: ActionDtoShape_a6d56f9a5d8c9b4c;
         access?: 'see' | 'use' | undefined;
         requestedTarget?: string | undefined;
     };
@@ -33,34 +26,8 @@ export type ComputerControlActionInputById = {
         permission: 'capture' | 'input';
         provider?: 'agent-desktop' | 'cua' | undefined;
     };
-    readonly "computer.capture": {
-        machineId: string;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-        target?: undefined | {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId?: string | undefined;
-    };
-    readonly "computer.query": {
-        machineId: string;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-        target?: undefined | {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId?: string | undefined;
-    };
+    readonly "computer.capture": ActionDtoShape_9372d2aaf5e56dd8;
+    readonly "computer.query": ActionDtoShape_9372d2aaf5e56dd8;
     readonly "computer.input": {
         machineId: string;
         captureId: string;
@@ -105,118 +72,26 @@ export type ComputerControlActionInputById = {
             deltaY: number;
         };
         provider?: 'agent-desktop' | 'cua' | undefined;
-        target?: undefined | {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
+        target?: ActionDtoShape_a6d56f9a5d8c9b4c;
         sourceId?: string | undefined;
     };
-    readonly "computer.clipboard.read": {
-        machineId: string;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-        target?: undefined | {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId?: string | undefined;
-    };
+    readonly "computer.clipboard.read": ActionDtoShape_9372d2aaf5e56dd8;
     readonly "computer.clipboard.write": {
         machineId: string;
         text: string;
         provider?: 'agent-desktop' | 'cua' | undefined;
-        target?: undefined | {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
+        target?: ActionDtoShape_a6d56f9a5d8c9b4c;
         sourceId?: string | undefined;
     };
-    readonly "computer.control.status": {
-        machineId: string;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-        target?: undefined | {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId?: string | undefined;
-    };
-    readonly "computer.control.interrupt": {
-        machineId: string;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-        target?: undefined | {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId?: string | undefined;
-    };
-    readonly "computer.control.handBack": {
-        machineId: string;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-        target?: undefined | {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId?: string | undefined;
-    };
-    readonly "computer.target.close": {
-        machineId: string;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-        target?: undefined | {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId?: string | undefined;
-    };
+    readonly "computer.control.status": ActionDtoShape_9372d2aaf5e56dd8;
+    readonly "computer.control.interrupt": ActionDtoShape_9372d2aaf5e56dd8;
+    readonly "computer.control.handBack": ActionDtoShape_9372d2aaf5e56dd8;
+    readonly "computer.target.close": ActionDtoShape_9372d2aaf5e56dd8;
     readonly "computer.recording.start": {
         machineId: string;
-        mediaTarget: {
-            sessionId: string;
-            messageLocalId: string;
-        };
+        mediaTarget: ActionDtoShape_d2fd43c9cdda0ffc;
         provider?: 'agent-desktop' | 'cua' | undefined;
-        target?: undefined | {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
+        target?: ActionDtoShape_a6d56f9a5d8c9b4c;
         sourceId?: string | undefined;
         retentionClass?: 'attached' | 'clearOnClose' | 'clearOnSend' | 'diagnosticsOnly' | 'preSend' | undefined;
     };
@@ -225,119 +100,27 @@ export type ComputerControlActionInputById = {
         sourceId: string;
         recordingId: string;
         provider?: 'agent-desktop' | 'cua' | undefined;
-        target?: undefined | {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
+        target?: ActionDtoShape_a6d56f9a5d8c9b4c;
         expiresAtMs?: number | undefined;
     };
-    readonly "computer.recording.cancel": {
-        machineId: string;
-        sourceId: string;
-        recordingId: string;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-        target?: undefined | {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-    };
-    readonly "computer.recording.status": {
-        machineId: string;
-        sourceId: string;
-        recordingId: string;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-        target?: undefined | {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-    };
-    readonly "computer.recording.listForTarget": {
-        machineId: string;
-        sourceId: string;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-        target?: undefined | {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-    };
-    readonly "computer.recording.discard": {
-        machineId: string;
-        sourceId: string;
-        recordingId: string;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-        target?: undefined | {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-    };
-    readonly "computer.recording.cleanupExpired": {
-        machineId: string;
-        sourceId: string;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-        target?: undefined | {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-    };
+    readonly "computer.recording.cancel": ActionDtoShape_cce8ac2fca556210;
+    readonly "computer.recording.status": ActionDtoShape_cce8ac2fca556210;
+    readonly "computer.recording.listForTarget": ActionDtoShape_3128d0f702a707ba;
+    readonly "computer.recording.discard": ActionDtoShape_cce8ac2fca556210;
+    readonly "computer.recording.cleanupExpired": ActionDtoShape_3128d0f702a707ba;
     readonly "computer.recording.attachToComposer": {
         machineId: string;
         sourceId: string;
         recordingId: string;
         provider?: 'agent-desktop' | 'cua' | undefined;
-        target?: undefined | {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
+        target?: ActionDtoShape_a6d56f9a5d8c9b4c;
         sessionId?: string | undefined;
     };
 };
 export type ComputerControlActionResultById = {
     readonly "computer.targets.list": {
         targets: {
-            target: {
-                kind: 'display';
-                displayId: string;
-            } | {
-                kind: 'window';
-                displayId: string;
-                pid: number;
-                windowId: number | string;
-            };
+            target: ActionDtoShape_b312890baf85d4ad;
             title?: string | undefined;
             appName?: string | undefined;
             label?: string | undefined;
@@ -350,10 +133,7 @@ export type ComputerControlActionResultById = {
                 height: number;
             };
         }[];
-        grants: {
-            capture: 'denied' | 'granted' | 'unknown';
-            input: 'denied' | 'granted' | 'unknown';
-        };
+        grants: ActionDtoShape_bf1652f02ae710ed;
         provider?: 'agent-desktop' | 'cua' | undefined;
         displays?: undefined | {
             status: 'available';
@@ -363,86 +143,8 @@ export type ComputerControlActionResultById = {
         };
         settingsDeepLink?: string | undefined;
     };
-    readonly "computer.target.get": {
-        approvalDisplay: {
-            machineDisplayName: string;
-            requiresTargetSelection: boolean;
-            appName?: string | undefined;
-            access?: 'see' | 'use' | undefined;
-            target?: undefined | {
-                kind: 'display' | 'window';
-                title: string;
-            };
-            captureId?: string | undefined;
-            captureMedia?: undefined | {
-                mediaId: string;
-                mediaKind: 'image';
-                width: number;
-                height: number;
-                sizeBytes: number;
-                file: {
-                    sessionId: string;
-                    storage: 'daemon' | 'session';
-                    path: string;
-                    sha256: string;
-                    mimeType: 'image/png';
-                };
-            };
-        };
-        consentGranted: boolean;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-        access?: 'see' | 'use' | undefined;
-        selectedTarget?: undefined | {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId?: string | undefined;
-    };
-    readonly "computer.target.select": {
-        approvalDisplay: {
-            machineDisplayName: string;
-            requiresTargetSelection: boolean;
-            appName?: string | undefined;
-            access?: 'see' | 'use' | undefined;
-            target?: undefined | {
-                kind: 'display' | 'window';
-                title: string;
-            };
-            captureId?: string | undefined;
-            captureMedia?: undefined | {
-                mediaId: string;
-                mediaKind: 'image';
-                width: number;
-                height: number;
-                sizeBytes: number;
-                file: {
-                    sessionId: string;
-                    storage: 'daemon' | 'session';
-                    path: string;
-                    sha256: string;
-                    mimeType: 'image/png';
-                };
-            };
-        };
-        consentGranted: boolean;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-        access?: 'see' | 'use' | undefined;
-        selectedTarget?: undefined | {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId?: string | undefined;
-    };
+    readonly "computer.target.get": ActionDtoShape_b88c3950f28bb73d;
+    readonly "computer.target.select": ActionDtoShape_b88c3950f28bb73d;
     readonly "computer.permissions.openSettings": {
         status: 'dispatched';
     } | {
@@ -452,138 +154,24 @@ export type ComputerControlActionResultById = {
     readonly "computer.capture": {
         status: 'captured';
         captureId: string;
-        geometry: {
-            captureWidth: number;
-            captureHeight: number;
-            nativeWidth: number;
-            nativeHeight: number;
-            originX: number;
-            originY: number;
-            scaleX: number;
-            scaleY: number;
-            crop: {
-                x: number;
-                y: number;
-                width: number;
-                height: number;
-            };
-        };
+        geometry: ActionDtoShape_25faab656a26ee80;
         frame: {
             mimeType: 'image/png';
             base64: string;
         };
-        target: {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
+        target: ActionDtoShape_b312890baf85d4ad;
         sourceId: string;
         provider?: 'agent-desktop' | 'cua' | undefined;
     } | {
         status: 'captured';
         captureId: string;
-        geometry: {
-            captureWidth: number;
-            captureHeight: number;
-            nativeWidth: number;
-            nativeHeight: number;
-            originX: number;
-            originY: number;
-            scaleX: number;
-            scaleY: number;
-            crop: {
-                x: number;
-                y: number;
-                width: number;
-                height: number;
-            };
-        };
-        media: {
-            mediaId: string;
-            mediaKind: 'image';
-            width: number;
-            height: number;
-            sizeBytes: number;
-            file: {
-                sessionId: string;
-                storage: 'daemon' | 'session';
-                path: string;
-                sha256: string;
-                mimeType: 'image/png';
-            };
-        };
-        target: {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
+        geometry: ActionDtoShape_25faab656a26ee80;
+        media: ActionDtoShape_35693e0100483c46;
+        target: ActionDtoShape_b312890baf85d4ad;
         sourceId: string;
         provider?: 'agent-desktop' | 'cua' | undefined;
-    } | {
-        status: 'failed';
-        code: string;
-        target: {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId: string;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-    } | {
-        status: 'target_selection_required';
-        approvalDisplay: {
-            machineDisplayName: string;
-            requiresTargetSelection: boolean;
-            appName?: string | undefined;
-            access?: 'see' | 'use' | undefined;
-            target?: undefined | {
-                kind: 'display' | 'window';
-                title: string;
-            };
-            captureId?: string | undefined;
-            captureMedia?: undefined | {
-                mediaId: string;
-                mediaKind: 'image';
-                width: number;
-                height: number;
-                sizeBytes: number;
-                file: {
-                    sessionId: string;
-                    storage: 'daemon' | 'session';
-                    path: string;
-                    sha256: string;
-                    mimeType: 'image/png';
-                };
-            };
-        };
-    };
-    readonly "computer.query": {
-        status: 'failed';
-        code: string;
-        target: {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId: string;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-    } | {
+    } | ActionDtoShape_67bb29e1e5e4d69b | ActionDtoShape_c86dee5e02cf6265;
+    readonly "computer.query": ActionDtoShape_67bb29e1e5e4d69b | {
         status: 'queried';
         accessibility: {
             status: 'complete' | 'partial' | 'unavailable';
@@ -592,1052 +180,56 @@ export type ComputerControlActionResultById = {
                 role: string;
                 name?: string | undefined;
                 value?: string | undefined;
-                bounds?: undefined | {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
+                bounds?: ActionDtoShape_9b5701f87e1e8d3e;
             }[];
             reason?: string | undefined;
         };
-        target: {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
+        target: ActionDtoShape_b312890baf85d4ad;
         sourceId: string;
         captureId?: string | undefined;
         provider?: 'agent-desktop' | 'cua' | undefined;
-    } | {
-        status: 'target_selection_required';
-        approvalDisplay: {
-            machineDisplayName: string;
-            requiresTargetSelection: boolean;
-            appName?: string | undefined;
-            access?: 'see' | 'use' | undefined;
-            target?: undefined | {
-                kind: 'display' | 'window';
-                title: string;
-            };
-            captureId?: string | undefined;
-            captureMedia?: undefined | {
-                mediaId: string;
-                mediaKind: 'image';
-                width: number;
-                height: number;
-                sizeBytes: number;
-                file: {
-                    sessionId: string;
-                    storage: 'daemon' | 'session';
-                    path: string;
-                    sha256: string;
-                    mimeType: 'image/png';
-                };
-            };
-        };
-    };
-    readonly "computer.input": {
-        status: 'dispatched';
-        target: {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId: string;
-        targetLabel?: string | undefined;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-    } | {
-        status: 'failed';
-        code: string;
-        target: {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId: string;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-        targetLabel?: string | undefined;
-    } | {
-        status: 'interrupted';
-        completion: 'known' | 'unknown';
-        target: {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId: string;
-        code?: string | undefined;
-        targetLabel?: string | undefined;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-    } | {
-        status: 'target_selection_required';
-        approvalDisplay: {
-            machineDisplayName: string;
-            requiresTargetSelection: boolean;
-            appName?: string | undefined;
-            access?: 'see' | 'use' | undefined;
-            target?: undefined | {
-                kind: 'display' | 'window';
-                title: string;
-            };
-            captureId?: string | undefined;
-            captureMedia?: undefined | {
-                mediaId: string;
-                mediaKind: 'image';
-                width: number;
-                height: number;
-                sizeBytes: number;
-                file: {
-                    sessionId: string;
-                    storage: 'daemon' | 'session';
-                    path: string;
-                    sha256: string;
-                    mimeType: 'image/png';
-                };
-            };
-        };
-    } | {
-        status: 'verified';
-        property: string;
-        target: {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId: string;
-        targetLabel?: string | undefined;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-    };
-    readonly "computer.clipboard.read": {
-        ok: false;
-        code: string;
-    } | {
-        ok: true;
-        text?: string | undefined;
-    };
-    readonly "computer.clipboard.write": {
-        ok: false;
-        code: string;
-    } | {
-        ok: true;
-        text?: string | undefined;
-    };
+    } | ActionDtoShape_c86dee5e02cf6265;
+    readonly "computer.input": ActionDtoShape_a50a8f5f92f0bc74;
+    readonly "computer.clipboard.read": ActionDtoShape_a4d42991ae6475f8;
+    readonly "computer.clipboard.write": ActionDtoShape_a4d42991ae6475f8;
     readonly "computer.control.status": {
         controller: 'agent' | 'human' | 'idle';
         controlEpoch: number;
         stopping: boolean;
         uncertain: boolean;
-        target: {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
+        target: ActionDtoShape_b312890baf85d4ad;
         sourceId: string;
-        grants?: undefined | {
-            capture: 'denied' | 'granted' | 'unknown';
-            input: 'denied' | 'granted' | 'unknown';
-        };
+        grants?: undefined | ActionDtoShape_bf1652f02ae710ed;
         activity?: undefined | {
             kind: 'capture' | 'click' | 'drag' | 'element' | 'move' | 'press' | 'type' | 'wheel';
             targetLabel?: string | undefined;
         };
-        activeTarget?: undefined | {
-            x: number;
-            y: number;
-            width: number;
-            height: number;
-            label?: string | undefined;
-        };
+        activeTarget?: ActionDtoShape_611e53e9ae424252;
         provider?: 'agent-desktop' | 'cua' | undefined;
     };
-    readonly "computer.control.interrupt": {
-        status: 'dispatched';
-        target: {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId: string;
-        targetLabel?: string | undefined;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-    } | {
-        status: 'failed';
-        code: string;
-        target: {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId: string;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-        targetLabel?: string | undefined;
-    } | {
-        status: 'interrupted';
-        completion: 'known' | 'unknown';
-        target: {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId: string;
-        code?: string | undefined;
-        targetLabel?: string | undefined;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-    } | {
-        status: 'target_selection_required';
-        approvalDisplay: {
-            machineDisplayName: string;
-            requiresTargetSelection: boolean;
-            appName?: string | undefined;
-            access?: 'see' | 'use' | undefined;
-            target?: undefined | {
-                kind: 'display' | 'window';
-                title: string;
-            };
-            captureId?: string | undefined;
-            captureMedia?: undefined | {
-                mediaId: string;
-                mediaKind: 'image';
-                width: number;
-                height: number;
-                sizeBytes: number;
-                file: {
-                    sessionId: string;
-                    storage: 'daemon' | 'session';
-                    path: string;
-                    sha256: string;
-                    mimeType: 'image/png';
-                };
-            };
-        };
-    } | {
-        status: 'verified';
-        property: string;
-        target: {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId: string;
-        targetLabel?: string | undefined;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-    };
-    readonly "computer.control.handBack": {
-        status: 'dispatched';
-        target: {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId: string;
-        targetLabel?: string | undefined;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-    } | {
-        status: 'failed';
-        code: string;
-        target: {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId: string;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-        targetLabel?: string | undefined;
-    } | {
-        status: 'interrupted';
-        completion: 'known' | 'unknown';
-        target: {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId: string;
-        code?: string | undefined;
-        targetLabel?: string | undefined;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-    } | {
-        status: 'target_selection_required';
-        approvalDisplay: {
-            machineDisplayName: string;
-            requiresTargetSelection: boolean;
-            appName?: string | undefined;
-            access?: 'see' | 'use' | undefined;
-            target?: undefined | {
-                kind: 'display' | 'window';
-                title: string;
-            };
-            captureId?: string | undefined;
-            captureMedia?: undefined | {
-                mediaId: string;
-                mediaKind: 'image';
-                width: number;
-                height: number;
-                sizeBytes: number;
-                file: {
-                    sessionId: string;
-                    storage: 'daemon' | 'session';
-                    path: string;
-                    sha256: string;
-                    mimeType: 'image/png';
-                };
-            };
-        };
-    } | {
-        status: 'verified';
-        property: string;
-        target: {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId: string;
-        targetLabel?: string | undefined;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-    };
-    readonly "computer.target.close": {
-        status: 'dispatched';
-        target: {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId: string;
-        targetLabel?: string | undefined;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-    } | {
-        status: 'failed';
-        code: string;
-        target: {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId: string;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-        targetLabel?: string | undefined;
-    } | {
-        status: 'interrupted';
-        completion: 'known' | 'unknown';
-        target: {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId: string;
-        code?: string | undefined;
-        targetLabel?: string | undefined;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-    } | {
-        status: 'target_selection_required';
-        approvalDisplay: {
-            machineDisplayName: string;
-            requiresTargetSelection: boolean;
-            appName?: string | undefined;
-            access?: 'see' | 'use' | undefined;
-            target?: undefined | {
-                kind: 'display' | 'window';
-                title: string;
-            };
-            captureId?: string | undefined;
-            captureMedia?: undefined | {
-                mediaId: string;
-                mediaKind: 'image';
-                width: number;
-                height: number;
-                sizeBytes: number;
-                file: {
-                    sessionId: string;
-                    storage: 'daemon' | 'session';
-                    path: string;
-                    sha256: string;
-                    mimeType: 'image/png';
-                };
-            };
-        };
-    } | {
-        status: 'verified';
-        property: string;
-        target: {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        sourceId: string;
-        targetLabel?: string | undefined;
-        provider?: 'agent-desktop' | 'cua' | undefined;
-    };
+    readonly "computer.control.interrupt": ActionDtoShape_a50a8f5f92f0bc74;
+    readonly "computer.control.handBack": ActionDtoShape_a50a8f5f92f0bc74;
+    readonly "computer.target.close": ActionDtoShape_a50a8f5f92f0bc74;
     readonly "computer.recording.start": {
         status: 'started';
-        recording: {
-            machineId: string;
-            sourceId: string;
-            sourceIdentity: {
-                kind: 'machine-person';
-                personId: string;
-            } | {
-                kind: 'session';
-                sessionId: string;
-            };
-            target: {
-                kind: 'display';
-                displayId: string;
-            } | {
-                kind: 'window';
-                displayId: string;
-                pid: number;
-                windowId: number | string;
-            };
-            mediaTarget: {
-                sessionId: string;
-                messageLocalId: string;
-            };
-            v: 1;
-            recordingId: string;
-            captureKind: 'cdpScreencast' | 'mediaRecorder' | 'nativeViewCapture' | 'streamFrameCapture' | 'unavailable' | 'webContentsCapture';
-            startedAtMs: number;
-            status: 'canceled' | 'completed' | 'discarded' | 'expired' | 'failed' | 'finalized' | 'recording' | 'starting' | 'stopping';
-            durationMs: number;
-            byteSize: number;
-            frameCount: number;
-            fps: number;
-            mimeType: string;
-            retentionClass: 'attached' | 'clearOnClose' | 'clearOnSend' | 'diagnosticsOnly' | 'preSend';
-            redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'redacted';
-            policyState: 'allowed' | 'captureUnavailable' | 'permissionDenied' | 'policyDenied' | 'retentionLimited';
-            actionChapters: {
-                v: 1;
-                chapterId: string;
-                startOffsetMs: number;
-                endOffsetMs: number;
-                actionKind: string;
-                status: 'canceled' | 'failed' | 'interrupted' | 'queued' | 'running' | 'succeeded';
-                requesterClass: 'agent' | 'human' | 'system';
-                diagnosticsRefs: string[];
-                actionId?: string | undefined;
-                targetSummary?: string | undefined;
-                reason?: string | undefined;
-            }[];
-            relatedReferences: ({
-                refKind: 'browserActionTimeline';
-                timelineId: string;
-                actionIds: string[];
-            } | {
-                refKind: 'browserContextScreenshot';
-                contextId: string;
-                mediaId?: string | undefined;
-            } | {
-                refKind: 'browserDiagnosticsBundle';
-                diagnosticsBundleId: string;
-            } | {
-                refKind: 'sessionMedia';
-                mediaId: string;
-                mediaKind: 'image' | 'video';
-                mimeType: string;
-                sizeBytes: number;
-            })[];
-            desktopKey?: string | undefined;
-            stoppedAtMs?: number | undefined;
-            outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'media_persistence_failed' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
-            expiresAtMs?: number | undefined;
-            mediaRef?: undefined | {
-                refKind: 'sessionMedia';
-                mediaId: string;
-                mediaKind: 'image' | 'video';
-                mimeType: string;
-                sizeBytes: number;
-            };
-        };
-    } | {
-        status: 'unavailable';
-        reason: {
-            code: string;
-            message: string;
-        };
-    };
+        recording: ActionDtoShape_f9447da0f1407966;
+    } | ActionDtoShape_f7c802bc8bcea2f3;
     readonly "computer.recording.stop": {
         status: 'failed';
-        recording: {
-            machineId: string;
-            sourceId: string;
-            sourceIdentity: {
-                kind: 'machine-person';
-                personId: string;
-            } | {
-                kind: 'session';
-                sessionId: string;
-            };
-            target: {
-                kind: 'display';
-                displayId: string;
-            } | {
-                kind: 'window';
-                displayId: string;
-                pid: number;
-                windowId: number | string;
-            };
-            mediaTarget: {
-                sessionId: string;
-                messageLocalId: string;
-            };
-            v: 1;
-            recordingId: string;
-            captureKind: 'cdpScreencast' | 'mediaRecorder' | 'nativeViewCapture' | 'streamFrameCapture' | 'unavailable' | 'webContentsCapture';
-            startedAtMs: number;
-            status: 'canceled' | 'completed' | 'discarded' | 'expired' | 'failed' | 'finalized' | 'recording' | 'starting' | 'stopping';
-            durationMs: number;
-            byteSize: number;
-            frameCount: number;
-            fps: number;
-            mimeType: string;
-            retentionClass: 'attached' | 'clearOnClose' | 'clearOnSend' | 'diagnosticsOnly' | 'preSend';
-            redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'redacted';
-            policyState: 'allowed' | 'captureUnavailable' | 'permissionDenied' | 'policyDenied' | 'retentionLimited';
-            actionChapters: {
-                v: 1;
-                chapterId: string;
-                startOffsetMs: number;
-                endOffsetMs: number;
-                actionKind: string;
-                status: 'canceled' | 'failed' | 'interrupted' | 'queued' | 'running' | 'succeeded';
-                requesterClass: 'agent' | 'human' | 'system';
-                diagnosticsRefs: string[];
-                actionId?: string | undefined;
-                targetSummary?: string | undefined;
-                reason?: string | undefined;
-            }[];
-            relatedReferences: ({
-                refKind: 'browserActionTimeline';
-                timelineId: string;
-                actionIds: string[];
-            } | {
-                refKind: 'browserContextScreenshot';
-                contextId: string;
-                mediaId?: string | undefined;
-            } | {
-                refKind: 'browserDiagnosticsBundle';
-                diagnosticsBundleId: string;
-            } | {
-                refKind: 'sessionMedia';
-                mediaId: string;
-                mediaKind: 'image' | 'video';
-                mimeType: string;
-                sizeBytes: number;
-            })[];
-            desktopKey?: string | undefined;
-            stoppedAtMs?: number | undefined;
-            outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'media_persistence_failed' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
-            expiresAtMs?: number | undefined;
-            mediaRef?: undefined | {
-                refKind: 'sessionMedia';
-                mediaId: string;
-                mediaKind: 'image' | 'video';
-                mimeType: string;
-                sizeBytes: number;
-            };
-        };
+        recording: ActionDtoShape_f9447da0f1407966;
         reason: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'media_persistence_failed' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped';
         failureCause?: ActionFailureCauseV1 | undefined;
         requestId?: string | undefined;
         saveFailure?: 'transcript_attach_failed' | 'workspace_write_failed' | undefined;
     } | {
         status: 'finalized';
-        recording: {
-            machineId: string;
-            sourceId: string;
-            sourceIdentity: {
-                kind: 'machine-person';
-                personId: string;
-            } | {
-                kind: 'session';
-                sessionId: string;
-            };
-            target: {
-                kind: 'display';
-                displayId: string;
-            } | {
-                kind: 'window';
-                displayId: string;
-                pid: number;
-                windowId: number | string;
-            };
-            mediaTarget: {
-                sessionId: string;
-                messageLocalId: string;
-            };
-            v: 1;
-            recordingId: string;
-            captureKind: 'cdpScreencast' | 'mediaRecorder' | 'nativeViewCapture' | 'streamFrameCapture' | 'unavailable' | 'webContentsCapture';
-            startedAtMs: number;
-            status: 'canceled' | 'completed' | 'discarded' | 'expired' | 'failed' | 'finalized' | 'recording' | 'starting' | 'stopping';
-            durationMs: number;
-            byteSize: number;
-            frameCount: number;
-            fps: number;
-            mimeType: string;
-            retentionClass: 'attached' | 'clearOnClose' | 'clearOnSend' | 'diagnosticsOnly' | 'preSend';
-            redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'redacted';
-            policyState: 'allowed' | 'captureUnavailable' | 'permissionDenied' | 'policyDenied' | 'retentionLimited';
-            actionChapters: {
-                v: 1;
-                chapterId: string;
-                startOffsetMs: number;
-                endOffsetMs: number;
-                actionKind: string;
-                status: 'canceled' | 'failed' | 'interrupted' | 'queued' | 'running' | 'succeeded';
-                requesterClass: 'agent' | 'human' | 'system';
-                diagnosticsRefs: string[];
-                actionId?: string | undefined;
-                targetSummary?: string | undefined;
-                reason?: string | undefined;
-            }[];
-            relatedReferences: ({
-                refKind: 'browserActionTimeline';
-                timelineId: string;
-                actionIds: string[];
-            } | {
-                refKind: 'browserContextScreenshot';
-                contextId: string;
-                mediaId?: string | undefined;
-            } | {
-                refKind: 'browserDiagnosticsBundle';
-                diagnosticsBundleId: string;
-            } | {
-                refKind: 'sessionMedia';
-                mediaId: string;
-                mediaKind: 'image' | 'video';
-                mimeType: string;
-                sizeBytes: number;
-            })[];
-            desktopKey?: string | undefined;
-            stoppedAtMs?: number | undefined;
-            outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'media_persistence_failed' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
-            expiresAtMs?: number | undefined;
-            mediaRef?: undefined | {
-                refKind: 'sessionMedia';
-                mediaId: string;
-                mediaKind: 'image' | 'video';
-                mimeType: string;
-                sizeBytes: number;
-            };
-        };
-    } | {
-        status: 'unavailable';
-        reason: {
-            code: string;
-            message: string;
-        };
-    };
-    readonly "computer.recording.cancel": {
-        status: 'canceled' | 'discarded' | 'failed';
-        recording: {
-            machineId: string;
-            sourceId: string;
-            sourceIdentity: {
-                kind: 'machine-person';
-                personId: string;
-            } | {
-                kind: 'session';
-                sessionId: string;
-            };
-            target: {
-                kind: 'display';
-                displayId: string;
-            } | {
-                kind: 'window';
-                displayId: string;
-                pid: number;
-                windowId: number | string;
-            };
-            mediaTarget: {
-                sessionId: string;
-                messageLocalId: string;
-            };
-            v: 1;
-            recordingId: string;
-            captureKind: 'cdpScreencast' | 'mediaRecorder' | 'nativeViewCapture' | 'streamFrameCapture' | 'unavailable' | 'webContentsCapture';
-            startedAtMs: number;
-            status: 'canceled' | 'completed' | 'discarded' | 'expired' | 'failed' | 'finalized' | 'recording' | 'starting' | 'stopping';
-            durationMs: number;
-            byteSize: number;
-            frameCount: number;
-            fps: number;
-            mimeType: string;
-            retentionClass: 'attached' | 'clearOnClose' | 'clearOnSend' | 'diagnosticsOnly' | 'preSend';
-            redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'redacted';
-            policyState: 'allowed' | 'captureUnavailable' | 'permissionDenied' | 'policyDenied' | 'retentionLimited';
-            actionChapters: {
-                v: 1;
-                chapterId: string;
-                startOffsetMs: number;
-                endOffsetMs: number;
-                actionKind: string;
-                status: 'canceled' | 'failed' | 'interrupted' | 'queued' | 'running' | 'succeeded';
-                requesterClass: 'agent' | 'human' | 'system';
-                diagnosticsRefs: string[];
-                actionId?: string | undefined;
-                targetSummary?: string | undefined;
-                reason?: string | undefined;
-            }[];
-            relatedReferences: ({
-                refKind: 'browserActionTimeline';
-                timelineId: string;
-                actionIds: string[];
-            } | {
-                refKind: 'browserContextScreenshot';
-                contextId: string;
-                mediaId?: string | undefined;
-            } | {
-                refKind: 'browserDiagnosticsBundle';
-                diagnosticsBundleId: string;
-            } | {
-                refKind: 'sessionMedia';
-                mediaId: string;
-                mediaKind: 'image' | 'video';
-                mimeType: string;
-                sizeBytes: number;
-            })[];
-            desktopKey?: string | undefined;
-            stoppedAtMs?: number | undefined;
-            outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'media_persistence_failed' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
-            expiresAtMs?: number | undefined;
-            mediaRef?: undefined | {
-                refKind: 'sessionMedia';
-                mediaId: string;
-                mediaKind: 'image' | 'video';
-                mimeType: string;
-                sizeBytes: number;
-            };
-        };
-    } | {
-        status: 'unavailable';
-        reason: {
-            code: string;
-            message: string;
-        };
-    };
-    readonly "computer.recording.status": null | {
-        machineId: string;
-        sourceId: string;
-        sourceIdentity: {
-            kind: 'machine-person';
-            personId: string;
-        } | {
-            kind: 'session';
-            sessionId: string;
-        };
-        target: {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        mediaTarget: {
-            sessionId: string;
-            messageLocalId: string;
-        };
-        v: 1;
-        recordingId: string;
-        captureKind: 'cdpScreencast' | 'mediaRecorder' | 'nativeViewCapture' | 'streamFrameCapture' | 'unavailable' | 'webContentsCapture';
-        startedAtMs: number;
-        status: 'canceled' | 'completed' | 'discarded' | 'expired' | 'failed' | 'finalized' | 'recording' | 'starting' | 'stopping';
-        durationMs: number;
-        byteSize: number;
-        frameCount: number;
-        fps: number;
-        mimeType: string;
-        retentionClass: 'attached' | 'clearOnClose' | 'clearOnSend' | 'diagnosticsOnly' | 'preSend';
-        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'redacted';
-        policyState: 'allowed' | 'captureUnavailable' | 'permissionDenied' | 'policyDenied' | 'retentionLimited';
-        actionChapters: {
-            v: 1;
-            chapterId: string;
-            startOffsetMs: number;
-            endOffsetMs: number;
-            actionKind: string;
-            status: 'canceled' | 'failed' | 'interrupted' | 'queued' | 'running' | 'succeeded';
-            requesterClass: 'agent' | 'human' | 'system';
-            diagnosticsRefs: string[];
-            actionId?: string | undefined;
-            targetSummary?: string | undefined;
-            reason?: string | undefined;
-        }[];
-        relatedReferences: ({
-            refKind: 'browserActionTimeline';
-            timelineId: string;
-            actionIds: string[];
-        } | {
-            refKind: 'browserContextScreenshot';
-            contextId: string;
-            mediaId?: string | undefined;
-        } | {
-            refKind: 'browserDiagnosticsBundle';
-            diagnosticsBundleId: string;
-        } | {
-            refKind: 'sessionMedia';
-            mediaId: string;
-            mediaKind: 'image' | 'video';
-            mimeType: string;
-            sizeBytes: number;
-        })[];
-        desktopKey?: string | undefined;
-        stoppedAtMs?: number | undefined;
-        outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'media_persistence_failed' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
-        expiresAtMs?: number | undefined;
-        mediaRef?: undefined | {
-            refKind: 'sessionMedia';
-            mediaId: string;
-            mediaKind: 'image' | 'video';
-            mimeType: string;
-            sizeBytes: number;
-        };
-    };
-    readonly "computer.recording.listForTarget": {
-        machineId: string;
-        sourceId: string;
-        sourceIdentity: {
-            kind: 'machine-person';
-            personId: string;
-        } | {
-            kind: 'session';
-            sessionId: string;
-        };
-        target: {
-            kind: 'display';
-            displayId: string;
-        } | {
-            kind: 'window';
-            displayId: string;
-            pid: number;
-            windowId: number | string;
-        };
-        mediaTarget: {
-            sessionId: string;
-            messageLocalId: string;
-        };
-        v: 1;
-        recordingId: string;
-        captureKind: 'cdpScreencast' | 'mediaRecorder' | 'nativeViewCapture' | 'streamFrameCapture' | 'unavailable' | 'webContentsCapture';
-        startedAtMs: number;
-        status: 'canceled' | 'completed' | 'discarded' | 'expired' | 'failed' | 'finalized' | 'recording' | 'starting' | 'stopping';
-        durationMs: number;
-        byteSize: number;
-        frameCount: number;
-        fps: number;
-        mimeType: string;
-        retentionClass: 'attached' | 'clearOnClose' | 'clearOnSend' | 'diagnosticsOnly' | 'preSend';
-        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'redacted';
-        policyState: 'allowed' | 'captureUnavailable' | 'permissionDenied' | 'policyDenied' | 'retentionLimited';
-        actionChapters: {
-            v: 1;
-            chapterId: string;
-            startOffsetMs: number;
-            endOffsetMs: number;
-            actionKind: string;
-            status: 'canceled' | 'failed' | 'interrupted' | 'queued' | 'running' | 'succeeded';
-            requesterClass: 'agent' | 'human' | 'system';
-            diagnosticsRefs: string[];
-            actionId?: string | undefined;
-            targetSummary?: string | undefined;
-            reason?: string | undefined;
-        }[];
-        relatedReferences: ({
-            refKind: 'browserActionTimeline';
-            timelineId: string;
-            actionIds: string[];
-        } | {
-            refKind: 'browserContextScreenshot';
-            contextId: string;
-            mediaId?: string | undefined;
-        } | {
-            refKind: 'browserDiagnosticsBundle';
-            diagnosticsBundleId: string;
-        } | {
-            refKind: 'sessionMedia';
-            mediaId: string;
-            mediaKind: 'image' | 'video';
-            mimeType: string;
-            sizeBytes: number;
-        })[];
-        desktopKey?: string | undefined;
-        stoppedAtMs?: number | undefined;
-        outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'media_persistence_failed' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
-        expiresAtMs?: number | undefined;
-        mediaRef?: undefined | {
-            refKind: 'sessionMedia';
-            mediaId: string;
-            mediaKind: 'image' | 'video';
-            mimeType: string;
-            sizeBytes: number;
-        };
-    }[];
-    readonly "computer.recording.discard": {
-        status: 'canceled' | 'discarded' | 'failed';
-        recording: {
-            machineId: string;
-            sourceId: string;
-            sourceIdentity: {
-                kind: 'machine-person';
-                personId: string;
-            } | {
-                kind: 'session';
-                sessionId: string;
-            };
-            target: {
-                kind: 'display';
-                displayId: string;
-            } | {
-                kind: 'window';
-                displayId: string;
-                pid: number;
-                windowId: number | string;
-            };
-            mediaTarget: {
-                sessionId: string;
-                messageLocalId: string;
-            };
-            v: 1;
-            recordingId: string;
-            captureKind: 'cdpScreencast' | 'mediaRecorder' | 'nativeViewCapture' | 'streamFrameCapture' | 'unavailable' | 'webContentsCapture';
-            startedAtMs: number;
-            status: 'canceled' | 'completed' | 'discarded' | 'expired' | 'failed' | 'finalized' | 'recording' | 'starting' | 'stopping';
-            durationMs: number;
-            byteSize: number;
-            frameCount: number;
-            fps: number;
-            mimeType: string;
-            retentionClass: 'attached' | 'clearOnClose' | 'clearOnSend' | 'diagnosticsOnly' | 'preSend';
-            redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'redacted';
-            policyState: 'allowed' | 'captureUnavailable' | 'permissionDenied' | 'policyDenied' | 'retentionLimited';
-            actionChapters: {
-                v: 1;
-                chapterId: string;
-                startOffsetMs: number;
-                endOffsetMs: number;
-                actionKind: string;
-                status: 'canceled' | 'failed' | 'interrupted' | 'queued' | 'running' | 'succeeded';
-                requesterClass: 'agent' | 'human' | 'system';
-                diagnosticsRefs: string[];
-                actionId?: string | undefined;
-                targetSummary?: string | undefined;
-                reason?: string | undefined;
-            }[];
-            relatedReferences: ({
-                refKind: 'browserActionTimeline';
-                timelineId: string;
-                actionIds: string[];
-            } | {
-                refKind: 'browserContextScreenshot';
-                contextId: string;
-                mediaId?: string | undefined;
-            } | {
-                refKind: 'browserDiagnosticsBundle';
-                diagnosticsBundleId: string;
-            } | {
-                refKind: 'sessionMedia';
-                mediaId: string;
-                mediaKind: 'image' | 'video';
-                mimeType: string;
-                sizeBytes: number;
-            })[];
-            desktopKey?: string | undefined;
-            stoppedAtMs?: number | undefined;
-            outcomeReason?: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'media_persistence_failed' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped' | undefined;
-            expiresAtMs?: number | undefined;
-            mediaRef?: undefined | {
-                refKind: 'sessionMedia';
-                mediaId: string;
-                mediaKind: 'image' | 'video';
-                mimeType: string;
-                sizeBytes: number;
-            };
-        };
-    } | {
-        status: 'unavailable';
-        reason: {
-            code: string;
-            message: string;
-        };
-    };
-    readonly "computer.recording.cleanupExpired": {
-        discardedRecordingIds: string[];
-        failedRecordingIds: string[];
-    };
+        recording: ActionDtoShape_f9447da0f1407966;
+    } | ActionDtoShape_f7c802bc8bcea2f3;
+    readonly "computer.recording.cancel": ActionDtoShape_47fdd306c8f540dd;
+    readonly "computer.recording.status": null | ActionDtoShape_f9447da0f1407966;
+    readonly "computer.recording.listForTarget": ActionDtoShape_f9447da0f1407966[];
+    readonly "computer.recording.discard": ActionDtoShape_47fdd306c8f540dd;
+    readonly "computer.recording.cleanupExpired": ActionDtoShape_18d82ea2481c929f;
     readonly "computer.recording.attachToComposer": {
         ok: true;
         attachmentId: string;

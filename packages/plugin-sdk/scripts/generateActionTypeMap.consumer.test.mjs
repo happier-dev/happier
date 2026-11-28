@@ -144,20 +144,26 @@ test('syntax projection retains concrete family rows beyond the retired compiler
     export type PluginInvocableActionId = keyof Inputs;
   `);
   writeFileSync(resolve(actions, 'family.ts'), `export type Inputs = { ${keys.map(key=>`${JSON.stringify(key)}: Record<string, never>;`).join('\n')} };\nexport type Results = { ${keys.map(key=>`${JSON.stringify(key)}: { payload: ${JSON.stringify(payload)} };`).join('\n')} };`);
-  const projection = generator.projectActionDtoDeclarations({ repoRoot: root, declarations: new Map(
-    ['pluginActionDtos.ts', 'family.ts'].map(name => {
-      const path = resolve(actions, name);
-      return [path, readFileSync(path, 'utf8')];
-    }),
-  ) });
+  const declarations = new Map(['pluginActionDtos.ts', 'family.ts'].map(name => {
+    const path = resolve(actions, name);
+    return [path, readFileSync(path, 'utf8')];
+  }));
+  assert.ok(Buffer.byteLength(declarations.get(resolve(actions, 'family.ts'))) > 1_000_000,
+    'exercise the previous aggregate print truncation region');
+  const projection = generator.projectActionDtoDeclarations({ repoRoot: root, declarations });
   assert.deepEqual(projection.inputKeys, [...keys].sort());
   assert.deepEqual(projection.resultKeys, [...keys].sort());
   const text = projection.outputs.get('packages/plugin-sdk/src/actions/dtos/family.generated.ts');
-  assert.ok(Buffer.byteLength(text) > 1_000_000, 'exercise the previous aggregate print truncation region');
   const file = ts.createSourceFile('family.ts', text, ts.ScriptTarget.ES2022, true);
-  const result = file.statements.find(node=>ts.isTypeAliasDeclaration(node)&&node.name.text === 'Results');
-  assert.deepEqual(result.type.members.map(node=>node.name.text), keys);
-  for (const member of result.type.members) assert.equal(member.type.members[0].type.literal.text, payload);
+  const result = file.statements.find(node => ts.isTypeAliasDeclaration(node) && node.name.text === 'Results');
+  const shared = projection.outputs.get('packages/plugin-sdk/src/actions/dtos/pluginActionDtoShapes.generated.ts');
+  const sharedFile = ts.createSourceFile('shared.ts', shared, ts.ScriptTarget.ES2022, true);
+  const shapes = new Map(sharedFile.statements.filter(ts.isTypeAliasDeclaration).map(node => [node.name.text, node.type]));
+  assert.deepEqual(result.type.members.map(node => node.name.text), keys);
+  for (const member of result.type.members) {
+    const row = ts.isTypeReferenceNode(member.type) ? shapes.get(member.type.typeName.text) : member.type;
+    assert.equal(row.members[0].type.literal.text, payload);
+  }
 });
 
 test('current published Action DTO closure emits portable declarations and recursive author contracts', (t) => {

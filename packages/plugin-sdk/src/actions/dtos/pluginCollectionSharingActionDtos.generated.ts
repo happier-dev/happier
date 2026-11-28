@@ -2,15 +2,11 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
+import type { ActionDtoShape_0209542ace379966, ActionDtoShape_20924bb32a439bfe, ActionDtoShape_23fc1acfacd95e01, ActionDtoShape_b72d4ec032684819 } from './pluginActionDtoShapes.generated.js';
 
 export type PluginCollectionSharingActionInputById = {
     readonly "plugins.collections.shared.list": {
-        collectionRef: {
-            pluginId: string;
-            collectionId: string;
-            schemaVersion: number;
-            contractDigest: string;
-        };
+        collectionRef: ActionDtoShape_0209542ace379966;
         cursor?: string | undefined;
         limit?: number | undefined;
         projection?: 'identity' | undefined;
@@ -33,12 +29,7 @@ export type PluginCollectionSharingActionInputById = {
     readonly "plugins.collections.shared.get": {
         ownerAccountId: string;
         rowId: string;
-        collectionRef: {
-            pluginId: string;
-            collectionId: string;
-            schemaVersion: number;
-            contractDigest: string;
-        };
+        collectionRef: ActionDtoShape_0209542ace379966;
     } & {
         clientId?: string | undefined;
     };
@@ -46,69 +37,29 @@ export type PluginCollectionSharingActionInputById = {
         value: Record<string, JsonValue>;
         expectedRevision: number;
         ownerAccountId: string;
-        collectionRef: {
-            pluginId: string;
-            collectionId: string;
-            schemaVersion: number;
-            contractDigest: string;
-        };
+        collectionRef: ActionDtoShape_0209542ace379966;
     } & {
         clientId?: string | undefined;
     };
     readonly "plugins.collections.shared.grants.list": {
         rowId: string;
-        collectionRef: {
-            pluginId: string;
-            collectionId: string;
-            schemaVersion: number;
-            contractDigest: string;
-        };
+        collectionRef: ActionDtoShape_0209542ace379966;
     } & {
         clientId?: string | undefined;
     };
     readonly "plugins.collections.shared.grants.set": {
         expectedRevision: number;
-        principal: {
-            kind: 'account';
-            accountId: string;
-        } | {
-            kind: 'group';
-            teamId: string;
-            groupId: string;
-        } | {
-            kind: 'team';
-            teamId: string;
-        };
-        rowId: string;
+        principal: ActionDtoShape_b72d4ec032684819;
         accessLevel: 'edit' | 'view';
-        collectionRef: {
-            pluginId: string;
-            collectionId: string;
-            schemaVersion: number;
-            contractDigest: string;
-        };
+        rowId: string;
+        collectionRef: ActionDtoShape_0209542ace379966;
     } & {
         clientId?: string | undefined;
     };
     readonly "plugins.collections.shared.grants.revoke": {
-        principal: {
-            kind: 'account';
-            accountId: string;
-        } | {
-            kind: 'group';
-            teamId: string;
-            groupId: string;
-        } | {
-            kind: 'team';
-            teamId: string;
-        };
+        principal: ActionDtoShape_b72d4ec032684819;
         rowId: string;
-        collectionRef: {
-            pluginId: string;
-            collectionId: string;
-            schemaVersion: number;
-            contractDigest: string;
-        };
+        collectionRef: ActionDtoShape_0209542ace379966;
     } & {
         clientId?: string | undefined;
     };
@@ -130,62 +81,12 @@ export type PluginCollectionSharingActionResultById = {
         }[];
         nextCursor?: string | undefined;
     };
-    readonly "plugins.collections.shared.get": {
-        value: Record<string, JsonValue>;
-        revision: number;
-        rowId: string;
-        ownerAccountId: string;
-        access: 'admin' | 'edit' | 'owner' | 'view';
-    };
-    readonly "plugins.collections.shared.put": {
-        value: Record<string, JsonValue>;
-        revision: number;
-        rowId: string;
-        ownerAccountId: string;
-        access: 'admin' | 'edit' | 'owner' | 'view';
-    };
+    readonly "plugins.collections.shared.get": ActionDtoShape_20924bb32a439bfe;
+    readonly "plugins.collections.shared.put": ActionDtoShape_20924bb32a439bfe;
     readonly "plugins.collections.shared.grants.list": {
         ownerAccountId: string;
         access: 'admin' | 'edit' | 'owner' | 'view';
-        grants: {
-            principal: {
-                kind: 'account';
-                accountId: string;
-            } | {
-                kind: 'group';
-                teamId: string;
-                groupId: string;
-            } | {
-                kind: 'team';
-                teamId: string;
-            };
-            accessLevel: 'admin' | 'edit' | 'view';
-            createdByAccountId: string;
-            createdAt: number;
-            display: {
-                name: null | string;
-                username?: null | string | undefined;
-            };
-            groupName?: undefined | {
-                kind: 'available';
-                label: {
-                    content: {
-                        t: 'encrypted';
-                        c: string;
-                    } | {
-                        t: 'plain';
-                        v: string;
-                    };
-                    recipientEnvelope: null | {
-                        encryptedDataKey: string;
-                        recipientContentPublicKeyFingerprint: string;
-                    };
-                    legacyPlaintext?: true | undefined;
-                };
-            } | {
-                kind: 'unavailable';
-            };
-        }[];
+        grants: ActionDtoShape_23fc1acfacd95e01[];
     };
     readonly "plugins.collections.shared.grants.set": {
         changed: boolean;
