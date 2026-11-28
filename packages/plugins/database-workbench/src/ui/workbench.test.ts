@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import type { DatabaseOperationResultV1, DatabaseRelationStructureV1, DatabaseRowsContinuationV1 } from '@happier-dev/plugin-sdk/database';
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
 import { DATABASE_EDITS_APPLY_ACTION_ID_V1 } from '@happier-dev/database-protocol';
@@ -99,16 +99,19 @@ it('retains opened pages across switches and only reads on new demand, Refresh o
         const untouched = otherPage.get().data;
         const beforeReveal = calls.length;
         firstId = '9007199254740994'; // An external write has no Workbench own-write notification.
-        off.push(page.subscribe(() => {}));
+        const hideRevealedPage = page.subscribe(() => {});
+        off.push(hideRevealedPage);
         await page.demand();
         expect(page.get().data).toBe(held);
         expect(calls).toHaveLength(beforeReveal);
 
+        // Refresh is itself demand for the selected page, even between subscription attachments.
+        hideRevealedPage();
         instance.refresh(targetKey, relation);
-        await page.demand();
+        await vi.waitFor(() => expect(page.get().data?.rows[0]?.cells).toEqual([{ type: 'integer', value: firstId }]));
         expect(calls.slice(beforeReveal).sort()).toEqual(['relation.structure', 'rows.read']);
-        expect(page.get().data?.rows[0]?.cells).toEqual([{ type: 'integer', value: firstId }]);
         expect(otherPage.get().data).toBe(untouched);
+        off.push(page.subscribe(() => {}));
         const refreshed = page.get().data;
         const before = [...calls];
         const change = { targetKey, relation, rowKey: 'row', label: 'Row', change: {

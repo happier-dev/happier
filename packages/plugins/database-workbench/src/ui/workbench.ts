@@ -367,7 +367,14 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
             const previous = foreignKeyBack(local.get('location'));
             if (previous) { await client.navigate(previous); local.set('location', previous); }
         },
-        refresh: invalidate,
+        refresh(targetKey?: string, relation?: DatabaseRelationV1) {
+            invalidate(targetKey, relation);
+            const location = local.get('location');
+            if (!relation || location.targetKey !== targetKey || !sameRelation(location.relation, relation)) return;
+            // The selected view's Refresh is demand even if its subscription is being reattached.
+            if (location.mode === 'data') void instance.page(location).demand();
+            if (location.mode === 'structure') void structure(location.targetKey, relation).demand();
+        },
         apply(relation: DatabaseRelationV1, targetKey = local.get('location').targetKey): WorkbenchControlBinding & { disabled: boolean } {
             const scope = { targetKey, relation };
             const controlKey = reviewKey(scope);
