@@ -2028,6 +2028,15 @@ describe('production workflow coordinator', () => {
       const admissions = boundary.calls.filter(call => call.operation === 'invocations.admit');
       expect(admissions.some(call => Array.isArray(call.invocations) && call.invocations.length > 1)).toBe(true);
     }
+    if (branch === 'fanout_5' || branch === 'then' || branch === 'otherwise') {
+      const runningStructures = boundary.calls.filter(call => call.operation === 'invocations.admit')
+        .flatMap(call => call.invocations as readonly { id: string; lifecycle?: string }[])
+        .filter(row => row.lifecycle === 'running');
+      expect(runningStructures).toHaveLength(branch === 'fanout_5' ? 6 : 1);
+      expect(boundary.calls.filter(call => call.operation === 'invocations.fact' && call.expectedLifecycle === 'pending'
+        && call.lifecycle === 'running')).toEqual([]);
+      expect(boundary.calls.filter(call => call.operation === 'invocations.fact' && call.lifecycle === 'admitting')).toHaveLength(size ?? 1);
+    }
     expect(slotReads).toBe(0);
     const owner = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => accountId,
       storage: boundary, definitions: { get: async () => { throw new Error('must_not_read_mutable_definition'); } },
@@ -2136,6 +2145,9 @@ describe('production workflow coordinator', () => {
       console.info('FIN-HANDOFF-COST', JSON.stringify({ timerFires, intervalInstalls: interval.mock.calls.length, invocationsStarted: admitted.length,
         deadlineDelaysMs: timeout.mock.calls.map(([, delay]) => delay),
         storageOperations: boundary.calls.length, operationsFromFirstResultToNextInput: operationsBeforeNextInput }));
+      expect(boundary.calls.filter(call => call.operation === 'invocations.fact' && call.lifecycle === 'completed'
+        && call.frontier !== undefined)).toHaveLength(2);
+      expect(boundary.calls.filter(call => call.operation === 'transition' && call.state === 'running')).toEqual([]);
     } finally {
       timeout.mockRestore();
       interval.mockRestore();

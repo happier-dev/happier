@@ -2309,14 +2309,20 @@ async function executeActionBlock(
     if (row.lifecycle !== 'completed') throw new WorkflowRuntimeInterruption();
   } else {
     if (!validated.ok) return await fail('schema_mismatch');
-    // The last cleanup block still inspects preceding failures, and a
-    // Discussion result still needs its publication before the frontier moves.
-    const advances = !parentKey && scope.length === 0 && leaf.runWhen !== 'always' && !context.deps.onInvocationSettled;
+    const advances = canAdvanceCompletedFrontier(leaf, scope, context, parentKey);
     row = await context.deps.store.commitFact({ key: row.key, lifecycle: 'completed', result: validated.value, ...capturedExecution,
       ...(advances ? { advanceFrontierTo: Number(memberOrdinal) + 1 } : {}) });
   }
   const result = row.result ?? (validated.ok ? validated.value : null);
   return result;
+}
+
+function canAdvanceCompletedFrontier(
+  block: WorkflowBlock, scope: WorkflowInvocationPath['scope'], context: ExecutionContext, parentKey: string | undefined,
+): boolean {
+  // Cleanup still inspects preceding failures, and Discussion results
+  // still need their publication before the frontier moves.
+  return !parentKey && scope.length === 0 && block.runWhen !== 'always' && !context.deps.onInvocationSettled;
 }
 
 async function executeWorkflowBlock(
@@ -2935,10 +2941,12 @@ async function executeStepBlock(
         await awaitReviewedInvocation(row, context);
         return await executeStepBlock(step, scope, frame, context, parentKey, memberOrdinal, supplementalInputValues);
       }
+      const advances = !isReviewGeneration && canAdvanceCompletedFrontier(step, scope, context, parentKey);
       await context.deps.store.commitFact({
         key,
         lifecycle: 'completed',
         result,
+        ...(advances ? { advanceFrontierTo: Number(memberOrdinal) + 1 } : {}),
         ...(isReviewGeneration ? { review: { resultSource: { kind: 'execution_input' as const } } } : {}),
         ...(execution.usage ? { usage: execution.usage } : {}),
         ...(execution.replyOutcome ? { replyOutcome: execution.replyOutcome } : {}),

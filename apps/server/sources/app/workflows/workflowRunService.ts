@@ -822,7 +822,7 @@ export async function admitWorkflowInvocations(params: Readonly<{
     accountId: string; runId: string; machineId: string; parentAttempt: number; expectedRevision: number; checkpointEnvelope: string;
     invocations: readonly Readonly<{
         id: string; sequence: bigint; parentRecordId: string; memberOrdinal: bigint;
-        lifecycle?: "pending" | "waiting_for_capacity"; contentEnvelope: string;
+        lifecycle?: "pending" | "waiting_for_capacity" | "running"; contentEnvelope: string;
         replaces?: Readonly<{ id: string; attempt: bigint; contentRevision: bigint }>;
     }>[];
     accountCurrentness: AutomationAccountCurrentnessWitnessV1;
@@ -839,7 +839,7 @@ export async function admitWorkflowInvocations(params: Readonly<{
                 throw new WorkflowRunServiceError("invalid_input");
             }
             if (invocation.replaces && (!WorkflowInvocationRecordIdSchema.safeParse(invocation.replaces.id).success
-                || invocation.replaces.id === invocation.id || invocation.replaces.attempt < 0n
+                || invocation.lifecycle === "running" || invocation.replaces.id === invocation.id || invocation.replaces.attempt < 0n
                 || invocation.replaces.attempt >= MAX_DATABASE_BIGINT || invocation.replaces.contentRevision < 0n
                 || invocation.replaces.contentRevision >= MAX_DATABASE_BIGINT)) throw new WorkflowRunServiceError("invalid_input");
         }
@@ -949,9 +949,10 @@ export async function admitWorkflowInvocations(params: Readonly<{
                 contentEnvelope: invocation.contentEnvelope,
             }, select: invocationSelect }) as InvocationRow);
         }
-        // Pending allocation is recovery state; publish when the step becomes
-        // visible, or when allocation itself changes capacity/review attention.
-        if (params.invocations.some(invocation => invocation.replaces || invocation.lifecycle === "waiting_for_capacity")) {
+        // Pending allocation is recovery state. A running structure or a
+        // capacity/review change is immediately visible.
+        if (params.invocations.some(invocation => invocation.replaces
+            || invocation.lifecycle === "waiting_for_capacity" || invocation.lifecycle === "running")) {
             await markWorkflowRunChangedTx(tx, params.accountId, params.runId, deliveryBefore);
         }
         return { invocations: created.map(projectInvocation), parentRevision: params.expectedRevision + 1, disposition: "created" as const };
@@ -2012,15 +2013,18 @@ export async function completeWorkflowInvocationReview(input: WorkflowReviewMuta
  * its members count
  * against the same response-byte boundary and it is part of the cursor binding.
  */
-export async function listWorkflowRunInvocations(params: PageOptions & Readonly<{ accountId: string; runId: string; invocationId?: string; knownContentRevisions?: Readonly<Record<string, string>>; knownProgressRevisions?: Readonly<Record<string, string>>; parentRecordId?: string | null; parentRecordIds?: readonly string[]; memberOrdinal?: string; lifecycles?: readonly WorkflowInvocationLifecycleV1[]; progressEnvelopes?: true }>) {
+export async function listWorkflowRunInvocations(params: PageOptions & Readonly<{ accountId: string; runId: string; invocationId?: string; invocationIds?: readonly string[]; knownContentRevisions?: Readonly<Record<string, string>>; knownProgressRevisions?: Readonly<Record<string, string>>; parentRecordId?: string | null; parentRecordIds?: readonly string[]; memberOrdinal?: string; lifecycles?: readonly WorkflowInvocationLifecycleV1[]; progressEnvelopes?: true }>) {
     if (params.limit !== undefined && (!Number.isSafeInteger(params.limit) || params.limit <= 0)) throw new WorkflowRunServiceError("invalid_input");
-    if (params.knownContentRevisions !== undefined && (params.invocationId !== undefined || params.parentRecordId !== undefined
+    const exactSelection = params.invocationId !== undefined || params.invocationIds !== undefined;
+    if (params.knownContentRevisions !== undefined && (exactSelection || params.parentRecordId !== undefined
         || params.parentRecordIds !== undefined || params.memberOrdinal !== undefined || params.lifecycles !== undefined)) throw new WorkflowRunServiceError("invalid_input");
     const knownRevisions = params.knownContentRevisions === undefined ? undefined
         : Object.entries(params.knownContentRevisions).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
             .map(([id, contentRevision]) => ({ id, contentRevision }));
-    if (params.invocationId !== undefined && (!params.invocationId || params.parentRecordId !== undefined
-        || params.parentRecordIds !== undefined || params.memberOrdinal !== undefined || params.lifecycles !== undefined)) throw new WorkflowRunServiceError("invalid_input");
+    if (exactSelection && (params.invocationId === "" || (params.invocationIds !== undefined
+        && (params.invocationId !== undefined || params.invocationIds.length === 0 || params.invocationIds.some(id => !id)))
+        || params.parentRecordId !== undefined || params.parentRecordIds !== undefined
+        || params.memberOrdinal !== undefined || params.lifecycles !== undefined)) throw new WorkflowRunServiceError("invalid_input");
     if (params.parentRecordIds !== undefined && (params.parentRecordIds.length === 0 || params.parentRecordId !== undefined
         || params.memberOrdinal !== undefined || params.parentRecordIds.some(id => !id))) throw new WorkflowRunServiceError("invalid_input");
     if (params.memberOrdinal !== undefined && (params.parentRecordId === undefined
@@ -2028,6 +2032,7 @@ export async function listWorkflowRunInvocations(params: PageOptions & Readonly<
     const queryKey = JSON.stringify({ runId: params.runId, parentRecordId: params.parentRecordId ?? null, lifecycles: [...(params.lifecycles ?? [])].sort(),
         ...(params.parentRecordId === null ? { rootOnly: true } : {}),
         ...(params.invocationId !== undefined ? { invocationId: params.invocationId } : {}),
+        ...(params.invocationIds !== undefined ? { invocationIds: [...new Set(params.invocationIds)].sort() } : {}),
         ...(params.parentRecordIds !== undefined ? { parentRecordIds: [...new Set(params.parentRecordIds)].sort() } : {}),
         ...(params.memberOrdinal !== undefined ? { memberOrdinal: params.memberOrdinal } : {}),
         ...(knownRevisions === undefined ? {} : { knownContentRevisions: knownRevisions }),
@@ -2039,7 +2044,7 @@ export async function listWorkflowRunInvocations(params: PageOptions & Readonly<
     return await inTx(async (tx) => {
         const { run, keyCensus } = await withWorkflowRunAccess(() => readWorkflowRunWithKeyProjectionInTx(tx,
             { actorAccountId: params.accountId, runId: params.runId }, { revision: true, ...preExecutionFailureSelect }));
-        if (params.progressEnvelopes || params.invocationId !== undefined) refuseExactPreExecutionFailure(run, keyCensus, params.accountId);
+        if (params.progressEnvelopes || exactSelection) refuseExactPreExecutionFailure(run, keyCensus, params.accountId);
         const mode = keyCensus.encryptionMode;
         // Both history and newest-member windows disclose the same admitted
         // progress sidecar and spend the same exact response-byte budget.
@@ -2171,23 +2176,24 @@ export async function listWorkflowRunInvocations(params: PageOptions & Readonly<
                         CROSS JOIN ${id("WorkflowRunInvocation")} retained
                         WHERE retained.${id("id")} = json_extract(known.value, '$.id') AND retained.${id("runId")} = ${params.runId}
                             AND json_extract(known.value, '$.contentRevision') = CAST(retained.${id("contentRevision")} AS TEXT))`;
-        const parentRecordIds = params.parentRecordIds;
-        const selectedParents = parentRecordIds === undefined ? undefined
+        const selection = params.invocationIds ?? params.parentRecordIds;
+        const selectedColumn = id(params.invocationIds === undefined ? "parentRecordId" : "id");
+        const selectedRecords = selection === undefined ? undefined
             : provider === "postgres" || provider === "pglite"
-                ? prismaRuntime.sql`${id("parentRecordId")} = ANY(${[...parentRecordIds]}::text[])`
+                ? prismaRuntime.sql`${selectedColumn} = ANY(${[...selection]}::text[])`
                 : provider === "mysql"
-                    ? prismaRuntime.sql`${id("parentRecordId")} IN (SELECT selected.id COLLATE utf8mb4_unicode_ci FROM JSON_TABLE(${JSON.stringify(parentRecordIds)}, '$[*]' COLUMNS (id VARCHAR(191) PATH '$')) selected)`
-                    : prismaRuntime.sql`${id("parentRecordId")} IN (SELECT value FROM json_each(${JSON.stringify(parentRecordIds)}))`;
+                    ? prismaRuntime.sql`${selectedColumn} IN (SELECT selected.id COLLATE utf8mb4_unicode_ci FROM JSON_TABLE(${JSON.stringify(selection)}, '$[*]' COLUMNS (id VARCHAR(191) PATH '$')) selected)`
+                    : prismaRuntime.sql`${selectedColumn} IN (SELECT value FROM json_each(${JSON.stringify(selection)}))`;
         for (;;) {
             const batchSize = Math.min(wanted - collected.length, WORKFLOW_PAGE_DATABASE_BATCH_ROWS);
-            // A selected set of parents is a history filter (including retries),
-            // not a second newest-attempt projection. Bind the caller-sized set
+            // Both set selectors read physical history, including retries.
+            // Bind the caller-sized set
             // once: 35k short ids fit the HTTP budget but exceed PostgreSQL's
             // 32767 bind parameters. Only the bounded page ids acquire bodies.
-            const selectedIds = selectedParents === undefined && changedRecords === undefined ? undefined : await tx.$queryRaw<Array<{ id: string }>>(prismaRuntime.sql`
+            const selectedIds = selectedRecords === undefined && changedRecords === undefined ? undefined : await tx.$queryRaw<Array<{ id: string }>>(prismaRuntime.sql`
                     SELECT ${id("id")} FROM ${id("WorkflowRunInvocation")}
                     WHERE ${id("runId")} = ${params.runId}
-                    ${selectedParents === undefined ? prismaRuntime.empty : prismaRuntime.sql`AND ${selectedParents}`}
+                    ${selectedRecords === undefined ? prismaRuntime.empty : prismaRuntime.sql`AND ${selectedRecords}`}
                     ${changedRecords === undefined ? prismaRuntime.empty : prismaRuntime.sql`AND ${changedRecords}`}
                     ${params.lifecycles ? prismaRuntime.sql`AND CAST(${id("lifecycle")} AS ${textType}) IN (${prismaRuntime.join([...params.lifecycles])})` : prismaRuntime.empty}
                     ${pageAfterSequence !== null && pageAfterId ? prismaRuntime.sql`AND (${id("sequence")} > ${pageAfterSequence}

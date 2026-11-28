@@ -363,8 +363,10 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
         const parentRecordId = operation.parentRecordId === undefined ? undefined
           : operation.parentRecordId === null ? null : String(operation.parentRecordId);
         const parentRecordIds = Array.isArray(operation.parentRecordIds) ? new Set(operation.parentRecordIds.map(String)) : undefined;
+        const invocationIds = Array.isArray(operation.invocationIds) ? new Set(operation.invocationIds.map(String)) : undefined;
         const scanned = (parentRecordId === undefined ? ordered() : newestPerMemberSlot(parentRecordId))
           .filter(row => (operation.invocationId === undefined || row.index.id === operation.invocationId)
+            && (!invocationIds || invocationIds.has(row.index.id))
             && (operation.memberOrdinal === undefined || row.index.memberOrdinal === operation.memberOrdinal)
             && (!parentRecordIds || row.index.parentRecordId !== null && parentRecordIds.has(row.index.parentRecordId)));
         const positionOf = (row: StoredRow) => (parentRecordId === undefined ? row.index.sequence : row.index.memberOrdinal);

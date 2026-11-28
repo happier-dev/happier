@@ -378,6 +378,39 @@ describe('Workflow root recovery', () => {
       response: { run: { state: h.storage.run().state, revision } } }]);
   });
 
+  it('reconfirms exact Review rows in one page against the earlier Run revision', async () => {
+    const h = await interruptedRoot('running');
+    for (const [ordinal, id] of ['held', 'resolved', 'unrelated'].entries()) {
+      const key = workflowInvocationKey({ runId, blockId: id, scope: [], attempt: 0 });
+      await h.store.ensureIntent({ key, recordId: id, runId, blockId: id, blockKind: 'step',
+        path: { blockId: id, scope: [] }, memberOrdinal: String(ordinal), attempt: 0, acceptedAtMs: Date.now(), lifecycle: 'pending' });
+      await h.store.commitFact({ key, lifecycle: id === 'resolved' ? 'completed' : 'waiting_for_review', result: id });
+    }
+    const calls: Parameters<typeof h.storage.execute>[0][] = [];
+    const store = await DurableWorkflowCoordinatorStore.load({ accountId, runId, parentAttempt: 0,
+      rootRecordId: rootId, checkpoint: h.store.checkpoint, encryption, revision: h.storage.run().revision,
+      storage: { execute: async (request, options) => {
+        calls.push(request);
+        const response = await h.storage.execute(request, options);
+        if (request.operation === 'get' && request.projection === 'revision') h.storage.requestControl('pause_requested');
+        return response;
+      } } });
+    calls.length = 0;
+    const revision = h.storage.run().revision;
+    await expect(store.confirmReviewHolds({ runId, recordIds: ['resolved', 'held'] })).resolves.toMatchObject({
+      revision, control: 'running',
+      rows: [{ recordId: 'resolved', lifecycle: 'completed', result: 'resolved' },
+        { recordId: 'held', lifecycle: 'waiting_for_review', result: 'held' }],
+    });
+    expect(h.storage.run().revision).toBeGreaterThan(revision);
+    console.info('REVIEW_CONFIRM_COST', JSON.stringify({ rows: 2, calls: calls.length,
+      requestBytes: calls.reduce((total, call) => total + Buffer.byteLength(JSON.stringify(call)), 0) }));
+    expect(calls).toMatchObject([
+      { operation: 'get', projection: 'revision' },
+      { operation: 'invocations.list', invocationIds: ['resolved', 'held'], progressEnvelopes: true },
+    ]);
+  });
+
   it.each(['get', 'invocations.get'] as const)('cancels pending %s storage when the containing worker stops', async operation => {
     const h = await interruptedRoot('pending');
     const controller = new AbortController();

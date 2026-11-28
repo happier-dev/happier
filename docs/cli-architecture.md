@@ -6875,7 +6875,12 @@ Development authoring's `runWhen` is owned by the canonical Workflow block
 schema and coordinator's ordered-list execution. Omission means success;
 failure inspects the preceding row's persisted lifecycle in the same sequence.
 Ordinary success follows the persisted frontier, and always needs no predecessor
-read. Only definitive, collectable failure can enter a handler. Holds,
+read. Normal top-level Action and Session completions can record the exact terminal
+fact and advance the frontier in one Home transaction when the current admission
+predicate and checkpoint revision still match. Fresh structural frames with
+capacity can start as running in the same admission that records their membership.
+Native input still needs its own signed admitting fact before release.
+Only definitive, collectable failure can enter a handler. Holds,
 cancellation, runtime interruption and uncertain outcomes retain their owning
 control flow. Failed rows and the completed-with-failures aggregate remain
 visible after a handler succeeds. Loop evaluators must make a decision every
@@ -6895,7 +6900,10 @@ newest direct-member slot (`parentRecordId` with `memberOrdinal`), or the
 direct-child history of `parentRecordIds`. Batched child history includes
 superseded attempts; it is distinct from the newest-member window. These
 selectors remain bound into the cursor and can include progress through the
-same mode-aware opener and response-byte budget. Workflow Action scope opens
+same mode-aware opener and response-byte budget. Review parking reads the Run
+revision first, then can confirm multiple exact physical invocation IDs through
+the same storage page. It keeps the earlier revision when parking so a concurrent
+control or Review change can win the CAS. Workflow Action scope opens
 only its logical attempt, current retry slot when needed, and accepted
 ancestry. Its `workflow.run.get` sets `includeUsage: false` to avoid aggregating
 unrelated history; ordinary Run detail reads continue to include usage.

@@ -2647,6 +2647,80 @@ describe("workflowRunService (integration)", () => {
         });
     });
 
+    it.each(["running", "pause_requested", "cancel_requested"] as const)("fences signed structural running admission with the existing input predicate (%s)", async (control) => {
+        const seeded = await seedPendingAdmission();
+        const { accountId, runId, rootId, machineId } = seeded;
+        const keyPair = tweetnacl.sign.keyPair();
+        const installationId = await readMachineInstallationId(machineId);
+        await db.machine.update({ where: { id: machineId }, data: { installationPublicKey: new Uint8Array(keyPair.publicKey) } });
+        const { app, headers } = await createReviewStorageApp(accountId);
+        const path = "/v3/automations/runs/workflow-storage";
+        const invocationId = randomUUID();
+        const sequence = 2n;
+        const memberOrdinal = 1n;
+        const contentEnvelope = progressEnvelope({ accountId, runId, id: invocationId, sequence, parentRecordId: rootId,
+            memberOrdinal, blockKind: "parallel", container: { kind: "parallel", nextBranchOrdinal: "0" } });
+        const checkpoint = checkpointEnvelope(accountId, runId, rootId, 3n);
+        try {
+            if (control === "pause_requested") await pauseWorkflowRun({ accountId, runId, expectedRevision: 2 });
+            if (control === "cancel_requested") await cancelWorkflowRun({ accountId, runId, expectedRevision: 2 });
+            const before = await getWorkflowRun({ accountId, runId });
+            const body = { operation: "invocations.admit", publisherMachineId: machineId, runId, parentAttempt: 1,
+                expectedRevision: before.run.revision, accountCurrentness: await accountCurrentness(accountId), checkpointEnvelope: checkpoint,
+                invocations: [{ id: invocationId, sequence: sequence.toString(), parentRecordId: rootId,
+                    memberOrdinal: memberOrdinal.toString(), lifecycle: "running", contentEnvelope }] };
+            const admit = () => app.inject({ method: "POST", url: path, headers: { ...headers,
+                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
+                    keyPair, machineId, installationId, path, body }),
+            }, payload: body });
+            const response = await admit();
+            if (control === "running") {
+                expect(response.statusCode, response.body).toBe(200);
+                expect(response.json()).toMatchObject({ disposition: "created", parentRevision: before.run.revision + 1,
+                    invocations: [{ id: invocationId, lifecycle: "running", contentRevision: "0" }] });
+                const replay = await admit();
+                expect(replay.statusCode, replay.body).toBe(200);
+                expect(replay.json()).toMatchObject({ disposition: "existing", parentRevision: before.run.revision + 1 });
+                await expect(getWorkflowRunInvocation({ accountId, runId, invocationId })).resolves.toMatchObject({
+                    invocation: { index: { lifecycle: "running" }, contentEnvelope },
+                });
+                await expect(getWorkflowRun({ accountId, runId })).resolves.toMatchObject({ checkpointEnvelope: checkpoint });
+            } else {
+                expect(response.statusCode, response.body).toBe(409);
+                await expect(getWorkflowRunInvocation({ accountId, runId, invocationId })).rejects.toMatchObject({ code: "run_not_found" });
+                await expect(getWorkflowRun({ accountId, runId })).resolves.toMatchObject({ checkpointEnvelope: before.checkpointEnvelope });
+            }
+        } finally { await app.close(); }
+    });
+
+    it("pages exact invocation IDs with bound progress and excludes unrelated history", async () => {
+        const seeded = await seedPendingAdmission();
+        const { accountId, runId, rootId, invocationId } = seeded;
+        const { app, headers } = await createReviewStorageApp(accountId);
+        const path = "/v3/automations/runs/workflow-storage";
+        const body = { operation: "invocations.list", runId, invocationIds: [invocationId, rootId], progressEnvelopes: true, limit: 1,
+            pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES };
+        const list = (payload: typeof body & { cursor?: string }) => app.inject({ method: "POST", url: path, headers, payload });
+        try {
+            const first = await list(body);
+            expect(first.statusCode, first.body).toBe(200);
+            const { nextCursor, ...page } = first.json();
+            expect(typeof nextCursor).toBe("string");
+            expect(page.invocations.map((row: { id: string }) => row.id)).toEqual([rootId]);
+            expect(Object.keys(page.progressEnvelopesByInvocationId)).toEqual([rootId]);
+            const changed = await list({ ...body, invocationIds: [rootId], cursor: nextCursor });
+            expect(changed.statusCode, changed.body).toBe(422);
+            expect(changed.json()).toMatchObject({ error: "invalid_input" });
+            const rest = await list({ ...body, invocationIds: [rootId, invocationId], cursor: nextCursor });
+            expect(rest.statusCode, rest.body).toBe(200);
+            expect(rest.json()).toMatchObject({ invocations: [{ id: invocationId, lifecycle: "pending" }],
+                progressEnvelopesByInvocationId: { [invocationId]: seeded.fact.contentEnvelope } });
+            const selected = await list({ ...body, invocationIds: [invocationId] });
+            expect(selected.statusCode, selected.body).toBe(200);
+            expect(selected.json().invocations.map((row: { id: string }) => row.id)).toEqual([invocationId]);
+        } finally { await app.close(); }
+    });
+
     it("withdraws the original origin input after the paused lease is reclaimed", async () => {
         const seeded = await seedPendingAdmission(true);
         const envelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({

@@ -690,9 +690,13 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
         v: 1 as const, purpose: 'invocation_progress' as const, accountId: this.params.accountId, runId: this.params.runId,
         recordId: invocation.recordId, sequence, parentRecordId, memberOrdinal, attempt: '0',
       };
+      // A fresh structural frame already has capacity. Native input still
+      // needs its separate, exact admitting fact before it can be released.
+      const lifecycle = invocation.lifecycle === 'waiting_for_capacity'
+        || (invocation.lifecycle === 'running' && invocation.container && !invocation.execution)
+        ? invocation.lifecycle : undefined;
       const row = { id: invocation.recordId, sequence, parentRecordId, memberOrdinal,
-        ...(invocation.lifecycle === 'waiting_for_capacity' ? { lifecycle: 'waiting_for_capacity' as const } : {}),
-        contentEnvelope: this.serializeProgress(binding, progress) };
+        ...(lifecycle ? { lifecycle } : {}), contentEnvelope: this.serializeProgress(binding, progress) };
       return { invocation, row, progress };
     });
     const checkpoint = WorkflowCheckpointEnvelopeV1Schema.parse({
@@ -746,12 +750,16 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
     });
     this.params.revision = Math.max(this.params.revision, response.parentRevision);
     this.params.checkpoint = checkpoint;
+    const running: WorkflowCoordinatorInvocation[] = [];
     rows.forEach((admitted, index) => {
       const { invocation, progress } = prepared[index]!;
-      records.set(invocation.key, this.remember(admitted, progress));
+      const record = this.remember(admitted, progress);
+      records.set(invocation.key, record);
+      if (admitted.lifecycle === 'running') running.push(record);
       if (response.disposition === 'created') this.locallyCreatedParents.add(admitted.id);
       this.loadedParentSlots.add(`${admitted.parentRecordId}:${admitted.memberOrdinal}`);
     });
+    if (running.length > 0) await this.refreshInvocationProgress(running);
     return records;
   }
 
@@ -1017,16 +1025,26 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
     fact: Parameters<WorkflowCoordinatorStore['commitFact']>[0],
   ): Promise<WorkflowCoordinatorInvocation> => {
     const result = await this.serializedInvocation(fact.key, async () => await this.commitFactNow(fact));
-    const parentId = this.persisted.get(result.key)?.index.parentRecordId;
-    const parent = parentId ? this.recordsById.get(parentId) : undefined;
-    const parentIndex = parent ? this.persisted.get(parent.key)?.index : undefined;
-    const currentParent = parentIndex ? this.currentSlots.get(`${parentIndex.parentRecordId}:${parentIndex.memberOrdinal}`) ?? parent : parent;
-    if (result.container?.kind === 'loop') await this.refreshLoopProgress(result.key);
-    if (currentParent?.container?.kind === 'loop') await this.refreshLoopProgress(currentParent.key);
-    if (this.params.destinations || parentId === this.params.rootRecordId || (parent?.blockKind === 'loop'
-      && this.persisted.get(parent.key)?.index.parentRecordId === this.params.rootRecordId)) await this.refreshStepProgress();
+    await this.refreshInvocationProgress([result]);
     return result;
   };
+
+  private async refreshInvocationProgress(records: readonly WorkflowCoordinatorInvocation[]): Promise<void> {
+    const loops = new Set<string>();
+    let rootChanged = this.params.destinations !== undefined;
+    for (const record of records) {
+      const parentId = this.persisted.get(record.key)?.index.parentRecordId;
+      const parent = parentId ? this.recordsById.get(parentId) : undefined;
+      const parentIndex = parent ? this.persisted.get(parent.key)?.index : undefined;
+      const currentParent = parentIndex ? this.currentSlots.get(`${parentIndex.parentRecordId}:${parentIndex.memberOrdinal}`) ?? parent : parent;
+      if (record.container?.kind === 'loop') loops.add(record.key);
+      if (currentParent?.container?.kind === 'loop') loops.add(currentParent.key);
+      rootChanged ||= parentId === this.params.rootRecordId
+        || (parent?.blockKind === 'loop' && parentIndex?.parentRecordId === this.params.rootRecordId);
+    }
+    for (const key of loops) await this.refreshLoopProgress(key);
+    if (rootChanged) await this.refreshStepProgress();
+  }
 
   private async projectLoopProgress(invocation: WorkflowCoordinatorInvocation, authoredTotal?: number): Promise<WorkflowProgressEnvelopeV1['loopProgress']> {
     const loop = invocation.container;
@@ -1368,13 +1386,33 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
     const snapshot = parseRunControl(await this.params.storage.execute({ operation: 'get', runId: this.params.runId, projection: 'revision' }));
     const revision = snapshot.run.revision;
     this.params.revision = Math.max(this.params.revision, revision);
-    const selected: WorkflowCoordinatorInvocation[] = [];
-    for (const id of recordIds) {
-      await this.loadInvocation(id);
+    const pending = new Set(recordIds);
+    if (pending.size > 1) {
+      const request = { operation: 'invocations.list', runId: this.params.runId,
+        invocationIds: [...pending], progressEnvelopes: true, pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } as const;
+      let cursor: string | undefined;
+      do {
+        const operation = cursor ? { ...request, cursor } : request;
+        if (readServerHttpRequestBodyUtf8ByteLengthV1({ ...operation, publisherMachineId: this.params.machineId })
+          > SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1) break;
+        const page = asRecord(await this.params.storage.execute(operation));
+        if (!Array.isArray(page.invocations)) throw new Error('workflow_storage_response_invalid');
+        const envelopes = asRecord(page.progressEnvelopesByInvocationId);
+        for (const value of page.invocations) {
+          const index = WorkflowRunInvocationIndexV1Schema.parse(value);
+          if (!pending.delete(index.id)) throw new Error('workflow_storage_response_invalid');
+          await this.loadInvocation(index.id, { index, contentEnvelope: envelopes[index.id], parentRevision: page.parentRevision });
+        }
+        cursor = typeof page.nextCursor === 'string' ? page.nextCursor : undefined;
+        if (!cursor && pending.size > 0) throw new Error('workflow_invocation_intent_missing');
+      } while (cursor);
+    }
+    for (const id of pending) await this.loadInvocation(id);
+    const selected = recordIds.map(id => {
       const record = this.recordsById.get(id);
       if (!record) throw new Error('workflow_invocation_intent_missing');
-      selected.push(record);
-    }
+      return record;
+    });
     const control = snapshot.run.state === 'cancelled' ? 'cancel_requested'
       : snapshot.run.state === 'pause_requested' || snapshot.run.state === 'paused' ? 'pause_requested' : 'running';
     return { revision, control, rows: selected };
