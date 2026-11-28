@@ -246,9 +246,12 @@ export function HappierScrollArea({
   const lastSelection = useRef(selection);
   // A switch while the row is pinned brings the new tab in at its top, the row still pinned; above that, it stays put.
   useEffect(() => {
-    if (lastSelection.current === selection) return;
+    const previousSelection = lastSelection.current;
+    if (previousSelection === selection) return;
     lastSelection.current = selection;
-    if (selection !== undefined && retainedRestore.current === null && offsetRef.current > leadHeightRef.current) {
+    // Showing or hiding the pinned row during a layout handoff keeps the current tab's offset.
+    if (previousSelection !== undefined && selection !== undefined
+      && retainedRestore.current === null && offsetRef.current > leadHeightRef.current) {
       scrollSourceRef.current?.scrollTo({ y: leadHeightRef.current, animated: false });
     }
   }, [selection]);

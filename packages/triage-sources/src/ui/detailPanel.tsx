@@ -34,7 +34,7 @@ export function triageDetailPanelOwnsScrollerV1(scrollOwner: TriageDetailSurface
 /**
  * The Triage detail's page-scroll fact (D21, UI refinements 2026-11-08): on a phone the whole detail scrolls as one
  * page (lab `merged-detail-*-phone`), so a source panel's List joins that page instead of keeping a bounded scroller.
- * The frame decides it once, from the placement that already presents the detail as a pushed page.
+ * The frame also owns scrolling in a pane when the source declares a frame ScrollArea.
  */
 const TRIAGE_DETAIL_PAGE_SCROLL_CONTEXT_KEY = Symbol.for('happier.triageSources.privateDetailPageScrollContext.v1');
 const TriageDetailPageScrollContext = resolveTriageCrossCopyContext<boolean>(TRIAGE_DETAIL_PAGE_SCROLL_CONTEXT_KEY, false);

@@ -118,7 +118,7 @@ function SourceDetailInstance(props: Readonly<{
   reviewAnyway?: () => void;
   publishVisiblePanels(panels: readonly string[] | null): void;
   publishFilesCount(count: number | null): void;
-  /** The phone detail scrolls as one page (D21): source Lists join it instead of owning a bounded scroller. */
+  /** The phone detail scrolls as one page (D21), including panels that own a bounded List in a pane. */
   pageScroll?: boolean;
 }>): React.ReactElement {
   const [lastPanel, setLastPanel] = React.useState({ id: props.panel ?? 'overview', scrollOwner: props.scrollOwner });
@@ -139,7 +139,7 @@ function SourceDetailInstance(props: Readonly<{
   // A parked source withdraws its shared scroller so the retained tab can save its offset before hiding.
   return (
     <TriageDetailPanelNavigationProvider navigation={navigation}>
-    <TriageDetailPageScrollProvider pageScroll={pageScroll}>
+    <TriageDetailPageScrollProvider pageScroll={pageScroll || scrollOwner === 'scrollArea'}>
     <ScrollArea
       style={FILL_STYLE}
       scrollEnabled={props.panel !== null && !ownsScroller}

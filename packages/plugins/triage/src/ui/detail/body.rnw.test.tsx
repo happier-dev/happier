@@ -26,9 +26,10 @@ import {
   type TriageDetailSurfaceInputV1,
 } from '@happier-dev/triage-protocol/v1';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
-import { TriageDetailPanel, TriageEvidenceDisclosureProvider, useTriageDetailFilesCount, useTriageDetailPanelOpener, useTriageDetailFixPullRequestNavigation, useTriageEvidenceDisclosure, type TriageDetailFixPullRequestNavigationV1, type TriageEvidenceDisclosureV1 } from '@happier-dev/triage-sources/ui';
+import { TriageChangedFilesList, TriageDetailPanel, TriageEvidenceDisclosureProvider, useTriageDetailFilesCount, useTriageDetailPanelOpener, useTriageDetailFixPullRequestNavigation, useTriageEvidenceDisclosure, type TriageDetailFixPullRequestNavigationV1, type TriageEvidenceDisclosureV1 } from '@happier-dev/triage-sources/ui';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1 } from '../../../../scm-github/src/triage/contribution.js';
 import { TriageDetailPageLeadProvider, TriageDetailTabbedBody } from './body.js';
 import { TriageAgentStep } from './storyRail.js';
 import { planTriageDetailTabsV1, type TriageDetailTabV1 } from './tabs.js';
@@ -717,6 +718,51 @@ describe('the tabbed detail body (r0.42)', () => {
     });
     await expect(body.getByText(FALLBACK)).resolves.toBeDefined();
     expect(scrollAncestor(FALLBACK)).not.toBeNull();
+  });
+
+  it('keeps the Files viewport across pane → compact page → pane handoff', async () => {
+    const label = 'Changed files in fixture';
+    const findScroller = () => {
+      let node = document.querySelector<HTMLElement>(`[aria-label="${label}"]`);
+      while (node !== null && !['auto', 'scroll'].includes(getComputedStyle(node).overflowY)) {
+        node = node.parentElement;
+      }
+      if (node === null) throw new Error('Expected the Files scroller');
+      return node;
+    };
+    const plan = planTriageDetailTabsV1({ workflowSubject: 'pullRequest',
+      entryTabs: GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1.kinds.find(kind => kind.workflowSubject === 'pullRequest')?.detailTabs,
+      fixPullRequest: null });
+    if (plan.kind !== 'tabs') throw new Error('Expected tabs');
+    const body = await mountBody(plan.tabs, <TriageChangedFilesList
+      accessibilityLabel={label}
+      accessibilityLabelKey="example.files"
+      sections={[]}
+      focusPath={null}
+      onFocusPath={() => {}}
+      active
+      viewed={null}
+      renderBody={() => null}
+      header={<Text value="Files progress" />}
+    />, undefined, 'files');
+    await act(async () => { await body.press(await body.getByRole('tab', { name: 'Files' })); });
+    const paneScroller = findScroller();
+    paneScroller.scrollTo = (options) => {
+      paneScroller.scrollTop = typeof options === 'object' ? options.top ?? 0 : 0;
+    };
+    await act(async () => {
+      paneScroller.scrollTop = 140;
+      paneScroller.dispatchEvent(new Event('scroll'));
+    });
+    try {
+      for (const compact of [true, false]) {
+        pushed = compact;
+        pageLead = compact ? <EmptyState title="Entry title and facts" /> : null;
+        await act(async () => { await body.updateSurface(context); });
+        expect(findScroller()).toBe(paneScroller);
+        expect(findScroller().scrollTop).toBe(140);
+      }
+    } finally { pushed = false; pageLead = null; }
   });
 
   it('scrolls a source List panel with the whole phone detail page, as in the lab (D21)', async () => {

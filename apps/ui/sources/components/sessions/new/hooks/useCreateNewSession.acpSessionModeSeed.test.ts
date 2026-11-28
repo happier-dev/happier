@@ -892,7 +892,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
           expect(modalShowSpy).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
             chrome: expect.objectContaining({ testID: 'actions.confirmation-review.modal',
               title: reviewCopy.title, subtitle: expect.stringContaining(reviewCopy.body) }),
-            props: expect.objectContaining({ confirmLabel: 'sessionGettingStarted.steps.createSession.copyLabel' }),
+            props: expect.objectContaining({ confirmLabel: reviewCopy.title }),
           }));
           // A dismissed review never creates a Session or consumes the draft's post-create link.
           expect(sessionSpawnNewRpcSpy).not.toHaveBeenCalled();

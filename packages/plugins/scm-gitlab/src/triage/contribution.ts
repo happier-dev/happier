@@ -226,7 +226,7 @@ export const GITLAB_TRIAGE_SOURCE_DESCRIPTOR_V1: TriageSourceDescriptorV1 =
         detailTabs: [
           { kind: 'shared', id: 'overview', scrollOwner: gitlabDetailTabDeclaration('overview').scrollOwner },
           { kind: 'shared', id: 'activity', scrollOwner: gitlabDetailTabDeclaration('activity').scrollOwner },
-          { kind: 'shared', id: 'files', scrollOwner: gitlabDetailTabDeclaration('changes').scrollOwner },
+          { kind: 'shared', id: 'files', scrollOwner: 'scrollArea' },
           { kind: 'shared', id: 'checks', summaryFact: 'gitlab/checks', scrollOwner: gitlabDetailTabDeclaration('pipelines').scrollOwner },
         ],
         detailActions: true,

@@ -204,7 +204,7 @@ export const GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1: TriageSourceDescriptorV1 =
       detailTabs: Object.freeze([
         Object.freeze({ kind: 'shared', id: 'overview', scrollOwner: githubDetailTabDeclaration('overview').scrollOwner }),
         Object.freeze({ kind: 'shared', id: 'activity', scrollOwner: githubDetailTabDeclaration('timeline').scrollOwner }),
-        Object.freeze({ kind: 'shared', id: 'files', scrollOwner: githubDetailTabDeclaration('files').scrollOwner, summaryFact: 'github/changed-files' }),
+        Object.freeze({ kind: 'shared', id: 'files', scrollOwner: 'scrollArea', summaryFact: 'github/changed-files' }),
         // The row's own checks rollup ("2 failing") is the Checks tab's summary.
         Object.freeze({ kind: 'shared', id: 'checks', scrollOwner: githubDetailTabDeclaration('checks').scrollOwner, summaryFact: 'github/checks' }),
       ]),

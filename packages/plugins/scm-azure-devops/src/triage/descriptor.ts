@@ -87,7 +87,7 @@ export const AZURE_DEVOPS_TRIAGE_DESCRIPTOR = {
     detailTabs: [
       { kind: 'shared', id: 'overview', scrollOwner: azureDetailTabDeclaration('overview').scrollOwner },
       { kind: 'shared', id: 'activity', scrollOwner: azureDetailTabDeclaration('activity').scrollOwner },
-      { kind: 'shared', id: 'files', scrollOwner: azureDetailTabDeclaration('files').scrollOwner },
+      { kind: 'shared', id: 'files', scrollOwner: 'scrollArea' },
       { kind: 'shared', id: 'checks', scrollOwner: azureDetailTabDeclaration('policies').scrollOwner },
     ],
     detailActions: true,

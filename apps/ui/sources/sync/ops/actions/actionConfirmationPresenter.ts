@@ -68,6 +68,7 @@ export function createActionConfirmationPresenter(accountContext: LazyActionAcco
     const creationReview = isSessionSpawnNewActionIdV1(actionId)
       ? (context as UiActionExecutorContext).sessionCreationReview : undefined;
     const title = creationReview ? resolvePluginConfirmationText(creationReview.title) : presentation.title;
+    const confirmLabel = creationReview ? title : presentation.confirmLabel;
     const authoredBody = creationReview ? resolvePluginConfirmationText(creationReview.body) : null;
     const confirmationSummary = [authoredBody, presentation.summary,
       ...(detectedProvider ? [detectedProvider.where, detectedProvider.availability,
@@ -97,7 +98,7 @@ export function createActionConfirmationPresenter(accountContext: LazyActionAcco
             }
           },
         } } : {}),
-        confirmLabel: actionId === 'account.delete' ? t('settingsAccount.deleteAccount') : presentation.confirmLabel ?? t('approvals.approve'),
+        confirmLabel: actionId === 'account.delete' ? t('settingsAccount.deleteAccount') : confirmLabel ?? t('approvals.approve'),
         ...(actionId === 'account.delete' ? { typedConfirmation: { text: 'DELETE', placeholder: 'DELETE',
           instruction: t('settingsAccount.deleteAccountTypeToContinue') } } : {}),
         irreversible: getActionSpec(actionId).irreversible === true, destructive: presentation.destructive === true,
@@ -107,7 +108,7 @@ export function createActionConfirmationPresenter(accountContext: LazyActionAcco
         placeholder: 'DELETE', confirmText: t('settingsAccount.deleteAccount'),
       }) === 'DELETE'
       : await Modal.confirm(title ?? t('approvals.untitled'), confirmationSummary,
-        { ...(presentation.confirmLabel ? { confirmText: presentation.confirmLabel } : {}),
+        { ...(confirmLabel ? { confirmText: confirmLabel } : {}),
           ...(presentation.destructive ? { destructive: true } : {}),
           ...(context.signal ? { signal: context.signal } : {}), });
     // Let the Action owner project invocation cancellation before checking
