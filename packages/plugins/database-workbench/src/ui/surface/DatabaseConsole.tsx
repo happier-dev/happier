@@ -250,8 +250,7 @@ export function DatabaseConsole(props: Readonly<{ targetKey: string; scope: Work
   const descriptor = instance.target(props.targetKey);
   const access = useDatabaseAccess(props.targetKey, false);
   const machineLabel = useDatabaseTargets(props.scope).targets.find((candidate) => candidate.targetKey === props.targetKey)?.machineLabel ?? null;
-  const canWrite = access.status !== 'unavailable' && access.status !== 'stale'
-    && (access.value?.access ?? descriptor.access)?.canWrite === true;
+  const canWrite = access.canWrite;
   const run = sql.run();
   const explain = sql.explain();
   const modes = React.useMemo(

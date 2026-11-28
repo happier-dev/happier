@@ -55,14 +55,13 @@ export function AccessWord(
   const targetKey = workbenchTargetKey(target);
   const selected = useDatabaseAccess(targetKey, open);
   const policy = selected.value?.setBy === 'environment' ? selected.value : null;
-  const environmentTarget = target.kind === 'managed_deployment' || target.kind === 'deployment_service' ? target : null;
-  const access = selected.value?.access ?? props.descriptor.access;
+  const { environmentTarget, summary: access } = selected;
   if (!access) return null;
   const unavailable = selected.status === 'unavailable' || selected.status === 'stale';
   const failure = isPluginError(selected.error) ? selected.error : undefined;
   const word = unavailable
     ? translate('plugins.database.access.unavailable', 'Access unavailable')
-    : access.canWrite
+    : selected.canWrite
     ? translate('plugins.database.access.canEdit', 'Can edit')
     : translate('plugins.database.access.readOnly', 'Read only');
   return <>

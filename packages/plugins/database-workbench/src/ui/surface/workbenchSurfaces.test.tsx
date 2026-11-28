@@ -1283,6 +1283,33 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
 
+  it.each([
+    { label: 'selected Member', canWrite: true },
+    { label: 'unselected Guest', canWrite: false },
+  ])('uses held Environment access on a cold relation for the $label', async ({ canWrite }) => {
+    const target = { kind: 'deployment_service', environment: { serverId: 'home', environmentId: 'env', projectSourceId: 'source' },
+      deploymentId: 'deployment', targetLinkId: 'link', serviceId: 'postgres', database: 'billing_dev' } as const;
+    const connected: DatabaseDescriptorV1 = { ...descriptor, target, access: {
+      canRead: true, canWrite, ...(canWrite ? {} : { reason: 'database_not_an_editor' }),
+    } };
+    const executeAction = daemonAnswers([connected], true);
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'cold-environment-relation', mountNonce: 'cold-environment-relation' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor: connected }), subPath: 'data/public/invoices',
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: {
+        pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { ...connectionResourceHandlers(connected), executeAction },
+    });
+    try {
+      await fixture.findByRole('button', { name: '48212' });
+      expect(Boolean(await fixture.queryByRole('button', { name: 'New row' }))).toBe(canWrite);
+      expect(executeAction.mock.calls.map(([request]) => request.action))
+        .not.toContain(databaseActionLocalIdV1(DATABASE_ACCESS_READ_ACTION_ID_V1));
+    } finally { await fixture.dispose(); }
+  });
+
   it.each(['database_editing_off', 'database_not_an_editor'] as const)('leads a %s Review refusal with its access recovery until the Environment access update lets the person edit', async code => {
     const environment = { serverId: 'home', environmentId: 'env', projectSourceId: 'source' } as const;
     const target = { kind: 'deployment_service', environment, targetLinkId: 'link', database: 'billing_dev', deploymentId: 'deployment', serviceId: 'postgres' } as const;

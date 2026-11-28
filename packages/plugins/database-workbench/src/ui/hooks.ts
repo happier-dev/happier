@@ -129,7 +129,7 @@ export function useRelationPage(location: WorkbenchLocation) {
     const resource = instance.page(location);
     const snapshot = useResource(resource);
     const access = useDatabaseAccess(location.targetKey, false);
-    const denied = access.value?.setBy === 'environment' && !access.value.access.canWrite;
+    const denied = access.environmentTarget !== null && !access.canWrite;
     return useMemo(() => ({ ...snapshot.data, columns: snapshot.data?.columns ?? emptyColumns, rows: snapshot.data?.rows ?? emptyRows,
         page: snapshot.data?.page ?? { offset: location.page.offset, limit: location.page.rows, approxTotal: null, hasNext: false },
         sort: location.sort, conditions: location.conditions,
@@ -175,11 +175,19 @@ export function useWorkbenchColumnWidths(relation: DatabaseRelationV1) {
 }
 export function useDatabaseAccess(targetKey: string, demand = true) {
     const instance = useWorkbenchInstance();
+    const descriptor = instance.target(targetKey);
     const resource = instance.access(targetKey);
     const snapshot = useSyncExternalStore(resource.subscribe, resource.get, resource.get);
     useEffect(() => { if (demand) void resource.demand(); }, [demand, resource]);
-    return useMemo(() => ({ value: snapshot.data, status: projectWorkbenchStatus(snapshot), error: snapshot.error,
-        refresh: resource.invalidate }), [resource, snapshot]);
+    return useMemo(() => {
+        const status = projectWorkbenchStatus(snapshot);
+        const summary = snapshot.data?.access ?? descriptor.access;
+        const target = descriptor.target;
+        const environmentTarget = target.kind === 'managed_deployment' || target.kind === 'deployment_service' ? target : null;
+        const canWrite = status !== 'stale' && status !== 'unavailable' && summary?.canWrite === true;
+        return { value: snapshot.data, summary, environmentTarget, canWrite, status, error: snapshot.error,
+            refresh: resource.invalidate };
+    }, [descriptor, resource, snapshot]);
 }
 export function useWorkbenchDraft(instance: WorkbenchInstance, scope?: Readonly<{ targetKey: string; relation: DatabaseRelationV1 }>) {
     const changes = useSyncExternalStore(instance.drafts.subscribe, instance.drafts.changes, instance.drafts.changes);
