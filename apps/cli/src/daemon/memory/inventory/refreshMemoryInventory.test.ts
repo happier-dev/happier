@@ -1,3 +1,5 @@
+import v8 from 'node:v8';
+import { runInNewContext } from 'node:vm';
 import { describe, expect, it, vi } from 'vitest';
 import nacl from 'tweetnacl';
 import * as accountScopedCipher from '@happier-dev/protocol/crypto/accountScopedCipher';
@@ -137,6 +139,35 @@ describe('refreshMemoryInventoryOnce', () => {
       const foreignCredential = createMemorySessionLocalityReader({ machineId: 'here',
         credentials: { token: 'other', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(20) } } });
       expect(foreignCredential.isOnMachine(session, 'e2ee')).toBe(false);
+    } finally { opens.mockRestore(); }
+  });
+  it('remembers each paged Session with a fixed-size proof instead of a copy of its owner ciphertext', () => {
+    // The worker remembers every Session it pages (2,000 Sessions retained 6.3 MiB, P03-MEM-DAEMON).
+    v8.setFlagsFromString('--expose-gc');
+    const gc = runInNewContext('gc') as () => void;
+    const secret = new Uint8Array(32).fill(19);
+    const credentials: StoredCredentials = { token: 'test', encryption: { type: 'legacy', secret } };
+    const sessions = Array.from({ length: 2_000 }, (_, index) => row(`s${index}`, {
+      encryptionMode: 'e2ee', metadataLayoutVersion: 1,
+      ownerMetadata: sealSessionOwnerMetadataEnvelopeV1({
+        ownerMetadata: SessionOwnerMetadataV1Schema.parse({ v: 1, workspace: { machineId: index % 2 ? 'here' : 'other', path: `/workspace/${'p'.repeat(2_000)}/${index}` } }),
+        material: { type: 'legacy', secret }, randomBytes: n => new Uint8Array(n).fill(7),
+      }),
+    }));
+    const read = createMemorySessionLocalityReader({ credentials, machineId: 'here' });
+    gc();
+    const before = process.memoryUsage().heapUsed;
+    const local = sessions.filter(session => read.isOnMachine(session, 'e2ee')).length;
+    gc();
+    const retainedBytes = process.memoryUsage().heapUsed - before;
+
+    expect(local).toBe(1_000);
+    expect(retainedBytes).toBeLessThan(1_000_000);
+    // Unchanged rows still reuse the remembered decision.
+    const opens = vi.spyOn(accountScopedCipher, 'openAccountScopedBlobCiphertext');
+    try {
+      expect(sessions.filter(session => read.isOnMachine(session, 'e2ee')).length).toBe(1_000);
+      expect(opens).toHaveBeenCalledTimes(0);
     } finally { opens.mockRestore(); }
   });
   it.each(['plain', 'e2ee'] as const)('reads layout-one locality without opening shared presentation metadata (%s)', mode => {

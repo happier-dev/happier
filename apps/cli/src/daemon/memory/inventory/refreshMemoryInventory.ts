@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import type { MemorySettingsV1 } from '@happier-dev/protocol';
 
 import type { RawSessionListRow } from '@/session/transport/http/sessionsHttp';
@@ -59,10 +61,13 @@ export function createMemorySessionLocalityReader(params: Readonly<{
         : accountEncryptionMode === 'e2ee' && (session.metadataLayoutVersion === undefined || session.metadataLayoutVersion === 0)
           ? JSON.stringify([0, session.encryptionMode, session.metadata, session.dataEncryptionKey,
             readSessionAccessProjectionRoleV1(session), legacy.machineId, legacy.host, legacy.homeDir]) : null;
+      // Remember a digest of the inputs, not the inputs: owner ciphertext is kilobytes
+      // per Session and this reader lives as long as the worker that pages every Session.
+      const contentDigest = contentKey === null ? null : createHash('sha256').update(contentKey).digest('base64');
       const retained = ownerLocality.get(session.id);
-      if (contentKey !== null && retained?.key === contentKey) return retained.local;
+      if (contentDigest !== null && retained?.key === contentDigest) return retained.local;
       const local = isMemorySessionOnMachine({ ...params, session, accountEncryptionMode });
-      if (contentKey !== null) ownerLocality.set(session.id, { key: contentKey, local });
+      if (contentDigest !== null) ownerLocality.set(session.id, { key: contentDigest, local });
       else ownerLocality.delete(session.id);
       return local;
     },
