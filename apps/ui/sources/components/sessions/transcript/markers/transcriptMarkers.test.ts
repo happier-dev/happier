@@ -299,6 +299,19 @@ describe('transcript markers', () => {
       .toEqual(['m1', 'm2', 'm100', 'transcript-marker:turn-end:turn-1']);
   });
 
+  it('closes a completed turn at its exact final reply when its recorded end has no visible row', () => {
+    const { rows, getMessageById } = rowsFor([user(1), agent(4)]);
+    const turnEnds = projectTranscriptTurnEnds([
+      { turnId: 'muse', status: 'completed', startedAt: 0, updatedAt: 9_454, terminalAt: 9_454,
+        transcriptAnchors: { startUserMessageSeq: 1, startSeqInclusive: 1, endSeqInclusive: 6, finalAssistantMessageSeq: 4 } },
+    ]);
+    const inputs = { items: rows, sessionId: 's1', getMessageById, viewerScope: null, newDividerAfterSeq: null, turnEnds };
+    const result = insertTranscriptMarkers(inputs);
+    expect(shape(result)).toEqual(['m1', 'm4', 'transcript-marker:turn-end:muse']);
+    expect(result.at(-1)).toMatchObject({ marker: { type: 'turn-end', outcome: 'worked', durationMs: 9_454 } });
+    expect(insertTranscriptMarkers({ ...inputs, isSeqRangeLoaded: (from, to) => from >= 1 && to <= 4 })).toBe(rows);
+  });
+
   it('allows a loaded target-window end that was absorbed into a visible row', () => {
     const { rows, getMessageById } = rowsFor([user(1), agent(2)]);
     const turnEnds = projectTranscriptTurnEnds([

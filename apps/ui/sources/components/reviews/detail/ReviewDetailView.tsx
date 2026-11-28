@@ -159,9 +159,8 @@ export function ReviewDetailView(
       <PageHeader
         title={props.title}
         meta={props.meta}
-        {...(props.primaryAction && !props.submit
-          ? { primaryAction: props.primaryAction }
-          : {})}
+        pagePrimaryAction={props.submit ? undefined : props.primaryAction
+          ?? (props.detailPending ? { title: t('reviewWalkthrough.detail.submitReview'), pending: true } : undefined)}
         menu={
           props.menu.length > 0 ? (
             <PageHeaderMenu testID="review-detail:more" actions={props.menu} />

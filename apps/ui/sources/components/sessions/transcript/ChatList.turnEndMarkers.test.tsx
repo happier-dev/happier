@@ -51,10 +51,9 @@ vi.mock('@legendapp/list/react-native', async (importOriginal) => ({
     await import('@/dev/testkit/harness/chatListHarness')
   ).createLegendChatListModuleMock(),
 }));
-vi.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
-  initialWindowMetrics: null,
-}));
+vi.mock('react-native-safe-area-context', async () =>
+  (await import('@/dev/testkit/mocks/safeAreaContext')).createSafeAreaContextMock({ top: 0, bottom: 0, left: 0, right: 0 }),
+);
 
 await loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storage');

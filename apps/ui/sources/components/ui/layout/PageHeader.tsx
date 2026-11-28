@@ -133,6 +133,9 @@ export type PageHeaderProps = Readonly<{
     menu?: React.ReactNode;
     /** Keep an entity's frequent operations in its page instead of the phone navigation overflow. */
     actionsPlacement?: 'navigation' | 'page';
+    /** A primary beside the page's identity even when navigation takes the title and menu.
+     * A known label can reserve that slot while the owner's read decides whether to offer the action. */
+    pagePrimaryAction?: PageHeaderPrimaryAction | Readonly<{ title: string; pending: true }>;
     /**
      * A list's own frequent controls (its "+" add menu, a privacy eye): kept as they are at the phone
      * navigation bar's trailing edge, after the folded menu, and closing the page's actions elsewhere.
@@ -269,11 +272,15 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
     const renderBack = usePageHeaderBack({ alwaysShowTitle: props.alwaysShowTitle, alwaysShowBack: props.alwaysShowBack });
     // Navigation owns ordinary page actions; an entity can retain its frequent operations by its identity.
 
+    const pagePrimary = props.pagePrimaryAction;
+    const pendingPagePrimary = pagePrimary && 'pending' in pagePrimary ? pagePrimary : null;
+    const primaryAction = pagePrimary ? 'pending' in pagePrimary ? null : pagePrimary : props.primaryAction;
+
     // A phone bar too narrow to draw the primary whole (large text) hands it back: it sits under the title,
     // as on a wide layout, until the window grows past the width where it did not fit.
     // Only a handed-back primary listens to the window, so ordinary pages never re-render on a resize.
     const [primaryDidNotFitAt, setPrimaryDidNotFitAt] = React.useState<number | null>(null);
-    const primaryInPage = chromeShowsTitle && primaryDidNotFitAt !== null && props.primaryAction != null;
+    const primaryInPage = chromeShowsTitle && primaryDidNotFitAt !== null && primaryAction != null;
     const onPrimaryDoesNotFit = React.useCallback(() => setPrimaryDidNotFitAt(Dimensions.get('window').width), []);
     React.useEffect(() => {
         if (primaryDidNotFitAt === null) return undefined;
@@ -284,10 +291,16 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
     }, [primaryDidNotFitAt]);
     // A page that keeps its actions beside its identity (`actionsPlacement="page"`) keeps its primary there too.
     const primaryInPageAlways = props.actionsPlacement === 'page';
-    const pageButtons = (!chromeShowsTitle || primaryInPage || primaryInPageAlways) && (props.primaryAction || props.cancelAction) ? (
+    const showPageButtons = !chromeShowsTitle || primaryInPage || primaryInPageAlways || pagePrimary != null;
+    const pageButtons = showPageButtons && (primaryAction || props.cancelAction || pendingPagePrimary) ? (
         <>
             {props.cancelAction && !chromeShowsTitle ? <PageHeaderActionButton action={props.cancelAction} quiet /> : null}
-            {props.primaryAction ? <PageHeaderActionButton action={props.primaryAction} /> : null}
+            {primaryAction ? <PageHeaderActionButton action={primaryAction} /> : null}
+            {pendingPagePrimary ? (
+                <View pointerEvents="none" aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={stylesheet.undrawnAction}>
+                    <RoundButton title={pendingPagePrimary.title} disabled />
+                </View>
+            ) : null}
         </>
     ) : null;
     // Inside the desktop app shell the stack header is not drawn; the actions its route put there
@@ -338,7 +351,7 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
     return (
         <HappierPageHeaderInlineTitleContext.Provider value={renderPageTitle}>
         {props.primaryAction || props.cancelAction || props.actions || props.menu || props.navigationTrailing ? (
-            <NavigationHeaderActions primary={primaryInPage || primaryInPageAlways ? null : props.primaryAction ?? null} cancel={props.cancelAction ?? null}
+            <NavigationHeaderActions primary={primaryInPage || primaryInPageAlways || pagePrimary ? null : props.primaryAction ?? null} cancel={props.cancelAction ?? null}
                 actions={barActions} trailing={props.navigationTrailing}
                 onPrimaryDoesNotFit={onPrimaryDoesNotFit} />
         ) : null}
@@ -577,6 +590,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: theme.space.s8,
     },
+    undrawnAction: { opacity: 0 },
     metaText: {
         ...Typography.default('regular'),
         ...happierPageTextMetrics('meta'),

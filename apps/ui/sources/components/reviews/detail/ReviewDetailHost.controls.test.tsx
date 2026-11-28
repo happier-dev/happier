@@ -298,7 +298,7 @@ it.each(['cold', 'warm'] as const)('keeps "…" on the header\'s trailing edge b
   const headerControls = () => {
     const header = JSON.stringify(screen.findHostByTestId('review-detail:header') ? screen.tree.toJSON() : null);
     const more = header.indexOf('"review-detail:more"');
-    const primary = header.indexOf(JSON.stringify(submit));
+    const primary = header.indexOf(`"accessibilityLabel":${JSON.stringify(submit)}`);
     return { more: more >= 0, primary: primary >= 0, moreTrailing: more >= 0 && (primary < 0 || more > primary) };
   };
   try {
