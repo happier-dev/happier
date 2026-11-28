@@ -2,9 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { invokeTestInstanceHandler, renderScreen, createSessionFixture, createSessionMessagesFixture } from '@/dev/testkit';
-import { installSessionPaneRuntimeTestHarness } from './sessionPaneRuntimeTestHarness';
-import { storage } from '@/sync/domains/state/storage';
+import { invokeTestInstanceHandler, renderScreen, createSessionFixture, createSessionMessagesFixture, createToolCallMessageFixture } from '@/dev/testkit';
 import { installNavigationCommonModuleMocks } from '@/components/ui/navigation/navigationTestHelpers';
 import type { Message } from "@happier-dev/session-core/messages";
 
@@ -67,7 +65,9 @@ installNavigationCommonModuleMocks({
 });
 
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
-const runtime = installSessionPaneRuntimeTestHarness();
+const { installSessionPaneRuntimeTestHarness } = await import('./sessionPaneRuntimeTestHarness');
+const { storage } = await import('@/sync/domains/state/storage');
+const runtime = installSessionPaneRuntimeTestHarness({ sessionId: 'session-1' });
 
 const ENTRY_TEST_ID = 'nav-entry:session-1:user-turn:3';
 
@@ -124,6 +124,50 @@ describe('SessionTranscriptNavigationPane', () => {
         expect(screen.findByTestId(ENTRY_TEST_ID)).toBeTruthy();
         expect(screen.getTextContent()).toContain('Set up the project');
         expect(screen.getTextContent()).toContain('Run the tests');
+    });
+
+    it('filters Questions to the current Session and jumps to its transcript without offering an answer form', async () => {
+        const { SessionTranscriptNavigationPane } = await import('./SessionTranscriptNavigationPane');
+        const { transcriptNavigationPaneStore } = await import('@/components/sessions/transcript/navigation/transcriptNavigationPaneStore');
+        const onEntryPress = vi.fn(() => ({ status: 'scrolled' as const }));
+        transcriptNavigationPaneStore.set('session-1', { onEntryPress });
+
+        const question = createToolCallMessageFixture({
+            id: 'question', seq: 4, createdAt: 4000,
+            tool: {
+                name: 'AskUserQuestion', state: 'running', input: {},
+                createdAt: 4000, startedAt: 4000, completedAt: null, description: null,
+                permission: { id: 'request', status: 'pending', kind: 'user_action' },
+            },
+        });
+        const peerTurn = userMessage('peer-turn', 1, 'Question in a different Session');
+        const peerQuestion = { ...question, id: 'peer-question', seq: 2, createdAt: 2000 };
+        storage.setState(({ sessions }) => ({
+            sessions: { ...sessions, peer: createSessionFixture({ id: 'peer', serverId: runtime.serverId }) },
+            sessionMessages: {
+                'session-1': createSessionMessagesFixture({
+                    messageIdsOldestFirst: [...transcriptState.ids, question.id],
+                    messagesById: { ...transcriptState.messagesById, [question.id]: question },
+                    isLoaded: true,
+                }),
+                peer: createSessionMessagesFixture({
+                    messageIdsOldestFirst: [peerTurn.id, peerQuestion.id],
+                    messagesById: { [peerTurn.id]: peerTurn, [peerQuestion.id]: peerQuestion },
+                    isLoaded: true,
+                }),
+            },
+        }));
+
+        const screen = await renderScreen(<runtime.Wrapper><SessionTranscriptNavigationPane sessionId="session-1" testIDPrefix="nav" /></runtime.Wrapper>);
+        await screen.pressByTestIdAsync('nav-filter:questions');
+        expect(screen.getTextContent()).toContain('Run the tests');
+        expect(screen.findByTestId('nav-entry:session-1:user-turn:1')).toBeNull();
+        expect(screen.getTextContent()).not.toContain('Question in a different Session');
+        expect(screen.findByTestId('ask-user-question.submit')).toBeNull();
+
+        await screen.pressByTestIdAsync(ENTRY_TEST_ID);
+        expect(onEntryPress).toHaveBeenCalledTimes(1);
+        expect(onEntryPress).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'session-1', seq: 3 }));
     });
 
     it('marks the reader position from the session visibility store rather than a host payload', async () => {
@@ -199,9 +243,10 @@ describe('SessionTranscriptNavigationPane', () => {
             />,
         );
 
-        await screen.pressByTestIdAsync(ENTRY_TEST_ID);
-        expect(onEntryPress).not.toHaveBeenCalled();
-
+        act(() => {
+            screen.pressByTestId(ENTRY_TEST_ID);
+            expect(onEntryPress).not.toHaveBeenCalled();
+        });
         await flushDeferredJump();
         expect(onEntryPress).toHaveBeenCalledTimes(1);
     });
