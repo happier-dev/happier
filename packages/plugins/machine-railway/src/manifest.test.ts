@@ -7,6 +7,19 @@ import { unselectedConnectedAccount } from '../../../../apps/cli/src/plugins/tes
 import { ACCOUNT_ID, ACCOUNT_PURPOSE } from './account.js';
 import * as entry from './index.js';
 
+it('requests workspace and project at the same access level for Railway OAuth consent', () => {
+  const authentication = entry.manifest.contributes.connectedAccountDescriptors
+    ?.find(descriptor => descriptor.id === ACCOUNT_ID)?.authentication;
+  if (!authentication) throw new Error('Expected the Railway account authentication declaration');
+  const mode = authentication.modes.find(mode => mode.id === authentication.defaultModeId);
+  if (mode?.kind !== 'oauthAuthorizationCode' || !mode.scopes) throw new Error('Expected the default Railway OAuth scopes');
+
+  const workspaceLevels = mode.scopes.filter(scope => scope.startsWith('workspace:')).map(scope => scope.split(':')[1]);
+  const projectLevels = mode.scopes.filter(scope => scope.startsWith('project:')).map(scope => scope.split(':')[1]);
+  expect(workspaceLevels).toEqual(['admin']);
+  expect(projectLevels).toEqual(workspaceLevels);
+});
+
 it('carries the purpose owner refusal through Railway options', async () => {
   const connectedAccounts = unselectedConnectedAccount({
     service: { pluginId: entry.manifest.id, localId: ACCOUNT_ID },

@@ -112,8 +112,9 @@ async function prepareMachineOAuthInventory(provider: 'railway' | 'digitalocean'
         : await import('../../../../../../packages/plugins/machine-digitalocean/src/manifest');
     const service = { pluginId: PLUGIN_MANIFEST.id, localId: `${provider}-account` };
     // The RED fixture can load the incumbent token-only declaration.
-    const target = PLUGIN_MANIFEST.contributes.connectedAccountDescriptors
-        ?.find(value => value.id === service.localId)?.authentication.account;
+    const authentication = PLUGIN_MANIFEST.contributes.connectedAccountDescriptors
+        ?.find(value => value.id === service.localId)?.authentication;
+    const target = authentication?.account;
     if (target) await prepareAuthenticationInventory(packaged, { manifest: PLUGIN_MANIFEST, target,
         projectPath: `packages/plugins/machine-${provider}`,
         entryPath: `packages/plugins/machine-${provider}/src/${provider === 'railway' ? 'account' : 'accountRuntime'}.ts`,
@@ -123,7 +124,8 @@ async function prepareMachineOAuthInventory(provider: 'railway' | 'digitalocean'
                 entryPath: 'packages/plugins/machine-railway/src/manifest.ts' },
         ] } : {}),
     });
-    return service;
+    const mode = authentication?.modes.find(mode => mode.id === authentication.defaultModeId);
+    return { service, scopes: mode?.kind === 'oauthAuthorizationCode' ? mode.scopes ?? [] : [] };
 }
 
 async function prepareCloudflareInventory() {
@@ -296,21 +298,22 @@ it.each([
         modeIds: inventories.codex.modeIds, machineModeIds: ['native-import'], declarationLoads: 0, beginStatus: 'awaitingOAuth' },
     { provider: 'Vercel', service: inventories.vercel, defaultModeId: 'oauth', modeIds: ['oauth', 'token'], declarationLoads: 0,
         beginStatus: 'awaitingOAuth', publicClient: 'fixture-vercel-client' },
-    { provider: 'Railway', service: inventories.railway, defaultModeId: 'oauth', modeIds: ['oauth'], declarationLoads: 0,
+    { provider: 'Railway', service: inventories.railway.service, defaultModeId: 'oauth', modeIds: ['oauth'], declarationLoads: 0,
         machineModeIds: ['token'], beginStatus: 'awaitingOAuth', publicClient: 'fixture-railway-client' },
-    { provider: 'Railway without a Home client', service: inventories.railway, defaultModeId: 'oauth', modeIds: ['oauth'],
+    { provider: 'Railway without a Home client', service: inventories.railway.service, defaultModeId: 'oauth', modeIds: ['oauth'],
         declarationLoads: 0, machineModeIds: ['token'], unavailableCode: 'railway_oauth_public_client_unavailable' },
-    { provider: 'DigitalOcean', service: inventories.digitalocean, defaultModeId: 'oauth', modeIds: ['oauth'], declarationLoads: 0,
+    { provider: 'DigitalOcean', service: inventories.digitalocean.service, defaultModeId: 'oauth', modeIds: ['oauth'], declarationLoads: 0,
         machineModeIds: ['token'], beginStatus: 'awaitingOAuth', publicClient: 'fixture-digitalocean-client' },
-    { provider: 'DigitalOcean without a Home client', service: inventories.digitalocean, defaultModeId: 'oauth', modeIds: ['oauth'],
+    { provider: 'DigitalOcean without a Home client', service: inventories.digitalocean.service, defaultModeId: 'oauth', modeIds: ['oauth'],
         declarationLoads: 0, machineModeIds: ['token'], unavailableCode: 'digitalocean_oauth_public_client_unavailable' },
 ])('demands $provider Account authentication through the service description wrapper', async testCase => {
     const { service, defaultModeId, modeIds, declarationLoads, publicClient } = testCase;
     const railway = testCase.provider === 'Railway';
     const digitalocean = testCase.provider === 'DigitalOcean';
     const hostScopes = railway
-        ? ['openid', 'email', 'profile', 'offline_access', 'workspace:admin', 'project:member']
+        ? inventories.railway.scopes
         : digitalocean ? ['account:read', 'droplet:create', 'droplet:delete'] : ['openid', 'offline_access'];
+    const oauthScopeOverride = railway ? null : hostScopes;
     const vendorOrigin = railway ? 'https://backboard.railway.com'
         : digitalocean ? 'https://cloud.digitalocean.com' : 'https://api.vercel.com';
     const authorizeUrl = railway ? 'https://backboard.railway.com/oauth/auth'
@@ -334,7 +337,7 @@ it.each([
         const features = createRootLayoutFeaturesResponse({ capabilities: {
             server: { webappUrl: url },
             connectedServices: { ...baseline.capabilities.connectedServices, ...(publicClient ? { publicOAuthClients: [{
-                service, clientId: publicClient, scopesByMode: { oauth: hostScopes },
+                service, clientId: publicClient, scopesByMode: { oauth: oauthScopeOverride },
             }] } : {}) },
         } });
         homes.answer(serverId, '/v1/features', { body: features });
@@ -426,7 +429,7 @@ it.each([
         expect(snapshot.status).toBe('ready');
         if (snapshot.status !== 'ready') throw new Error('Missing Home features');
         const advertised = snapshot.features.capabilities.connectedServices?.publicOAuthClients;
-        if (publicClient) expect(advertised).toMatchObject([{ service, clientId: publicClient, scopesByMode: { oauth: hostScopes } }]);
+        if (publicClient) expect(advertised).toMatchObject([{ service, clientId: publicClient, scopesByMode: { oauth: oauthScopeOverride } }]);
         else expect(advertised ?? []).toEqual([]);
     }
     const lifetime = captureActiveServerAccountScopeLifetime();
