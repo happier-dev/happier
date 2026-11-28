@@ -47,6 +47,8 @@ export function TranscriptJumpAttention(props: Readonly<{
     viewRef?: React.Ref<View>;
     /** This element's message holds the keyboard message cursor (#1031): it takes focus and keeps a static ring. */
     cursorFocused?: boolean;
+    /** Content with no surface of its own (agent prose): the ring stands off it, so it never touches the text. */
+    frameless?: boolean;
     children: React.ReactNode;
 }>): React.ReactElement {
     const token = useTranscriptJumpHighlight({
@@ -58,15 +60,18 @@ export function TranscriptJumpAttention(props: Readonly<{
     const readAloud = useVoiceReadAloudMessagePhase(props.filePath ? null : props.sessionAddress, props.routeMessageId ?? null);
     const cursorFocused = props.cursorFocused === true;
     const ref = useMessageCursorFocus(cursorFocused, props.viewRef);
+    const ringStyle = React.useMemo(
+        () => [styles.ring, props.frameless ? styles.ringFrameless : null, { borderRadius: props.radius }],
+        [props.frameless, props.radius]);
     return (
         <View {...(props.viewProps ?? null)} ref={ref} style={props.style}>
             {readAloud !== 'idle' ? (
                 <View pointerEvents="none" accessible
                     accessibilityLabel={readAloud === 'preparing' ? t('voicePresence.readAloud.preparing') : t('voicePresence.readAloud.speaking')}
-                    style={[styles.ring, { borderRadius: props.radius }]}
+                    style={ringStyle}
                     testID="transcript-read-aloud-highlight" />
-            ) : token != null ? <TranscriptJumpAttentionRing key={token} token={token} radius={props.radius} />
-                : cursorFocused ? <View pointerEvents="none" style={[styles.ring, { borderRadius: props.radius }]}
+            ) : token != null ? <TranscriptJumpAttentionRing key={token} token={token} style={ringStyle} />
+                : cursorFocused ? <View pointerEvents="none" style={ringStyle}
                     testID={TRANSCRIPT_MESSAGE_CURSOR_TEST_ID} /> : null}
             {props.children}
         </View>
@@ -118,7 +123,7 @@ function useMessageCursorFocus(focused: boolean, forwardedRef: React.Ref<View> |
     return ref;
 }
 
-const TranscriptJumpAttentionRing = React.memo(function TranscriptJumpAttentionRing(props: Readonly<{ token: number; radius: number }>) {
+const TranscriptJumpAttentionRing = React.memo(function TranscriptJumpAttentionRing(props: Readonly<{ token: number; style: StyleProp<ViewStyle> }>) {
     const reducedMotion = useReducedMotionPreference();
     // The cue's duration starts once this row has painted it, never at the jump's report.
     React.useEffect(() => {
@@ -176,7 +181,7 @@ const TranscriptJumpAttentionRing = React.memo(function TranscriptJumpAttentionR
     return (
         <Animated.View
             pointerEvents="none"
-            style={[styles.ring, { borderRadius: props.radius, opacity, transform: [{ scale }] }]}
+            style={[props.style, { opacity, transform: [{ scale }] }]}
             testID={TRANSCRIPT_JUMP_HIGHLIGHT_TEST_ID}
         />
     );
@@ -192,5 +197,10 @@ const styles = StyleSheet.create((theme) => ({
         borderWidth: 1.5,
         borderColor: theme.colors.state.active.foreground,
         backgroundColor: theme.colors.state.active.background,
+    },
+    // Sideways only: the list row clips anything drawn above it.
+    ringFrameless: {
+        left: -theme.space.s8,
+        right: -theme.space.s8,
     },
 }));

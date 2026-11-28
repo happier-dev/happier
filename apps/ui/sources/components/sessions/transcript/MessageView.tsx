@@ -1706,6 +1706,7 @@ function AgentTextBlock(props: {
         routeMessageId={buildMessageRouteId(props.message)}
         seq={resolveTranscriptMessageSeq(props.message)}
         radius={TRANSCRIPT_AGENT_BLOCK_HIGHLIGHT_RADIUS}
+        frameless
         cursorFocused={cursorFocused}
         viewProps={{
           collapsable: false,

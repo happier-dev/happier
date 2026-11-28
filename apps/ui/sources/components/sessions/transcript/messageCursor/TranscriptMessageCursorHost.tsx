@@ -7,6 +7,7 @@ import {
   useKeyboardShortcutHandlers,
 } from '@/keyboard/KeyboardShortcutProvider';
 import type { KeyboardShortcutHandlers } from '@/keyboard/runtime';
+import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 import {
   allSignals,
   useLayoutPresentationSignal,
@@ -14,6 +15,7 @@ import {
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { TranscriptRowShellItem } from '@/components/sessions/transcript/measurement/transcriptRowShellSignature';
 import { collectTranscriptNavigationMessageIdsForItem } from '../viewport/lifecycle/transcriptRowClassification';
+import { useSessionTranscriptSource } from '../source/SessionTranscriptSourceContext';
 import type {
   TranscriptJumpResult,
   TranscriptJumpTarget,
@@ -85,12 +87,15 @@ export const TranscriptMessageCursorHost = React.memo(
     props: Readonly<{
       address: SessionAddress | null;
       items: readonly TranscriptRowShellItem[];
-      messagesById: Readonly<Record<string, Message | undefined>>;
+      /** A forked transcript's map, ancestry included; otherwise the cursor reads the Session's own. */
+      messagesById?: Readonly<Record<string, Message | undefined>>;
       jumpToTarget: JumpToTarget;
     }>,
   ) {
-    const latest = React.useRef(props);
-    latest.current = props;
+    const sourceMessagesById = useSessionTranscriptSource().useMessagesById({ textUpdates: false });
+    const messagesById = props.messagesById ?? sourceMessagesById;
+    const latest = React.useRef({ ...props, messagesById });
+    latest.current = { ...props, messagesById };
     const executeCommand = useKeyboardCommand();
     const presentation = useLayoutPresentationSignal();
     const cursorSignal = React.useMemo(
@@ -152,15 +157,16 @@ export const TranscriptMessageCursorHost = React.memo(
         },
       };
     }, []);
+    const exit = React.useCallback(() => {
+      clearTranscriptMessageCursor(latest.current.address ?? undefined);
+      executeCommand('composer.focus');
+    }, [executeCommand]);
     const cursorHandlers = React.useMemo<KeyboardShortcutHandlers>(() => {
       const handlers: KeyboardShortcutHandlers = {
         'transcript.message.previous':
           entryHandlers['transcript.message.previous'],
         'transcript.message.next': entryHandlers['transcript.message.next'],
-        'transcript.message.exit': () => {
-          clearTranscriptMessageCursor(latest.current.address ?? undefined);
-          executeCommand('composer.focus');
-        },
+        'transcript.message.exit': exit,
       };
       for (const [id, commandId] of Object.entries(
         TRANSCRIPT_MESSAGE_CURSOR_ACTION_COMMANDS,
@@ -172,7 +178,7 @@ export const TranscriptMessageCursorHost = React.memo(
         };
       }
       return handlers;
-    }, [entryHandlers, executeCommand]);
+    }, [entryHandlers, exit]);
     const focusLastHandlers = React.useMemo<KeyboardShortcutHandlers>(
       () => ({
         'transcript.message.focusLast':
@@ -182,6 +188,14 @@ export const TranscriptMessageCursorHost = React.memo(
     );
     useKeyboardShortcutHandlers(focusLastHandlers, presentation);
     useKeyboardShortcutHandlers(cursorHandlers, cursorSignal);
+    // The web Escape stack runs ahead of shortcuts, and the Session's own layer leaves it for Home.
+    const cursorActive = React.useSyncExternalStore(subscribeTranscriptMessageCursor,
+      () => isTranscriptMessageCursorActiveFor(props.address), () => false);
+    useEscapeLayer({
+      enabled: cursorActive,
+      priority: ESCAPE_LAYER_PRIORITIES.messageCursor,
+      onEscape: () => { exit(); return true; },
+    });
 
     // A cursor never outlives the transcript that holds it.
     const { serverId, sessionId } = props.address ?? {};

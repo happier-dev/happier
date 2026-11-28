@@ -1070,6 +1070,27 @@ describe('buildCommandPaletteCommands', () => {
     expect(pushes).toEqual([]);
   });
 
+  it('lists catalog Actions by title only, never by the description written for agents', () => {
+    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: buildSettingsWithExecutionRunsEnabled() };
+    const cmds = buildCommandPaletteCommands({
+      sessionsById: {},
+      isDev: false,
+      activeSessionId: null,
+      features: { executionRunsEnabled: true, voiceEnabled: false },
+      nav: { push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
+      actions: { execute: async () => ({ ok: true, result: {} }) },
+      alert: async () => {},
+    });
+
+    const fork = cmds.find(command => command.id === 'action:session.fork');
+    expect(fork?.title).toBe('Fork session');
+    expect(fork?.subtitle).toBeUndefined();
+    const optionIds = (query: string) => filterSelectionListSections(buildCommandPaletteSelectionListSections(cmds), query)
+      .flatMap(section => section.kind === 'static' ? section.options.map(option => option.id) : []);
+    expect(optionIds('Fork session')).toContain('command:action:session.fork');
+    expect(optionIds('Native or Replay')).not.toContain('command:action:session.fork');
+  });
+
   it('keeps review engine selection explicit and does not inject coderabbit-specific config into review.start drafts', async () => {
     createSessionActionDraftSpy.mockClear();
     mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: buildSettingsWithExecutionRunsEnabled() };

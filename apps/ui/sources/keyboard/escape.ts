@@ -11,6 +11,8 @@ export const ESCAPE_LAYER_PRIORITIES = {
     sessionListSelection: 15,
     draftClear: 20,
     pane: 100,
+    /** Return from the focused transcript message to the composer before a pane or the Session takes Escape. */
+    messageCursor: 110,
     /**
      * Stop a loading page in the in-app browser while the Escape comes from inside that browser. It sits
      * above its pane and Session navigation, so the first Escape stops the load and the next one closes

@@ -2167,7 +2167,8 @@ export const ChatListInternal = React.memo(function ChatListInternal(props: Chat
                 waitForVisualUpdate={waitForNextTranscriptVisualUpdate}
                 jumpToTarget={jumpToTranscriptTarget}
             />
-            <TranscriptMessageCursorHost address={messageCursorAddress} items={props.items} messagesById={props.messagesById}
+            <TranscriptMessageCursorHost address={messageCursorAddress} items={props.items}
+                messagesById={props.forkedTranscriptEnabled ? props.messagesById : undefined}
                 jumpToTarget={jumpToTranscriptTarget} />
             <InitialPresentationReadinessProvider value={initialRichContentPresentationController.boundary}>
               <View

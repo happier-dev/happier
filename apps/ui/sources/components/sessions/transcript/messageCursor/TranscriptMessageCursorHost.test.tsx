@@ -13,6 +13,9 @@ import {
 import type { TranscriptRowShellItem } from '@/components/sessions/transcript/measurement/transcriptRowShellSignature';
 
 import { TranscriptMessageCursorHost } from './TranscriptMessageCursorHost';
+import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
+import { SessionTranscriptSourceProvider } from '../source/SessionTranscriptSourceContext';
+import { createReadOnlySessionTranscriptSource } from '../source/readOnlySessionTranscriptSource';
 import {
   readTranscriptMessageCursor,
   registerTranscriptMessageCursorActions,
@@ -56,7 +59,8 @@ function key(
   init: Partial<KeyboardEvent>,
   target: EventTarget | null = null,
 ): KeyboardEvent {
-  return {
+  // Behaves as a DOM event: preventDefault marks it, stopImmediatePropagation ends the dispatch.
+  const event: Record<string, unknown> = {
     key: '',
     code: '',
     altKey: false,
@@ -64,12 +68,15 @@ function key(
     metaKey: false,
     shiftKey: false,
     repeat: false,
-    preventDefault: vi.fn(),
-    stopPropagation: vi.fn(),
-    stopImmediatePropagation: vi.fn(),
+    defaultPrevented: false,
+    stopped: false,
     target,
     ...init,
-  } as unknown as KeyboardEvent;
+  };
+  event.preventDefault = vi.fn(() => { event.defaultPrevented = true; });
+  event.stopPropagation = vi.fn(() => { event.stopped = true; });
+  event.stopImmediatePropagation = vi.fn(() => { event.stopped = true; });
+  return event as unknown as KeyboardEvent;
 }
 // The browser window is the keyboard boundary: the real provider registers its listeners on it.
 function installKeyboardWindow() {
@@ -82,7 +89,10 @@ function installKeyboardWindow() {
       if (type === 'keydown') listeners.delete(listener);
     },
     dispatchEvent: (event: KeyboardEvent) => {
-      for (const listener of [...listeners]) listener(event);
+      for (const listener of [...listeners]) {
+        if ((event as unknown as { stopped?: boolean }).stopped) break;
+        listener(event);
+      }
       return true;
     },
   });
@@ -113,6 +123,14 @@ function Row(props: { messageId: string; copy: () => void }) {
     [focused, props.copy, props.messageId],
   );
   return null;
+}
+// Every ChatList renders inside its Session's transcript source.
+function InSource(props: { children: React.ReactNode }) {
+  const source = React.useMemo(() => createReadOnlySessionTranscriptSource({
+    sessionId: address.sessionId, serverId: address.serverId,
+    messages: Object.values(messagesById), messagesById, reducerState: null, metadata: null, agentState: null,
+  }), []);
+  return <SessionTranscriptSourceProvider source={source}>{props.children}</SessionTranscriptSourceProvider>;
 }
 function Composer(props: { onFocus: () => void }) {
   useKeyboardShortcutHandlers(
@@ -160,12 +178,14 @@ describe('TranscriptMessageCursorHost', () => {
     const screen = await renderScreen(
       <KeyboardShortcutProvider handlers={{}}>
         <Composer onFocus={composerFocus} />
-        <TranscriptMessageCursorHost
-          address={address}
-          items={items}
-          messagesById={messagesById}
-          jumpToTarget={jumpToTarget}
-        />
+        <InSource>
+          <TranscriptMessageCursorHost
+            address={address}
+            items={items}
+            messagesById={messagesById}
+            jumpToTarget={jumpToTarget}
+          />
+        </InSource>
         {['m1', 'm2', 'm5'].map((id) => (
           <Row key={id} messageId={id} copy={copy} />
         ))}
@@ -229,12 +249,14 @@ describe('TranscriptMessageCursorHost', () => {
     const jumpToTarget = vi.fn(async () => ({ status: 'scrolled' }) as never);
     const screen = await renderScreen(
       <KeyboardShortcutProvider handlers={{}}>
-        <TranscriptMessageCursorHost
-          address={address}
-          items={items}
-          messagesById={messagesById}
-          jumpToTarget={jumpToTarget}
-        />
+        <InSource>
+          <TranscriptMessageCursorHost
+            address={address}
+            items={items}
+            messagesById={messagesById}
+            jumpToTarget={jumpToTarget}
+          />
+        </InSource>
       </KeyboardShortcutProvider>,
     );
     await act(async () => {
@@ -245,5 +267,52 @@ describe('TranscriptMessageCursorHost', () => {
     expect(readTranscriptMessageCursor()?.messageId).toBe('m5');
     await screen.unmount();
     expect(readTranscriptMessageCursor()).toBeNull();
+  });
+
+  // ChatList hands its rows no message map outside forked transcripts; the cursor reads the Session's own.
+  it('enters from the transcript source when the list passes no message map', async () => {
+    const jumpToTarget = vi.fn(async () => ({ status: 'scrolled' }) as never);
+    const screen = await renderScreen(
+      <KeyboardShortcutProvider handlers={{}}>
+        <InSource>
+          <TranscriptMessageCursorHost address={address} items={items} jumpToTarget={jumpToTarget} />
+        </InSource>
+      </KeyboardShortcutProvider>,
+    );
+    const enter = key({ key: 'ArrowUp', code: 'ArrowUp', metaKey: true }, textarea);
+    await act(async () => { window.dispatchEvent(enter); });
+    expect(enter.preventDefault).toHaveBeenCalled();
+    expect(readTranscriptMessageCursor()?.messageId).toBe('m5');
+    await screen.unmount();
+  });
+
+  // On the web the Session claims Escape (leave to Home) through the shared Escape stack, ahead of shortcuts.
+  it('returns to the composer on Escape before the Session takes Escape', async () => {
+    const leaveSession = vi.fn(() => true);
+    function SessionEscape() {
+      useEscapeLayer({ priority: ESCAPE_LAYER_PRIORITIES.focusSessionSurface, onEscape: leaveSession });
+      return null;
+    }
+    const composerFocus = vi.fn();
+    const jumpToTarget = vi.fn(async () => ({ status: 'scrolled' }) as never);
+    const screen = await renderScreen(
+      <KeyboardShortcutProvider handlers={{}}>
+        <SessionEscape />
+        <Composer onFocus={composerFocus} />
+        <InSource>
+          <TranscriptMessageCursorHost address={address} items={items} jumpToTarget={jumpToTarget} />
+        </InSource>
+      </KeyboardShortcutProvider>,
+    );
+    await act(async () => { window.dispatchEvent(key({ key: 'ArrowUp', code: 'ArrowUp', metaKey: true }, textarea)); });
+    expect(readTranscriptMessageCursor()?.messageId).toBe('m5');
+    await act(async () => { window.dispatchEvent(key({ key: 'Escape', code: 'Escape' })); });
+    expect(readTranscriptMessageCursor()).toBeNull();
+    expect(composerFocus).toHaveBeenCalledTimes(1);
+    expect(leaveSession).not.toHaveBeenCalled();
+    // Without a cursor, Escape is the Session's again.
+    await act(async () => { window.dispatchEvent(key({ key: 'Escape', code: 'Escape' })); });
+    expect(leaveSession).toHaveBeenCalledTimes(1);
+    await screen.unmount();
   });
 });

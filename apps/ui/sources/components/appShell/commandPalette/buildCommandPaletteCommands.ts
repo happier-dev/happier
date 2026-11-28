@@ -765,7 +765,8 @@ export function buildCommandPaletteCommands(
       || spec.inputHints?.fields.some(field => field.path === 'sessionId');
     cmds.push({
       id: `action:${spec.id}`, actionSpecId: spec.id,
-      title: spec.title, subtitle: spec.description,
+      // A spec's description is written for agents; the person reads and searches the title.
+      title: spec.title,
       icon: 'lightning', category: t('commandPalette.commands.actionsCategory'),
       ...(sessionScoped && contextCategory ? { contextCategory } : {}),
       ...(parsed.success ? { invokeAction: caller => caller.executeOrdinaryChildAction!(spec.id, parsed.data) } : {}),
