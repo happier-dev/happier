@@ -52,6 +52,7 @@ test('F2 mounted Console stops native SQL, reviews writes and restores history',
     const approval = page.getByRole('dialog', { name: /^(Run SQL|Run a plugin action)$/ });
     await expect(approval).toBeVisible();
     await approval.getByRole('button', { name: 'Technical details' }).click();
+    await expect(approval).toContainText('UPDATE ui_stage');
     await expect(approval).not.toContainText(parameter);
     await expect(page.getByText('Offline · nothing cached yet', { exact: true })).toBeHidden();
     const readNative = () => fixture.sql('dbw_selected', "SELECT note FROM ui_stage WHERE id = 'first'");
