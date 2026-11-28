@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { ConnectedAccountCatalogRowReadResponseV1Schema, CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol';
 import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { QualifiedConnectedAccountProfileV4Schema, type QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import * as persistence from '@/persistence';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
@@ -47,6 +48,7 @@ const TEAM_SELECTION = {
 };
 
 let hasTeamDefault = true;
+let destinationAccounts: QualifiedConnectedAccountProfileV4[];
 let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
 beforeAll(async () => {
   runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
@@ -125,6 +127,7 @@ function createHarness(input: Readonly<{
 beforeEach(() => {
   resetInMemoryAccountSettingsContextForTests();
   hasTeamDefault = true;
+  destinationAccounts = [];
   vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(TEST_CREDENTIALS);
   vi.spyOn(axios, 'get').mockImplementation(async input => {
     const path = new URL(String(input)).pathname;
@@ -132,7 +135,7 @@ beforeEach(() => {
       data: { content: { t: 'plain', v: {} }, version: 9 } };
     if (path === '/v1/account/encryption/currentness') return { status: 200,
       data: createAccountEncryptionCurrentnessFixture({ settingsVersion: 9 }) };
-    if (path === '/v4/connect/qualified/accounts') return { status: 200, data: { service: CODEX_SERVICE, accounts: [] } };
+    if (path === '/v4/connect/qualified/accounts') return { status: 200, data: { service: CODEX_SERVICE, accounts: destinationAccounts } };
     if (path === `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/purposes`) return { status: 200,
       data: ConnectedAccountCatalogRowReadResponseV1Schema.parse({ status: 'present', revision: 3,
         content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: hasTeamDefault ? [{
@@ -210,6 +213,45 @@ describe('runSessionAgentTransition — the target binding comes from the one sp
 
     expect(result).toMatchObject({ type: 'rejected', sourceEffect: 'none',
       errorDetail: { kind: 'launch_error', code: 'connected_service_profile_missing' } });
+    expect(harness.deps.requestSessionStop).not.toHaveBeenCalled();
+    expect(captured.currentView).toBeNull();
+  });
+
+  it('preserves the reconnect diagnostic before stopping the source for an unusable destination login', async () => {
+    const destinationAccount = QualifiedConnectedAccountProfileV4Schema.parse({
+      ref: { service: CODEX_SERVICE, accountId: 'work' },
+      status: 'connected',
+      authenticationModeId: 'oauth',
+      revisionSemantics: 'legacy_unfenced',
+      credentialRevision: null,
+      configurationRevision: null,
+      configurationReady: true,
+      displayName: 'Work',
+      scopes: [],
+    });
+    destinationAccounts = [destinationAccount];
+    const { harness, captured } = createHarness({ readTeamCatalog: async () => null });
+    const request = buildTransitionRequest();
+
+    const result = await runSessionAgentTransition({
+      credentials: TEST_CREDENTIALS,
+      request: {
+        ...request,
+        selection: { ...request.selection, connectedServices: { v: 2, bindingsByServiceId: {
+          'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: destinationAccount.ref.accountId },
+        } } },
+      },
+      deps: harness.deps,
+    });
+
+    expect(result).toMatchObject({
+      type: 'rejected', sourceEffect: 'none',
+      errorDetail: {
+        kind: 'launch_error',
+        code: 'connected_service_credential_reconnect_required',
+        uxDiagnostic: { profileId: destinationAccount.ref.accountId, diagnostics: { reconnectCause: 'credential_missing' } },
+      },
+    });
     expect(harness.deps.requestSessionStop).not.toHaveBeenCalled();
     expect(captured.currentView).toBeNull();
   });

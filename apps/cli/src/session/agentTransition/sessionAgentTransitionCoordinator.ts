@@ -994,6 +994,16 @@ export async function runSessionAgentTransition(
     const { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } =
       await import('@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn');
     try {
+      const { readCurrentCatalogHook } = await import('@/agent/catalog/runtimeEntry');
+      const purposeSnapshot = await readCurrentCatalogHook(target.agentId, catalogEntry =>
+        resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
+          agentId: target.agentId,
+          bindings: targetBinding.connectedServices,
+          teamCredentialBindings: targetTeamCredentialBindings,
+          contributions: readCurrentContributionRegistry(),
+          catalogEntry,
+        }),
+      );
       const ports = params.connectedServiceAdmission
         ?? { api: await (await import('@/api/api')).ApiClient.create(credentials) };
       admittedAuth = await admitConnectedServiceAuthForSpawn({
@@ -1005,17 +1015,15 @@ export async function runSessionAgentTransition(
         modelId: modelSelectionRef?.modelId,
         materializationKey: targetBinding.materializationIdentity.id,
         connectedServicesBindingsRaw: targetBinding.connectedServices,
-        resolveQualifiedPurposeBindingSnapshot: bindings => resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
-          agentId: target.agentId, bindings, teamCredentialBindings: targetTeamCredentialBindings,
-          contributions: readCurrentContributionRegistry(), catalogEntry: catalog.get(target.agentId),
-        }),
+        resolveQualifiedPurposeBindingSnapshot: () => purposeSnapshot,
       });
     } catch (error) {
       params.signal?.throwIfAborted();
       const { buildConnectedServiceCredentialSpawnErrorResult } =
         await import('@/daemon/connectedServices/diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult');
-      const launchFailure = buildConnectedServiceCredentialSpawnErrorResult({ agentId: target.agentId, error });
-      return effects.rejected('target_unavailable', launchFailure?.errorDetail);
+      const spawnFailure = buildConnectedServiceCredentialSpawnErrorResult({ agentId: target.agentId, error });
+      const failure = spawnFailure && projectSessionSpawnFailure({ ...spawnFailure, agentId: target.agentId, requestId: localId });
+      return effects.rejected('target_unavailable', failure && 'launchError' in failure ? failure.launchError : undefined);
     }
   }
   const nativeBindings = admittedAuth && targetBinding ? {
