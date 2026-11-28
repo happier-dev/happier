@@ -171,7 +171,7 @@ function sourceRequesterForHome(home: DeploymentSocketHomeFixture): import('./re
 }
 
 describe.skipIf(process.platform !== 'linux' || process.env.HAPPIER_RUN_DBW_TELEMETRY_F14 === '1')('Railway database removal', () => {
-    it('reviews and settles Railway volume removal through the signed required-E2EE Action', async () => {
+    it.each(['browser', 'signed'] as const)('reviews and settles Railway volume removal through a required-E2EE Action (%s)', async surface => {
         const homeEnv = createEnvKeyScope(['HAPPIER_SERVER_URL', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_HOME_DIR',
             'HAPPIER_FEATURE_TEAMS__ENABLED', 'HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED']);
         const lifetime = new AbortController();
@@ -242,9 +242,11 @@ describe.skipIf(process.platform !== 'linux' || process.env.HAPPIER_RUN_DBW_TELE
                     actionRequestId: randomUUID(), authority: 'present_user', signal: lifetime.signal,
                     ...(name === 'deployments.teardown' ? {} : { presentUserConfirmation: { actionId } }) });
             };
-            await runRailwayScopeDeletePreviewCoverage({ home, artifacts: nativeDeploymentArtifacts(home), invoke, settlePublicApproval,
-                signal: lifetime.signal });
-            await runRailwayVolumeRemovalCoverage({ home, artifacts: nativeDeploymentArtifacts(home), invoke, settlePublicApproval,
+            if (surface === 'signed') {
+                await runRailwayScopeDeletePreviewCoverage({ home, artifacts: nativeDeploymentArtifacts(home), invoke, settlePublicApproval,
+                    signal: lifetime.signal });
+            }
+            await runRailwayVolumeRemovalCoverage({ surface, home, artifacts: nativeDeploymentArtifacts(home), invoke, settlePublicApproval,
                 async withUnavailableCredentialRead(read) {
                     credentialReadUnavailable = true;
                     try {

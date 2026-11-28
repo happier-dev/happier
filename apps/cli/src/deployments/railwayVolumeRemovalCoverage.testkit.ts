@@ -5,7 +5,14 @@ import { stubUndiciFetch } from '@/testkit/http/stubUndiciFetch';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { DeploymentEnvironmentContentV1Schema, DeploymentTargetLinkContentV1Schema, DeploymentProviderTeardownContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { bindPresentUserActionConfirmationV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
+import { bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { openExternalActionResponseV2, sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { projectDeploymentReviewedCandidateV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
+import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { DeploymentEnvironmentCreateResultV1Schema, DeploymentReceiptGetResultV1Schema, DeploymentReceiptListResultV1Schema, DeploymentReceiptResultV1Schema, DeploymentTargetLinkResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
@@ -16,6 +23,7 @@ import { TEAM_CREDENTIAL_MANUAL_CONNECTED_ACCOUNT_DIRECT_CONTRACT_V1, computeTea
     computeTeamCredentialSourceMemberKeyV1, createTeamCredentialDirectMaterialStoredV1 } from '@happier-dev/protocol/teams';
 import { mutateQualifiedConnectedAccountCredentialV4 } from '@/api/client/qualifiedConnectedAccountApi';
 import type { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { encodeStoredCredentials } from '@/persistence';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { actionIds } from '../../../../packages/plugins/deployment-railway/src/actions';
 import { manifest as railwayDataManifest } from '../../../../packages/plugins/deployment-railway/src/manifest';
@@ -76,7 +84,8 @@ async function shareRailwayCredential(home: DeploymentSocketHomeFixture, account
         selection: { source: 'team_resource' as const, resourceId: resource.id, deliveryMode: 'direct' as const, disclosedMember: account } };
 }
 
-export async function runRailwayVolumeRemovalCoverage({ home, artifacts, invoke, settlePublicApproval, withUnavailableCredentialRead }: Readonly<{
+export async function runRailwayVolumeRemovalCoverage({ surface, home, artifacts, invoke, settlePublicApproval, withUnavailableCredentialRead }: Readonly<{
+    surface: 'browser' | 'signed';
     home: DeploymentSocketHomeFixture;
     artifacts: Artifacts;
     invoke: Invoke;
@@ -85,6 +94,50 @@ export async function runRailwayVolumeRemovalCoverage({ home, artifacts, invoke,
 }>) {
     const material = home.encryption;
     if (home.encryptionMode !== 'e2ee' || !material) throw new Error('Railway teardown requires E2EE');
+    const actionId = DEPLOYMENT_TEARDOWN_ACTION_ID_V1;
+    const target = { kind: 'machine' as const, machineId: home.machineId };
+    const post = (path: string, body: unknown) => fetch(`${home.baseUrl}${path}`, { method: 'POST',
+        headers: { Authorization: `Bearer ${home.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body) });
+    const pressDelete = async (input: unknown, requestId: string, confirmed?: Readonly<{
+        candidate: NonNullable<ReturnType<typeof projectDeploymentReviewedCandidateV1>>;
+        originalAuthorizationToken: string;
+        digest: string;
+        reviewedInput: unknown;
+    }>) => {
+        const binding = { serverIdentityId: home.serverId, accountId: home.accountId, actionId, requestId, target,
+            authentication: { kind: 'account' as const, tokenEpoch: 0 } };
+        const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+            binding, input, material, randomBytes: nacl.randomBytes });
+        const minted = await post(bindExternalActionExecutionAuthorizationHttpPathV1(actionId), {
+            v: 1, machineId: home.machineId, envelope,
+            ...(confirmed ? { deploymentReview: { candidate: confirmed.candidate, originalAuthorizationToken: confirmed.originalAuthorizationToken } } : {}),
+        });
+        const mintPayload: unknown = await minted.json();
+        if (minted.status === 403) {
+            return { execution: null, authorizationToken: null, authorizationRefusal: mintPayload };
+        }
+        expect(minted.status, JSON.stringify(minted.ok ? null : mintPayload)).toBe(200);
+        const root = ExternalActionExecutionAuthorizationV1Schema.parse(mintPayload);
+        const context = { surface: 'ui' as const, actionCaller: { kind: 'host' as const }, authority: 'present_user' as const,
+            runtimeAccountId: home.accountId, serverId: home.serverId, serverIdentityId: home.serverId,
+            actionRequestId: requestId, externalActionTarget: target };
+        const confirmation = bindPresentUserActionConfirmationV1(actionId, input, context,
+            confirmed?.digest, confirmed?.reviewedInput).presentUserConfirmation;
+        const authorization = sealExternalActionRequesterAccountContextV1({ authorization: root,
+            purpose: { kind: 'external_action' }, installationPublicKey: home.keys.publicKey, randomBytes: nacl.randomBytes,
+            credentials: encodeStoredCredentials({ token: home.token, encryption: material }),
+            invocation: { surface: 'ui', caller: context.actionCaller, authority: context.authority,
+                ...(confirmation ? { presentUserConfirmation: confirmation } : {}) },
+        });
+        const response = await post(`/v1/actions/${actionId}`, { v: 1, machineId: home.machineId, envelope,
+            executionAuthorization: authorization });
+        const payload: unknown = await response.json();
+        expect(response.status, JSON.stringify(response.ok ? null : payload)).toBe(200);
+        const execution = openExternalActionResponseV2({ envelope: payload, binding, request: envelope, material });
+        if (!execution) throw new Error('Expected the bound E2EE Delete response');
+        return { execution, authorizationToken: root.token };
+    };
     const descriptor = railwayAccountManifest.contributes.connectedAccountDescriptors?.[0];
     if (!descriptor) throw new Error('Railway Account descriptor is required');
     const credentialRef = { service: { pluginId: railwayAccountManifest.id, localId: descriptor.id }, accountId: randomUUID() };
@@ -179,6 +232,8 @@ export async function runRailwayVolumeRemovalCoverage({ home, artifacts, invoke,
     });
     try {
         for (const scenario of [
+            { name: 'browser carried review', before: false, after: false, unavailable: false, browser: true,
+                preview: { kind: 'removed' }, observation: { kind: 'removed' } },
             { name: 'exclusive', before: false, after: false, unavailable: false,
                 preview: { kind: 'removed' }, observation: { kind: 'removed' } },
             { name: 'shared', before: true, after: true, unavailable: false,
@@ -199,6 +254,7 @@ export async function runRailwayVolumeRemovalCoverage({ home, artifacts, invoke,
             { name: 'volume acknowledgement lost', before: false, after: false, unavailable: false,
                 preview: { kind: 'removed' } },
         ] as const) {
+            if (('browser' in scenario) !== (surface === 'browser')) continue;
             writes.length = 0;
             railwayRequests = 0;
             shared = scenario.before;
@@ -234,6 +290,42 @@ export async function runRailwayVolumeRemovalCoverage({ home, artifacts, invoke,
             }));
             if (!linked.ok || !('targetLinkId' in linked)) throw new Error(`Railway fixture target link refused: ${JSON.stringify(linked)}`);
             const removal = { ...address, targetLinkId: linked.targetLinkId, requestKey: randomUUID(), reason: 'manual', providerRemoval: 'delete' };
+            if ('browser' in scenario) {
+                const { execution: first, authorizationToken } = await pressDelete(removal, randomUUID());
+                expect(first).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required',
+                    details: { review: { preview: { deploymentReview: { removal: { volumeRemoval: scenario.preview } } } },
+                        reviewDigest: expect.any(String) } });
+                expect(writes).toEqual([]);
+                if (!first || first.ok || !authorizationToken) throw new Error('Expected a carried review');
+                const details = readRecord(first.details);
+                const reviewedInput = readRecord(details.review).actionArgs;
+                const candidate = projectDeploymentReviewedCandidateV1(reviewedInput);
+                if (!candidate || typeof details.reviewDigest !== 'string') throw new Error('Expected a bound Delete review');
+                const carried = { candidate, reviewedInput, digest: details.reviewDigest, originalAuthorizationToken: authorizationToken };
+                const { execution: changed } = await pressDelete(removal, randomUUID(), {
+                    ...carried, digest: (carried.digest.startsWith('A') ? 'B' : 'A') + carried.digest.slice(1),
+                });
+                expect(changed).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required',
+                    details: { reviewDigest: carried.digest } });
+                expect(writes).toEqual([]);
+
+                const { execution: confirmed } = await pressDelete(removal, randomUUID(), carried);
+                expect(confirmed, JSON.stringify(confirmed)).toMatchObject({ ok: true, result: { ok: true, state: 'succeeded' } });
+                expect(writes).toEqual([{ kind: 'service', id: serviceId, environmentId }, { kind: 'volume', id: volumeId }]);
+                const writeCount = writes.length;
+                const repeatRequestId = randomUUID();
+                const { execution: repeated, authorizationRefusal } = await pressDelete(removal, repeatRequestId, carried);
+                expect(writes).toHaveLength(writeCount);
+                if (repeated === null) {
+                    expect(authorizationRefusal).toMatchObject({ error: 'credential_scope_denied', requestId: repeatRequestId,
+                        details: { deploymentReview: 'stale' } });
+                } else if (repeated.ok) {
+                    expect(repeated).toEqual(confirmed);
+                } else {
+                    expect(repeated.errorCode).toBe('action_operation_unavailable');
+                }
+                continue;
+            }
             const review = () => invoke('deployments.teardown', removal);
             const credentialUnavailable = scenario.name === 'credential unavailable during review';
             const pending = credentialUnavailable ? await withUnavailableCredentialRead(review) : await review();

@@ -15,7 +15,7 @@ import { ProjectWorkerStatusInputV1Schema } from '@happier-dev/protocol/actions/
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ActionId } from '@happier-dev/protocol';
 import { DeploymentActionInputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentTemplateInstantiateInputV1Schema, projectDeploymentTemplateInstantiationResultV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
@@ -623,6 +623,12 @@ export function createCliActionExecutorHarness(
             const runActionOperation = resolved.runActionOperation ?? deps.runActionOperation;
             if (!runActionOperation) return { ok: false,
               errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+            // Teardown already owns retained replay and starts its operation
+            // after admission. Recording the review as an operation failure
+            // would replay that failure when the person confirms.
+            if (actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1) {
+              return await consumeDeferredApproval(await executor.execute(actionId, parsed.data, resolved), resolved);
+            }
             // The existing request owner consumes or rejoins this invocation
             // with the same normalized intent used by confirmation and replay.
             return await consumeDeferredApproval(await runActionOperation({ actionId, input: parsed.data, context: resolved,
