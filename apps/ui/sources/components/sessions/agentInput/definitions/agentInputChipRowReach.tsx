@@ -3,8 +3,7 @@ import { HappierComposerChip, type HappierComposerChipProps } from '@happier-dev
 
 import { NATIVE_ACTION_CHIP_GAP_Y } from '../components/agentInputChromeStyles';
 import type { KeyboardCommandId } from '@/keyboard/types';
-import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
-import { withShortcut } from '@/keyboard/withShortcut';
+import { Tooltip } from '@/components/ui/overlays/Tooltip';
 
 type ChipRailHitReach = NonNullable<HappierComposerChipProps['hitReach']>;
 
@@ -38,16 +37,26 @@ export function useAgentInputChipRowReach(): HappierComposerChipProps['hitReach'
 /** The composer's rail chip: the shared chip shell with the reach its row declares. */
 type AgentInputRailChipProps = HappierComposerChipProps & Readonly<{ shortcutCommandId?: KeyboardCommandId }>;
 
+/** Lets a chip whose label shrinks (the agent chip) still shrink inside its tooltip host. */
+const RAIL_CHIP_TOOLTIP_HOST_STYLE = { minWidth: 0, flexShrink: 1 } as const;
+
 export const AgentInputRailChip: React.ForwardRefExoticComponent<
     React.PropsWithoutRef<AgentInputRailChipProps> & React.RefAttributes<unknown>
 > = React.forwardRef<unknown, AgentInputRailChipProps>(
     function AgentInputRailChip({ shortcutCommandId, ...props }, ref) {
         const rowReach = useAgentInputChipRowReach();
-        const shortcut = useKeyboardShortcutLabel(shortcutCommandId);
         // A chip's own bounds narrow its row's: a side it declares wins, the others keep the row's reach.
         const hitReach = typeof props.hitReach === 'object' && typeof rowReach === 'object' ? { ...rowReach, ...props.hitReach } : props.hitReach ?? rowReach;
-        const webAttributes = shortcut ? { ...props.webAttributes,
-            title: withShortcut(props.webAttributes?.title ?? props.accessibilityLabel ?? '', shortcut) } : props.webAttributes;
-        return <HappierComposerChip ref={ref} {...props} webAttributes={webAttributes} hitReach={hitReach} />;
+        // The help text goes through the shared tooltip (which adds the command's current key); a DOM `title` never renders.
+        const { title, ...webAttributes } = props.webAttributes ?? {};
+        const help = title ?? (shortcutCommandId ? props.accessibilityLabel : undefined);
+        const chip = <HappierComposerChip ref={ref} {...props} webAttributes={props.webAttributes ? webAttributes : undefined} hitReach={hitReach} />;
+        if (!help) return chip;
+        return (
+            <Tooltip label={help} shortcutCommandId={shortcutCommandId} focusable={false} hidden={props.accessibilityState?.expanded === true}
+                testID={props.testID ? `${props.testID}-help` : undefined} style={RAIL_CHIP_TOOLTIP_HOST_STYLE}>
+                {chip}
+            </Tooltip>
+        );
     },
 );

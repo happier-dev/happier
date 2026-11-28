@@ -10,15 +10,18 @@ import { blurActiveElementOnWeb } from '@/utils/platform/deferOnWeb';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import type { ScreenCaptureAttachmentAction } from './screenCaptureAttachmentActions';
 import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE, AGENT_INPUT_MENU_ICON_SIZE_PX } from '../definitions/agentInputChipIconMetrics';
-import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
-import { withShortcut } from '@/keyboard/withShortcut';
+import { Tooltip } from '@/components/ui/overlays/Tooltip';
 
 const WEB_PICKER_DOUBLE_OPEN_COOLDOWN_MS = 500;
 
+/** The chip's help text and current key come from the shared tooltip; a press hides it until the pointer leaves. */
 function AttachmentChipButton(props: React.ComponentProps<typeof Pressable>) {
-    const shortcut = useKeyboardShortcutLabel('composer.attachFile');
-    return <Pressable {...props} {...(Platform.OS === 'web' && shortcut
-        ? { title: withShortcut(props.accessibilityLabel ?? '', shortcut) } : {})} />;
+    return (
+        <Tooltip label={props.accessibilityLabel ?? ''} shortcutCommandId="composer.attachFile" focusable={false}
+            testID={props.testID ? `${props.testID}-help` : undefined}>
+            <Pressable {...props} />
+        </Tooltip>
+    );
 }
 
 const SCREEN_CAPTURE_LABELS = {

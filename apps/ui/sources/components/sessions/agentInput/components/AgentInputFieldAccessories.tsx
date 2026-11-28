@@ -59,6 +59,7 @@ export function AgentInputFieldAccessories(props: Readonly<{
                 icon={<ChromeGlyph name="book-open" size={16} />}
                 accessibilityLabel={t('agentInput.promptPicker.open')}
                 tooltip={t('agentInput.promptPicker.open')}
+                shortcutCommandId="composer.prompts.open"
                 tooltipHidden={props.libraryOpen === true}
                 variant="plain"
                 size={VISUAL_SIZE}

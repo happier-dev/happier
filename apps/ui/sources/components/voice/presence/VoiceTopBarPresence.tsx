@@ -11,6 +11,7 @@ import {
 } from '@/components/voice/attempt/useVoiceAttemptControl';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
+import { withShortcut } from '@/keyboard/withShortcut';
 import { t } from '@/text';
 import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -78,7 +79,7 @@ export const VoiceTopBarPresence = React.memo(function VoiceTopBarPresence(props
                 accessibilityHint={voice.primaryActionHint ?? undefined}
                 // Starts Voice, or — before Voice is set up — opens its setup; the tooltip says which.
                 tooltip={voice.primaryAction === 'start'
-                    ? [t('voicePresence.talkWithVoice'), shortcutLabel].filter(Boolean).join(' ')
+                    ? withShortcut(t('voicePresence.talkWithVoice'), shortcutLabel)
                     : voice.primaryActionLabel ?? t('voicePresence.talkWithVoice')}
                 tooltipPlacement="bottom"
                 variant="plain"

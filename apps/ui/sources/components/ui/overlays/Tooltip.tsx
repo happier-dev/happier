@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Platform, Pressable, type StyleProp, type View, type ViewStyle } from 'react-native';
 
 import { DeferredAnchoredTooltip } from './DeferredAnchoredTooltip';
+import { useActionTooltip } from '@/components/ui/buttons/ActionTooltip';
 import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
 import type { KeyboardCommandId } from '@/keyboard/types';
 import { withShortcut } from '@/keyboard/withShortcut';
@@ -23,6 +24,8 @@ export function Tooltip(props: Readonly<{
     onPress?: () => void;
     /** Off when this wraps a control: that control is the tab stop, and its focus still shows the tooltip. */
     focusable?: boolean;
+    /** Hide the help text for now (for example while the wrapped control's own popover is open). */
+    hidden?: boolean;
 }>) {
     const shortcut = useKeyboardShortcutLabel(props.shortcutCommandId);
     const label = props.label === '' ? '' : withShortcut(props.label, shortcut);
@@ -30,6 +33,8 @@ export function Tooltip(props: Readonly<{
     const [hovered, setHovered] = React.useState(false);
     const [focused, setFocused] = React.useState(false);
     const [held, setHeld] = React.useState(false);
+    // A press on the wrapped control answers the pointer until it leaves, as on an IconButton.
+    const { isVisible, onPressIn: suppress, onHoverOut: resetSuppression } = useActionTooltip(undefined, props.hidden);
     const touchReadout = Platform.OS !== 'web' && props.label !== '';
     return (
         <Pressable
@@ -40,15 +45,16 @@ export function Tooltip(props: Readonly<{
             focusable={props.focusable}
             accessibilityLabel={props.accessibilityLabel ?? (label === '' ? undefined : label)}
             onHoverIn={() => setHovered(true)}
-            onHoverOut={() => setHovered(false)}
+            onHoverOut={() => { setHovered(false); resetSuppression(); }}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
             onLongPress={touchReadout ? () => setHeld(true) : undefined}
             onPressOut={touchReadout ? () => setHeld(false) : undefined}
+            {...(Platform.OS === 'web' ? { onPointerDown: suppress } : {})}
             style={props.style}
         >
             {props.children}
-            {Platform.OS === 'web' && props.label !== '' && (hovered || focused) ? (
+            {Platform.OS === 'web' && props.label !== '' && isVisible({ hovered, focused }) ? (
                 <DeferredAnchoredTooltip activationKey={`${hovered}:${focused}`} anchorRef={anchorRef} label={label} testID={props.testID ? `${props.testID}-tooltip` : undefined} />
             ) : null}
             {touchReadout && held ? (

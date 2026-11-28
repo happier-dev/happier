@@ -8,6 +8,7 @@ import {
 import { useVoiceEnergyIfMounted } from '@/components/voice/light/useVoiceEnergy';
 import { resolveVoiceMarkPose } from '@/components/voice/presence/resolveVoiceMarkPose';
 import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
+import { withShortcut } from '@/keyboard/withShortcut';
 import { t } from '@/text';
 import { useLocalSetting } from '@/sync/domains/state/storage';
 import { Modal } from '@/modal';
@@ -106,7 +107,7 @@ function VoiceComposerPlanetRuntime(props: Readonly<{
                 markEvent={control.markEvent}
                 muted={live && muted}
                 tooltip={[primaryAction === 'start'
-                    ? [t('voicePresence.talkWithVoice'), shortcutLabel].filter(Boolean).join(' ')
+                    ? withShortcut(t('voicePresence.talkWithVoice'), shortcutLabel)
                     : primaryActionLabel, holdHint].filter(Boolean).join('\n')}
                 /*
                  * "Start Global Voice" rather than "Start Voice" in New Session: the two do different

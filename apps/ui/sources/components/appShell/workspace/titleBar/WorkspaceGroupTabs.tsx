@@ -309,6 +309,7 @@ export function WorkspaceGroupTabs(props: Readonly<{
                 icon={<ChromeGlyph name="plus" size={M.actionGlyphPx} />}
                 accessibilityLabel={t('workspaceBar.newTab')}
                 tooltip={t('workspaceBar.newTab')}
+                shortcutCommandId="workspace.tab.new"
                 tooltipPlacement="bottom"
                 interactiveTargetEdgesPx={NEW_TAB_EDGES_PX}
                 onPress={() => execute({ actionId: 'workspace.tabs.open', input: { groupId: group.id } })}

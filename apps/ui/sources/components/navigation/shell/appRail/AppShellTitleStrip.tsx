@@ -157,7 +157,8 @@ export const AppShellTitleStrip = React.memo(function AppShellTitleStrip(props: 
                         size={DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_TARGET_SIZE_PX}
                         interactiveTargetGapPx={TITLE_STRIP_CONTROL_GAP_PX}
                         accessibilityLabel={toggleLabel}
-                        tooltip={toggleLabel}
+                        // Named by its command, as Settings → Keyboard names it; the key is added by the tooltip owner.
+                        tooltip={t('settingsKeyboard.commands.shellColumnToggle')}
                         shortcutCommandId="shell.column.toggle"
                         tooltipPlacement="bottom"
                         icon={<ChromeGlyph size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX}>{ink => <View style={ink.style}>

@@ -8,7 +8,6 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ChromeGlyph } from '@/components/ui/icons/chromeGlyphInk';
 import { DETAILS_TAB_STRIP_METRICS as M } from '@/components/appShell/panes/details/header/detailsTabHeaderMetrics';
 import { DOCUMENT_TAB_BAR_METRICS as B } from '@/components/ui/navigation/DocumentTabStrip';
-import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
 import { t } from '@/text';
 import { useOptionalWorkspaceNavigation, type WorkspaceNavigationContextValue } from '../WorkspaceNavigationContext';
 import { executeWorkspaceUiAction } from '../workspaceActionRuntime';
@@ -104,8 +103,6 @@ function WorkspaceTitleBarSegments(props: Readonly<{
 /** Split right for the focused pane, admitted by its measured width like every other split. */
 function WorkspaceSplitButton(props: Readonly<{ workspace: WorkspaceNavigationContextValue }>) {
     const { workspace } = props;
-    const shortcut = useKeyboardShortcutLabel('workspace.splitRight');
-    const label = shortcut ? `${t('workspaceBar.splitRight')} (${shortcut})` : t('workspaceBar.splitRight');
     const split = React.useCallback(() => {
         const groupId = workspace.state.focusedGroupId;
         fireAndForget(executeWorkspaceUiAction({ actionId: 'workspace.split', input: { groupId, direction: 'right' } }, href => {
@@ -123,7 +120,8 @@ function WorkspaceSplitButton(props: Readonly<{ workspace: WorkspaceNavigationCo
             // Half the strip's gap to All tabs before it; the segment's end padding after it.
             interactiveTargetEdgesPx={SPLIT_EDGES_PX}
             accessibilityLabel={t('workspaceBar.splitRight')}
-            tooltip={label}
+            tooltip={t('workspaceBar.splitRight')}
+            shortcutCommandId="workspace.splitRight"
             tooltipPlacement="bottom"
             onPress={split}
         />
