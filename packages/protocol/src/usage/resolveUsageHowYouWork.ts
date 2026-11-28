@@ -53,6 +53,20 @@ export const UsageSessionEvidenceCoverageSchema = lazyZodSchema(() => z.strictOb
     && (value.notRead === undefined || value.notRead <= value.admitted))));
 export type UsageSessionEvidenceCoverage = z.infer<typeof UsageSessionEvidenceCoverageSchema>;
 
+/** Project the opened evidence for one query after its selected Session census. */
+export function projectUsageSessionEvidenceCoverage<T>(selected: number, sessions: readonly T[],
+    readState: (session: T) => 'unavailable' | 'unread' | 'read'): UsageSessionEvidenceCoverage {
+    let admitted = 0;
+    let notRead = 0;
+    for (const session of sessions) {
+        const state = readState(session);
+        if (state === 'unavailable') continue;
+        admitted++;
+        if (state === 'unread') notRead++;
+    }
+    return { selected, admitted, notRead };
+}
+
 /** Admission permits a read; only observed private evidence counts as checked. */
 export function countUsageCheckedSessions(coverage: UsageSessionEvidenceCoverage | undefined): number | undefined {
     return coverage === undefined ? undefined : coverage.admitted - (coverage.notRead ?? 0);

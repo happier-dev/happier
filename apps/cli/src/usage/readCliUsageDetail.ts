@@ -16,8 +16,8 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import type { UsageCoachRemedySession } from '@happier-dev/protocol/usage/coach/buildUsageCoachRemedies';
 import { getUsageQueryKey, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
-import type { UsageHowYouWorkDetailInput } from '@happier-dev/protocol/usage/resolveUsageHowYouWork';
-import { projectUsageActivitySourceStatus, type UsageAccountingSourceSnapshot, type UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { projectUsageSessionEvidenceCoverage, type UsageHowYouWorkDetailInput } from '@happier-dev/protocol/usage/resolveUsageHowYouWork';
+import { projectUsageActivitySourceStatus, readUsageAuthorityRefusalCode, type UsageAccountingSourceSnapshot, type UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { OperationUpdateRequiredV1Schema, type OperationUpdateRequiredV1 } from '@happier-dev/protocol/compat/operationUpdateRequiredV1';
 import type { StoredCredentials } from '@/persistence';
 import type { AccountRecipientEnvelopeReadiness } from '@happier-dev/protocol/account/encryptionMode';
@@ -89,16 +89,17 @@ export async function readCliUsageDetail(input: Readonly<{
         evidence: UsageHowYouWorkDetailInput; messagesComplete: boolean;
         workTarget: ReturnType<typeof resolveUsageWorkSessionTarget>; canReadWork: boolean }>;
     const sessions = new Map<string, Detail>();
-    type ReadFailure = Readonly<{ errorCode: string; updateRequired?: OperationUpdateRequiredV1; transcriptOnly?: boolean }>;
+    type ReadFailure = Readonly<{ errorCode: string; updateRequired?: OperationUpdateRequiredV1 }>;
     const activityFailures = new Map<string, ReadFailure>();
+    const transcriptFailures = new Map<string, ReadFailure & { blocksSessionEvidence: boolean }>();
     type WorkReadFailure = ReadFailure & Readonly<{ httpStatus?: number }>;
     const workTargetFailures = new Map<string, WorkReadFailure>();
     let requestFailure: WorkReadFailure | undefined;
-    const selectReadFailure = (failuresById: ReadonlyMap<string, ReadFailure>, sessionIds: readonly string[], transcriptOnly = false) => {
+    const selectReadFailure = (failuresById: ReadonlyMap<string, ReadFailure>, sessionIds: readonly string[]) => {
         if (failuresById.size === 0) return undefined;
         const failures = sessionIds.flatMap(id => {
             const failure = failuresById.get(id);
-            return failure && (failure.transcriptOnly ?? false) === transcriptOnly ? [failure] : [];
+            return failure ? [failure] : [];
         });
         return failures.find(failure => failure.updateRequired !== undefined) ?? failures[0];
     };
@@ -200,8 +201,7 @@ export async function readCliUsageDetail(input: Readonly<{
         try {
             await input.assertCurrent();
             const sessionParts = [part.detail, ...(includeTurns ? [part.turns] : [])];
-            const requiredParts = includeMessages ? [...sessionParts, part.messages] : sessionParts;
-            const requirement = requiredParts.flatMap(read => read?.status !== 200 && read?.body
+            const requirement = sessionParts.flatMap(read => read?.status !== 200 && read?.body
                 && 'kind' in read.body && read.body.kind === 'update_required' ? [read.body] : [])[0];
             if (requirement) {
                 const failure = { errorCode: 'update_required', updateRequired: requirement };
@@ -256,9 +256,12 @@ export async function readCliUsageDetail(input: Readonly<{
             await input.assertCurrent();
             let messages: OpenedUsageMessage[] | undefined;
             let messagesComplete = false;
-            const messageEvidence = crypto.mode === 'plain' ? part.messageEvidence : undefined;
+            const messageEvidence = includeMessages && crypto.mode === 'plain' ? part.messageEvidence : undefined;
             const messagePart = part.messages;
-            if (includeMessages) try {
+            if (includeMessages && messagePart && messagePart.status !== 200
+                && 'kind' in messagePart.body && messagePart.body.kind === 'update_required') {
+                transcriptFailures.set(sessionId, { errorCode: 'update_required', updateRequired: messagePart.body, blocksSessionEvidence: true });
+            } else if (includeMessages) try {
                 if (messageEvidence !== undefined) messagesComplete = part.messagesComplete === true;
                 else {
                     if (!messagePart) throw Object.assign(new Error('Session messages unavailable'), { code: 'session_read_batch_invalid_response' });
@@ -278,13 +281,15 @@ export async function readCliUsageDetail(input: Readonly<{
                 }
             } catch (error) {
                 await input.assertCurrent();
-                // Failed access/format admission cannot revive any Session private facts.
                 const failed = messagePart && messagePart.status !== 200 ? classifySessionEvidencePartRead(messagePart.status, messagePart.body)
                     : { errorCode: error instanceof SessionStoredContentError ? error.code : 'session_read_batch_invalid_response', retryable: false };
-                if (!failed.retryable || !activityFailures.has(sessionId)) {
-                    activityFailures.set(sessionId, { errorCode: failed.errorCode, transcriptOnly: failed.retryable });
+                const status = messagePart?.status;
+                if (status === 401 || status === 403 || status === 404 || readUsageAuthorityRefusalCode(failed.errorCode) !== null) {
+                    activityFailures.set(sessionId, { errorCode: failed.errorCode });
+                    continue;
                 }
-                if (!failed.retryable) continue;
+                // The message format is independent of the already opened summary.
+                transcriptFailures.set(sessionId, { errorCode: failed.errorCode, blocksSessionEvidence: !failed.retryable });
             }
             const access = rawSession.effectiveAccess ?? (role === 'owner' ? { capabilities: { submitAgentInput: true } } : undefined);
             const session: OpenedUsageSession = { id: sessionId, seq: rawSession.seq, createdAt: rawSession.createdAt, origin: rawSession.origin,
@@ -304,7 +309,8 @@ export async function readCliUsageDetail(input: Readonly<{
         }
     }
     await input.assertCurrent();
-    const eligibleIds = new Set<string>();
+    const remedySessionIds = new Set<string>();
+    const openedByQuery = new Map<string, readonly Detail[]>();
     for (const query of input.queries) {
         const key = getUsageQueryKey(query);
         const candidates = query.includeSessionEvidence ? idsByQuery.get(key) ?? [] : [...sessions.keys()];
@@ -312,10 +318,18 @@ export async function readCliUsageDetail(input: Readonly<{
             selectedSessionIds: candidates,
             sessions: candidates.flatMap(id => sessions.has(id) ? [sessions.get(id)!.session] : [{ id }]),
             contributions: accounting.get(key), sessionMembership: membership.get(key) });
-        if (query.includeSessionEvidence) idsByQuery.set(key, [...ids]);
-        for (const id of ids) eligibleIds.add(id);
+        const needsTranscript = query.includeSessionEvidence && query.includeTranscriptEvidence;
+        const opened = ids.flatMap(id => {
+            const row = sessions.get(id);
+            return row && !(needsTranscript && transcriptFailures.get(id)?.blocksSessionEvidence) ? [row] : [];
+        });
+        if (query.includeSessionEvidence) {
+            idsByQuery.set(key, [...ids]);
+            openedByQuery.set(key, opened);
+        }
+        for (const row of opened) remedySessionIds.add(row.session.id);
     }
-    for (const id of sessions.keys()) if (!eligibleIds.has(id)) sessions.delete(id);
+    // Work admits accounting turns and resolves them from the opened Session metadata.
     const work = await collectUsageWorkSources({ queries: workQueries, accounting: input.accounting, assertCurrent: input.assertCurrent, now: Date.now,
         resolveSession: async sessionId => {
             const session = sessions.get(sessionId);
@@ -339,21 +353,28 @@ export async function readCliUsageDetail(input: Readonly<{
     const howYouWork = evidenceQueries.map(query => {
         const key = getUsageQueryKey(query);
         const ids = idsByQuery.get(key) ?? [];
+        const contributions = accounting.get(key);
+        const sessionMembership = membership.get(key);
+        const opened = openedByQuery.get(key) ?? [];
         const detail = projectUsageQueryWorkEvidence({ query,
-            sessions: ids.flatMap(id => sessions.has(id) ? [sessions.get(id)!.session] : []),
-            sessionEvidence: new Map(ids.flatMap(id => {
-                const row = sessions.get(id);
-                return row ? [[id, query.includeTranscriptEvidence ? row.evidence : projectSessionUsageWorkEvidence(row.session)]] : [];
-            })),
-            contributions: accounting.get(key), sessionMembership: membership.get(key),
+            sessions: opened.map(row => row.session),
+            sessionEvidence: new Map(opened.map(row => [row.session.id,
+                query.includeTranscriptEvidence ? row.evidence : projectSessionUsageWorkEvidence(row.session)])),
+            contributions, sessionMembership,
         });
         const sessionFailure = selectReadFailure(activityFailures, ids);
-        const transcriptFailure = query.includeTranscriptEvidence ? selectReadFailure(activityFailures, ids, true) : undefined;
-        const failure = sessionFailure ?? transcriptFailure;
-        if (admitted && !requestFailure && !failure?.updateRequired) {
-            const sessionsCovered = hasUsageActivitySessionPopulation(query, accounting.get(key), membership.get(key))
-                && ids.every(id => sessions.has(id));
-            const transcriptsCovered = sessionsCovered && ids.every(id => sessions.get(id)?.messagesComplete === true);
+        const transcriptFailure = query.includeTranscriptEvidence ? selectReadFailure(transcriptFailures, ids) : undefined;
+        const failure = sessionFailure?.updateRequired ? sessionFailure
+            : transcriptFailure?.updateRequired ? transcriptFailure : sessionFailure ?? transcriptFailure;
+        const canPublishEvidence = admitted && !requestFailure && !failure?.updateRequired;
+        const populationObserved = hasUsageActivitySessionPopulation(query, contributions, sessionMembership);
+        const sessionCoverage = canPublishEvidence && populationObserved
+            ? projectUsageSessionEvidenceCoverage(ids.length, opened,
+                row => query.includeTranscriptEvidence && row.messagesComplete ? 'read' : 'unread')
+            : undefined;
+        if (canPublishEvidence) {
+            const sessionsCovered = sessionCoverage !== undefined && sessionCoverage.admitted === sessionCoverage.selected;
+            const transcriptsCovered = sessionsCovered && sessionCoverage.notRead === 0;
             howYouWorkProgress.set(key, { pending: false, sources: [
                 { source: 'how_you_work:sessions', status: projectUsageActivitySourceStatus(true, true, sessionsCovered && !sessionFailure),
                     ...(sessionFailure ? { errorCode: sessionFailure.errorCode } : {}) },
@@ -361,9 +382,12 @@ export async function readCliUsageDetail(input: Readonly<{
                     ...(transcriptFailure ? { errorCode: transcriptFailure.errorCode } : {}) },
             ] });
         }
-        return { query, asOfMs: input.nowMs, detail,
+        return { query, asOfMs: input.nowMs, detail, ...(sessionCoverage ? { sessionCoverage } : {}),
             ...(requestFailure ? { errorCode: requestFailure.errorCode, ...(requestFailure.updateRequired ? { updateRequired: requestFailure.updateRequired } : {}) }
-                : accountActivityFailure ?? (detail.status === 'unknown' || failure?.updateRequired ? failure : undefined)) };
+                : accountActivityFailure ?? (failure && (detail.status === 'unknown' || failure.updateRequired)
+                    ? { errorCode: failure.errorCode, ...(failure.updateRequired ? { updateRequired: failure.updateRequired } : {}) }
+                    : undefined)) };
     });
-    return { howYouWork, howYouWorkProgress, work, sessions: [...sessions.values()].map(row => row.remedySession) };
+    return { howYouWork, howYouWorkProgress, work, sessions: [...sessions.values()]
+        .flatMap(row => remedySessionIds.has(row.session.id) ? [row.remedySession] : []) };
 }

@@ -203,6 +203,8 @@ describe('opened Session usage work evidence', () => {
             ...overrides,
         });
         expect(read()).toMatchObject({ status: 'partial', facts: [expect.objectContaining({ workId: '["session-a","turn"]' })] });
+        expect(read({ sessions: [{ ...session, encryptionMode: 'e2ee',
+            encryptedContentAvailability: 'encrypted_content_unavailable' }] })).toEqual({ status: 'unknown' });
         expect(read({ currentScope: { ...scope, accountId: 'other-account' } })).toEqual({ status: 'unknown' });
         expect(read({ isCurrent: false })).toEqual({ status: 'unknown' });
         expect(read({ query: normalizeUsageQuery({ machines: ['different'] }) })).toMatchObject({ status: 'partial', facts: [] });

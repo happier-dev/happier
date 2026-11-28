@@ -16,6 +16,7 @@ import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQuery, normalizeUsageQueryBatchInput, resolveUsageQueryPeriod, usageAnalyticsRequestToQuery, usageQueryToAnalyticsRequest, usageQueryNeedsContributionRows, type UsageQuery, type UsageQueryBatchInput } from '@happier-dev/protocol/inputs/usageQuery';
 import { collectUsageWorkSources, readUsageWorkSessionTurns, resolveUsageWorkSessionTarget } from '@happier-dev/protocol/usage/usageWorkSources';
 import { hasSameUsageQueryWorkEvidenceMembership } from '@happier-dev/protocol/usage/usageWorkEvidence';
+import { projectUsageSessionEvidenceCoverage } from '@happier-dev/protocol/usage/resolveUsageHowYouWork';
 import { USAGE_COACH_PREFERENCES_READ_SOURCE, readUsageAccountingReadAtMs, resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, resolveUsageComparisonQuery, resolveUsageQuotaSourceSnapshot, projectUsageQuotaCoverage, projectUsageQuotaSourceCoverage, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, readUsageAuthorityRefusalCode, isUsageQuerySourceOutstanding, withdrawUsageQueryWork, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState, type UsageQueryResultSlice, type UsageQuotaCoverageRead, type UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ConnectedServicePoolSelectionGetRequestV1Schema, type ConnectedServicePoolSelectionGetRequestV1, type ConnectedServicePoolSelectionGetResponseV1 } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { isMachineRpcTimeoutError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
@@ -47,7 +48,7 @@ import { readSessionSnapshotsForAuthority } from '@/sync/runtime/orchestration/s
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import { readRegisteredStorageState, subscribeRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
-import { projectUsageQueryWorkEvidence, selectUsageQueryWorkEvidenceSessionIds, projectUsageSessionInput } from '@/sync/domains/usage/usageWorkEvidence';
+import { projectUsageQueryWorkEvidence, selectUsageQueryWorkEvidenceSessionIds, projectUsageSessionInput, readUsageSessionInputAvailability } from '@/sync/domains/usage/usageWorkEvidence';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readAccountSettingsForScope } from '@/sync/domains/state/accountSettingsPersistence';
 import { getConnectedMetadataCatalog, subscribeConnectedMetadataCatalog } from '@/sync/store/settings/connectedMetadataCatalogSnapshot';
@@ -62,7 +63,6 @@ import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSe
     createUsageSessionEvidenceStreamDecoder,
     type UsageSessionEvidenceResponse } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { getUsageSessionFactKinds } from '@happier-dev/protocol/usage/usageSessionFactKinds';
-import { isSessionContentReadable, readSessionContentAvailability } from '@/sync/domains/session/encryptedContentAvailability';
 import { ConnectedServiceQuotaGetInputV1Schema, projectProviderAccountUsageQuotaReadV1, type ConnectedServiceQuotaGetInputV1, type ConnectedServiceQuotaGetResultV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
@@ -777,8 +777,7 @@ function readsUnconvertedTranscriptsOnOpen(query: UsageQuery): boolean {
 /** Explicit history reads convert finalized, readable Sessions; live gaps stay unchecked. */
 function canReadUnconvertedSessionHistory(value: SessionInputEvidence): boolean {
     return value.session.active !== true
-        && value.session.access?.capabilities.readTranscript !== false
-        && isSessionContentReadable(readSessionContentAvailability(value.session))
+        && readUsageSessionInputAvailability(value.session) === 'ready'
         && (!value.completeMessageCoverage || value.workFactsPersisted === false);
 }
 
@@ -1066,7 +1065,7 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
                 let messageEvidence: UsageSessionMessageEvidence | undefined;
                 let detail = summary.detail;
                 let completeMessageCoverage = false;
-                if (session.access?.capabilities.readTranscript !== false && isSessionContentReadable(readSessionContentAvailability(session))) {
+                if (readUsageSessionInputAvailability(session) === 'ready') {
                     const projected = await readMessagePage();
                     if (projected?.detail?.status === 200) {
                         const [{ readSessionSnapshotsForAuthority }, { readSessionDetailAccessProjectionVersion }] = await Promise.all([
@@ -1218,8 +1217,9 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
     const project = (admitted: boolean): (HowYouWorkEvidenceSnapshot & { opened: OpenedUsageSessionSelection })[] => queries.map(query => {
         // Loaded Sessions supply demand, never an access/content fallback after
         // a fresh exact-Account admission fails or denies transcript access.
+        const selectedIds = idsByQuery.get(getUsageQueryKey(query)) ?? [];
         const { sessions, detail, opened } = projectSelection({ query, nowMs, admitted, selected,
-            selectedIds: idsByQuery.get(getUsageQueryKey(query)) ?? [], scope: context.accountLifetime.scope,
+            selectedIds, scope: context.accountLifetime.scope,
             currentScope: query.session === null ? active?.scope ?? null : context.accountLifetime.scope,
             isCurrent: context.accountLifetime.isCurrent() && (query.session !== null || active?.isCurrent() === true),
             contributions: byQuery.get(getUsageQueryKey(query))?.contributions,
@@ -1227,16 +1227,11 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
         // The projection admits only readable Sessions and marks their observed
         // subset partial. A failed sibling must not erase those witnessed facts;
         // sessionCoverage and the source status keep the missing population explicit.
-        const sessionCoverage = { selected: (idsByQuery.get(getUsageQueryKey(query)) ?? []).length,
-            admitted: sessions.filter(session => session.access?.capabilities.readTranscript !== false
-                && isSessionContentReadable(readSessionContentAvailability(session))).length,
-            notRead: sessions.filter(session => {
-                const value = selected.get(session.id);
-                return value && (!value.completeMessageCoverage || value.workFactsPersisted === false);
-            }).length };
+        const sessionCoverage = populationObserved
+            ? projectSelectedUsageSessionCoverage(selectedIds.length, sessions, selected) : undefined;
         history?.coverage(selectedIdSet,
             [...selected.values()].filter(value => value && canReadUnconvertedSessionHistory(value)).length);
-        return { query, asOfMs: Date.now(), sessions, sessionCoverage, detail, opened,
+        return { query, asOfMs: Date.now(), sessions, detail, opened, ...(sessionCoverage ? { sessionCoverage } : {}),
             ...(updateRequired ? { errorCode: 'update_required', updateRequired }
                 : projectedReadFailure ? { errorCode: readUsageHistoryFailure(projectedReadFailure).errorCode } : {}) };
     });
@@ -1265,12 +1260,10 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
         requireCurrent(context, signal);
         // A null completion already reported its failure through recordReadFailure.
         if (value) {
-            if (value.session.access?.capabilities.readTranscript === false) recordReadFailure(sessionId, { errorCode: 'forbidden' });
-            else if (!isSessionContentReadable(readSessionContentAvailability(value.session))) {
-                const availability = readSessionContentAvailability(value.session);
+            const availability = readUsageSessionInputAvailability(value.session);
+            if (availability !== 'ready') {
                 if (availability !== null) recordReadFailure(sessionId, { errorCode: availability });
-            }
-            else if (complete && value.completeMessageCoverage && value.workFactsPersisted !== false) history?.succeeded(sessionId);
+            } else if (complete && value.completeMessageCoverage && value.workFactsPersisted !== false) history?.succeeded(sessionId);
         }
         const changed = evidencePhase.select(sessionId, value, complete);
         // Cached progress already supplied these exact facts. Only the last
@@ -1332,8 +1325,7 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
     }, async (requests, ownerSignal) => {
         const messageIds = requests.filter(request => {
                 const admitted = summaries.get(request.sessionId)!;
-                return admitted.session.access?.capabilities.readTranscript !== false
-                    && isSessionContentReadable(readSessionContentAvailability(admitted.session))
+                return readUsageSessionInputAvailability(admitted.session) === 'ready'
                     && !canReuseSessionMessageEvidence(request.retained, admitted);
         }).map(request => request.sessionId);
         const contextIds = requests.filter(request => {
@@ -1511,6 +1503,15 @@ function createUsageWorkTargetReader(context: UsageQueryAccountContext, signal?:
     };
 }
 
+function projectSelectedUsageSessionCoverage(selectedCount: number, sessions: readonly SessionInputEvidence['session'][],
+    selected: ReadonlyMap<string, SessionInputEvidence | null>) {
+    return projectUsageSessionEvidenceCoverage(selectedCount, sessions, session => {
+        if (readUsageSessionInputAvailability(session) !== 'ready') return 'unavailable';
+        const evidence = selected.get(session.id);
+        return evidence && (!evidence.completeMessageCoverage || evidence.workFactsPersisted === false) ? 'unread' : 'read';
+    });
+}
+
 /** A failed replacement can only subtract from the Activity admission it retained. */
 function readRetainedActivityAfterRefusal(context: UsageQueryAccountContext, slice: UsageQueryResultSlice,
     admission: UsageActivityAdmission, sessionInputs: ReturnType<typeof createUsageQuerySessionInputs>) {
@@ -1526,13 +1527,10 @@ function readRetainedActivityAfterRefusal(context: UsageQueryAccountContext, sli
         scope: context.accountLifetime.scope, currentScope: context.accountLifetime.scope, isCurrent: true,
         contributions: slice.accounting?.contributions, sessionMembership: readUsageAccountingSessionMembership(slice.accounting),
     });
-    const admitted = sessions.filter(session => session.access?.capabilities.readTranscript !== false
-        && isSessionContentReadable(readSessionContentAvailability(session))).length;
+    const sessionCoverage = projectSelectedUsageSessionCoverage(subjects.length, sessions, phase.selected);
+    const { admitted } = sessionCoverage;
     const snapshot: HowYouWorkReadSnapshot = admitted ? { query, sessions, detail, asOfMs,
-        sessionCoverage: { selected: subjects.length, admitted, notRead: sessions.filter(session => {
-            const value = phase.selected.get(session.id);
-            return value && (!value.completeMessageCoverage || value.workFactsPersisted === false);
-        }).length } } : { query, errorCode };
+        sessionCoverage } : { query, errorCode };
     const phases = phase.read()!.sources.map(source => source.source === 'how_you_work:sessions'
         ? { ...source, status: admitted ? 'partial' as const : 'error' as const, errorCode } : source);
     return { snapshot, phases, admission: { opened: remaining, asOfMs, subjects: sessions.map(session => session.id) } };

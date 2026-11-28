@@ -1,5 +1,5 @@
 import { projectUsageActivitySourceStatus, type UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
-import { isSessionContentReadable, readSessionContentAvailability } from '@/sync/domains/session/encryptedContentAvailability';
+import { readUsageSessionInputAvailability } from '@/sync/domains/usage/usageWorkEvidence';
 import type { SessionInputEvidence } from './usageQuerySessionInputs';
 
 type EvidenceReadPhase = Readonly<{
@@ -25,9 +25,7 @@ export class UsageQueryEvidencePhase {
 
     private updateEvidenceCounts(value: SessionInputEvidence | null, change: number): void {
         if (value === null) { this.refusedInputs += change; return; }
-        const session = value.session;
-        if (session.access?.capabilities.readTranscript !== false
-            && isSessionContentReadable(readSessionContentAvailability(session))) this.readableInputs += change;
+        if (readUsageSessionInputAvailability(value.session) === 'ready') this.readableInputs += change;
         if (value.completeMessageCoverage) this.coveredInputs += change;
     }
 

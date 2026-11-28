@@ -3,7 +3,7 @@ import { projectUsageQueryWorkEvidence as projectOpenedUsageQueryWorkEvidence,
     type OpenedUsageSession, type UsageSessionStateEvidence } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import type { UsageHowYouWorkDetailInput } from '@happier-dev/protocol/usage/resolveUsageHowYouWork';
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { isSessionContentReadable, readSessionContentAvailability } from '@/sync/domains/session/encryptedContentAvailability';
+import { readSessionContentAvailability } from '@/sync/domains/session/encryptedContentAvailability';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { projectUsageCoachRemedySession } from './buildUsageCoachRemedies';
@@ -16,6 +16,12 @@ type UsageSessionIdentity = Pick<Session, 'serverId' | 'seq' | 'updatedAt' | 'me
 export type UsageSessionInput = OpenedUsageSession & Omit<UsageSessionIdentity, 'access'>
     & Readonly<{ access?: NonNullable<Session['access']> }>
     & Pick<ReturnType<typeof projectUsageCoachRemedySession>, 'active' | 'ownerMetadata' | 'agentTarget'>;
+
+/** Combine the admitted transcript capability and the Session content owner's typed result. */
+export function readUsageSessionInputAvailability(session: Pick<UsageSessionIdentity,
+    'access' | 'encryptionMode' | 'encryptedContentAvailability'>) {
+    return session.access?.capabilities.readTranscript === false ? 'forbidden' : readSessionContentAvailability(session);
+}
 
 /** Keep the owning admission identity beside only the canonical consumed facts. */
 export function projectUsageSessionInput(session: UsageSession & UsageSessionIdentity): UsageSessionInput {
@@ -34,7 +40,6 @@ export function projectUsageQueryWorkEvidence(input: Omit<Parameters<typeof proj
 }>): UsageHowYouWorkDetailInput {
     if (!input.isCurrent || !areServerAccountScopesEqual(input.scope, input.currentScope)) return { status: 'unknown' };
     const sessions = input.sessions.filter(session => (!session.serverId || session.serverId === input.scope.serverId)
-        && session.access?.capabilities.readTranscript !== false
-        && isSessionContentReadable(readSessionContentAvailability(session)));
+        && readUsageSessionInputAvailability(session) === 'ready');
     return projectOpenedUsageQueryWorkEvidence({ ...input, sessions });
 }

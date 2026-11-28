@@ -2263,7 +2263,7 @@ describe('usage query captured Resource adapter', () => {
         ? { query, error: 'usage_query_failed' } : { query, value: empty }) });
     });
     const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, projects: ['project'],
-      includeQuota: false, includeComparison: false, includeCoach: false, includeWorkEvidence: false,
+      includeQuota: false, includeComparison: false, includeCoach: true, includeWorkEvidence: false,
       includeSessionEvidence: true, includeTranscriptEvidence: true });
     const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
       input: projectNativeJsonValueForTransport({ queries: [query] }) });
@@ -2276,6 +2276,9 @@ describe('usage query captured Resource adapter', () => {
         { source: 'how_you_work:sessions', status: phase },
         { source: 'how_you_work:transcripts', status: phase },
       ]);
+      const coverage = result === 'empty' ? { selected: 0, admitted: 0, notRead: 0 } : undefined;
+      expect(slice.howYouWork?.sessionCoverage).toEqual(coverage);
+      expect(slice.coach?.sessionCoverage).toEqual(coverage);
     } finally { release(); }
   });
 
@@ -10145,11 +10148,12 @@ describe('usage query captured Resource adapter', () => {
     expect(failed?.sources).toContainEqual({ source: 'accounting', status: 'error', errorCode: 'usage_query_failed' });
   });
 
-  it.each([true, false])('respects a denied transcript capability for explicit Session selection %s', async explicit => {
+  it.each(['exact', 'broad', 'mixed'] as const)('respects a denied transcript capability for %s Session selection', async selection => {
     const deniedAccess = createSessionAccessFixture('view', { readTranscript: false });
     const captured = await context(request => {
       if (request.path === '/v2/usage/query') return Response.json({ ...value, contributions: [
         { ...workContribution, sessionId: 'denied-session' },
+        ...(selection === 'mixed' ? [{ ...workContribution, id: 'readable-contribution', sessionId: 'readable-session' }] : []),
       ] });
       if (request.path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1,
         signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
@@ -10164,6 +10168,21 @@ describe('usage query captured Resource adapter', () => {
         agentState: JSON.stringify({ completedRequests: { request: { tool: 'Bash', arguments: {},
           turnId: 'turn', createdAt: 200, completedAt: 400, status: 'approved' } } }), share: null,
       } });
+      if (request.path === '/v2/sessions/readable-session') return Response.json({ session: {
+        ...ownerSessionAccess,
+        id: 'readable-session', createdAt: 1, updatedAt: 900, seq: 2, active: false, activeAt: 900,
+        encryptionMode: 'plain', dataEncryptionKey: null, metadataLayoutVersion: 0,
+        metadataVersion: 1, metadata: JSON.stringify({ name: 'Readable' }),
+        agentStateVersion: 1, agentState: null, share: null,
+      } });
+      if (request.path === '/v1/sessions/readable-session/turns') return Response.json({
+        v: 1, sessionId: 'readable-session', updatedAt: 900, turns: [{ turnId: 'turn', agentId: 'codex',
+          status: 'completed', startedAt: 100, terminalAt: 900, updatedAt: 900 }],
+      });
+      if (request.path === '/v1/sessions/readable-session/messages') return Response.json({ messages: [], hasMore: false });
+      if (request.method === 'PUT' && request.path === '/v2/sessions/readable-session/system-records') {
+        return successfulUsageFactWrite(request.body);
+      }
       if (request.path === '/v1/sessions/denied-session/messages') return Response.json({ messages: [{
         id: 'accepted-row', seq: 2, localId: 'accepted-input', createdAt: 300,
         content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'denied private input' } } },
@@ -10174,11 +10193,21 @@ describe('usage query captured Resource adapter', () => {
       return undefined;
     });
     const result = await readUiUsageQueryBatch(captured, { queries: [normalizeUsageQuery({
-      ...(explicit ? { session: 'denied-session' } : {}), period: { startMs: 0, endMs: 1000 },
+      ...(selection === 'broad' ? {} : { session: selection === 'mixed'
+        ? ['denied-session', 'readable-session'] : 'denied-session' }), period: { startMs: 0, endMs: 1000 },
     })] });
     expect(result.results[0]?.accounting).toMatchObject(value);
-    expect(result.results[0]?.howYouWork).toMatchObject({ detailStatus: 'unknown', intervals: null,
-      inputs: null, permissions: null });
+    if (selection === 'mixed') {
+      const slice = result.results[0];
+      const coverage = { selected: 2, admitted: 1, notRead: 0 };
+      expect(slice?.howYouWork).toMatchObject({ detailStatus: 'partial', sessionCoverage: coverage });
+      expect(slice?.coach?.sessionCoverage).toEqual(coverage);
+      expect(slice?.sources).toContainEqual({ source: 'how_you_work:transcripts', status: 'partial', errorCode: 'forbidden' });
+      expect(sessionRequests().some(request => request.path === '/v1/sessions/readable-session/messages')).toBe(true);
+    } else {
+      expect(result.results[0]?.howYouWork).toMatchObject({ detailStatus: 'unknown', intervals: null,
+        inputs: null, permissions: null });
+    }
     expect(sessionRequests().some(request => request.path === '/v1/sessions/denied-session/messages')).toBe(false);
     expect(JSON.stringify(result)).not.toContain('denied private input');
   });
