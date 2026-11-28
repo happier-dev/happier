@@ -10,7 +10,7 @@ import { WORK_STATUS_WORKING_SPINNER_VARIANT, workStatusGlyphColor, workStatusUn
 
 import { useCollectionRowNeedsYouHighlight, type CollectionRowNeedsYouFacts } from '@/components/ui/lists/collection/CollectionRowNeedsYouHighlight';
 
-import { resolveWorkStatusRowMark, resolveWorkStatusRowWord } from './workStatusRowMark';
+import { resolveWorkStatusRowMark, resolveWorkStatusRowWord } from './workStatusRowMarkModel';
 
 /** The row's status slot (one 14 px column, so marks, words and ages share one right edge). */
 const STATUS_SLOT_SIZE = 14;

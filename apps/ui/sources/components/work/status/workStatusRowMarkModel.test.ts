@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { WorkStatusPresentation } from './resolveWorkStatusTone';
-import { resolveWorkStatusRowMark, resolveWorkStatusRowWord } from './workStatusRowMark';
+import { resolveWorkStatusRowMark, resolveWorkStatusRowWord } from './workStatusRowMarkModel';
 
 const status = (state: string, bucket: WorkStatusPresentation['bucket'], tone: WorkStatusPresentation['tone'] = 'neutral',
     attentionType: WorkStatusPresentation['attentionType'] = null): WorkStatusPresentation =>

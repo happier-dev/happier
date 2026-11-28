@@ -52,7 +52,7 @@ import { replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabil
 import { PluginAccountAvailabilityIntentReadResponseV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { InboxWorkRow } from './InboxWorkRow';
 import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
-import { resolveWorkStatusRowMark } from '@/components/work/status/workStatusRowMark';
+import { resolveWorkStatusRowMark } from '@/components/work/status/workStatusRowMarkModel';
 import { Icon } from '@/components/ui/icons/Icon';
 import { resolveInboxItemPageRoute } from './inboxItemFocus';
 import { readWorkflowRunTarget } from '@/sync/domains/workflows/workflowRunRoute';
