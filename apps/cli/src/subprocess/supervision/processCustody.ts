@@ -279,6 +279,16 @@ export function createProcessCustodyHandshakePath(): string {
     return join(tmpdir(), `.happier-svc09-custody-${randomUUID()}.json`);
 }
 
+/** One hosted Session child tree uses the existing unique Windows Job launch. */
+export function prepareWindowsProcessLaunchCustody(): ProcessCustodySpawnSpec | null {
+    const executablePath = resolveProcessCustodyRuntimeExecutable('win32');
+    return executablePath ? {
+        executablePath,
+        jobName: createWindowsJobCustodyName(randomUUID()),
+        handshakePath: createProcessCustodyHandshakePath(),
+    } : null;
+}
+
 /** Best-effort removal of an unread handshake marker; never throws. */
 export async function removeProcessCustodyHandshakeFile(handshakePath: string): Promise<void> {
     await rm(handshakePath, { force: true }).catch(() => undefined);

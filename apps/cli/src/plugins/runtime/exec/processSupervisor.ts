@@ -12,6 +12,7 @@ import type {
 } from '@happier-dev/plugin-sdk/exec';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 
+import { readProcessCensus } from '@/processes/census/processCensus';
 import { captureProcessTree, createProcessTreeTerminator, terminateProcessTree, type ProcessTreeCapture } from '@/processes/terminate/terminateProcessTree';
 import {
     removeProcessCustodyHandshakeFile,
@@ -152,6 +153,8 @@ type SpawnSupervisedPluginProcessInput = Readonly<{
     waitForGracefulRootExitBeforeTreeStop?: true;
     /** Native containment facts; present only when the command is the custody helper. */
     processCustody?: SpawnProcessCustodySpec;
+    /** Hosted Exec can be stopped before its launcher has established the Job. */
+    verifyProcessCustodyOnStop?: true;
     /** Host-only native observation/termination boundaries, never plugin options. */
     processTreeSystemBoundary?: Parameters<typeof createProcessTreeTerminator>[0];
     spawnOptions?: Omit<SpawnOptionsWithoutStdio, 'cwd' | 'env'>;
@@ -342,6 +345,9 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
     let terminationPromise: Promise<void> | null = null;
     let disposePromise: Promise<void> | null = null;
     let timeout: ReturnType<typeof setTimeout> | null = null;
+    const hostedJob = input.verifyProcessCustodyOnStop ? input.processCustody : undefined;
+    const hostedJobLifetime = hostedJob ? new AbortController() : undefined;
+    let hostedJobFacts: SupervisedPluginProcessCustody | null = null;
 
     const publishOutput = (stream: 'stdout' | 'stderr', value: Buffer): void => {
         const event = Object.freeze({
@@ -466,6 +472,10 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
     });
     child.once('close', (exitCode, signal) => {
         freezeObserved(observedTermination(exitCode, signal));
+        if (hostedJob) {
+            hostedJobLifetime?.abort();
+            void removeProcessCustodyHandshakeFile(hostedJob.handshakePath);
+        }
         seal();
     });
 
@@ -534,6 +544,10 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
                     });
                 });
             const joined = (async () => {
+                if (hostedJob && !observed && !hostedJobFacts) {
+                    hostedJobFacts = await waitForSupervisedPluginProcessCustody({ custody: hostedJob, signal: hostedJobLifetime?.signal });
+                    if (!hostedJobFacts && !observed) throw terminationIncompleteError();
+                }
                 if (observed && observed.kind !== 'failed' && sharedOwner
                     && !input.terminateProcessTree && !input.processCustody
                     && !input.waitForGracefulRootExitBeforeTreeStop) {
@@ -551,13 +565,30 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
                     // Signalling every descendant first can kill the native
                     // activation watchdog before it releases its service manager.
                     // The existing join budget bounds the caller's wait, not custody.
-                    const requested = await terminateProcessTree({ targets: child.pid ? [{ pid: child.pid }] : [],
-                        tree: false, captureDescendants: true, waitForExit: false });
-                    if (requested.status === 'unavailable' || requested.outcomes.some(row => row.outcome === 'refused')) {
-                        throw terminationIncompleteError();
+                    let target: Parameters<typeof captureProcessTree>[0] | undefined = child.pid ? { pid: child.pid } : undefined;
+                    if (hostedJobFacts) {
+                        const { jobName, targetPid } = hostedJobFacts;
+                        const snapshot = await readProcessCensus({
+                            freshness: 'fresh', pids: [targetPid], fields: [], verifiedJobNames: [jobName],
+                        });
+                        if (snapshot.status !== 'ok'
+                            || snapshot.jobObservations?.find(job => job.name === jobName)?.state === 'unavailable') {
+                            throw terminationIncompleteError();
+                        }
+                        // The handshake PID may have been recycled. Signal only
+                        // the current Job member with a verified birth identity.
+                        const row = snapshot.rows.find(row => row.pid === targetPid && row.jobs?.includes(jobName));
+                        target = row ? { pid: row.pid, start: row.start } : undefined;
                     }
-                    capturedTargets = requested.capturedTargets;
-                    await observedPromise;
+                    if (target || !hostedJobFacts) {
+                        const requested = await terminateProcessTree({ targets: target ? [target] : [],
+                            tree: false, captureDescendants: true, waitForExit: false });
+                        if (requested.status === 'unavailable' || requested.outcomes.some(row => row.outcome === 'refused')) {
+                            throw terminationIncompleteError();
+                        }
+                        capturedTargets = requested.capturedTargets;
+                        await observedPromise;
+                    }
                 }
                 // Known subtree or exclusive custody still needs the canonical
                 // terminator's absence proof even after the launcher exits.

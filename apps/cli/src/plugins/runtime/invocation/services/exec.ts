@@ -8,7 +8,7 @@ import { isAbsolute, join } from 'node:path';
 import { createSessionNativeDirectory } from '@/utils/fs/unixPathAccess';
 import { transformAgentLaunchFrameEnvironment, type AgentLaunchNativeSocketDirectory } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { configuration } from '@/configuration';
-import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { readHostedSessionScope, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import type { AgentCliReadinessService as PluginAgentCliReadinessService, ExecService, PluginProcessHandle, PluginProcessResult, SystemToolsService as PluginSystemToolsService } from '@happier-dev/plugin-sdk/exec';
 import type { PluginFramedBytesClient, PluginJsonRpcClient, PluginJsonRpcConnection, PluginJsonRpcConnectionSpec, PluginJsonStreamClient, PluginLoopbackWebSocketJsonClient, PluginProtocolClientHandle, PluginProtocolClientSpec, PluginProtocolClientSpecByKind, ProtocolClientsService } from '@happier-dev/plugin-sdk/exec/protocol-clients';
@@ -34,7 +34,7 @@ import {
     type SupervisedPluginProcess,
     type SupervisedPluginGracefulStop,
 } from '../../exec/processSupervisor';
-import { resolveProcessCustodySupportExecutable, type ProcessCustodySpawnSpec } from '@/subprocess/supervision/processCustody';
+import { prepareWindowsProcessLaunchCustody, resolveProcessCustodySupportExecutable, type ProcessCustodySpawnSpec } from '@/subprocess/supervision/processCustody';
 import { resolveSessionProcessHolderLaunch, trackSessionManagedProcess, type SessionHolderRole } from '@/subprocess/supervision/sessionHolder';
 import { readSessionTargetPlacement, resolveSessionHostCwd } from '@/subprocess/supervision/sessionTargetRelay';
 import { createSessionHolderAdoption, JSON_RPC_INITIALIZE_HANDSHAKE, JSON_STREAM_ADOPT_HANDSHAKES } from '@/subprocess/supervision/sessionHolderAdoption';
@@ -51,7 +51,7 @@ import type { SpawnFailureLimitsReader } from '@/processes/spawnFailure/classify
 import { validateEnvVarRecordStrict } from '@/terminal/runtime/envVarSanitization';
 import type { ProjectNativeToolchainInput, ProjectNativeToolchainIo, ProjectNativePluginAdapterInput } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 import type { ProjectSecretReferenceEnvironmentInput } from '@/settings/secrets/secretReferenceOverlay';
-import { PROCESS_OWNER_ENV_KEY, formatProcessOwnerTag, readHostProcessOwnerTag, withHostProcessOwnerEnvironment, withProcessOwnerEnvironment, type ProcessOwnerRef } from '@/processes/ownerTag';
+import { PROCESS_OWNER_ENV_KEY, formatProcessOwnerTag, parseProcessOwnerTag, readHostProcessOwnerTag, withHostProcessOwnerEnvironment, withProcessOwnerEnvironment, type ProcessOwnerRef } from '@/processes/ownerTag';
 import { buildCgroupProcessLaunchSpec, prepareCgroupProcessLaunchScope, type LinuxProcessLaunchScope } from '@/daemon/platform/linux/buildCgroupSelfMigratingHappyCliLaunchSpec';
 import { createHappierLinuxScopeName } from '@/daemon/platform/linux/systemdUserResourceGovernor';
 import type { OwnerRemainderPort } from '@/daemon/processes/endOwnerRemainder';
@@ -532,7 +532,16 @@ export function spawnAuthorizedHostExecLaunchForHost(
             throw new PluginError({ code: 'agent_cli_target_unavailable', retryable: false,
                 message: 'The Session target cannot establish the required host process custody' });
         }
-        const custody = options.processCustody;
+        // The shared host itself cannot join a Session Job. Give unheld
+        // Session-owned children their own Job before their first instruction.
+        const ownWindowsJob = process.platform === 'win32' && readHostedSessionScope()?.end
+            && !holder && !options.processCustody && options.descendantDisposition !== 'preserve-on-success'
+            && parseProcessOwnerTag(environment[PROCESS_OWNER_ENV_KEY])?.kind === 'session';
+        const custody = ownWindowsJob ? prepareWindowsProcessLaunchCustody() : options.processCustody;
+        if (ownWindowsJob && !custody) {
+            throw new PluginError({ code: 'plugin_exec_spawn_failed', retryable: false,
+                message: 'Windows Session process custody helper is unavailable' });
+        }
         const unit = createHappierLinuxScopeName(launch.processOwnerTag ?? readHostProcessOwnerTag());
         const scopedLaunch = !placed && options.linuxProcessLaunchScope && unit
             ? buildCgroupProcessLaunchSpec({ scope: options.linuxProcessLaunchScope, unit,
@@ -576,6 +585,7 @@ export function spawnAuthorizedHostExecLaunchForHost(
             signals: options.signal ? [options.signal] : [],
             ...(options.pipeStdout ? { pipeStdout: true } : {}),
             ...(custody ? { processCustody: custody } : {}),
+            ...(ownWindowsJob ? { verifyProcessCustodyOnStop: true } : {}),
             ...(options.processTreeSystemBoundary ? { processTreeSystemBoundary: options.processTreeSystemBoundary } : {}),
             spawnOptions: {
                 detached: process.platform !== 'win32' && options.posixProcessGroup !== 'inherit',
