@@ -297,7 +297,7 @@ async function reconcileWorkflowRunStart(
 ): Promise<WorkflowRunStartResultV1> {
     try {
         const detail = await callWorkflowAction({
-            actionId: 'workflow.run.get', input: { runId: request.input.runId },
+            actionId: 'workflow.run.get', input: { runId: request.input.runId, includeUsage: false },
             parseResult: (value) => WorkflowRunGetResultV1Schema.parse(value),
             fallbackMessage: 'Workflow admission outcome unavailable',
             accountLifetime: lifetime,

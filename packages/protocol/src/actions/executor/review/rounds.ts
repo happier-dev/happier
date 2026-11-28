@@ -145,7 +145,7 @@ export async function dispatchReviewRoundAction(inv: RoundActionInvocation): Pro
       const result = readReviewRunActionPayload(response.result);
       return readActionFailureEnvelope(result) ?? { ok: true, result };
     }
-    const prior = await inv.executeHostChild('workflow.run.get', { runId: input.runId }, inv.ctx);
+    const prior = await inv.executeHostChild('workflow.run.get', { runId: input.runId, includeUsage: false }, inv.ctx);
     if (!prior.ok) return prior;
     const opened = WorkflowRunGetResultV1Schema.parse(prior.result);
     // Lazy like Review composition: the builtin graph owner sits above the Action executor.

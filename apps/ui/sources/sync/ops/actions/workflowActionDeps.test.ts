@@ -2889,6 +2889,12 @@ describe('UI Workflow Action front door', () => {
         } finally { h.account.dispose(); }
     });
 
+    const isExactRunWave = (operation: unknown) => {
+        const value = operation as Readonly<Record<string, unknown>>;
+        return value.runId === runId && (value.operation === 'get'
+            || (value.operation === 'invocations.list' && value.progressEnvelopes === true && value.cursor === undefined));
+    };
+
     it('refuses malformed content and mismatched Account scope before disclosure', async () => {
         const h = await createHarness('e2ee', { malformed: true });
         try {
@@ -2900,9 +2906,9 @@ describe('UI Workflow Action front door', () => {
                 .resolves.toMatchObject({ ok: false, errorCode: 'content_unavailable' });
             await expect(executeCaptured({ actionId: 'workflow.run.cancel', input: { runId, expectedRevision: 1 }, context: { ...h.context, runtimeAccountId: 'other-account' } }))
                 .resolves.toMatchObject({ ok: false, errorCode: 'content_unavailable' });
-            expect(h.operations).toEqual([
-                { operation: 'get', runId },
-            ]);
+            // The exact read's first usage page leaves with it as opaque rows; nothing is opened.
+            expect(h.operations).toEqual(expect.arrayContaining([{ operation: 'get', runId }]));
+            expect(h.operations.filter(operation => !isExactRunWave(operation))).toEqual([]);
         } finally { h.account.dispose(); }
     });
 
@@ -2922,12 +2928,15 @@ describe('UI Workflow Action front door', () => {
             // The authorized read supplies the Run owner's mode and opaque
             // envelopes. Locked material must prevent opening or returning them,
             // and must stop before recipient census/preparation or mutation.
-            expect(h.operations).toEqual([{ operation: 'get', runId }]);
+            // Its first usage page leaves with it as opaque rows and is never opened.
+            expect(h.operations).toEqual(expect.arrayContaining([{ operation: 'get', runId }]));
+            expect(h.operations.filter(operation => !isExactRunWave(operation))).toEqual([]);
+            const exactWave = h.operations.length;
             storage.setState({ settings, settingsScope });
             // Default settings bootstrap precedes Workflow dispatch. Its missing
             // material rejection is fail-closed, not a Workflow typed result.
             await expect(h.executeDefault('workflow.run.get', { runId }, h.context)).rejects.toBeInstanceOf(Error);
-            expect(h.operations).toEqual([{ operation: 'get', runId }]);
+            expect(h.operations).toHaveLength(exactWave);
             expect(h.transport).not.toHaveBeenCalled();
         } finally { storage.setState({ settings, settingsScope }); h.account.dispose(); }
     });

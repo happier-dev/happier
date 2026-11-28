@@ -52,7 +52,7 @@ export async function captureWorkflowDefinitionV1(input: unknown, context: Actio
     draft = captured;
   } else if (runIds.size === 1) {
     const runId = [...runIds][0]!;
-    const raw = await deps.workflowAction({ actionId: 'workflow.run.get', input: { runId }, context,
+    const raw = await deps.workflowAction({ actionId: 'workflow.run.get', input: { runId, includeUsage: false }, context,
       ...(context.signal ? { signal: context.signal } : {}) });
     const failure = readActionFailureEnvelope(raw);
     if (failure) return failure;

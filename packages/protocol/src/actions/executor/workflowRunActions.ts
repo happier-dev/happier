@@ -2172,6 +2172,17 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       evidence: { ...evidence, canContinueConversation }, current, retryCausalSet: causalSet, restoreWorkspaces: recordedWorkspaces });
   };
 
+  // The storage-only `progressEnvelopes` flag returns each row's private
+  // envelope in a byte-bounded same-page sidecar, so usage costs one
+  // storage read per page instead of one detail read per invocation.
+  const readRunUsagePage = async (runId: string, cursor: string | undefined, signal?: AbortSignal) => record(await deps.storage.execute({
+    operation: 'invocations.list',
+    runId,
+    progressEnvelopes: true,
+    ...(cursor ? { cursor } : {}),
+    pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
+  }, signal ? { signal } : {}));
+
   const readRunUsage = async (
     runId: string,
     resolvedEncryption: Readonly<{
@@ -2179,6 +2190,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       enc: WorkflowRunEncryptionV1;
     }>,
     signal?: AbortSignal,
+    // A first page the caller started alongside the exact Run read.
+    firstPage?: Promise<Readonly<Record<string, unknown>>>,
   ): Promise<WorkflowUsageV1 | undefined> => {
     let cursor: string | undefined;
     let applicableExecutions = 0;
@@ -2189,17 +2202,10 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     let outputTokensComplete = true;
     let costUsdComplete = true;
 
+    let pending = firstPage;
     do {
-      // The storage-only `progressEnvelopes` flag returns each row's private
-      // envelope in a byte-bounded same-page sidecar, so usage costs one
-      // storage read per page instead of one detail read per invocation.
-      const page = record(await deps.storage.execute({
-        operation: 'invocations.list',
-        runId,
-        progressEnvelopes: true,
-        ...(cursor ? { cursor } : {}),
-        pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
-      }, signal ? { signal } : {}));
+      const page = pending ? await pending : await readRunUsagePage(runId, cursor, signal);
+      pending = undefined;
       // A row whose envelope is absent from the sidecar fails closed below.
       const sidecar = page.progressEnvelopesByInvocationId;
       const envelopesById: Readonly<Record<string, unknown>> = sidecar && typeof sidecar === 'object' && !Array.isArray(sidecar)
@@ -3232,6 +3238,12 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       throw workflowError('continuation_unavailable');
     }
     if (args.actionId === 'workflow.run.get') {
+      // The first usage page depends on no fact of the exact Run read, so both
+      // leave in one storage wave. A resource-restricted caller reads no page
+      // until the retained Run passes its restriction.
+      const firstUsagePage = args.input.includeUsage === false || args.context.externalActionTarget !== undefined ? undefined
+        : readRunUsagePage(args.input.runId, undefined, args.context.signal);
+      firstUsagePage?.catch(() => undefined);
       const { accountId, enc, snapshot, accepted } = await openAccepted(args.input.runId, args.context.signal);
       assertRunResourceRestriction(args.context, { machineId: accepted.machineId, project: accepted.workspaceTarget.project }, deps.normalizeAbsolutePath);
       let checkpoint = null;
@@ -3256,6 +3268,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         args.input.runId,
         { accountId, enc },
         args.context.signal,
+        firstUsagePage,
       );
       const { stepProgress, stepProgressCurrentness, startWaitReason } = openRootProgress(args.input.runId, snapshot.rootProgress, enc, accountId);
       const heldStep = snapshot.heldProgress === undefined ? undefined

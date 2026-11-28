@@ -652,7 +652,7 @@ export function createCliWorkflowFamily(
               request: { operationId: operation.operationId }, exactMachine: true, ...(signal ? { signal } : {}) }),
             getRun: async (request) => await callDetachedExecutionRunRpc(null, SESSION_RPC_METHODS.EXECUTION_RUN_GET,
               request, { exactMachineId: run.machineId, ...(signal ? { signal } : {}) }),
-            getWorkflow: async runId => await owner.execute({ actionId: 'workflow.run.get', input: { runId },
+            getWorkflow: async runId => await owner.execute({ actionId: 'workflow.run.get', input: { runId, includeUsage: false },
               context: { ...args.context, ...(signal ? { signal } : {}) } }),
             ...(signal ? { signal } : {}),
           });
@@ -695,7 +695,7 @@ export function createCliWorkflowFamily(
                 wait: async () => { throw Object.assign(new Error('workflow_observation_only'), { code: 'workflow_observation_only' }); },
               },
               nativeActionWorkflows: {
-                get: async (runId, observationSignal) => await owner.execute({ actionId: 'workflow.run.get', input: { runId },
+                get: async (runId, observationSignal) => await owner.execute({ actionId: 'workflow.run.get', input: { runId, includeUsage: false },
                   context: { ...args.context, ...(observationSignal ? { signal: observationSignal } : {}) } }),
                 cancel: async () => { throw Object.assign(new Error('workflow_observation_only'), { code: 'workflow_observation_only' }); },
                 wait: async () => { throw Object.assign(new Error('workflow_observation_only'), { code: 'workflow_observation_only' }); },

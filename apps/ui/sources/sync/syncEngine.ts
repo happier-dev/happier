@@ -9652,7 +9652,7 @@ class Sync {
                     import('@happier-dev/protocol/workflows/actionsV1'),
                 ]);
                 const opened = await createUiWorkflowAction({ account })({ actionId: 'workflow.run.get',
-                    input: { runId: detail.workflowRun.workflowRunId },
+                    input: { runId: detail.workflowRun.workflowRunId, includeUsage: false },
                     context: { surface: 'ui', authority: 'present_user', serverId: account.serverId, runtimeAccountId: account.accountId },
                 }).catch(() => null);
                 account.assertCurrent();

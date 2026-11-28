@@ -77,10 +77,13 @@ describe('workflow Run detail Actions through Account HTTP and native RPC', () =
         expect(result.acceptedContext).toMatchObject({ source: { kind: 'inline' }, machineId: run.machineId, executionTarget: { kind: 'session' }, startedBy: 'user' });
         expect(result.callerAccess).toEqual({ canEdit: true });
         expect(result.definition.blocks).toHaveLength(500);
-        expect(home.requestsFor(route).map(request => request.input)).toEqual([
+        // The detail read and its first usage page leave in one wave, in either order.
+        const inputs = home.requestsFor(route).map(request => request.input);
+        expect(inputs).toHaveLength(2);
+        expect(inputs).toEqual(expect.arrayContaining([
             { operation: 'get', runId: run.id },
             expect.objectContaining({ operation: 'invocations.list', runId: run.id, progressEnvelopes: true }),
-        ]);
+        ]));
     });
 
     it('asks the server index for actionable invocations without paging full detail history', async () => {

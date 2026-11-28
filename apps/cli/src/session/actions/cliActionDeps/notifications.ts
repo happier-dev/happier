@@ -198,7 +198,7 @@ function createCliNotificationActionDepsForHost(
         }
       } else if (input.open?.kind === 'workflow_run') {
         if (!workflowAction) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
-        const visible = await workflowAction({ actionId: 'workflow.run.get', input: { runId: input.open.runId }, context });
+        const visible = await workflowAction({ actionId: 'workflow.run.get', input: { runId: input.open.runId, includeUsage: false }, context });
         if ('errorCode' in visible && visible.ok === false) return visible;
       }
       context.signal?.throwIfAborted();

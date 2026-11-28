@@ -713,7 +713,7 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
           },
           nativeActionWorkflows: {
             get: async (runId, signal) => {
-              const result = await actionExecutor.execute('workflow.run.get', { runId }, { surface: 'cli', authority: 'account_automation', ...(signal ? { signal } : {}) });
+              const result = await actionExecutor.execute('workflow.run.get', { runId, includeUsage: false }, { surface: 'cli', authority: 'account_automation', ...(signal ? { signal } : {}) });
               if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
               return result.result;
             },

@@ -467,6 +467,26 @@ describe('workflow Run Actions', () => {
     // O(pages): two storage pages per read, never one detail read per row.
     expect(execute.mock.calls.filter(([operation]) => operation.operation === 'invocations.list')).toHaveLength(4);
     expect(execute.mock.calls.filter(([operation]) => operation.operation === 'invocations.get')).toHaveLength(0);
+
+    // The first usage page needs no fact from the exact Run read: both leave in
+    // one storage wave, and decryption still waits for the opened Run key.
+    execute.mockClear();
+    let releaseRun!: () => void;
+    const runRead = new Promise<void>(resolve => { releaseRun = resolve; });
+    const overlapped = createWorkflowRunActionOwner({ ...deps, storage: { execute: async (operation: Readonly<Record<string, unknown>>) => {
+      if (operation.operation === 'get') await runRead;
+      return await execute(operation);
+    } } }).execute({ actionId: 'workflow.run.get', input: { runId }, context: {} });
+    await vi.waitFor(() => expect(execute.mock.calls.some(([operation]) => operation.operation === 'invocations.list')).toBe(true));
+    releaseRun();
+    await expect(overlapped).resolves.toMatchObject({ usage: { inputTokens: 14, outputTokens: 8, costUsd: 0.14 } });
+
+    // A caller that discards usage never pays for the scan.
+    execute.mockClear();
+    await expect(createWorkflowRunActionOwner(deps).execute({
+      actionId: 'workflow.run.get', input: { runId, includeUsage: false }, context: {},
+    })).resolves.not.toHaveProperty('usage');
+    expect(execute.mock.calls.map(([operation]) => operation.operation)).toEqual(['get']);
   });
 
   it('fails Run usage closed when a same-page private progress envelope is missing, malformed or bound to another row', async () => {
@@ -1295,9 +1315,11 @@ describe('workflow Run Actions', () => {
         },
       },
     });
-    execute.mockResolvedValueOnce({ run, acceptedEnvelope: admitted.acceptedEnvelope,
-      checkpointEnvelope: null, resultEnvelope: null, keyCensus: plainRunKeyCensus(admittedRunId, 7) })
-      .mockResolvedValueOnce({ invocations: [], progressEnvelopesByInvocationId: {} });
+    // The exact read and its first usage page leave together.
+    execute.mockImplementation(async (operation: Readonly<Record<string, unknown>>) => operation.operation === 'get'
+      ? { run, acceptedEnvelope: admitted.acceptedEnvelope, checkpointEnvelope: null, resultEnvelope: null,
+        keyCensus: plainRunKeyCensus(admittedRunId, 7) }
+      : { invocations: [], progressEnvelopesByInvocationId: {} });
     const observed = await owner.execute({ actionId: 'workflow.run.get', input: { runId: admittedRunId }, context: {} });
     expect(observed).toMatchObject({ acceptedContext: { origin: { kind: 'direct', originSessionId: 'session-1' } } });
     expect(observed).not.toHaveProperty('acceptedContext.origin.actionRequestAttributionV1');
