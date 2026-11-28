@@ -198,7 +198,8 @@ function NavigationProbe(props: Readonly<{ navigation: WorkspaceNavigationContex
 
 function ResizeLayout() { return <Stack />; }
 function DestinationTitlesProbe(props: Readonly<{ navigation: WorkspaceNavigationContextValue; catalog: ReturnType<typeof resolveCompactAppDestinations> }>) {
-    const entries = React.useMemo(() => Object.values(props.navigation.state.tabs).map(tab => ({ key: tab.id, ref: tab.target })), [props.navigation.state.tabs]);
+    const entries = React.useMemo(() => Object.values(props.navigation.state.tabs).map(tab => ({ key: tab.id, ref: tab.target,
+        fallbackTitle: props.navigation.state.fallbackTitlesByTabId[tab.id] })), [props.navigation.state.tabs, props.navigation.state.fallbackTitlesByTabId]);
     return React.createElement('DestinationTitles', { titles: useDestinationInstanceTitles(props.catalog, entries) });
 }
 
@@ -1867,6 +1868,25 @@ describe('consumed workspace navigation owner', () => {
         expect(title()).toBe(`${pageTitle} · ${t('approvals.status.executed')}`);
         await act(async () => storage.setState({ artifacts: { 'subject-request': artifact('failed') } }));
         expect(title()).toBe(`${pageTitle} · ${t('approvals.status.failed')}`);
+        await act(async () => { nav().openHref('/inbox', { mode: 'newTab' }); });
+        const key = workspaceLayoutScopeKey({ ...boundary.scope, windowId: 'main' });
+        const saved = JSON.parse(JSON.stringify(serializeWorkspaceLayout(nav().state)));
+        expect(parseWorkspaceLayout(saved)?.fallbackTitlesByTabId[tabId]).toBe(pageTitle);
+        const stored = getPersistenceStorage().getAllKeys().filter(entry => entry.startsWith('ui-state:workspace-layout'))
+            .map(entry => [entry, getPersistenceStorage().getString(entry)!] as const);
+        await screen.unmount();
+        clearPersistenceStorage();
+        for (const [entry, raw] of stored) getPersistenceStorage().set(entry, raw);
+        storage.setState({ artifacts: {} });
+        boundary.pathname = '/inbox';
+        boundary.params = {};
+        const cold = await renderScreen(scene());
+        const coldNav = cold.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        expect(parseWorkspaceLayout(workspaceLayoutsState.readStrict(key))?.fallbackTitlesByTabId[tabId]).toBe(pageTitle);
+        expect(coldNav.state.groups[coldNav.state.focusedGroupId].activeTabId).not.toBe(tabId);
+        expect(cold.root.findByType('DestinationTitles').props.titles.get(tabId)).toBe(pageTitle);
+        await act(async () => storage.setState({ artifacts: { 'subject-request': artifact('failed') } }));
+        expect(cold.root.findByType('DestinationTitles').props.titles.get(tabId)).toBe(`${pageTitle} · ${t('approvals.status.failed')}`);
     });
 
     it.each([false, true])('settles a retained approval tab from the live request lifecycle without mounting its page (phone=%s)', async phone => {
