@@ -1,14 +1,16 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { computePluginUiArtifactFileSetSha256DigestV1 } from '@happier-dev/protocol/plugins/ui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createTestNpmTarball } from '@/plugins/distribution/testkit/npmTarball';
+import { resolveAuthoritativePackagedRuntimeCustody } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
 import { decideUserPluginChange, describeUserPluginChangeFailure } from '@/plugins/daemon/changeClient';
 import { executePluginDevLoopAction } from '@/plugins/devLoop/actions';
 import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
@@ -930,6 +932,44 @@ describe('createDaemonArchivePluginChangePreparer', () => {
     expect(describeUserPluginChangeFailure(result)).toMatchObject({
       code: 'plugin_install_failed',
       failureCause: { phase: 'plugins.change.apply', errorCode: 'ENOENT' },
+    });
+    expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins).toEqual({});
+  });
+
+  it('returns a rejected packaged runtime identity to the person approving an archive', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-archive-change-home-'));
+    roots.push(happyHomeDir);
+    const fixture = await createArchiveFixture();
+    const unboundRuntime = join(fixture.root, 'package-dist');
+    await mkdir(unboundRuntime);
+    const entrypoint = join(unboundRuntime, 'index.mjs');
+    await writeFile(entrypoint, 'export {};');
+    const service = createDaemonPluginChangeService({
+      prepare: createDaemonArchivePluginChangePreparer({
+        happyHomeDir,
+        runtimeLifecycle: {
+          prepare: async () => {
+            resolveAuthoritativePackagedRuntimeCustody({
+              moduleUrl: pathToFileURL(entrypoint).href,
+              argv: [process.execPath, entrypoint],
+              processEnv: { HAPPIER_HOME_DIR: happyHomeDir },
+            });
+            return { abort: async () => undefined, adopt: async () => undefined };
+          },
+        },
+      }),
+    });
+    const review = await service.requestPluginChange({ kind: 'installArchive', locator: fixture.archivePath });
+    if (review.kind !== 'reviewRequired') throw new Error('Expected archive installation review');
+
+    const result = await service.decidePluginChange({
+      pendingChangeId: review.pendingChangeId,
+      decision: 'installAndTrust',
+    });
+    if (result.kind !== 'failed') throw new Error('Expected archive installation failure');
+    expect(describeUserPluginChangeFailure(result)).toMatchObject({
+      code: 'FIRST_PARTY_VERSION_ROOT_OUTSIDE_LAYOUT',
+      failureCause: { phase: 'plugins.change.apply', errorCode: 'FIRST_PARTY_VERSION_ROOT_OUTSIDE_LAYOUT' },
     });
     expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins).toEqual({});
   });

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { FirstPartyVersionRootIdentityError } from '@happier-dev/cli-common/firstPartyRuntime';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { isPluginError } from '@happier-dev/protocol/plugins/errors';
@@ -129,6 +130,7 @@ export function projectPluginChangeFailure(
 ): Extract<PluginChangeApplyResult, { kind: 'failed' }> {
   const ownerRefusal = error instanceof RegistryFetchErrorV1
     || error instanceof DaemonPluginChangePreparationError
+    || error instanceof FirstPartyVersionRootIdentityError
     || isPluginError(error);
   const code = ownerRefusal ? error.code : fallbackCode;
   logLocalFailure?.(code);
