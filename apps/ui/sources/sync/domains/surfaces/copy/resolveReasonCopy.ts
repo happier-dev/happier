@@ -3,6 +3,7 @@ import type { BrowserAdapterUnavailableReasonCode } from '@/sync/domains/browser
 import type { BrowserPreviewRefusalReasonCode } from '@/sync/domains/browser/adapters/targets/localPreview';
 import { t } from '@/text';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { PluginActionExecutionV2 } from '@happier-dev/protocol/plugins/actions/v2';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { MachineAvailabilityDiagnosticV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
@@ -977,6 +978,8 @@ export function resolveReasonCopy(input: Readonly<{
     servicesActionOffered?: boolean;
     /** The surrounding title already names the Service, so the body does not repeat it as a prefix. */
     serviceNamedByTitle?: boolean;
+    /** A plugin Action's typed execution realm: an Account Action's refusal names no Machine. */
+    executionTarget?: PluginActionExecutionV2['target'];
 }>): ResolvedReasonCopy {
     const rawCode = input.reasonCode ?? null;
     const frameTitleKey = !rawCode ? undefined
@@ -985,7 +988,10 @@ export function resolveReasonCopy(input: Readonly<{
         : undefined;
     const startFailed = input.kind === 'localServiceAction' && rawCode === 'plugin_managed_service_establishment_failed';
     const title = startFailed ? t('localServices.actions.failure.startFailedTitle') : frameTitleKey ? t(frameTitleKey) : resolveTitle(input.kind);
-    const known = rawCode ? resolveKnownMessage(input.kind, rawCode, input.servicesActionOffered) : null;
+    const accountActivationRefused = input.kind === 'pluginRuntime' && input.executionTarget === 'account' && rawCode !== null
+        && PLUGIN_RUNTIME_KEYS[rawCode as keyof typeof PLUGIN_RUNTIME_KEYS] === 'pluginSurfaces.originReason.activation_refused';
+    const known = accountActivationRefused ? t('pluginRuntime.accountActivationRefused')
+        : rawCode ? resolveKnownMessage(input.kind, rawCode, input.servicesActionOffered) : null;
     const prerequisite = input.kind === 'localServiceAction' && rawCode === 'native_tool_unavailable' ? input.prerequisite : undefined;
     const failure = input.kind === 'localServiceAction' && rawCode === 'plugin_managed_service_establishment_failed'
         ? input.establishmentFailure : undefined;

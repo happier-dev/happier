@@ -26,7 +26,8 @@ import { t } from '@/text';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
-import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { isDeferredApprovalResult, normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { publishPresentationNotice, readPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 
 import type {
     ActionInputForm,
@@ -63,6 +64,21 @@ function isSuccessfulSubmit(
     >,
 ): boolean {
     return outcome.kind === 'settled' && outcome.outcome.ok;
+}
+
+/**
+ * A settled Action is confirmed once, where the person acted, through the shared notice host; its result is
+ * never drawn. A form that only selected a value carries no result, and an Action waiting for approval is not done.
+ * The caller skips this when the Action's own path already published a notice (an Undo, a skipped automation).
+ */
+function confirmSettledAction(settled: ActionInputFormSubmissionResult, title: string, actionId: string | undefined): void {
+    if (!('result' in settled) || isDeferredApprovalResult({ ok: true, result: settled.result })) return;
+    publishPresentationNotice({
+        key: `action-form-settled:${actionId ?? title}`,
+        severity: 'info',
+        message: t('pluginRuntime.actionDone', { action: title }),
+        emphasis: title,
+    });
 }
 
 /** A required field the person left empty: its owner would refuse the input, so the form says so first. */
@@ -180,8 +196,12 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
         setError(null);
         void (async () => {
             try {
+                const noticeBefore = readPresentationNotice();
                 const outcome = await props.form.submit();
                 if (isSuccessfulSubmit(outcome)) {
+                    if (outcome.kind === 'settled' && readPresentationNotice() === noticeBefore) {
+                        confirmSettledAction(outcome.outcome, props.form.presentation.title, props.actionId);
+                    }
                     props.onClose();
                     return;
                 }
@@ -196,7 +216,8 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
                     return;
                 }
                 const code = outcome.kind === 'settled' ? outcome.outcome.code : outcome.reason;
-                const message = code ? resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: code }).body
+                const message = code ? resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: code,
+                    executionTarget: props.form.presentation.executionTarget }).body
                     : t('pluginRuntime.unavailableGeneric');
                 const presentation = presentActionExecutionFailure({
                     ...(outcome.kind === 'settled' ? outcome.outcome : { ok: false }),
@@ -210,7 +231,7 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
                 setError(presentActionExecutionFailure({ ok: false, ...normalizeActionExecutorThrownError(error) }, t('pluginRuntime.unavailableGeneric')));
             }
         })();
-    }, [fieldOptions.resolveOptions, fields, props.form, props.onClose, props.onSubmitOptions, props.validateInput, shownFields]);
+    }, [fieldOptions.resolveOptions, fields, props.actionId, props.form, props.onClose, props.onSubmitOptions, props.validateInput, shownFields]);
 
     const repairConnectedAccounts = React.useCallback(() => {
         // A fresh open after repair re-resolves the form's options on its admitted target.

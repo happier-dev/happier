@@ -453,6 +453,9 @@ describe('qualified Session row Action binding', () => {
         const controller = createPluginContributedActionController({ resolveCurrent: () => current, dispatch });
         const opened = await controller.open(controller.list({ placement: 'contextMenu', scope: 'session' })[0]!);
         if (opened.kind !== 'form') throw new Error('expected_row_form');
+        // The Action's typed execution realm reaches the form so its refusal copy names the right place.
+        expect(opened.action.executionTarget).toBe('daemon');
+        expect(opened.form.presentation.executionTarget).toBe('daemon');
         expect(opened.form.getInput()).toMatchObject({ sessionId: SESSION_ID });
         opened.form.replaceInput({ sessionId: 'another-session', note: 'Review' });
         expect(await opened.form.submit()).toMatchObject({ kind: 'unavailable', reason: 'invalid_input' });

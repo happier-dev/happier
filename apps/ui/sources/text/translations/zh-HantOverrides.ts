@@ -15830,6 +15830,8 @@ settingsSession: {
   pluginRuntime: {
     invalidParameters: "此操作的請求因無效而被拒絕。請檢查輸入後重試。",
     requiredFieldMissing: "請填寫此項以繼續。",
+    actionDone: ({ action }: { action: string }) => `${action}：已完成`,
+    accountActivationRefused: "你的帳戶現在無法執行此操作。",
       actionFailed: "操作失敗。重試前請先檢查結果。",
       actionUnavailable: "此操作無法使用。請檢查外掛和機器連線。",
       actionStale: "此操作已失效。請重新開啟以繼續。",

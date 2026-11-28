@@ -20889,6 +20889,8 @@ settingsSession: {
     pluginRuntime: {
       invalidParameters: "此操作的请求因无效而被拒绝。请检查输入后重试。",
       requiredFieldMissing: "请填写此项以继续。",
+      actionDone: ({ action }: { action: string }) => `${action}：已完成`,
+      accountActivationRefused: "你的账户现在无法运行此操作。",
         actionFailed: "操作失败。重试前请先检查结果。",
         actionUnavailable: "此操作不可用。请检查插件和机器连接。",
         actionStale: "此操作已失效。请重新打开以继续。",

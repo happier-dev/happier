@@ -24916,6 +24916,8 @@ const enPluginReactNative = {
 const enPluginRuntime = {
   invalidParameters: "This action’s request was rejected as invalid. Check the input and try again.",
   requiredFieldMissing: "Fill this in to continue.",
+  actionDone: ({ action }: { action: string }) => `${action} done`,
+  accountActivationRefused: "Your account can’t run this right now.",
   actionFailed: "This action failed. Check its result before trying again.",
   actionUnavailable: "This action is unavailable. Check the plugin and machine connection.",
   actionStale: "This action is no longer current. Open it again to continue.",

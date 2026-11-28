@@ -49,6 +49,16 @@ it('explains a local native artifact failure through the runtime reason owner', 
   expect(resolvePluginSurfaceStatePresentation({ state: 'failedRetry', reasonCode: 'local_artifact_failure' }).recoveryAction?.kind).toBe('retry');
 });
 
+it.each(['activation_failed', 'plugin_activation_failed'])(
+  'says an Account Action that could not start without naming a Machine; a Machine Action keeps its Machine (%s)', (code) => {
+    const account = resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: code, executionTarget: 'account' });
+    expect(account.body).toBe(t('pluginRuntime.accountActivationRefused'));
+    expect(account.body).not.toBe(t('pluginSurfaces.originReason.activation_refused'));
+    expect(account.diagnosticCode).toBe(code);
+    expect(resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: code, executionTarget: 'daemon' }).body)
+      .toBe(t('pluginSurfaces.originReason.activation_refused'));
+  });
+
 it('says an unreadable Account mode is an unreachable Home, offers Retry and keeps the code for Details', () => {
   const presentation = resolvePluginSurfaceStatePresentation({
     state: 'unavailable', reasonCode: 'account_encryption_mode_unavailable', subjectName: 'PRs, Issues & Tasks',

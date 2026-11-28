@@ -1,5 +1,5 @@
 import { DaemonPluginHostPresentedComposerCurrentIntentV1Schema, type DaemonPluginHostPresentedComposerCurrentIntentV1 } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
-import { PluginActionPlacementV2Schema, PluginActionScopeV2Schema, type PluginActionPlacementV2, type PluginActionScopeV2 } from '@happier-dev/protocol/plugins/actions/v2';
+import { PluginActionPlacementV2Schema, PluginActionScopeV2Schema, type PluginActionExecutionV2, type PluginActionPlacementV2, type PluginActionScopeV2 } from '@happier-dev/protocol/plugins/actions/v2';
 import { PluginContributionIdentityV1Schema, buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ConnectedAccountActionFormSelectionV1Schema } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import type { DaemonPluginActionFormConnectedAccountOption } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -285,6 +285,11 @@ type PluginContributedActionDescriptorBase = Readonly<{
     /** The semantic scope that selected this presentation instance. */
     scope: PluginActionScopeV2;
     scopes: readonly PluginActionScopeV2[];
+    /**
+     * The current Action's typed execution realm (Machine, Account or this app), from the same resolver dispatch
+     * reads; refusal copy names the place from it. Absent while the Action has no resolved execution descriptor.
+     */
+    executionTarget?: PluginActionExecutionV2['target'];
 }>;
 
 export type PluginContributedActionDescriptor =
@@ -615,6 +620,10 @@ function actionMatchesSelector(action: PluginProjectionAction, selector: PluginC
         && actionScopes(action).includes(selector.scope);
 }
 
+function withExecutionTarget(target: PluginActionExecutionV2['target'] | undefined) {
+    return target === undefined ? {} : { executionTarget: target };
+}
+
 const COMPOSER_SLASH_SELECTOR: PluginContributedActionSelector = Object.freeze({ placement: 'composer.slash', scope: 'session' });
 
 function descriptorForAction(params: Readonly<{
@@ -625,6 +634,7 @@ function descriptorForAction(params: Readonly<{
     pluginUiProjection?: PluginUiProjectionModel | null;
     localize?: PluginLocalizedTextResolver;
     selector: PluginContributedActionSelector;
+    resolveContributedAction?: PluginContributedActionCurrentSnapshot['resolveContributedAction'];
 }>): PluginContributedActionDescriptor | null {
     const identity = PluginContributionIdentityV1Schema.safeParse({
         pluginId: params.pluginId,
@@ -652,6 +662,7 @@ function descriptorForAction(params: Readonly<{
         slash: params.action.slash ?? null,
         scope: params.selector.scope,
         scopes,
+        ...withExecutionTarget(params.resolveContributedAction?.(identity.data)?.execution.target),
     };
     const inputHints = presentation.inputHints;
     return inputHints?.fields.length
@@ -968,6 +979,7 @@ export function createPluginContributedActionController(params: Readonly<{
                 placement: requested.placement,
                 scope: requested.scope,
             },
+            resolveContributedAction: snapshot.resolveContributedAction,
         });
         if (!descriptor || !sameDescriptor(requested, descriptor)) {
             return { kind: 'stale', reason: 'action_retired' };
@@ -1054,6 +1066,7 @@ export function createPluginContributedActionController(params: Readonly<{
             action,
             pluginUiProjection: reference.value.snapshot.pluginUiProjection,
             localize: reference.value.snapshot.localize,
+            resolveContributedAction: reference.value.snapshot.resolveContributedAction,
             // Retain only the first non-semantic placement to reuse the
             // descriptor, form, and currentness owner. A semantic
             // Composer/Message binding must never acquire this generic
@@ -1282,6 +1295,7 @@ export function createPluginContributedActionController(params: Readonly<{
                 title: resolved.descriptor.title,
                 description: resolved.descriptor.description,
                 ...presentResolvedCredentialFormHints(hints),
+                ...withExecutionTarget(resolved.descriptor.executionTarget),
             },
             ...(isSessionRowPlacement(resolved.snapshot, resolved.descriptor.placement, resolved.descriptor.scope) ? { initialInput: seedSessionRowInput(
                 resolved.snapshot, resolved.identity, seedInputByFieldHints({ inputHints }, {}),
@@ -1929,6 +1943,7 @@ export function createPluginContributedActionController(params: Readonly<{
                         pluginUiProjection: snapshot.pluginUiProjection,
                         localize: presentation?.localize ?? snapshot.localize,
                         selector,
+                        resolveContributedAction: snapshot.resolveContributedAction,
                     });
                     if (descriptor) actions.push(descriptor);
                 }

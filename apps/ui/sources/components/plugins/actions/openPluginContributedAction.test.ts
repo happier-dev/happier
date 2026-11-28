@@ -135,6 +135,32 @@ describe('openPluginContributedAction', () => {
         );
     });
 
+    it.each([
+        ['account', 'pluginRuntime.accountActivationRefused'],
+        ['daemon', 'pluginSurfaces.originReason.activation_refused'],
+    ] as const)('says a direct %s Action that could not start by its execution realm', async (executionTarget, copyKey) => {
+        const descriptor = { ...action(), inputHints: null, kind: 'direct' as const, executionTarget };
+        const controller = {
+            list: () => [],
+            listSlashCommands: () => [],
+            open: vi.fn().mockResolvedValue({
+                kind: 'direct',
+                action: descriptor,
+                outcome: { ok: false, code: 'activation_failed', reason: 'activation_failed', layer: 'registration' },
+            }),
+            isReferenceAvailable: () => false,
+            isSessionReferenceAvailable: () => false,
+            invokeReference: async () => ({ kind: 'stale' as const, reason: 'action_retired' as const }),
+            openSessionReference: async () => ({ kind: 'stale' as const, reason: 'action_retired' as const }),
+        } satisfies PluginContributedActionController;
+        const { Modal } = await import('@/modal');
+        const { t } = await import('@/text');
+
+        await openPluginContributedAction({ controller, action: descriptor });
+
+        expect(vi.mocked(Modal.alert).mock.calls[0]?.[1]).toBe(t(copyKey));
+    });
+
     it('keeps a settled plugin refusal code and issued request ID in shared technical details', async () => {
         const descriptor = { ...action(), inputHints: null, kind: 'direct' as const };
         const requestId = 'message-action-refusal';

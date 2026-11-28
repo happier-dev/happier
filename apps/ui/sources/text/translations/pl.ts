@@ -21098,6 +21098,8 @@ settingsSession: {
     pluginRuntime: {
       invalidParameters: "Żądanie tej akcji zostało odrzucone jako nieprawidłowe. Sprawdź dane i spróbuj ponownie.",
       requiredFieldMissing: "Wypełnij to pole, aby kontynuować.",
+      actionDone: ({ action }: { action: string }) => `${action}: gotowe`,
+      accountActivationRefused: "Twoje konto nie może teraz tego uruchomić.",
         actionFailed: "Ta czynność nie powiodła się. Sprawdź wynik przed ponowną próbą.",
         actionUnavailable: "Ta czynność jest niedostępna. Sprawdź wtyczkę i połączenie z maszyną.",
         actionStale: "Ta czynność jest już nieaktualna. Otwórz ją ponownie, aby kontynuować.",

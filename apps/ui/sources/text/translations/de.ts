@@ -21354,6 +21354,8 @@ settingsSession: {
     pluginRuntime: {
       invalidParameters: "Die Anfrage dieser Aktion wurde als ungültig abgelehnt. Prüfe die Eingaben und versuche es erneut.",
       requiredFieldMissing: "Fülle dieses Feld aus, um fortzufahren.",
+      actionDone: ({ action }: { action: string }) => `${action}: erledigt`,
+      accountActivationRefused: "Dein Konto kann das gerade nicht ausführen.",
         actionFailed: "Diese Aktion ist fehlgeschlagen. Prüfe das Ergebnis, bevor du es erneut versuchst.",
         actionUnavailable: "Diese Aktion ist nicht verfügbar. Prüfe das Plugin und die Verbindung zum Rechner.",
         actionStale: "Diese Aktion ist nicht mehr aktuell. Öffne sie erneut, um fortzufahren.",

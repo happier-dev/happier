@@ -20080,6 +20080,8 @@ La meva pregunta: `,
     pluginRuntime: {
       invalidParameters: "La sol·licitud d’aquesta acció s’ha rebutjat perquè no és vàlida. Comprova les dades i torna-ho a provar.",
       requiredFieldMissing: "Omple aquest camp per continuar.",
+      actionDone: ({ action }: { action: string }) => `${action}: fet`,
+      accountActivationRefused: "El teu compte no pot executar això ara mateix.",
         actionFailed: "Aquesta acció ha fallat. Comprova’n el resultat abans de tornar-ho a provar.",
         actionUnavailable: "Aquesta acció no està disponible. Comprova el connector i la connexió amb la màquina.",
         actionStale: "Aquesta acció ja no és vigent. Torna-la a obrir per continuar.",

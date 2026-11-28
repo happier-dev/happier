@@ -16,8 +16,9 @@ import type {
 } from './pluginContributedActionController';
 
 function presentPluginActionFailure(kind: 'failed' | 'stale' | 'unavailable' | 'thrown', reasonCode?: string,
-    failure?: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>): void {
-    const message = reasonCode ? resolveReasonCopy({ kind: 'pluginRuntime', reasonCode }).body
+    failure?: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>,
+    executionTarget?: PluginContributedActionDescriptor['executionTarget']): void {
+    const message = reasonCode ? resolveReasonCopy({ kind: 'pluginRuntime', reasonCode, executionTarget }).body
         : kind === 'failed' ? t('pluginRuntime.actionFailed')
         : kind === 'stale' ? t('pluginRuntime.actionStale')
             : kind === 'unavailable' ? t('pluginRuntime.actionUnavailable')
@@ -52,7 +53,8 @@ async function presentPluginContributedActionOpen(
         // known effect as stale, because consumers can otherwise retry it.
         if (opened.kind === 'direct') {
             if (showUnavailableFeedback && !opened.outcome.ok && !signal?.aborted) {
-                presentPluginActionFailure('failed', opened.outcome.layer ? opened.outcome.code : undefined, opened.outcome);
+                presentPluginActionFailure('failed', opened.outcome.layer ? opened.outcome.code : undefined, opened.outcome,
+                    opened.action.executionTarget);
             }
             return opened;
         }

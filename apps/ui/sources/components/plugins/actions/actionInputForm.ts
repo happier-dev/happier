@@ -2,6 +2,7 @@ import { normalizeInputByFieldHints as normalizeActionInputByFieldHints, resolve
 import type { InputHints as ActionInputHints } from '@happier-dev/protocol/inputs/inputFields';
 import type { PluginUiHostApiErrorPayloadV1 } from '@happier-dev/protocol/plugins/ui';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { PluginActionExecutionV2 } from '@happier-dev/protocol/plugins/actions/v2';
 
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
@@ -15,6 +16,8 @@ export type ActionInputFormPresentation = Readonly<{
      * adding one beside it. Resolution removes the field's own marker, so the host states it here.
      */
     choosesConnectedAccount?: true;
+    /** The Action's typed execution realm, so a refusal says where it could not run (an Account Action names no Machine). */
+    executionTarget?: PluginActionExecutionV2['target'];
 }>;
 
 export type ActionInputFormSubmissionResult = Readonly<{
@@ -23,6 +26,11 @@ export type ActionInputFormSubmissionResult = Readonly<{
     cancelled?: true;
     /** Displayed as diagnostic text. Action owners may provide their own operation phase. */
     phase?: string;
+    /**
+     * The settled Action's result, present only when the submit ran an Action. The form confirms that
+     * Action once and never draws the result; a form that only selected a value leaves it out.
+     */
+    result?: unknown;
 }
     & Partial<Pick<PluginUiHostApiErrorPayloadV1,
         'code' | 'layer' | 'retryable' | 'message' | 'remediation'>>

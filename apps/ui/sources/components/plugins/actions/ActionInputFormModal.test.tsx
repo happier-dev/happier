@@ -4,6 +4,8 @@ import { act } from 'react-test-renderer';
 
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
+import { publishPresentationNotice, readPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
+
 import { createActionInputForm, type ActionInputForm, type ActionInputFormSubmissionResult } from './actionInputForm';
 import { ActionInputFormModal } from './ActionInputFormModal';
 
@@ -303,6 +305,98 @@ describe('ActionInputFormModal', () => {
             expect(screen.getTextContent()).not.toContain('pluginRuntime.requiredFieldMissing');
             await press();
             expect(submit.mock.calls[0]?.[0]).toMatchObject({ note: 'Ship it' });
+        } finally { await act(async () => { form.retire(); }); }
+    });
+
+    it('closes on a settled Action and confirms it once through the notice host, never drawing its result', async () => {
+        retirePresentationNotice();
+        const onClose = vi.fn();
+        const setChrome = vi.fn();
+        const form = createActionInputForm({
+            presentation: { title: 'Post a standup note', description: null, inputHints: { fields: [
+                { path: 'note', title: 'Note', widget: 'text', required: true },
+            ] } },
+            initialInput: { note: 'Shipped the form' },
+            submit: async () => ({ ok: true, result: { noteId: 'note-7f3a', body: 'Shipped the form' } }),
+        });
+        try {
+            const screen = await renderScreen(<ActionInputFormModal form={form} onClose={onClose} setChrome={setChrome} />);
+            const submit = findSubmitButton(setChrome.mock.calls.at(-1)?.[0] as ChromeWithFooter);
+            await act(async () => { submit?.props.onPress?.(); await Promise.resolve(); });
+            expect(onClose).toHaveBeenCalledOnce();
+            expect(readPresentationNotice()).toMatchObject({
+                severity: 'info', message: 'pluginRuntime.actionDone', emphasis: 'Post a standup note',
+            });
+            // No typed target reference: nothing to open.
+            expect(readPresentationNotice()?.action).toBeUndefined();
+            expect(screen.getTextContent()).not.toContain('note-7f3a');
+        } finally {
+            retirePresentationNotice();
+            await act(async () => { form.retire(); });
+        }
+    });
+
+    it.each([
+        ['a selection that ran no Action', { ok: true }],
+        ['an Action that is waiting for approval', { ok: true, result: { kind: 'approval_request_created' } }],
+    ] as const)('closes on %s without saying it is done', async (_name, settled) => {
+        retirePresentationNotice();
+        const onClose = vi.fn();
+        const setChrome = vi.fn();
+        const form = createActionInputForm({
+            presentation: { title: 'Choose a channel', description: null, inputHints: { fields: [] } },
+            submit: async () => settled,
+        });
+        try {
+            await renderScreen(<ActionInputFormModal form={form} onClose={onClose} setChrome={setChrome} />);
+            const submit = findSubmitButton(setChrome.mock.calls.at(-1)?.[0] as ChromeWithFooter);
+            await act(async () => { submit?.props.onPress?.(); await Promise.resolve(); });
+            expect(onClose).toHaveBeenCalledOnce();
+            expect(readPresentationNotice()).toBeNull();
+        } finally { await act(async () => { form.retire(); }); }
+    });
+
+    it('leaves the notice the Action itself published (its Undo) in place of a second confirmation', async () => {
+        retirePresentationNotice();
+        const undo = { label: 'Undo', run: vi.fn() };
+        const setChrome = vi.fn();
+        const form = createActionInputForm({
+            presentation: { title: 'Move widget', description: null, inputHints: { fields: [] } },
+            submit: async () => {
+                publishPresentationNotice({ key: 'widget-moved', severity: 'info', message: 'Widget moved', undo });
+                return { ok: true, result: { moved: true } };
+            },
+        });
+        try {
+            await renderScreen(<ActionInputFormModal form={form} onClose={vi.fn()} setChrome={setChrome} />);
+            const submit = findSubmitButton(setChrome.mock.calls.at(-1)?.[0] as ChromeWithFooter);
+            await act(async () => { submit?.props.onPress?.(); await Promise.resolve(); });
+            expect(readPresentationNotice()).toMatchObject({ key: 'widget-moved', undo });
+        } finally {
+            retirePresentationNotice();
+            await act(async () => { form.retire(); });
+        }
+    });
+
+    it.each([
+        ['account', 'pluginRuntime.accountActivationRefused'],
+        ['daemon', 'pluginSurfaces.originReason.activation_refused'],
+    ] as const)('keeps a refused %s Action in the form, said by its execution realm', async (executionTarget, sentence) => {
+        retirePresentationNotice();
+        const onClose = vi.fn();
+        const setChrome = vi.fn();
+        const form = createActionInputForm({
+            presentation: { title: 'Post a standup note', description: null, inputHints: { fields: [] }, executionTarget },
+            submit: async () => ({ ok: false, code: 'activation_failed' }),
+        });
+        try {
+            const screen = await renderScreen(<ActionInputFormModal form={form} onClose={onClose} setChrome={setChrome} />);
+            const submit = findSubmitButton(setChrome.mock.calls.at(-1)?.[0] as ChromeWithFooter);
+            await act(async () => { submit?.props.onPress?.(); await Promise.resolve(); });
+            expect(onClose).not.toHaveBeenCalled();
+            expect(readPresentationNotice()).toBeNull();
+            expect(screen.getTextContent()).toContain(sentence);
+            if (executionTarget === 'account') expect(screen.getTextContent()).not.toContain('originReason.activation_refused');
         } finally { await act(async () => { form.retire(); }); }
     });
 

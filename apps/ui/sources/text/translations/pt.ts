@@ -21379,6 +21379,8 @@ settingsSession: {
     pluginRuntime: {
       invalidParameters: "A solicitação desta ação foi rejeitada por ser inválida. Verifique os dados e tente novamente.",
       requiredFieldMissing: "Preencha este campo para continuar.",
+      actionDone: ({ action }: { action: string }) => `${action}: concluído`,
+      accountActivationRefused: "Sua conta não pode executar isto agora.",
         actionFailed: "Esta ação falhou. Verifica o resultado antes de tentares novamente.",
         actionUnavailable: "Esta ação está indisponível. Verifica o plugin e a ligação à máquina.",
         actionStale: "Esta ação já não está atualizada. Abre-a novamente para continuar.",
