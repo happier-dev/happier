@@ -516,6 +516,68 @@ describe('parseClaudeScreenState — dialogs and editors', () => {
     const state = parseClaudeScreenState(CLAUDE_2_1_170.userDraft);
     expect(state.userDraftPresent).toBe(true);
   });
+
+  it('reads a rule-boxed draft that starts with digits and a dot as the composer, not a numbered option', () => {
+    const screen = ['────────────────────', '❯ 1.1.5 は配布済み', '────────────────────', '  ? for shortcuts'].join('\n');
+    const state = parseClaudeScreenState(screen, { cursor: { x: 16, y: 1 } });
+    expect(state.composerContent).toBe('1.1.5 は配布済み');
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(false);
+    expect(state.inputBoxInteractive).toBe(true);
+  });
+
+  it('keeps slash and mode controls available on an empty composer with no visible rules', () => {
+    const state = parseClaudeScreenState('│ > │\n  ? for shortcuts');
+    expect(state.userDraftPresent).toBe(false);
+    expect(isSafeWindowForSlashControl(state)).toBe(true);
+    expect(isSafeWindowForModeCycle(state)).toBe(true);
+  });
+
+  it.each(['', 'Start', '1. Start'])('keeps a quoted numbered row inside the framed draft starting with %s', (firstLine) => {
+    const screen = [
+      '────────────────────',
+      `❯ ${firstLine}`,
+      '  ─── Build check ───',
+      '  ❯ 2. review the output',
+      '────────────────────',
+    ].join('\n');
+
+    expect(parseClaudeScreenState(screen)).toMatchObject({
+      composerContent: `${firstLine}\n─── Build check ───\n❯ 2. review the output`,
+      inputBoxInteractive: true,
+      userDraftPresent: true,
+      unrecognizedConfirmationDialogVisible: false,
+    });
+  });
+
+  it('keeps a titled rule inside a draft between the opening and closing rules', () => {
+    const screen = [
+      '────── Work session ──────────',
+      '❯ 1. check the build',
+      '  ─── Build check ───',
+      '  then review the output',
+      '────────────────────',
+    ].join('\n');
+
+    expect(parseClaudeScreenState(screen)).toMatchObject({
+      composerContent: '1. check the build\n─── Build check ───\nthen review the output',
+      inputBoxInteractive: true,
+    });
+  });
+
+  it('keeps a numbered draft interactive when the terminal host only supplies the screen text', () => {
+    const screen = [
+      '────────────────────',
+      '❯ 1. check the build',
+      '  2. review the output',
+      '────────────────────',
+    ].join('\n');
+    const state = parseClaudeScreenState(screen);
+    expect(state.composerContent).toBe('1. check the build\n2. review the output');
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(false);
+    expect(state.visibleDialogSelection).toBeNull();
+    expect(state.inputBoxInteractive).toBe(true);
+  });
+
 });
 
 // Live runner capture 2026-06-12 (Claude Code 2.1.174, zellij, fresh-dir spawn pid-45964): the
