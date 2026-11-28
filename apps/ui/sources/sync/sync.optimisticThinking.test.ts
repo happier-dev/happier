@@ -834,8 +834,8 @@ describe('sync.sendMessage optimistic thinking', () => {
             return { ok: true, providerAcceptancePending: true };
         });
         const request = vi.spyOn(apiSocket, 'request').mockImplementation(async (path) => {
-            if (path === `/v2/sessions/${sessionId}/messages/by-local-id/${localId}`) {
-                return Response.json({ error: 'Message not found' }, { status: 404 });
+            if (path === `/v2/sessions/${sessionId}/messages/by-local-id`) {
+                return Response.json({ absentLocalIds: [localId] });
             }
             if (path.includes('/pending?')) return Response.json({ pending: [] });
             return Response.json({ messages: [] });
@@ -862,7 +862,7 @@ describe('sync.sendMessage optimistic thinking', () => {
         }
         await expect(sending).resolves.toEqual({ localId, persistence: 'provider_direct', providerAcceptancePending: true });
         await vi.waitFor(() => expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([]));
-        expect(request).toHaveBeenCalledWith(`/v2/sessions/${sessionId}/messages/by-local-id/${localId}`, expect.anything());
+        expect(request).toHaveBeenCalledWith(`/v2/sessions/${sessionId}/messages/by-local-id`, expect.anything());
         const transcript = storage.getState().sessionMessages[sessionId];
         expect(transcript.messageIdsOldestFirst.map((id) => transcript.messagesById[id]?.localId)).toEqual([
             'native-user-turn-local-id',
@@ -888,8 +888,8 @@ describe('sync.sendMessage optimistic thinking', () => {
         let deliverTranscript!: () => void;
         const transcript = new Promise<void>((resolve) => { deliverTranscript = resolve; });
         const request = vi.spyOn(apiSocket, 'request').mockImplementation(async (path) => {
-            if (path === `/v2/sessions/${sessionId}/messages/by-local-id/${localId}`) {
-                return Response.json({ message: committed });
+            if (path === `/v2/sessions/${sessionId}/messages/by-local-id`) {
+                return Response.json({ absentLocalIds: [] });
             }
             if (path.includes('/pending?')) return Response.json({ pending: [] });
             await transcript;
@@ -899,7 +899,7 @@ describe('sync.sendMessage optimistic thinking', () => {
         try {
             await sync.sendMessage(sessionId, text, undefined, undefined, { localId });
             await sync.fetchPendingMessages(sessionId);
-            expect(request).toHaveBeenCalledWith(`/v2/sessions/${sessionId}/messages/by-local-id/${localId}`, expect.anything());
+            expect(request).toHaveBeenCalledWith(`/v2/sessions/${sessionId}/messages/by-local-id`, expect.anything());
             expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
                 expect.objectContaining({ localId, text }),
             ]);
@@ -922,8 +922,8 @@ describe('sync.sendMessage optimistic thinking', () => {
         sync.encryption = await Encryption.create(new Uint8Array(32).fill(9));
         vi.spyOn(apiSocket, 'sessionRPC').mockResolvedValue({ ok: true, providerAcceptancePending: true });
         vi.spyOn(apiSocket, 'request').mockImplementation(async (path) => {
-            if (path === `/v2/sessions/${sessionId}/messages/by-local-id/${localId}`) {
-                return Response.json({ error: 'Not found', method: 'GET', path }, { status: 404 });
+            if (path === `/v2/sessions/${sessionId}/messages/by-local-id`) {
+                return Response.json({ error: 'Not found', method: 'POST', path }, { status: 404 });
             }
             if (path.includes('/pending?')) return Response.json({ pending: [] });
             return Response.json({ messages: [] });

@@ -5,6 +5,8 @@ import { buildMessageUpdatedUpdate, buildNewMessageUpdate, eventRouter } from "@
 import { catchupFollowupFetchesCounter, catchupFollowupReturnedCounter } from "@/app/monitoring/metrics2";
 import {
     SessionMessageDeliveryResolutionV1Schema,
+    SessionMessagePresenceRequestSchema,
+    SessionMessagePresenceResponseSchema,
     SessionMessageRoleSchema,
     SessionStoredMessageContentSchema,
     SessionTranscriptObservationProvenanceV1Schema,
@@ -143,6 +145,34 @@ function serializeSessionMessageListRow(v: SessionMessageListRow) {
 }
 
 export function registerSessionMessageRoutes(app: Fastify) {
+    app.post('/v2/sessions/:sessionId/messages/by-local-id', {
+        schema: {
+            params: z.object({ sessionId: z.string() }),
+            body: SessionMessagePresenceRequestSchema,
+            response: {
+                200: SessionMessagePresenceResponseSchema,
+                404: z.object({ error: z.string() }),
+            },
+        },
+        preHandler: app.authenticate,
+        config: {
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, "session.messages.byLocalId"),
+        },
+    }, async (request, reply) => {
+        const { sessionId } = request.params;
+        if (!await checkSessionAccess(request.userId, sessionId)) {
+            return reply.code(404).send({ error: 'Session not found' });
+        }
+
+        const localIds = [...new Set(request.body.localIds)];
+        const rows = await db.sessionMessage.findMany({
+            where: { sessionId, localId: { in: localIds } },
+            select: { localId: true },
+        });
+        const presentLocalIds = new Set(rows.map((row) => row.localId));
+        return reply.send({ absentLocalIds: localIds.filter((localId) => !presentLocalIds.has(localId)) });
+    });
+
     app.get('/v2/sessions/:sessionId/messages/by-local-id/:localId', {
         schema: {
             params: z.object({

@@ -11,6 +11,7 @@ import {
     getSessionParticipantUserIds,
     markAccountChanged,
     resetSessionRouteMocks,
+    sessionMessageFindMany,
 } from "./sessionRoutes.testkit";
 
 describe("sessionRoutes v2 messages", () => {
@@ -70,6 +71,37 @@ describe("sessionRoutes v2 messages", () => {
 
         expect(reply.code).toHaveBeenCalledWith(404);
         expect(reply.send).toHaveBeenCalledWith({ error: "Message not found" });
+    });
+
+    it("returns only the exact local IDs absent from the requested session in one lookup", async () => {
+        sessionMessageFindMany.mockResolvedValueOnce([{ localId: "present" }]);
+        const route = await createSessionRouteTestBuilder("POST", "/v2/sessions/:sessionId/messages/by-local-id");
+        const { response } = await route.invoke({
+            params: { sessionId: "s1" },
+            body: { localIds: ["present", "elsewhere", "absent", "absent"] },
+        });
+
+        expect(sessionMessageFindMany).toHaveBeenCalledExactlyOnceWith({
+            where: { sessionId: "s1", localId: { in: ["present", "elsewhere", "absent"] } },
+            select: { localId: true },
+        });
+        expect(response).toEqual({ absentLocalIds: ["elsewhere", "absent"] });
+    });
+
+    it("returns no exact local ID information to an account without session access", async () => {
+        checkSessionAccess.mockResolvedValueOnce(null);
+        const route = await createSessionRouteTestBuilder("POST", "/v2/sessions/:sessionId/messages/by-local-id", {
+            defaultRequest: { userId: "unrelated-account" },
+        });
+        const { reply } = await route.invoke({
+            params: { sessionId: "private-session" },
+            body: { localIds: ["private-id"] },
+        });
+
+        expect(checkSessionAccess).toHaveBeenCalledWith("unrelated-account", "private-session");
+        expect(reply.code).toHaveBeenCalledWith(404);
+        expect(reply.send).toHaveBeenCalledWith({ error: "Session not found" });
+        expect(sessionMessageFindMany).not.toHaveBeenCalled();
     });
 
     it("creates a message via service and emits updates using returned cursors", async () => {

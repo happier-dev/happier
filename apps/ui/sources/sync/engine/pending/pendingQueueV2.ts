@@ -1,5 +1,5 @@
 import { storage } from '@/sync/domains/state/storage';
-import { isSessionTranscriptMessageAbsent } from '@/sync/api/session/sessionMessagesApi';
+import { fetchAbsentSessionTranscriptLocalIds } from '@/sync/api/session/sessionMessagesApi';
 import {
     assertSafePendingIdPathSegment,
     findPendingOutboxMessage,
@@ -1736,12 +1736,16 @@ async function fetchAndApplyPendingMessagesV2Owned(
     });
     let retiredRuntimeAdmissions: ReadonlySet<PendingMessage> | undefined;
     if (missingRuntimeAdmissions.length > 0) {
-        const results = await Promise.all(missingRuntimeAdmissions.map(async ({ localId, message }) =>
-            await isSessionTranscriptMessageAbsent({ request, sessionId, localId }) ? message : undefined
-        ));
+        const absentLocalIds = await fetchAbsentSessionTranscriptLocalIds({
+            request,
+            sessionId,
+            localIds: missingRuntimeAdmissions.map(({ localId }) => localId),
+        });
         if (!await isRefreshScopeCurrent()) return;
         if (!pendingSnapshotContainsEveryAcceptedLocalIdAfterCapture(refreshToken, rows)) return;
-        retiredRuntimeAdmissions = new Set(results.filter((message) => message !== undefined));
+        retiredRuntimeAdmissions = new Set(missingRuntimeAdmissions.flatMap(({ localId, message }) =>
+            absentLocalIds.has(localId) ? [message] : []
+        ));
     }
     storage.getState().applyPendingSnapshot(sessionId, {
         ...withholdPendingRowsCommittedAfterSnapshotCapture(sessionId, refreshToken, reconciled),

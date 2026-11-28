@@ -252,6 +252,15 @@ to be `true` in `GET /v1/features`. Servers that omit it use the existing RPC
 launch path. The capability is separate from the Pending input protocol version,
 which describes the broader queue contract.
 
+When a Pending snapshot drops several locally admitted sends before their
+transcript rows arrive, the app checks their local IDs in one authenticated
+request to `POST /v2/sessions/:sessionId/messages/by-local-id`. The request
+carries `localIds` and the response lists only `absentLocalIds`. A confirmed
+absence clears that local Pending projection. A matching transcript row replaces
+it after the row reaches the app. An unavailable lookup preserves the projection
+and the app still applies the rest of the Pending snapshot. Older servers
+continue to materialize ordinary sends in the transcript.
+
 ## Live runner wake-up recovery (development)
 
 Pending counts and versions come from the server's projection. A materialization

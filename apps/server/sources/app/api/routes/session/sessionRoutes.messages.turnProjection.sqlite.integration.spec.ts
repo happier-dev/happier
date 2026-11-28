@@ -11,7 +11,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 
 import { registerSessionMessageRoutes } from "./registerSessionMessageRoutes";
 
-describe("turn projection over authenticated HTTP and SQLite", () => {
+describe("session message reads over authenticated HTTP and SQLite", () => {
     let harness: LightSqliteHarness;
     let origin: string;
     const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
@@ -69,5 +69,45 @@ describe("turn projection over authenticated HTTP and SQLite", () => {
         expect(oldest).toMatchObject({ hasMore: false, nextBeforeSeq: null });
         expect(oldest.messages[1]).not.toHaveProperty("messageRole");
         expect(oldest.messages[0].content).toEqual({ t: "encrypted", c: "ciphertext-2" });
+    });
+
+    it("looks up exact presence across the SQLite bind limit without exposing another session", async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID() } });
+        const otherAccount = await db.account.create({ data: { publicKey: randomUUID() } });
+        const session = await db.session.create({
+            data: { accountId: account.id, tag: randomUUID(), metadata: "{}" },
+        });
+        const otherSession = await db.session.create({
+            data: { accountId: otherAccount.id, tag: randomUUID(), metadata: "{}" },
+        });
+        await db.sessionMessage.createMany({
+            data: [
+                { sessionId: session.id, localId: "present-first" },
+                { sessionId: session.id, localId: "present-last" },
+                { sessionId: otherSession.id, localId: "elsewhere" },
+            ].map((row, index) => ({
+                ...row, id: randomUUID(), seq: index + 1,
+                content: { t: "encrypted", c: "ciphertext" },
+            })),
+        });
+        const absentLocalIds = ["elsewhere", ...Array.from({ length: 1_000 }, (_, index) => `absent-${index}`)];
+        const token = await auth.createToken(account.id);
+        const otherToken = await auth.createToken(otherAccount.id);
+        const lookup = (requestToken: string, localIds: string[]) => fetch(
+            `${origin}/v2/sessions/${session.id}/messages/by-local-id`,
+            {
+                method: "POST",
+                headers: { authorization: `Bearer ${requestToken}`, "content-type": "application/json" },
+                body: JSON.stringify({ localIds }),
+            },
+        );
+
+        const response = await lookup(token, ["present-first", ...absentLocalIds, "present-last"]);
+        expect(response.status).toBe(200);
+        await expect(response.json()).resolves.toEqual({ absentLocalIds });
+
+        const inaccessible = await lookup(otherToken, ["present-first"]);
+        expect(inaccessible.status).toBe(404);
+        await expect(inaccessible.json()).resolves.toEqual({ error: "Session not found" });
     });
 });

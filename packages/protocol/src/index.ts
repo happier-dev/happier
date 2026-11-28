@@ -56,6 +56,11 @@ export {
 } from './sessionMessages/pendingLocalId.js';
 
 export {
+  SessionMessagePresenceRequestSchema,
+  SessionMessagePresenceResponseSchema,
+} from './sessionMessages/sessionMessagePresence.js';
+
+export {
   ACCEPTED_PENDING_SETTLEMENT_EVENT_V1,
   AcceptedPendingSettlementRequestSchema,
   AcceptedPendingSettlementRequestV1Schema,
