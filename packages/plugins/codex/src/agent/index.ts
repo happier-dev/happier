@@ -40,7 +40,6 @@ export * from './surfaces/sessions/handoff/export.js';
 export * from './surfaces/sessions/handoff/import.js';
 export * from './surfaces/sessions/handoff/providerOps.js';
 export * from './auth/services/quota/openaiFetcher.js';
-export * from './auth/services/quota/probe.js';
 export * from './auth/services/quota/rateLimitSnapshot.js';
 export * from './auth/services/quota/runtimeRateLimits.js';
 export * from './auth/services/usage/identity.js';
