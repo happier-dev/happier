@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import { expect, it } from 'vitest';
 import {
   DATABASE_ACCESS_SET_ACTION_ID_V1, DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1, DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
+  DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1,
   DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1, DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1,
   DATABASE_CAPTURE_STATUS_ACTION_ID_V1, DATABASE_CAPTURE_RESOURCE_REF_V1,
   DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1, DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1,
@@ -22,7 +23,7 @@ import { sanitizeDockerEnv } from '../../scripts/extended-db-docker.plan.mjs';
 import { LocalServiceLauncherSnapshotV1Schema,
   DaemonLocalServiceLauncherStartResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { LocalServiceActionResultV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
-import { installDatabaseCapturePluginFixture, startDatabaseWorkbenchInsightsFixture } from '../../src/testkit/databaseWorkbench';
+import { installDatabaseCapturePluginFixture, startDatabaseWorkbenchAgent, startDatabaseWorkbenchInsightsFixture } from '../../src/testkit/databaseWorkbench';
 import { repoRootDir } from '../../src/testkit/paths';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { waitFor } from '../../src/testkit/timing';
@@ -224,6 +225,30 @@ it('P5-F7-known-good-capture records a Happier-started service query and turns r
       expect(queries.items.every(row => row.source === 'wire')).toBe(true);
       expect(waterfall.repeatedQueries[0]?.observationIds).toEqual(expect.arrayContaining(queries.items.map(row => row.id)));
       expect(waterfall.repeatedQueries[0]?.observationIds).toHaveLength(3);
+      const queryId = queries.items[0]!.id;
+      const agent = await startDatabaseWorkbenchAgent(fixture, testDir);
+      try {
+        const page = { limit: 20 };
+        const selected = { source, databaseTarget };
+        const reads = [
+          { action: DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1, input: { ...selected, traceId, page },
+            result: { ok: true, items: expect.arrayContaining([expect.objectContaining({ id: queryId })]) } },
+          { action: DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1, input: { ...selected, id: queryId },
+            result: { ok: true, detail: expect.any(Object) } },
+          { action: DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1, input: { ...selected, traceId, page },
+            result: { ok: true, traceId, repeatedQueries: [{ kind: 'suspected_n_plus_one', repetitionCount: 3 }] } },
+        ] as const;
+        for (const { action, input, result } of reads) {
+          expect(await agent.execute(action, input), action).toMatchObject({ ok: true, result });
+        }
+        expect(await fixture.executeDatabase(DATABASE_ACCESS_SET_ACTION_ID_V1, { target: databaseTarget, agentAccess: 'none' }))
+          .toMatchObject({ ok: true, result: { ok: true, agentAccess: 'none' } });
+        for (const { action, input } of reads) {
+          expect(await agent.execute(action, input), action).toMatchObject({ ok: false, errorCode: 'database_agent_access_none' });
+        }
+        expect(await fixture.executeDatabase(DATABASE_ACCESS_SET_ACTION_ID_V1, { target: databaseTarget, agentAccess: 'read' }))
+          .toMatchObject({ ok: true, result: { ok: true, agentAccess: 'read' } });
+      } finally { await agent.stop(); }
       const endpoints = DatabaseCaptureEndpointsListResultV1Schema.parse(await capture(DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1,
         { source, page: { limit: 20 } }));
       expect(endpoints).toMatchObject({ ok: true, items: expect.arrayContaining([
