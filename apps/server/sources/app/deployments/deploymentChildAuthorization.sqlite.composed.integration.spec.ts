@@ -169,6 +169,8 @@ import { createArtifact, updateArtifact } from '@/app/artifacts/artifactWriteSer
 import { readArtifactForCallerInTx } from '@/app/artifacts/artifactAccessService';
 import { ArtifactHttpReadV1Schema, ArtifactReadBatchHttpInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { encodeExternalActionHttpBodyV1, EXTERNAL_ACTION_HTTP_BODY_HEADER_V1,
+    EXTERNAL_ACTION_HTTP_READ_BODY_MARKER_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { registerMachineAdmissionRoutes } from '@/app/api/routes/machines/registerMachineAdmissionRoutes';
 import { registerPeerMediationGrantRoutes } from '@/app/api/routes/machines/peer/mediation/registerPeerMediationGrantRoutes';
 import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymentRoutes';
@@ -3145,6 +3147,48 @@ describe('deployment children retain their controller Action authority', () => {
                     expect(ordinary.statusCode, ordinary.body).toBe(404);
                 }
             } finally { verify.mockRestore(); parseEnvironment.mockRestore(); }
+        }, { authentication: 'real' });
+    });
+
+    it.each(['plain', 'e2ee'] as const)('admits reviewed owner receipt history and refuses another Account (%s)', async contentMode => {
+        const owner = await fixture('account', 'account', { readableEnvironment: true, confirmedCompactDeploy: true, contentMode });
+        const other = await fixture('account', 'account', { readableEnvironment: true, confirmedCompactDeploy: true, contentMode });
+        await db.deployment.update({ where: { id: owner.receipt.id }, data: { state: 'succeeded' } });
+        const mint = (caller: typeof owner) => {
+            const requestId = crypto.randomUUID();
+            const target = { kind: 'machine' as const, machineId: caller.controller.id };
+            const input = { serverId, environmentId: caller.environment.id, targetLinkId: caller.link.id, requestKey: crypto.randomUUID() };
+            return auth.mintExternalActionExecutionAuthorization({
+                serverIdentityId: serverId, accountId: caller.account.id,
+                authentication: { kind: 'account', tokenEpoch: caller.account.tokenEpoch },
+                actionId: 'deployments.deploy', machineId: caller.controller.id, target, requestId,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId, target, input }),
+            }, { input });
+        };
+        const [ownerAuthorization, otherAuthorization] = await Promise.all([mint(owner), mint(other)]);
+        const effectActionId = 'deployments.receipts.list';
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const read = (caller: typeof owner, { token, binding }: typeof ownerAuthorization, path: string) => {
+                const payload = encodeExternalActionHttpBodyV1({
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(binding.target),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: token,
+                        effectActionId, target: binding.target, installationId: caller.controller.installationId,
+                        requestId: binding.requestId, method: 'GET', path, privateKey: caller.controller.keys.secretKey }),
+                }, undefined);
+                return app.inject({ method: 'POST', url: path, payload,
+                    headers: { [EXTERNAL_ACTION_HTTP_BODY_HEADER_V1]: EXTERNAL_ACTION_HTTP_READ_BODY_MARKER_V1 } });
+            };
+            for (const selection of ['', '&inProgressOnly=true']) {
+                const path = `/v1/deployments/environments/${owner.environment.id}/deployments?serverId=${serverId}${selection}`;
+                const own = await read(owner, ownerAuthorization, path);
+                expect.soft(own.statusCode, `${selection}: ${own.body}`).toBe(200);
+                expect.soft(own.json()).toMatchObject({ ok: true });
+                const foreign = await read(other, otherAuthorization, path);
+                expect(foreign.statusCode, foreign.body).toBe(401);
+                expect(foreign.json()).toEqual({ error: 'invalid_token', authorizationRefusal: 'verification_purpose' });
+            }
         }, { authentication: 'real' });
     });
 
