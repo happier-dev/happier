@@ -2926,6 +2926,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                     const subtitle = named === source.displayLabel ? undefined : named;
                     // Each connection says its own health on its row: a quiet word and its reason, its fix at the end.
                     const health = sourceHealthRows.get(source.sourceInstanceId) ?? null;
+                    const completedAtMs = window.snapshot.sourceCompletedAtMs?.[source.sourceInstanceId];
                     const repair = health?.fix === 'connection'
                       ? configureOffers.find((offer) => offer.destination.pluginId === source.configured.instance.source.pluginId)
                       : undefined;
@@ -2940,9 +2941,13 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                         {...(subtitle === undefined ? {} : { subtitle })}
                         // The reason is a status sentence, not a short value: it reads under the name and its
                         // subtitle at every width, where a row states its status (TRIAGE-UI-ACCEPT-1119 S3).
-                        {...(health === null ? {} : { children: (
+                        {...(health !== null ? { children: (
                           <RowStatusLine tone="warn" numberOfLines={3}
                             text={`${text('plugins.triage.surface.sources.notRead', 'Not read')} · ${health.reason}`} />
+                        ) } : completedAtMs === undefined ? {} : { children: (
+                          <RowStatusLine tone="quiet" text={text('plugins.triage.surface.detail.lastRead', 'Last read {age}.', {
+                            age: formatTriageTimestampV1(surfaceContext.locale, completedAtMs, 'absolute', completedAtMs),
+                          })} />
                         ) })}
                         {...(fixLabel === null ? {} : { accessory: (
                           <TriageFailureLineAction label={fixLabel} accessibilityLabel={`${fixLabel} ${source.displayLabel}`}

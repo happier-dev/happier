@@ -1875,6 +1875,25 @@ describe('the mounted PRs & Issues surface', () => {
         }
     });
 
+    it('shows a healthy connection’s last read beside an unreadable sibling in Manage sources', async () => {
+        const harness = createHarness();
+        harness.state.listInvocationFailure = sourceInstanceId => sourceInstanceId === INSTANCE_A
+            ? new PluginError({ code: 'unavailable', message: 'This connection could not be read.', retryable: true })
+            : null;
+        const shell = await mountSurface(renderShellSurface, harness, 'triage-list-per-source-freshness',
+            sourceContextFixture(harness), { directAccountData: true });
+        await settleWindow('view', shell);
+        await pressToolbarMenuItem(shell, 'More', 'menuitem', 'Manage sources');
+
+        const sourceRow = (label: string) => {
+            let row = document.querySelector<HTMLElement>(`[aria-label="More actions for ${label}"]`);
+            while (row !== null && !row.textContent?.includes(label)) row = row.parentElement;
+            return row;
+        };
+        expect(sourceRow(LABEL_A)?.textContent).toContain('Not read');
+        expect(sourceRow(LABEL_B)?.textContent).toContain('Last read');
+    });
+
     it('keeps different connection causes in Manage sources behind the compact failure line', async () => {
         const harness = createHarness();
         const shell = await mountSurface(renderShellSurface, harness, 'triage-list', sourceContextFixture(harness), { directAccountData: true });

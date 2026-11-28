@@ -107,6 +107,8 @@ export type TriageListWindowSnapshotV1 = Readonly<{
      * paced-away demand cannot advance it.
      */
     completedAtMs?: number;
+    /** Last successful read of each configured connection that has answered. */
+    sourceCompletedAtMs?: Readonly<Partial<Record<string, number>>>;
     pending: 'idle' | 'initial' | 'refresh';
     /** Missing contributions in the roster are provisional while Machine admission is being established. */
     sourceAdmissionPending?: true;
@@ -596,6 +598,12 @@ export function createTriageListWindowStore(deps: Readonly<{
         const blocked = retainTriageProjectionValue(snapshot.refreshBlocked, refreshBlock() ?? undefined);
         const appendable = retainTriageProjectionValue(snapshot.loadMore, loadMore() ?? undefined);
         const completed = completedAtMs();
+        const sourceCompletions = configuredSources.flatMap(({ sourceInstanceId }) => {
+            const atMs = lanes.get(sourceInstanceId)?.completedAtMs;
+            return atMs == null ? [] : [[sourceInstanceId, atMs] as const];
+        });
+        const sourceCompletedAtMs = sourceCompletions.length === 0 ? undefined
+            : retainTriageProjectionValue(snapshot.sourceCompletedAtMs, Object.freeze(Object.fromEntries(sourceCompletions)));
         const taskState = [...lanes.values()].find(state => state.taskProjection !== undefined);
         const taskFailure = taskState?.lane.health.kind === 'failed' ? taskState.lane.health.failure
             : taskState?.error === null || taskState?.error === undefined ? undefined
@@ -610,6 +618,7 @@ export function createTriageListWindowStore(deps: Readonly<{
             ...(window === null ? {} : { window }),
             freshness: freshness(completed),
             ...(completed === undefined ? {} : { completedAtMs: completed }),
+            ...(sourceCompletedAtMs === undefined ? {} : { sourceCompletedAtMs }),
             pending,
             ...((sourceMachineReadiness?.pending === true
                 || (rosterReadWhileResolving && sourceMachineReadiness?.ready !== false))
@@ -1666,6 +1675,7 @@ export function createTriageListWindowStore(deps: Readonly<{
 function sameTriageListWindowSnapshot(left: TriageListWindowSnapshotV1, right: TriageListWindowSnapshotV1): boolean {
     return left.window === right.window && left.error === right.error && left.taskProjection === right.taskProjection
         && left.freshness === right.freshness && left.completedAtMs === right.completedAtMs
+        && left.sourceCompletedAtMs === right.sourceCompletedAtMs
         && left.pending === right.pending && left.passes === right.passes
         && left.loadMore === right.loadMore && left.refreshBlocked === right.refreshBlocked
         && left.unreadableSources === right.unreadableSources && left.configuredSources === right.configuredSources
