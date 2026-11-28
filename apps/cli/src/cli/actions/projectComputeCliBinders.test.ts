@@ -1,3 +1,7 @@
+import axios from 'axios';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod/mini';
 import { getActionSpec } from '@happier-dev/protocol';
@@ -12,9 +16,13 @@ import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/creat
 import { dispatchBuiltInHappierTool } from '@/agent/tools/happierTools/dispatchBuiltInHappierTool';
 import { createHappierToolInventory } from '@/agent/tools/happierTools/listBuiltInHappierTools';
 import { resolveSessionNativeToolDescriptors } from '@/agent/tools/happierTools/resolveSessionNativeToolBridge';
+import { reloadConfiguration } from '@/configuration';
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { prepareHappierMcpToolInventory } from '@/mcp/server/registerHappierMcpBuiltInTools';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 import { findCompiledActionCliCommand } from './compiledCommands';
-import { runCompiledActionCliCommand } from './executeCommand';
+import { resolveDefaultCliWorkspaceForCwd, runCompiledActionCliCommand } from './executeCommand';
 import { composeActionCliInput, parseActionCliCommandInput } from './parseCommandInput';
 
 const workspace = {
@@ -507,6 +515,59 @@ describe('Project compute CLI binders', () => {
     } finally {
       writeSpy.mockRestore();
       process.exitCode = undefined;
+    }
+  });
+
+  it('fails closed in resolveDefaultCliWorkspaceForCwd when --machine-id differs from the local registered machine', async () => {
+    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-ws-cwd-'));
+    try {
+      envScope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_ACTIVE_SERVER_ID: 'home-1' });
+      reloadConfiguration();
+      await updateMachineRegistration(() => ({ machineId: 'laptop-1', accountId: 'acct-1' }), 'home-1');
+
+      const token = `eyJhbGciOiJub25lIn0.${Buffer.from(JSON.stringify({ sub: 'acct-1' })).toString('base64url')}.sig`;
+      const credentials = { token, encryption: null };
+      const remoteRef = { id: 'ws-remote', serverId: 'home-1', machineId: 'remote-1', rootPath: '/repo', createdAtMs: 1, projectKey: 'proj' };
+      const localRef = { id: 'ws-local', serverId: 'home-1', machineId: 'laptop-1', rootPath: '/repo', createdAtMs: 1, projectKey: 'proj' };
+      const rows = [remoteRef, localRef].map((value) => {
+        const key = { kind: 'workspace-ref', serverId: 'home-1', id: value.id };
+        return { key, revision: 1, content: { t: 'plain', v: { key, value } } };
+      });
+      const getSpy = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
+      const postSpy = vi.spyOn(axios, 'post').mockImplementation(async (url, body) =>
+        projectAccountRowsReadHttpResponse(rows, String(url), body));
+
+      // Explicit remote --machine-id must fail closed before matching local cwd against remote checkouts.
+      const remoteAttempt = await resolveDefaultCliWorkspaceForCwd({
+        cwd: '/repo/apps/cli',
+        credentials,
+        serverId: 'home-1',
+        serverIdentityId: 'home-1',
+        serverApiUrl: 'https://home.example',
+        machineId: 'remote-1',
+      });
+      expect(remoteAttempt).toMatchObject({ ok: false, errorCode: 'invalid_arguments' });
+      expect(postSpy).not.toHaveBeenCalled();
+
+      // Matching local --machine-id resolves the local checkout normally.
+      const localAttempt = await resolveDefaultCliWorkspaceForCwd({
+        cwd: '/repo/apps/cli',
+        credentials,
+        serverId: 'home-1',
+        serverIdentityId: 'home-1',
+        serverApiUrl: 'https://home.example',
+        machineId: 'laptop-1',
+      });
+      expect(localAttempt).toEqual({
+        ok: true,
+        workspace: { serverId: 'home-1', workspaceId: 'ws-local', machineId: 'laptop-1', rootPath: '/repo' },
+      });
+      expect(getSpy).toHaveBeenCalled();
+    } finally {
+      envScope.restore();
+      reloadConfiguration();
+      await rm(homeDir, { recursive: true, force: true });
     }
   });
 });

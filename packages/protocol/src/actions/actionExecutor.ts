@@ -2756,6 +2756,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       hostReviewedChild: _parentReviewedChild, admittedHostReviewedChildren: _parentReviewedChildren,
       actionAutomationAdmission: _parentAutomationAdmission,
       prepareAdmittedExecutionOrigin: _parentExecutionOrigin,
+      admittedProjectActionPlacement: _parentProjectActionPlacement,
       invocationServices: _parentServices, executeHostReviewedChildAction: _parentHostChildAction,
       workflowAgentStartScope: _parentTriggerStart, ...caller } = context;
     return caller;
@@ -2792,7 +2793,8 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         sessionCreationPresetPlacement: _parentPresetPlacement,
         managedContinuationSessionCreationTag: _parentContinuationCreationTag,
         actionAutomationAdmission: _parentAutomationAdmission,
-        prepareAdmittedExecutionOrigin: _parentExecutionOrigin, ...caller } = inheritedCaller;
+        prepareAdmittedExecutionOrigin: _parentExecutionOrigin,
+        admittedProjectActionPlacement: _parentProjectActionPlacement, ...caller } = inheritedCaller;
       const childCaller = childSessionContext(childId, childInput, caller);
       const parentRequestId = normalizeId(childCaller.actionRequestId);
       const derivedContext = parentRequestId ? { ...childCaller,

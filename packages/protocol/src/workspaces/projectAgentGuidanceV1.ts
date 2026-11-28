@@ -9,7 +9,7 @@ export const PROJECT_COMPUTE_EXEC_CLI_USAGE = 'happier project compute exec [--o
 /** Hard upper bound on the coding-session prompt block emitted by this formatter. */
 export const MAX_PROJECT_COMPUTE_AGENT_GUIDANCE_PROMPT_CHARS = 1200;
 
-const CONTROL_OR_BIDI_CHAR_PATTERN = /[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/gu;
+const CONTROL_OR_BIDI_CHAR_PATTERN = /[\p{Cc}\p{Cf}]/gu;
 
 const MAX_GUIDANCE_ID_CHARS = 96;
 const MAX_GUIDANCE_ROOT_PATH_CHARS = 180;

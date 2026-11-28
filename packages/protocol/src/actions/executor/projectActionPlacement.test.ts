@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
+import { createActionExecutor } from '../actionExecutor.js';
+import type { ActionExecutorContext } from './types.js';
 import { ProjectDefinitionInspectOutputSchema } from '../projectDefinitionActionFamily.js';
 import { readProjectManifestDocument } from '../../workspaces/projectSetup/projectManifestDocument.js';
 import type { ProjectManifestV1 } from '../../workspaces/projectSetup/projectManifestV1.js';
@@ -270,5 +272,37 @@ describe('Project Action declaration placement ceiling', () => {
     expect(await h.place({ kind: 'named', name: 'check' }, pool, ambientContext))
       .toMatchObject({ ok: false, errorCode: 'override_requires_review' });
     expect(h.reads).toContain('projects.inspect');
+  });
+
+  it('strips admittedProjectActionPlacement from ordinary and host-reviewed child action contexts', async () => {
+    const capturedChildContexts: ActionExecutorContext[] = [];
+    let nested = false;
+    const executor = createActionExecutor({
+      uiCommandPaletteAction: async ({ context }) => {
+        if (!nested) {
+          nested = true;
+          await context.executeOrdinaryChildAction!('ui.command_palette.list', {}, {
+            execute: async (_id, _input, childCtx) => {
+              capturedChildContexts.push(childCtx);
+              return { ok: true, result: { commands: [] } };
+            },
+          });
+          await context.executeHostReviewedChildAction!('ui.command_palette.list', {}, context);
+        } else {
+          capturedChildContexts.push(context);
+        }
+        return { ok: true, result: { commands: [] } };
+      },
+    });
+    const result = await executor.execute('ui.command_palette.list', {}, {
+      surface: 'ui',
+      admittedProjectActionPlacement: { actionId: 'projects.compute.exec', machineId: 'worker' },
+      executionRunTargetMachineId: 'worker',
+    });
+    expect(result).toMatchObject({ ok: true });
+    expect(capturedChildContexts).toHaveLength(2);
+    for (const childCtx of capturedChildContexts) {
+      expect(childCtx.admittedProjectActionPlacement).toBeUndefined();
+    }
   });
 });

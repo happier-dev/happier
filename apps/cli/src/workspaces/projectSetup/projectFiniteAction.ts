@@ -34,7 +34,7 @@ import { resolveProjectMemoryDemandV1 as maximumDemand } from '@happier-dev/prot
 import { isProjectNativeProcessUncertain, preserveUnconfirmedNativeProcess, type ProjectNativeAdapterProductionV1 } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
 import { authorizeResolvedProjectExecLaunchForHost, type ProjectNativeEffectCaptureForHost } from '@/plugins/runtime/invocation/services/exec';
 import { validatePath } from '@/rpc/handlers/pathSecurity';
-import { isValidEnvVarKey } from '@/terminal/runtime/envVarSanitization';
+import { validateProjectComputeEnv } from '@happier-dev/protocol/workspaces/projectComputeEnvV1';
 import { getPathRemainderWithinBase, resolveSessionHandoffWorkspaceSessionPath } from '@/session/handoff/paths/sessionHandoffPathNormalization';
 import { resolveProjectSetupAcceptedWorkspace, type ProjectSetupAcceptedAssociation } from './projectSetupAcceptedWorkspace';
 import { RequesterWorkAttributionV1Schema } from '@/daemon/lifecycle/requesterWorkAttribution';
@@ -118,24 +118,8 @@ const failureFromError = async (error: unknown, details?: unknown): Promise<Acti
 };
 const digest = (value: unknown) => createHash('sha256').update(createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(value))).digest('hex');
 
-const BLOCKED_COMPUTE_ENV_KEYS = new Set([
-    'NODE_OPTIONS', 'BASH_ENV', 'ENV', 'PYTHONSTARTUP', 'PYTHONPATH',
-    'RUBYOPT', 'PERL5OPT', 'IFS', 'ZDOTDIR', 'PROMPT_COMMAND',
-    'PATH', 'PATHEXT', 'COMSPEC', 'SYSTEMROOT', 'WINDIR',
-    'HOME', 'USERPROFILE', 'SHELL', 'CDPATH', 'FPATH',
-    'NODE_PATH', 'NODE_EXTRA_CA_CERTS', 'PYTHONHOME', 'PERL5LIB', 'RUBYLIB',
-    'HOSTALIASES', 'LOCPATH', 'NLSPATH', 'GIT_SSH_COMMAND', 'GIT_EXEC_PATH',
-]);
-
-const BLOCKED_COMPUTE_ENV_PREFIXES = ['LD_', 'DYLD_', 'HAPPIER_', 'BASH_FUNC_'] as const;
 const ASCII_CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
 const SAFE_BARE_COMPUTE_EXECUTABLE_RE = /^[A-Za-z0-9._+-]+$/;
-
-function isBlockedComputeEnvKey(key: string): boolean {
-    const upper = key.trim().toUpperCase();
-    return BLOCKED_COMPUTE_ENV_KEYS.has(upper)
-        || BLOCKED_COMPUTE_ENV_PREFIXES.some(prefix => upper.startsWith(prefix));
-}
 
 function isValidProjectComputeExecutable(executable: string): boolean {
     if (executable.length === 0 || ASCII_CONTROL_CHAR_RE.test(executable)) return false;
@@ -209,14 +193,9 @@ export function readValidatedComputeEnv(input: unknown): Readonly<Record<string,
     if (!input || typeof input !== 'object' || !('env' in input)) return undefined;
     const raw = (input as { env?: unknown }).env;
     if (raw === undefined) return undefined;
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-    const out: Record<string, string> = Object.create(null);
-    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-        if (!isValidEnvVarKey(key) || isBlockedComputeEnvKey(key) || key.includes('\0')) return null;
-        if (typeof value !== 'string' || value.includes('\0')) return null;
-        out[key] = value;
-    }
-    return Object.freeze(out);
+    const validated = validateProjectComputeEnv(raw);
+    if (!validated.ok) return null;
+    return Object.freeze(validated.value);
 }
 
 /**

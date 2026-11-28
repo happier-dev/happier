@@ -114,7 +114,7 @@ const PLACEHOLDER_CONTEXTUAL_WORKSPACE: WorkspaceAddressV1 = Object.freeze({
   rootPath: '/',
 });
 
-async function resolveDefaultCliWorkspaceForCwd(params: Readonly<{
+export async function resolveDefaultCliWorkspaceForCwd(params: Readonly<{
   cwd: string;
   credentials: StoredCredentials;
   serverId: string;
@@ -124,9 +124,17 @@ async function resolveDefaultCliWorkspaceForCwd(params: Readonly<{
   signal?: AbortSignal;
 }>): Promise<ActionCliWorkspaceResolutionResult> {
   const accountId = readAccountIdFromToken(params.credentials.token);
-  const resolvedMachineId = params.machineId
-    ?? await readRegisteredMachineId(params.serverId, accountId)
+  const localMachineId = await readRegisteredMachineId(params.serverId, accountId)
     ?? await readActiveMachineId();
+  const requestedMachineId = params.machineId?.trim() || null;
+  if (requestedMachineId && requestedMachineId !== localMachineId) {
+    return {
+      ok: false,
+      errorCode: 'invalid_arguments',
+      errorMessage: 'Cannot infer a project checkout from the current directory when --machine-id targets a different machine. Pass --workspace-json explicitly.',
+    };
+  }
+  const resolvedMachineId = localMachineId;
   if (!resolvedMachineId) {
     return {
       ok: false,

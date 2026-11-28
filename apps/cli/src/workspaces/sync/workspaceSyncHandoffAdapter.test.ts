@@ -619,8 +619,14 @@ describe('WorkspaceSyncHandoffAdapter', () => {
     let current = true;
     const context = { signal: new AbortController().signal, verifyMachineAdmissionCurrent: async () => current };
     const request = { sourceWorkspaceRefId: 'workspace-c', targetWorkspaceRefId: 'workspace-b' };
-    await expect(adapter.prepareBetween(request, context.signal, context))
+    const admittedRoute = {
+      serverId: 'srv-1',
+      workspaceRefs: settings.workspaceRefs,
+      relationships: settings.relationships,
+    };
+    await expect(adapter.prepareBetween(request, context.signal, context, admittedRoute))
       .resolves.toMatchObject({ ok: true, traversed: [{ relationshipId: 'source-hub' }, { relationshipId: 'hub-target' }] });
+    expect(prepareBetween).toHaveBeenLastCalledWith(request, context.signal, context, admittedRoute);
     current = false;
     await expect(adapter.prepareBetween(request, context.signal, context))
       .rejects.toMatchObject({ code: 'project_requester_credentials_unavailable' });

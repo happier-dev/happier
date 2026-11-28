@@ -391,10 +391,10 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
       if (request.phase === 'finalize') return { v: 1, phase: 'finalized', result: await adapter.finalize(phaseInput) };
       return { v: 1, phase: 'committed', result: await adapter.commit(phaseInput) };
     },
-    async prepareBetween(request, signal, context) {
+    async prepareBetween(request, signal, context, admittedRoute) {
       if (!deps.prepareBetween) throw adapterError('workspace_sync_unavailable', 'Linked workspace preparation is unavailable');
       signal?.throwIfAborted();
-      return await deps.prepareBetween(request, signal, context);
+      return await deps.prepareBetween(request, signal, context, admittedRoute);
     },
     async prepare(input, authority, context) {
       input.signal?.throwIfAborted();

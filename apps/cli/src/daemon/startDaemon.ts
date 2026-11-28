@@ -4382,7 +4382,7 @@ export async function startDaemon(
               get finiteServerHttpBaseUrl() { return readDaemonHomeServerHttpBaseUrl(); },
               registeredMachineId, admission, isCurrent, resolveCurrentMachineExecutionOriginContext,
               nativeIo: createProjectNativeIo({ ownerRemainder, agentIsolation }), agentIsolation, successHomeDir: configuration.happyHomeDir,
-              prepareBetween: (request, signal, context) => runtime.handoffAdapter.prepareBetween(request, signal, context),
+              prepareBetween: (request, signal, context, admittedRoute) => runtime.handoffAdapter.prepareBetween(request, signal, context, admittedRoute),
               plugins: { secretSources: daemonSecretSources, async resolveProjectNativeAdapter(reference, role) {
                 if (!await isCurrent()) return { kind: 'refused', code: 'native_adapter_retired' };
                 const lease = await acquireAuthoritativePluginRuntimeRegistryLease({
