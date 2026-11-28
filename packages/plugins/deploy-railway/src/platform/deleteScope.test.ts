@@ -54,6 +54,14 @@ function withVendor(
   })();
 }
 
+it('offers scope create, Delete preview and Delete to plugin Action callers', () => {
+  for (const scope of ['environment', 'project']) {
+    for (const operation of ['create', 'delete-preview', 'delete']) {
+      expect(plugin.manifest.contributes.actions?.find(action => action.id === `${scope}-${operation}`)?.surfaces).toContain('plugin');
+    }
+  }
+});
+
 it('previews the selected environment and its named inventory', () => withVendor(
   request => ({ data: vendorInventory(request) }),
   async (kit, requests) => {

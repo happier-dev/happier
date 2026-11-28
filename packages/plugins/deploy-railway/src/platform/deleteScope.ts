@@ -26,7 +26,7 @@ const reviewFields = {
 } as const satisfies Record<keyof Preview, unknown>;
 const base = DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema.properties!;
 const accountFields = { credentialRef: base.credentialRef!, credentialPrincipal: base.credentialPrincipal! };
-const common = { ...railwayAccountAction, surfaces: ['agent', 'mcp', 'cli'] } as const;
+const common = { ...railwayAccountAction, surfaces: ['agent', 'mcp', 'cli', 'plugin'] } as const;
 
 function actionObject<T extends Readonly<Record<string, unknown>>>(properties: T) {
   return { type: 'object', additionalProperties: false, properties, required: Object.keys(properties) } as const;

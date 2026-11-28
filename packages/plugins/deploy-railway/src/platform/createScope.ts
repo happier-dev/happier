@@ -15,7 +15,7 @@ const accountFields = { credentialRef: base.credentialRef!, credentialPrincipal:
 const accountKeys = Object.keys(accountFields);
 const common = {
   ...railwayAccountAction, dangerLevel: 'writesRemote', readOnly: false,
-  surfaces: ['ui', 'agent', 'mcp', 'cli'],
+  surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
 } as const;
 
 function nameOf(value: unknown): string {
