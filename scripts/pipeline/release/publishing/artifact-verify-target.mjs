@@ -16,6 +16,7 @@ const DEFAULT_PUBLIC_KEY_PATH = 'scripts/release/installers/happier-release.pub'
  *   product?: string;
  *   version?: string;
  *   releaseChannel?: string;
+ *   manifestsInArtifactsRoot?: boolean;
  * }} ArtifactVerifyOptions
  */
 
@@ -94,7 +95,9 @@ export function resolveArtifactVerifyTarget({ repoRoot, source, options = {} }) 
       preflightPaths: [
         checksumsPath,
         `${checksumsPath}.minisig`,
-        resolve(repoRoot, spec.manifestOutDir, 'v1', spec.manifestProduct, channel, 'latest.json'),
+        options.manifestsInArtifactsRoot
+          ? resolve(artifactsDir, 'latest.json')
+          : resolve(repoRoot, spec.manifestOutDir, 'v1', spec.manifestProduct, channel, 'latest.json'),
       ],
     };
   }

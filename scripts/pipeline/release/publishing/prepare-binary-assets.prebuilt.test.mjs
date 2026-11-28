@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createWriteStream } from 'node:fs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -106,6 +106,46 @@ async function writeRunnerArchive(archivePath) {
     void archive.finalize();
   });
 }
+
+test('finalizePreparedBinaryArtifacts flattens generated channel manifests into the signed release envelope', async () => {
+  const artifactsDir = await mkdtemp(join(tmpdir(), 'happier-prebuilt-cli-manifests-'));
+  const manifestsRoot = join(artifactsDir, 'manifests');
+  const manifestsDir = join(manifestsRoot, 'v1', 'happier', 'preview');
+  const version = '1.2.3-preview.4';
+  const finalize = (writes) => finalizePreparedBinaryArtifacts({
+    artifactsDir, manifestsDir, manifestsRoot, productSpec: getBinaryPublishProductSpec('cli'),
+    channel: 'preview', version, targets: CLI_TARGETS.map(([os, arch]) => ({ os, arch })),
+    writeChecksums: async (input) => {
+      writes.push(input);
+      const checksumPath = join(artifactsDir, `checksums-happier-v${version}.txt`);
+      await writeFile(checksumPath, 'checksum');
+      return checksumPath;
+    },
+    signFile: async ({ path }) => {
+      await writeFile(`${path}.minisig`, 'signature');
+      return `${path}.minisig`;
+    },
+  });
+  try {
+    await writeCliArchives(artifactsDir, version);
+    await writeCliEvidence(artifactsDir);
+    await mkdir(manifestsDir, { recursive: true });
+    const manifestNames = [...CLI_TARGETS.map(([os, arch]) => `${os}-${arch}.json`), 'latest.json'];
+    for (const name of manifestNames) await writeFile(join(manifestsDir, name), `${JSON.stringify({ name })}\n`, 'utf8');
+    const writes = [];
+    await finalize(writes);
+    const signed = writes[0].artifacts.map(({ name }) => name);
+    for (const name of manifestNames) assert.ok(signed.includes(name), `${name} is in the signed checksums`);
+    assert.deepEqual((await readdir(artifactsDir)).filter((name) => name.endsWith('.json') && !name.includes('.cli.')).sort(), [...manifestNames].sort());
+    assert.equal((await readdir(artifactsDir)).includes('manifests'), false, 'the nested manifest tree is removed');
+
+    await mkdir(manifestsDir, { recursive: true });
+    for (const name of manifestNames.slice(1)) await writeFile(join(manifestsDir, name), '{}\n', 'utf8');
+    await assert.rejects(finalize([]), /unexpected generated manifest set/);
+  } finally {
+    await rm(artifactsDir, { recursive: true, force: true });
+  }
+});
 
 test('finalizePreparedBinaryArtifacts signs one complete native CLI artifact matrix', async () => {
   const artifactsDir = await mkdtemp(join(tmpdir(), 'happier-prebuilt-cli-'));
@@ -372,9 +412,13 @@ test('prepareBinaryReleaseAssets consumes a prepared matrix without rebuilding i
       },
     });
 
-    assert.equal(finalized.length, 1);
+    // The second seal adds the generated channel manifests to the signed envelope.
+    assert.equal(finalized.length, 2);
     assert.equal(finalized[0].version, '1.2.3-preview.4');
     assert.equal(finalized[0].channel, 'preview');
+    assert.equal(finalized[0].manifestsDir, undefined);
+    assert.equal(finalized[1].manifestsRoot, join(repoRoot, 'dist/release-assets/cli/manifests'));
+    assert.equal(finalized[1].manifestsDir, join(repoRoot, 'dist/release-assets/cli/manifests/v1/happier/preview'));
     assert.equal(
       logs.some((line) => line.includes('build-cli-binaries.mjs')),
       false,

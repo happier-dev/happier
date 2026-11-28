@@ -2,7 +2,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, rm, stat } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, readdir, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
@@ -107,6 +107,33 @@ export async function finalizePreparedBinaryArtifacts(params) {
     writeChecksums ??= binaryRelease.writeChecksumsFile;
     signFile ??= binaryRelease.maybeSignFile;
   }
+  // Generated channel manifests join the signed envelope: candidate inspection rejects any unsigned asset.
+  const expectedManifestNames = params.manifestsDir
+    ? [...targets.map((target) => `${target.os}-${target.arch}.json`), 'latest.json'].sort()
+    : [];
+  if (params.manifestsDir) {
+    const mainChecksumsPath = path.join(artifactsDir, `checksums-${params.productSpec.manifestProduct}-v${version}.txt`);
+    await Promise.all([rm(mainChecksumsPath, { force: true }), rm(`${mainChecksumsPath}.minisig`, { force: true })]);
+    const manifestsDir = path.resolve(params.manifestsDir);
+    const manifestNames = (await readdir(manifestsDir)).sort();
+    if (manifestNames.length !== expectedManifestNames.length
+      || manifestNames.some((name, index) => name !== expectedManifestNames[index])) {
+      throw new Error(`unexpected generated manifest set for ${params.productSpec.id} ${version}`);
+    }
+    for (const name of manifestNames) {
+      const sourcePath = path.join(manifestsDir, name);
+      const metadata = await lstat(sourcePath);
+      if (!metadata.isFile() || metadata.size < 1) throw new Error(`generated manifest must be a regular non-empty file: ${name}`);
+      await copyFile(sourcePath, path.join(artifactsDir, name));
+    }
+    if (params.manifestsRoot) {
+      const relativeRoot = path.relative(artifactsDir, path.resolve(params.manifestsRoot));
+      if (!relativeRoot || path.isAbsolute(relativeRoot) || relativeRoot === '..' || relativeRoot.startsWith(`..${path.sep}`)) {
+        throw new Error('generated manifests root must be a child of the prepared artifacts directory');
+      }
+      await rm(path.resolve(params.manifestsRoot), { recursive: true, force: true });
+    }
+  }
   const archiveExtension = params.productSpec.id === 'runner' ? 'zip' : 'tar.gz';
   const componentProducts = params.productSpec.optionalComponentProducts ?? [];
   const products = [params.productSpec.manifestProduct, ...componentProducts];
@@ -173,6 +200,12 @@ export async function finalizePreparedBinaryArtifacts(params) {
     path: path.join(artifactsDir, name),
     os: 'darwin',
     arch: name.includes('arm64') ? 'arm64' : 'x64',
+  })));
+  artifacts.push(...expectedManifestNames.map((name) => ({
+    name,
+    path: path.join(artifactsDir, name),
+    os: 'manifest',
+    arch: name === 'latest.json' ? 'latest' : name.slice(0, -'.json'.length),
   })));
   for (const product of componentProducts) {
     const componentChecksumsPath = await writeChecksums({
@@ -301,6 +334,24 @@ export async function prepareBinaryReleaseAssets(params) {
     { cwd: repoRoot },
   );
 
+  // A prepared (not yet authenticated) matrix is resealed with its generated channel manifests.
+  const manifestsInArtifactsRoot = params.preparedArtifacts === true && params.finalizedArtifacts !== true;
+  if (manifestsInArtifactsRoot) {
+    if (!opts.dryRun || params.finalizePrepared) {
+      const manifestsRoot = withinRepo(repoRoot, productSpec.manifestOutDir);
+      await (params.finalizePrepared ?? finalizePreparedBinaryArtifacts)({
+        artifactsDir: withinRepo(repoRoot, productSpec.artifactsDir),
+        manifestsRoot,
+        manifestsDir: path.join(manifestsRoot, 'v1', productSpec.manifestProduct, channel),
+        productSpec,
+        channel,
+        version,
+      });
+    } else {
+      console.log(`[dry-run] would reseal prepared artifacts with generated manifests under ${productSpec.artifactsDir}`);
+    }
+  }
+
   const target = resolveArtifactVerifyTarget({
     repoRoot,
     source: { kind: 'local-build', ref: productSpec.artifactsDir },
@@ -308,6 +359,7 @@ export async function prepareBinaryReleaseAssets(params) {
       product: productSpec.id,
       version,
       releaseChannel: channel,
+      manifestsInArtifactsRoot,
       skipSmoke: params.skipSmoke === true,
     },
   });
@@ -329,6 +381,7 @@ export async function prepareBinaryReleaseAssets(params) {
       product: productSpec.id,
       version,
       releaseChannel: channel,
+      manifestsInArtifactsRoot,
       skipSmoke: params.skipSmoke === true,
     },
   });
