@@ -22,7 +22,8 @@ type ReceiptHistoryPages = Readonly<{
     readPage(cursor?: string): Promise<unknown>;
 }>;
 
-export async function* readDeploymentReceiptHistoryHeadersForHost(input: ReceiptHistoryPages) {
+async function* readDeploymentReceiptHistoryPagesForHost(input: ReceiptHistoryPages) {
+    const { lineage } = input;
     let cursor: string | undefined;
     let liveReferencesOnEveryPage = true;
     for (;;) {
@@ -33,13 +34,14 @@ export async function* readDeploymentReceiptHistoryHeadersForHost(input: Receipt
             for (const id of page.liveReferencedDeploymentIds ?? []) input.liveReferences.ids.add(id);
             if (!page.nextCursor) input.liveReferences.complete = liveReferencesOnEveryPage;
         }
-        for (const deployment of page.items) {
-            if (input.lineage && !input.lineage.has(deployment.targetLinkId)) continue;
-            yield deployment;
-        }
+        yield lineage ? page.items.filter(deployment => lineage.has(deployment.targetLinkId)) : page.items;
         if (!page.nextCursor) return;
         cursor = page.nextCursor;
     }
+}
+
+export async function* readDeploymentReceiptHistoryHeadersForHost(input: ReceiptHistoryPages) {
+    for await (const page of readDeploymentReceiptHistoryPagesForHost(input)) yield* page;
 }
 
 /** Settled headers are immutable; live receipts and conflicted headers reopen
@@ -47,20 +49,31 @@ export async function* readDeploymentReceiptHistoryHeadersForHost(input: Receipt
 export async function* readOwnServerDeploymentReceiptHistoryForHost(input: ReceiptHistoryPages & Readonly<{
     readCurrent(deploymentId: string): Promise<DeploymentReceiptDetailV1>;
     open(deployment: DeploymentReceiptHeaderV1): Promise<DeploymentReceiptDetailV1>;
+    openSettledPage?(deployments: readonly DeploymentReceiptHeaderV1[]): Promise<readonly PromiseSettledResult<DeploymentReceiptDetailV1>[]>;
 }>) {
-    for await (const deployment of readDeploymentReceiptHistoryHeadersForHost(input)) {
-        if (!hasDeploymentReceiptContentV1(deployment)) continue;
-        let receipt: DeploymentReceiptDetailV1;
-        if (deployment.operation === 'teardown' || !isDeploymentSettledV1(deployment.state)) {
-            receipt = await input.readCurrent(deployment.id);
-        } else {
-            try { receipt = await input.open(deployment); }
-            catch (error) {
-                if (!(error instanceof Error) || !('code' in error) || error.code !== 'deployment_conflict') throw error;
+    for await (const page of readDeploymentReceiptHistoryPagesForHost(input)) {
+        const settled = page.filter(deployment => hasDeploymentReceiptContentV1(deployment)
+            && deployment.operation !== 'teardown' && isDeploymentSettledV1(deployment.state));
+        const opened = input.openSettledPage && settled.length ? await input.openSettledPage(settled) : undefined;
+        let settledIndex = 0;
+        for (const deployment of page) {
+            if (!hasDeploymentReceiptContentV1(deployment)) continue;
+            let receipt: DeploymentReceiptDetailV1;
+            if (deployment.operation === 'teardown' || !isDeploymentSettledV1(deployment.state)) {
                 receipt = await input.readCurrent(deployment.id);
+            } else {
+                try {
+                    const retained = opened?.[settledIndex++];
+                    if (retained?.status === 'rejected') throw retained.reason;
+                    receipt = retained ? retained.value : await input.open(deployment);
+                } catch (error) {
+                    if (!(error instanceof Error) || !('code' in error) || error.code !== 'deployment_conflict') throw error;
+                    receipt = await input.readCurrent(deployment.id);
+                }
             }
+            const content = receipt.content.platform === undefined ? receipt.content : DeploymentOwnServerContentV1Schema.parse(receipt.content);
+            yield { ...receipt, content };
         }
-        yield { ...receipt, content: DeploymentOwnServerContentV1Schema.parse(receipt.content) };
     }
 }
 
@@ -78,6 +91,25 @@ export async function openDeploymentReceiptForHost(deployment: DeploymentReceipt
     const receipt = { deployment, content: content.content };
     const cancellationConsequence = projectDeploymentCancellationConsequenceV1(receipt);
     return { ...receipt, ...(cancellationConsequence ? { cancellationConsequence } : {}) };
+}
+
+export async function openSettledDeploymentReceiptPageForHost(deployments: readonly DeploymentReceiptHeaderV1[],
+    context: ActionExecutorContext, host: Readonly<{
+        openMany(ids: readonly string[], context: ActionExecutorContext):
+            Promise<readonly PromiseSettledResult<DeploymentArtifactDocumentV1 | null>[]>;
+        assertCurrent(context: ActionExecutorContext): Promise<void>;
+    }>) {
+    const ids = [...new Set(deployments.filter(hasDeploymentReceiptContentV1).map(deployment => deployment.contentArtifactId))];
+    const documents = await host.openMany(ids, context);
+    const byId = new Map(ids.map((id, index) => [id, documents[index]]));
+    return Promise.allSettled(deployments.map(deployment => openDeploymentReceiptForHost(deployment, context, {
+        assertCurrent: host.assertCurrent,
+        async open(id) {
+            const result = byId.get(id);
+            if (result?.status === 'rejected') throw result.reason;
+            return result?.value ?? null;
+        },
+    })));
 }
 
 export async function readDeploymentReceiptForHost(

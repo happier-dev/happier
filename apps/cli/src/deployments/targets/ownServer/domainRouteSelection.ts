@@ -169,10 +169,13 @@ export type DomainCaddyStartFirstLegsResult = Readonly<{ kind: 'ready'; legs: re
     | Readonly<{ kind: 'unavailable' | 'conflict' | 'unknown' | 'cancelled'; reason: string; domainIds: readonly string[] }>;
 type DomainContentReference = Pick<DeploymentDomainHeaderV1, 'contentArtifactId' | 'contentHeaderVersion' | 'contentBodyVersion'>;
 
-type DomainInventoryInput = Readonly<{
+type DomainArtifactReader = Readonly<{
+    open(artifactId: string, signal?: AbortSignal): Promise<DeploymentArtifactDocumentV1 | null>;
+    openMany?(artifactIds: readonly string[], signal?: AbortSignal): Promise<readonly PromiseSettledResult<DeploymentArtifactDocumentV1 | null>[]>;
+}>;
+type DomainInventoryInput = DomainArtifactReader & Readonly<{
     serverId: string; environmentId: string; targetLinkId: string;
     list(request: DeploymentDomainListInputV1, signal?: AbortSignal): Promise<ReturnType<typeof DeploymentDomainListResultV1Schema.parse>>;
-    open(artifactId: string, signal?: AbortSignal): Promise<DeploymentArtifactDocumentV1 | null>;
     signal?: AbortSignal;
 }>;
 
@@ -196,20 +199,24 @@ export async function readDeploymentDomainInventoryForHost(input: Pick<DomainInv
     return { kind: 'ready', domains };
 }
 
-function createDomainContentReader(input: DomainInventoryInput) {
-    // A Domain's public/private captures commonly share one Artifact. Reuse
-    // the one exact opened revision inside this finite operation only.
+async function createDomainContentReader(input: DomainInventoryInput, references: readonly DomainContentReference[]) {
+    const ids = [...new Set(references.map(reference => reference.contentArtifactId))];
+    input.signal?.throwIfAborted();
+    const batch = ids.length && input.openMany ? await input.openMany(ids, input.signal) : undefined;
+    const documents = new Map(ids.flatMap((id, index) => batch?.[index] ? [[id, batch[index]] as const] : []));
     const content = new Map<string, ReturnType<typeof readDeploymentDomainArtifactV1>>();
-    const readContent = async (reference: DomainContentReference) => {
-        const key = JSON.stringify([reference.contentArtifactId, reference.contentHeaderVersion, reference.contentBodyVersion]);
+    return async (reference: DomainContentReference) => {
+        input.signal?.throwIfAborted();
+        const id = reference.contentArtifactId;
+        const key = JSON.stringify([id, reference.contentHeaderVersion, reference.contentBodyVersion]);
         const retained = content.get(key);
         if (retained) return retained;
-        input.signal?.throwIfAborted();
-        const opened = readDeploymentDomainArtifactV1(reference, await input.open(reference.contentArtifactId, input.signal));
+        const document = documents.get(id);
+        if (document?.status === 'rejected') throw document.reason;
+        const opened = readDeploymentDomainArtifactV1(reference, document ? document.value : await input.open(id, input.signal));
         content.set(key, opened);
         return opened;
     };
-    return readContent;
 }
 
 export type TelemetryCollectorDomainEndpoint = PublicTelemetryCollectorDomainResultV1 & Readonly<{
@@ -258,13 +265,16 @@ export async function readTelemetryCollectorDomainForHost(input: PrivateCollecto
     }
     const inventory = await readDeploymentDomainInventoryForHost(input);
     if (inventory.kind !== 'ready') return { kind: 'unavailable', reason: inventory.reason };
-    const readContent = createDomainContentReader(input);
-    for (const domain of inventory.domains) {
-        if (domain.deletedAtMs !== undefined || domain.state === 'removing') continue;
-        for (const capture of domain.placements ?? []) {
+    const candidates = inventory.domains.flatMap(domain => domain.deletedAtMs !== undefined || domain.state === 'removing' ? []
+        : [{ domain, captures: (domain.placements ?? []).filter(capture => {
             const placement = capture.placement;
-            if (!capture.desired || capture.listener !== 'privateOrigin' || placement.machineId !== input.collectorMachineId
-                || placement.environmentId !== input.environmentId || placement.targetLinkId !== input.targetLinkId) continue;
+            return capture.desired && capture.listener === 'privateOrigin' && placement.machineId === input.collectorMachineId
+                && placement.environmentId === input.environmentId && placement.targetLinkId === input.targetLinkId;
+        }) }]);
+    const readContent = await createDomainContentReader(input, candidates.flatMap(({ captures }) => captures.map(capture => capture.content)));
+    for (const { domain, captures } of candidates) {
+        for (const capture of captures) {
+            const placement = capture.placement;
             const opened = await readContent(capture.content);
             if (!opened.ok) return { kind: 'unavailable', reason: opened.error };
             if (opened.content.target.kind !== 'telemetry') continue;
@@ -296,14 +306,15 @@ export async function readExpectedDownDomainReferencesForHost(input: DomainInven
 }>): Promise<readonly MachineDeploymentDomainReferenceV1[] | null> {
     const inventory = await readDeploymentDomainInventoryForHost(input);
     if (inventory.kind !== 'ready') return null;
-    const readContent = createDomainContentReader(input);
+    const candidates = inventory.domains.flatMap(domain => domain.deletedAtMs !== undefined || domain.state === 'removing' ? []
+        : [{ domain, captures: (domain.placements ?? []).filter(capture => capture.desired
+            && capture.placement.targetLinkId === input.targetLinkId) }]);
+    const readContent = await createDomainContentReader(input, candidates.flatMap(({ captures }) => captures.map(capture => capture.content)));
     const affected = new Set(input.affectedServices);
     const references: MachineDeploymentDomainReferenceV1[] = [];
-    for (const domain of inventory.domains) {
-        if (domain.deletedAtMs !== undefined || domain.state === 'removing') continue;
+    for (const { domain, captures } of candidates) {
         const placements = new Set<string>();
-        for (const capture of domain.placements ?? []) {
-            if (!capture.desired || capture.placement.targetLinkId !== input.targetLinkId) continue;
+        for (const capture of captures) {
             const opened = await readContent(capture.content);
             if (!opened.ok) return null;
             const service = opened.content.target.service;
@@ -322,32 +333,31 @@ export async function readExpectedDownDomainReferencesForHost(input: DomainInven
 /** One finite read of the Environment's complete Domain custody. Only the native
  * owner classifies installed replica routes; edge private-origin proxies remain
  * unchanged while local replicas switch. Missing custody never means no routes. */
-export async function readDomainCaddyStartFirstLegs(input: Readonly<{
-    serverId: string; environmentId: string; targetLinkId: string;
+export async function readDomainCaddyStartFirstLegs(input: DomainInventoryInput & Readonly<{
     machineId: string; installationId: string; dockerEngineId: string; affectedServices: readonly string[];
-    list(request: DeploymentDomainListInputV1, signal?: AbortSignal): Promise<ReturnType<typeof DeploymentDomainListResultV1Schema.parse>>;
-    open(artifactId: string, signal?: AbortSignal): Promise<DeploymentArtifactDocumentV1 | null>;
     routes: Pick<ReturnType<typeof createNativeCaddyRoutes>, 'readStartFirstLeg'>;
-    signal?: AbortSignal;
 }>): Promise<DomainCaddyStartFirstLegsResult> {
     const inventory = await readDeploymentDomainInventoryForHost(input);
     if (inventory.kind !== 'ready') return inventory;
-    const { domains } = inventory;
-    const readContent = createDomainContentReader(input);
+    const candidates = inventory.domains.filter(domain => domain.deletedAtMs === undefined).map(domain => ({
+        domain,
+        captures: domain.placements?.length
+            ? domain.placements.filter(capture => capture.placement.machineId === input.machineId) : undefined,
+    }));
+    const readContent = await createDomainContentReader(input, candidates.flatMap(({ domain, captures }) =>
+        captures ? captures.map(capture => capture.content) : [domain]));
     const affected = new Set(input.affectedServices);
     const legs: NativeCaddyStartFirstLeg[] = [];
-    for (const domain of domains) {
-        if (domain.deletedAtMs !== undefined) continue;
-        if (!domain.placements?.length) {
+    for (const { domain, captures } of candidates) {
+        if (!captures) {
             const opened = await readContent(domain);
             if (!opened.ok) return { kind: 'unavailable', reason: opened.error, domainIds: [domain.id] };
             const service = opened.content.target.service;
             if (service !== undefined && affected.has(service)) return { kind: 'unavailable', reason: 'native_route_unavailable', domainIds: [domain.id] };
             continue;
         }
-        for (const capture of domain.placements) {
+        for (const capture of captures) {
             const placement = capture.placement;
-            if (placement.machineId !== input.machineId) continue;
             const opened = await readContent(capture.content);
             if (!opened.ok) return { kind: 'unavailable', reason: opened.error, domainIds: [domain.id] };
             const { hostname, target: { service } } = opened.content;

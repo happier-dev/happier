@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { executeOwnServerDatabaseOperationForHost } from './databaseConnection';
 import { randomBytes } from 'node:crypto';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol';
+import { ActionApprovalRequestCreatedResultSchema, type ActionExecutorContext } from '@happier-dev/protocol';
 import { signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { projectDeploymentPreparationAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentPreparationAdmissionV1';
 import { WorkflowAcceptedSnapshotV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
@@ -4510,16 +4510,29 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
                 const member = { request, machineId: 'machine-a', installationId: 'installation-a',
                     phase: 'activate' as const, selectedDeploymentId: receipt.deployment.id };
                 const result = scenario === 'member_child_cost' ? await (async () => {
+                    let receiptRead = false;
+                    let metadataOverlapped = false;
                     const storage = createCliDeploymentActionDeps({ serverHttpBaseUrl, admitAccount: async () => null,
                         resolveRequestHeaders: async () => ({ Authorization: `Bearer ${token}` }),
                         async dispatchReceipt() { throw new Error('Member reads must not allocate a receipt'); } });
                     const artifacts = createAccountArtifactStore({ credentials, getAccountEncryptionMode: async () => 'plain' });
-                    const child = createDaemonDeploymentChildExecutor(measuredHost, { target, storage: storage.deploymentAction!,
-                        open: id => artifacts.read(id, { prepareRecipients: false, includeSharedAudience: false }),
-                        async assertCurrent(context) { context.signal?.throwIfAborted(); },
+                    const ports = {
+                        target,
+                        async storage(...args: Parameters<NonNullable<typeof storage.deploymentAction>>) {
+                            receiptRead = true;
+                            try { return await storage.deploymentAction!(...args); }
+                            finally { receiptRead = false; }
+                        },
+                        async prepareEnvironmentRead(environmentRead: { environmentId: string; context: ActionExecutorContext }) {
+                            metadataOverlapped = receiptRead;
+                            return () => measuredHost.readEnvironment(environmentRead);
+                        },
+                        open: (id: string) => artifacts.read(id, { prepareRecipients: false, includeSharedAudience: false }),
+                        async assertCurrent(context: ActionExecutorContext) { context.signal?.throwIfAborted(); },
                         async domainNative() { throw new Error('Member dispatch must not enter Domain execution'); },
                         async teardown() { throw new Error('Member dispatch must not enter teardown'); },
-                        async prepareCandidate() { throw new Error('Member dispatch must not author another candidate'); } });
+                        async prepareCandidate() { throw new Error('Member dispatch must not author another candidate'); } };
+                    const child = createDaemonDeploymentChildExecutor(measuredHost, ports);
                     const job = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'member', actionId: request.actionId,
                         input: request.input, machineId: member.machineId, installationId: member.installationId,
                         phase: member.phase, selectedDeploymentId: member.selectedDeploymentId,
@@ -4534,6 +4547,7 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
                     const headersBefore = memberHeaderReads;
                     const result = await child(job, request.context);
                     expect(memberHeaderReads - headersBefore).toBe(1);
+                    expect(metadataOverlapped).toBe(true);
                     return result;
                 })() : await target.executeMember(member);
                 phase('member-settled');

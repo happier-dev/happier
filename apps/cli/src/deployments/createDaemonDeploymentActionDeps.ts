@@ -149,6 +149,7 @@ import { readDeploymentEnvironmentForHost } from './readEnvironmentForHost';
 import { createPlatformVariablesForHost } from './targets/platformVariablesForHost';
 import { readDeploymentObservationForHost } from './readObservationForHost';
 import { openDeploymentReceiptForHost, readDeploymentReceiptForHost, readDeploymentReceiptHistoryHeadersForHost,
+    openSettledDeploymentReceiptPageForHost,
     readOwnServerDeploymentReceiptHistoryForHost, type DeploymentLiveReferencesForHost } from './readReceiptForHost';
 import { readDeploymentCreationDefaultInputsForHost, prepareDeploymentCreationDefaultsForHost, prepareDeploymentEnvironmentDefaultsForHost,
     type DeploymentCreationDefaultRequestForHost } from './readCreationDefaultsForHost';
@@ -365,6 +366,13 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         return atHome(() => artifacts.read(id, { signal: context.signal, prepareRecipients: false,
             includeSharedAudience: false, authorizationHeaders }));
     };
+    // Signed deployment purposes admit exact Artifact GETs. The installed Account
+    // can use the same Account Artifact owner for selected reads in one request.
+    const openMany = async (ids: readonly string[], context: ActionExecutorContext) => {
+        await assertCurrent(context);
+        return atHome(() => artifacts.readArtifactContents(ids, { signal: context.signal,
+            authorizationHeaders: artifactAuthorization(context) }));
+    };
     const openReceipt = async (deployment: DeploymentReceiptHeaderV1, context: ActionExecutorContext): Promise<DeploymentReceiptDetailV1> => {
         return openDeploymentReceiptForHost(deployment, context, { open, assertCurrent });
     };
@@ -561,6 +569,10 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         readOwnServerDeploymentReceiptHistoryForHost({ ...receiptHistoryPages(request, lineage),
             readCurrent: deploymentId => targetHostReaders.readReceipt({ ...request, deploymentId }),
             open: deployment => openReceipt(deployment, request.context),
+            ...(request.context.externalActionExecutionAuthorization ? {} : {
+                openSettledPage: (deployments: readonly DeploymentReceiptHeaderV1[]) =>
+                    openSettledDeploymentReceiptPageForHost(deployments, request.context, { openMany, assertCurrent }),
+            }),
         });
     const readMemberVersions = async (request: Parameters<NonNullable<OwnServerDeploymentTargetHostInput['readMemberVersions']>>[0],
         environment: DeploymentEnvironmentDetailV1): Promise<readonly DeploymentMachineResultV1[]> => {
@@ -593,6 +605,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 targetLinkId: request.targetLinkId, collectorMachineId: collector.machineId,
                 observerNetworks: observer?.daemonState?.reachability?.privateNetworks ?? [], signal: request.context.signal,
                 open: id => open(id, request.context),
+                ...(request.context.externalActionExecutionAuthorization ? {}
+                    : { openMany: (ids: readonly string[]) => openMany(ids, request.context) }),
                 list: async (query, signal) => DeploymentActionOutputSchemasV1['deployments.domains.list'].parse(
                     await storage('deployments.domains.list', query, { ...request.context, signal })),
                 deployment: request.deployment,
@@ -617,11 +631,14 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             return readExpectedDownDomainReferencesForHost({ serverId: host.serverId, environmentId: request.environmentId,
                 targetLinkId: request.targetLinkId, affectedServices: request.affectedServices, signal: request.context.signal,
                 open: id => open(id, request.context),
+                ...(request.context.externalActionExecutionAuthorization ? {}
+                    : { openMany: (ids: readonly string[]) => openMany(ids, request.context) }),
                 list: async (query, signal) => DeploymentActionOutputSchemasV1['deployments.domains.list'].parse(
                     await storage('deployments.domains.list', query, { ...request.context, signal })) });
         },
         async readStartFirstRoutes(request, input) {
             return createOwnServerStartFirstRoutesForHost({ ...host, open,
+                ...(request.context.externalActionExecutionAuthorization ? {} : { openMany }),
                 list: async (query, signal) => DeploymentActionOutputSchemasV1['deployments.domains.list'].parse(
                     await storage('deployments.domains.list', query, { ...request.context, signal })) })(request, input);
         },
@@ -1302,6 +1319,10 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         } });
     const domainNative = createOwnServerDomainNative({ ...host, open, readEnvironment: targetHostReaders.readEnvironment, readReceipt: targetHostReaders.readReceipt });
     const deploymentChild = createDaemonDeploymentChildExecutor(targetHost, { target, open, storage, assertCurrent, domainNative,
+        async prepareEnvironmentRead(request) {
+            const metadata = await readEnvironmentMetadata(request);
+            return () => targetHostReaders.readEnvironment(request, metadata);
+        },
         snapshot: nativeSnapshot.executeChild,
         dataRole: dataRoleBindings.executeChild,
         teardown: ownServerTeardown.executeNative,

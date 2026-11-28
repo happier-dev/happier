@@ -291,16 +291,27 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
                 return { status: 404, data: { error: 'not_found' } };
             }
             if (!selected) throw new Error(`Unexpected Account Artifact read: ${path}`);
+            return { status: 200, data: receiptArtifactRow(selected) };
+        });
+        const receiptArtifactRow = (selected: typeof receipt) => {
             openedReceiptArtifacts.push(selected.deployment.contentArtifactId);
-            return { status: 200, data: { id: selected.deployment.contentArtifactId, ownerAccountId: 'owner',
+            return { id: selected.deployment.contentArtifactId, ownerAccountId: 'owner',
                 access: 'owner', publicAudience: 'none', encryptionMode: mode,
                 dataEncryptionKey: key.mode === 'plain' ? ARTIFACT_PLAIN_DATA_KEY_MARKER : key.dataEncryptionKey,
                 header: encode({ kind: DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, title: 'Retained' }),
                 body: encode({ body: JSON.stringify(selected.content) }), headerVersion: 1, bodyVersion: 1,
-                seq: 1, createdAt: 1, updatedAt: 1 } };
-        });
+                seq: 1, createdAt: 1, updatedAt: 1 };
+        };
         vi.spyOn(axios, 'post').mockImplementation(async (url, input) => {
-            if (new URL(url).pathname === '/v1/artifacts/read') return artifactReadResponse(input, id => noticeRows.get(id) ?? null);
+            if (new URL(url).pathname === '/v1/artifacts/read') {
+                const result = artifactReadResponse(input, id => {
+                    const selected = availableReceipts.find(value => id === value.deployment.contentArtifactId);
+                    if (!selected) return noticeRows.get(id) ?? null;
+                    return receiptArtifactRow(selected);
+                });
+                if ((input as { artifactIds: string[] }).artifactIds.includes(unreadableReceipt.contentArtifactId)) unreadableReads.push('artifact');
+                return result;
+            }
             const mutation = readCarrierMutation(input);
             const id = typeof mutation.id === 'string' ? mutation.id : new URL(url).pathname.split('/').at(-1)!;
             const prior = noticeRows.get(id);

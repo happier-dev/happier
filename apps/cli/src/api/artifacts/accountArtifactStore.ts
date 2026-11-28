@@ -1579,33 +1579,62 @@ export function createAccountArtifactStore(params: Readonly<{
         : { ok: false, errorCode: 'delete_failed', error: 'artifact_delete_failed' } as const;
     },
   };
-  const readListBodies = async (items: readonly AccountArtifactHeader[], signal?: AbortSignal,
-    readAdmittedAccountMode?: () => Promise<ConnectedServiceAccountEncryptionMode>,
-    authorizationHeaders?: ArtifactRequestAuthorizationHeaders): Promise<readonly AccountArtifactHeader[]> => {
+  const fetchSelectedBodies = async (artifactIds: readonly string[], signal?: AbortSignal,
+    authorizationHeaders?: ArtifactRequestAuthorizationHeaders) => {
     signal?.throwIfAborted();
-    if (items.length === 0) return items;
-    const startedAt = performance.now();
-    const input = ArtifactReadBatchInputV1Schema.parse({ artifactIds: items.map(item => item.artifactId) });
+    const input = ArtifactReadBatchInputV1Schema.parse({ artifactIds });
     const path = '/v1/artifacts/read';
     const config = { headers: authorizationHeaders
       ? await authorizationHeaders({ method: 'POST', path, body: input }) : headers(),
       ...(signal ? { signal } : {}), validateStatus: () => true };
     const response = await axios.post(`${resolveServerHttpBaseUrl()}${path}`, input, config);
     signal?.throwIfAborted();
-    const httpMs = performance.now() - startedAt;
     if (response.status < 200 || response.status >= 300) {
       throw artifactReadHttpError(response.status, response.data, authorizationHeaders ? config.headers : undefined);
     }
     const parsed = ArtifactReadBatchResponseV1Schema.safeParse(response.data);
-    if (!parsed.success || parsed.data.items.length !== items.length
-      || parsed.data.items.some((item, index) => item.artifactId !== items[index].artifactId)) {
+    if (!parsed.success || parsed.data.items.length !== artifactIds.length
+      || parsed.data.items.some((item, index) => item.artifactId !== artifactIds[index])) {
       throw Object.assign(new Error('artifact_read_invalid'), { code: 'artifact_read_invalid' });
     }
+    return parsed.data.items;
+  };
+  const readArtifactContents = async (artifactIds: readonly string[],
+    access?: Pick<NonNullable<Parameters<typeof projectStoredArtifact>[1]>, 'signal' | 'authorizationHeaders'>):
+    Promise<PromiseSettledResult<AccountArtifact | null>[]> => {
+    if (artifactIds.length === 0) return [];
+    const options = { ...access, prepareRecipients: false, includeSharedAudience: false };
+    try {
+      const items = await fetchSelectedBodies(artifactIds, options.signal, options.authorizationHeaders);
+      return await Promise.allSettled(items.map(async item => {
+        if (!item.ok) {
+          if (item.status === 404) return null;
+          if (item.error === 'artifact_content_unavailable' && !item.retryable) throw new ArtifactEncryptionMaterialUnavailableError();
+          throw artifactReadHttpError(item.status, item, options.authorizationHeaders ? {} : undefined);
+        }
+        const stored = parseStoredArtifact(item.artifact);
+        if (!stored) throw Object.assign(new Error('artifact_read_invalid'), { code: 'artifact_read_invalid' });
+        return projectStoredArtifact(stored, options);
+      }));
+    } catch (reason) {
+      if (reason instanceof Error && 'status' in reason && reason.status === 404)
+        return Promise.allSettled(artifactIds.map(id => read(id, options)));
+      return artifactIds.map(() => ({ status: 'rejected', reason }));
+    }
+  };
+  const readListBodies = async (items: readonly AccountArtifactHeader[], signal?: AbortSignal,
+    readAdmittedAccountMode?: () => Promise<ConnectedServiceAccountEncryptionMode>,
+    authorizationHeaders?: ArtifactRequestAuthorizationHeaders): Promise<readonly AccountArtifactHeader[]> => {
+    signal?.throwIfAborted();
+    if (items.length === 0) return items;
+    const startedAt = performance.now();
+    const selected = await fetchSelectedBodies(items.map(item => item.artifactId), signal, authorizationHeaders);
+    const httpMs = performance.now() - startedAt;
     const timing = { accountModeMs: 0, codecMs: 0 };
     let accountMode: Promise<ConnectedServiceAccountEncryptionMode> | undefined;
     const readBatchAccountMode = () => accountMode ??= readAdmittedAccountMode?.()
       ?? readAccountMode({ signal, authorizationHeaders });
-    const opened = await projectHeaderRows(parsed.data.items.flatMap(item => item.ok ? [item.artifact] : []), { includeBody: true, signal }, timing, readBatchAccountMode);
+    const opened = await projectHeaderRows(selected.flatMap(item => item.ok ? [item.artifact] : []), { includeBody: true, signal }, timing, readBatchAccountMode);
     signal?.throwIfAborted();
     const byId = new Map(opened.map(item => [item.artifactId, item]));
     logger.infoFile('[Artifacts] Selected body batch timing', { rows: items.length, items: opened.length,
@@ -1677,6 +1706,7 @@ export function createAccountArtifactStore(params: Readonly<{
   return {
     ...store,
     readBodies: readListBodies,
+    readArtifactContents,
     backfillQueryHints,
     /** The public Action stays reference-only; only the admitted keyholding host supplies preparation. */
     decideDocEditProposal: async (args: (Readonly<{ actionId: 'doc.edit.accept'; input: DocEditAcceptHostInputV1 }>

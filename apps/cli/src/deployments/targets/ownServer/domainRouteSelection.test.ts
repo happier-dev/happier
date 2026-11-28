@@ -450,7 +450,13 @@ it.skipIf(process.platform === 'win32')('reads the complete Domain inventory int
     const input = { serverId: 'home', environmentId: 'environment', targetLinkId: 'link', machineId: 'a', installationId: 'installed-a',
         dockerEngineId: 'engine-a', affectedServices: ['web', 'api'], list,
         open: async (id: string) => { opened.push(id); return artifacts.get(id) ?? null; }, routes: native };
-    const selected = await readDomainCaddyStartFirstLegs(input);
+    const batches: string[][] = [];
+    const selected = await readDomainCaddyStartFirstLegs({ ...input, ...{
+        openMany: async (ids: readonly string[]) => {
+            batches.push([...ids]);
+            return ids.map(id => ({ status: 'fulfilled' as const, value: artifacts.get(id) ?? null }));
+        },
+    } });
     expect(selected).toMatchObject({ kind: 'ready', legs: [
         { placement: placement('web'), route: { domainId: 'web', listener: 'privateOrigin', privateSourceRanges: ['100.64.0.0/10'],
             peerOrigins: ['100.70.0.3:9481'], basicAuth: [{ username: 'reader' }] } },
@@ -460,7 +466,7 @@ it.skipIf(process.platform === 'win32')('reads the complete Domain inventory int
             basicAuth: [{ username: 'reader' }] } },
     ] });
     expect(cursors).toEqual([undefined, 'page-2']);
-    expect(opened).toEqual(['web-content', 'api-content', 'alias-content']);
+    expect({ batches, opened }).toEqual({ batches: [['web-content', 'api-content', 'alias-content']], opened: [] });
     expect(await readExpectedDownDomainReferencesForHost(input)).toEqual(['web', 'api', 'alias'].map(domainId => ({
         environmentId: 'environment', targetLinkId: 'link', domainId, machineId: 'a', installationId: 'installed-a' })));
     expect(JSON.stringify(selected)).not.toContain('native-only-hash');

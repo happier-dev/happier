@@ -108,6 +108,8 @@ export function createOwnServerStartFirstRoutesForHost(host: Readonly<{
     credentials: StoredCredentials; serverId: string; serverHttpBaseUrl: string; machineId: string;
     open(id: string, context: ActionExecutorContext): Promise<DeploymentArtifactDocumentV1 | null>;
     list: Parameters<typeof readDomainCaddyStartFirstLegs>[0]['list'];
+    openMany?(ids: readonly string[], context: ActionExecutorContext):
+        Promise<readonly PromiseSettledResult<DeploymentArtifactDocumentV1 | null>[]>;
 }>): NonNullable<OwnServerDeploymentTargetHostInput['readStartFirstRoutes']> {
     return async (request, input) => {
         const identity = readInstallationIdentityIfExistsSync();
@@ -134,11 +136,15 @@ export function createOwnServerStartFirstRoutesForHost(host: Readonly<{
         const routes = createNativeCaddyRoutes({ machineId: host.machineId, installationId: input.installationId,
             privateKey: decodeBase64(identity.privateKey, 'base64url'),
             exchange: async exchange => createNativeCaddyAdminExchange((await caddy()).adminSocketPath)(exchange) });
+        const { openMany } = host;
+        const context = { ...request.context, signal: input.signal };
         const inventory = await readDomainCaddyStartFirstLegs({ serverId: host.serverId,
             environmentId: request.input.environmentId, targetLinkId: request.input.targetLinkId,
             machineId: host.machineId, installationId: input.installationId, dockerEngineId: input.docker.engineId,
             affectedServices: [...input.affectedServices], list: host.list,
-            open: id => host.open(id, request.context), routes, signal: input.signal });
+            open: id => host.open(id, context),
+            ...(openMany ? { openMany: (ids: readonly string[]) => openMany(ids, context) } : {}),
+            routes, signal: input.signal });
         if (inventory.kind !== 'ready') return refuse(inventory.reason);
         const adapter = createNativeCaddyStartFirstRoutes({ routes, legs: inventory.legs });
         return { switch: cutover => machineNativeEffectAdmission.runStage(input.context, async () => {

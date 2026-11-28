@@ -43,6 +43,9 @@ export function createDaemonDeploymentChildExecutor(host: OwnServerDeploymentTar
     target: OwnServerDeploymentTargetForHost;
     open(id: string, context: ActionExecutorContext): Promise<AccountArtifact | null>;
     storage: NonNullable<ActionExecutorDeps['deploymentAction']>;
+    /** Fetch only the admitted Environment headers. Opening content still follows receipt admission. */
+    prepareEnvironmentRead?(request: Parameters<OwnServerDeploymentTargetHostInput['readEnvironment']>[0]):
+        Promise<() => ReturnType<OwnServerDeploymentTargetHostInput['readEnvironment']>>;
     domainNative: ReturnType<typeof import('./targets/ownServer/ownServerDomainNative').createOwnServerDomainNative>;
     teardown: ReturnType<typeof import('./targets/ownServer/teardown').createOwnServerTeardownForHost>['executeNative'];
     assertCurrent(context: ActionExecutorContext): Promise<void>;
@@ -132,8 +135,14 @@ export function createDaemonDeploymentChildExecutor(host: OwnServerDeploymentTar
                         : { ...common, actionId: job.actionId, input: job.input };
                 return await target.reviewMember({ request, machineId: job.machineId, installationId: job.installationId });
             }
-            const loaded = await storage('deployments.receipts.get', { serverId: host.serverId,
-                environmentId: job.input.environmentId, deploymentId: job.deploymentId }, context);
+            const environmentRequest = { environmentId: job.input.environmentId, context };
+            const [receiptRead, environmentRead] = await Promise.allSettled([
+                storage('deployments.receipts.get', { serverId: host.serverId,
+                    environmentId: job.input.environmentId, deploymentId: job.deploymentId }, context),
+                ports.prepareEnvironmentRead?.(environmentRequest),
+            ]);
+            if (receiptRead.status === 'rejected') throw receiptRead.reason;
+            const loaded = receiptRead.value;
             if ('errorCode' in loaded) return loaded;
             const result = DeploymentReceiptGetResultV1Schema.parse(loaded);
             if (!result.ok) return result;
@@ -142,7 +151,16 @@ export function createDaemonDeploymentChildExecutor(host: OwnServerDeploymentTar
             // canonical receipt proves the parent operation, never from the RPC.
             if (deployment.actionOperationId !== job.actionOperationId) return failure('operation_unavailable');
             if (readInstallationIdentityIfExistsSync()?.installationId !== job.installationId) return failure('target_mismatch');
-            const environment = await host.readEnvironment({ environmentId: job.input.environmentId, context });
+            if (environmentRead.status === 'rejected') throw environmentRead.reason;
+            const openEnvironment = environmentRead.value ?? (() => host.readEnvironment(environmentRequest));
+            const needsReceipt = job.kind === 'build' || job.kind === 'member' || job.actionId === 'deployments.promote'
+                || job.actionId === 'deployments.deploy' && semanticRoot !== undefined;
+            const [openedEnvironment, openedReceipt] = await Promise.allSettled([
+                openEnvironment(),
+                needsReceipt && hasDeploymentReceiptContentV1(deployment) ? open(deployment.contentArtifactId, context) : null,
+            ]);
+            if (openedEnvironment.status === 'rejected') throw openedEnvironment.reason;
+            const environment = openedEnvironment.value;
             const admittedContext: ActionExecutorContext = { ...context,
                 operationAcceptance: { operationId: deployment.actionOperationId, actionId: job.actionId, accept() {} } };
             const receipt = { ok: true as const, environmentId: deployment.environmentId, revision: environment.environment.revision,
@@ -152,18 +170,19 @@ export function createDaemonDeploymentChildExecutor(host: OwnServerDeploymentTar
                 : job.actionId === 'deployments.rollback' ? { actionId: job.actionId, input: job.input, context: admittedContext, receipt }
                     : { actionId: job.actionId, input: job.input, context: admittedContext, receipt };
             let admitted: OwnServerDeploymentMemberRequest['admitted'];
-            if (job.kind === 'build' || job.kind === 'member' || job.actionId === 'deployments.promote'
-                || job.actionId === 'deployments.deploy' && semanticRoot) {
+            if (needsReceipt) {
                 // Stages advance the Artifact versions but never its stable id.
                 // Build consumes this same admitted header and opened content.
                 if (!hasDeploymentReceiptContentV1(deployment)) return failure('deployment_content_unavailable');
-                const current = readDeploymentReceiptArtifactV1(deployment, await open(deployment.contentArtifactId, context));
+                if (openedReceipt.status === 'rejected') throw openedReceipt.reason;
+                const current = readDeploymentReceiptArtifactV1(deployment, openedReceipt.value);
                 if (!current.ok) return failure(current.error, current);
                 if (job.actionId === 'deployments.deploy') await admitSource(current.content, true, environment);
                 if (job.actionId === 'deployments.promote' && (!deployment.acceptedExecution?.builder
                     || deployment.operation !== 'promote' || deployment.environmentId !== job.input.environmentId
                     || deployment.targetLinkId !== job.input.targetLinkId)) return failure('deployment_conflict');
-                admitted = { environment, receipt: { deployment, content: DeploymentOwnServerContentV1Schema.parse(current.content) } };
+                const content = current.content.platform === undefined ? current.content : DeploymentOwnServerContentV1Schema.parse(current.content);
+                admitted = { environment, receipt: { deployment, content } };
                 if (job.kind === 'build') return await buildOwnServerDeploymentReceipt(host, request, admitted);
             }
             if (job.kind === 'retention') return await target.retain({ request, machineId: job.machineId, installationId: job.installationId,

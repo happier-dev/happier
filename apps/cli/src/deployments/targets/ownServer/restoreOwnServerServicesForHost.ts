@@ -9,7 +9,7 @@ import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { MachineTerminalAccountReadRuntime } from '@/api/machine/rpcHandlers.terminal';
 import { createCliDeploymentActionDeps } from '../../createCliDeploymentActionDeps';
-import { openDeploymentReceiptForHost, readDeploymentReceiptForHost,
+import { openDeploymentReceiptForHost, openSettledDeploymentReceiptPageForHost, readDeploymentReceiptForHost,
     readOwnServerDeploymentReceiptHistoryForHost } from '../../readReceiptForHost';
 import { restoreOwnServerDeploymentServices, type RestoreOwnServerDeploymentServicesInput } from './restoreOwnServerDeploymentServices';
 import { createDaemonDeploymentActionDeps } from '../../createDaemonDeploymentActionDeps';
@@ -62,14 +62,15 @@ export async function restoreOwnServerServicesForHost(input: Readonly<{
         resolveRequestHeaders: headers,
         dispatchReceipt: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' }),
     });
-    const open = (artifactId: string) => runWithServerHttpBaseUrl(runtime.serverHttpBaseUrl,
-        () => artifacts.read(artifactId, { signal: input.signal, prepareRecipients: false,
-            includeSharedAudience: false, authorizationHeaders: headers }));
+    const artifactReadOptions = (signal: AbortSignal) => ({ signal, prepareRecipients: false,
+        includeSharedAudience: false, authorizationHeaders: headers });
+    const open = (artifactId: string, signal = input.signal) => runWithServerHttpBaseUrl(runtime.serverHttpBaseUrl,
+        () => artifacts.read(artifactId, artifactReadOptions(signal)));
     const receiptHost = {
-        open, assertCurrent,
-        async readMetadata(request: Readonly<{ environmentId: string; deploymentId: string }>) {
+        open: (id: string, request: ActionExecutorContext) => open(id, request.signal), assertCurrent,
+        async readMetadata(request: Readonly<{ environmentId: string; deploymentId: string; context: ActionExecutorContext }>) {
             const result = DeploymentReceiptGetResultV1Schema.parse(await deploymentAction!('deployments.receipts.get',
-                { serverId: input.serverId, environmentId: request.environmentId, deploymentId: request.deploymentId }, context));
+                { serverId: input.serverId, environmentId: request.environmentId, deploymentId: request.deploymentId }, request.context));
             return result.ok ? result : refuse(result.error);
         },
     };
@@ -92,13 +93,14 @@ export async function restoreOwnServerServicesForHost(input: Readonly<{
         if (!page.ok) return refuse(page.error);
         // An older/incomplete inventory cannot establish that there is nothing
         // to restore. Leave the owner's attempt retryable on the next use.
-        if (!page.runtimeTargetLinks || page.coverage === 'partial') return refuse('admission_unavailable', 'service.environment_inventory');
-        for (const environment of page.items) {
-            const selected = page.runtimeTargetLinks.find(link => link.id === environment.runtimeTargetLinkId
+        const { runtimeTargetLinks } = page;
+        if (!runtimeTargetLinks || page.coverage === 'partial') return refuse('admission_unavailable', 'service.environment_inventory');
+        const restored = await Promise.allSettled(page.items.map(async environment => {
+            const selected = runtimeTargetLinks.find(link => link.id === environment.runtimeTargetLinkId
                 && link.environmentId === environment.id && link.targetKind === 'ownServer'
                 && link.members.some(member => member.machineId === input.machineId
                     && member.installationId === input.installationId && member.state === 'active'));
-            if (!selected) continue;
+            if (!selected) return [];
             const detail = DeploymentEnvironmentGetResultV1Schema.parse(await deploymentAction!('deployments.environments.get',
                 { serverId: input.serverId, environmentId: environment.id }, context));
             if (!detail.ok) return refuse(detail.error);
@@ -106,7 +108,7 @@ export async function restoreOwnServerServicesForHost(input: Readonly<{
             const link = links.find(value => value.id === detail.environment.runtimeTargetLinkId);
             if (!link || link.targetKind !== 'ownServer'
                 || !link.members.some(member => member.machineId === input.machineId
-                    && member.installationId === input.installationId && member.state === 'active')) continue;
+                    && member.installationId === input.installationId && member.state === 'active')) return [];
             const readReceipt = (deploymentId: string) => readDeploymentReceiptForHost({ environmentId: environment.id,
                 deploymentId, context }, receiptHost);
             const projection = createDeploymentMemberVersionProjectionV1(link, links);
@@ -118,6 +120,11 @@ export async function restoreOwnServerServicesForHost(input: Readonly<{
                 readCurrent: deploymentId => readDeploymentReceiptForHost({ environmentId: environment.id,
                     deploymentId, context: { signal } }, receiptHost),
                 open: deployment => openDeploymentReceiptForHost(deployment, { signal }, receiptHost),
+                openSettledPage: deployments => openSettledDeploymentReceiptPageForHost(deployments, { signal }, {
+                    assertCurrent,
+                    openMany: ids => runWithServerHttpBaseUrl(runtime.serverHttpBaseUrl,
+                        () => artifacts.readArtifactContents(ids, { signal, authorizationHeaders: headers })),
+                }),
             });
             for await (const receipt of receiptHistory(input.signal)) {
                 opened.set(receipt.deployment.id, receipt);
@@ -125,9 +132,9 @@ export async function restoreOwnServerServicesForHost(input: Readonly<{
                 if (complete || projection.getVersions()[input.machineId]?.deploymentId != null) break;
             }
             const version = projection.getVersions()[input.machineId];
-            if (!version?.deploymentId || version.uncertain) continue;
+            if (!version?.deploymentId || version.uncertain) return [];
             const receipt = opened.get(version.deploymentId) ?? await readReceipt(version.deploymentId);
-            failures.push(...await restoreOwnServerDeploymentServices({ ...input, receipt, readReceipt,
+            return await restoreOwnServerDeploymentServices({ ...input, receipt, readReceipt,
                 observeServices({ handles, homeServerIdentityId }) {
                     attachDeploymentServiceHealthNotices({ ...host, homeServerIdentityId,
                         environment: detail, handles, recoveryReceipt: receipt, serviceRows: input.owner.machineServiceRows,
@@ -153,7 +160,11 @@ export async function restoreOwnServerServicesForHost(input: Readonly<{
                             readEnvironment: dependencies.readDeploymentEnvironment, docker, engine, onFailure });
                         return { async close() { try { await restored.close(); } finally { await lease.release(); } } };
                     } catch (error) { await lease.release(); throw error; }
-                } }));
+                } });
+        }));
+        for (const result of restored) {
+            if (result.status === 'rejected') throw result.reason;
+            failures.push(...result.value);
         }
         cursor = page.nextCursor ?? undefined;
     } while (cursor);
