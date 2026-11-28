@@ -113,6 +113,7 @@ describe('createApiCorsOptions', () => {
     await app.close();
 
     expect(preflight.statusCode).toBe(204);
+    expect(preflight.headers['access-control-max-age']).toBe('7200');
     expect(preflight.headers['access-control-allow-origin']).toBe('*');
     expect(preflight.headers['access-control-allow-credentials']).toBeUndefined();
     expect(preflight.headers['access-control-allow-headers']).toContain(
