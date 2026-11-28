@@ -173,21 +173,25 @@ export function useWorkbenchColumnWidths(relation: DatabaseRelationV1) {
     }, [instance, key]);
     return useMemo(() => ({ widths: value, commit }), [value, commit]);
 }
+const useNoEnvironmentViewerAccess = () => undefined;
 export function useDatabaseAccess(targetKey: string, demand = true) {
     const instance = useWorkbenchInstance();
     const descriptor = instance.target(targetKey);
     const resource = instance.access(targetKey);
     const snapshot = useSyncExternalStore(resource.subscribe, resource.get, resource.get);
+    const target = descriptor.target;
+    const environmentTarget = target.kind === 'managed_deployment' || target.kind === 'deployment_service' ? target : null;
+    const viewerAccessHook = useHostDatabaseWorkbench()?.useEnvironmentViewerAccess;
+    const useViewerAccess = viewerAccessHook ?? useNoEnvironmentViewerAccess;
+    const viewerAccess = useViewerAccess(environmentTarget);
     useEffect(() => { if (demand) void resource.demand(); }, [demand, resource]);
     return useMemo(() => {
         const status = projectWorkbenchStatus(snapshot);
-        const summary = snapshot.data?.access ?? descriptor.access;
-        const target = descriptor.target;
-        const environmentTarget = target.kind === 'managed_deployment' || target.kind === 'deployment_service' ? target : null;
+        const summary = environmentTarget && viewerAccessHook ? viewerAccess : snapshot.data?.access ?? descriptor.access;
         const canWrite = status !== 'stale' && status !== 'unavailable' && summary?.canWrite === true;
         return { value: snapshot.data, summary, environmentTarget, canWrite, status, error: snapshot.error,
             refresh: resource.invalidate };
-    }, [descriptor, resource, snapshot]);
+    }, [descriptor, environmentTarget, resource, snapshot, viewerAccess, viewerAccessHook]);
 }
 export function useWorkbenchDraft(instance: WorkbenchInstance, scope?: Readonly<{ targetKey: string; relation: DatabaseRelationV1 }>) {
     const changes = useSyncExternalStore(instance.drafts.subscribe, instance.drafts.changes, instance.drafts.changes);

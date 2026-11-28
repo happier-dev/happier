@@ -250,6 +250,8 @@ export type PluginSurfaceHostActionExecute = ((
 
 /** Branch 1 wiring: the canonical ActionExecutor plus the host front-door context. */
 export type PluginSurfaceActionExecutorContext = ActionExecutorContext & Readonly<{
+    /** The host's physical Action Control press, scoped to the request it prepared. */
+    presentedActionControlRequestId?: string;
     /** The live mount's presentation capability, carried only through this in-process invocation. */
     requestContributedActionCurrentIntent?: PluginSurfaceActionCurrentIntentPresenter;
     /** Resource read custody survives canonical Session admission and in-process reentry. */
@@ -2838,6 +2840,10 @@ async function executeContributedAction(
         input.onDaemonActionOperationAdmitted?.(admittedOperation, admittedRequestId);
     }
     const actionInput = normalizedInput;
+    const hostContext = input.hostAction?.context;
+    // The private host control preserves the Person who pressed it through Home admission.
+    const presentedByPerson = originSurface === 'ui' && admittedRequestId && hostContext
+        && hostContext.presentedActionControlRequestId === admittedRequestId && isPresentUserHostInvocation(hostContext);
     const projectionScope = {
         machineId: binding.machineId,
         serverId: binding.accountLifetime?.scope.serverId ?? binding.serverId ?? null,
@@ -2848,6 +2854,7 @@ async function executeContributedAction(
         ...(binding.accountLifetime === undefined ? {} : { accountLifetime: binding.accountLifetime }),
         ...(binding.onApprovalPending ? { onApprovalPending: binding.onApprovalPending } : {}),
         ...(admittedOperation ? { operation: admittedOperation } : {}),
+        ...(presentedByPerson ? { presentedByPerson: true } : {}),
         // Local admission consumes the view's currentness. The finite result
         // belongs to its Account after this point, even if that view detaches.
         isCurrent: admittedOperation

@@ -35,7 +35,7 @@ import { useWorktreeDatabaseTargetChanges } from '@/hooks/databases/useWorktreeD
 import { useMachinePresenceSummary, type MachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { createDatabaseStatsLastLook } from '@/sync/domains/databases/lastLook';
 import type { HostDatabaseWorkbench, HostTaskShareSheet } from '@happier-dev/plugin-ui/hostApi';
-import { DeploymentWorkbenchAccessObserver, DeploymentWorkbenchAccessSettings } from '@/components/projects/deployments/DeploymentWorkbenchAccess';
+import { DeploymentWorkbenchAccessObserver, DeploymentWorkbenchAccessSettings, useDeploymentWorkbenchViewerAccess } from '@/components/projects/deployments/DeploymentWorkbenchAccess';
 import { DeploymentWorkbenchProductionBackup, DeploymentWorkbenchWriteSetup } from '@/components/projects/deployments/DeploymentWorkbenchReview';
 import { showTaskShareSheet } from '@/components/sharing/tasks/showTaskShareSheet';
 import { PluginUiMenuPresentation } from './pluginUiMenuPresentation';
@@ -887,6 +887,9 @@ export function createPluginUiPrivatePresentationHost(
                     },
                 } : {}),
                 renderEnvironmentAccessObserver: input => <DeploymentWorkbenchAccessObserver {...input} scope={automations} />,
+                useEnvironmentViewerAccess: function useEnvironmentViewerAccess(target) {
+                    return useDeploymentWorkbenchViewerAccess(target, automations);
+                },
                 renderEnvironmentAccessSettings: input => <DeploymentWorkbenchAccessSettings {...input} scope={automations} />,
                 renderProductionBackup: target => <DeploymentWorkbenchProductionBackup target={target} scope={automations} />,
                 renderWriteSetup: input => <DeploymentWorkbenchWriteSetup {...input} scope={automations} />,

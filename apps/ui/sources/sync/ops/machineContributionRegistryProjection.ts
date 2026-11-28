@@ -1001,6 +1001,8 @@ export async function machinePluginStructuredMessageActionExecute(
         onApprovalPending?: (registration: ActionApprovalRegistration) => void;
         /** Host-owned declaration; never part of the plugin invocation DTO. */
         operation?: ActionOperationDeclarationV1;
+        /** The mounted host is presenting this Environment database request for a Person. */
+        presentedByPerson?: true;
     }>,
 ): Promise<MachinePluginStructuredMessageActionResult> {
     let issued = false;
@@ -1048,8 +1050,9 @@ export async function machinePluginStructuredMessageActionExecute(
                 // uses only the contributed Action's allowed wrapper fields.
                 const input = !mounted && payload.sessionId !== undefined ? { ...actionInput, sessionId: payload.sessionId } : actionInput;
                 const target = { kind: 'machine' as const, machineId };
-                const authority = mounted ? 'account_automation' as const : 'present_user' as const;
-                const callerBinding = mounted?.kind === 'mountedPluginSurface' ? mounted.mountedBinding : mounted?.clientActionBinding;
+                const pluginInvocation = environmentDatabase && opts.presentedByPerson ? undefined : mounted;
+                const authority = pluginInvocation ? 'account_automation' as const : 'present_user' as const;
+                const callerBinding = pluginInvocation?.kind === 'mountedPluginSurface' ? pluginInvocation.mountedBinding : pluginInvocation?.clientActionBinding;
                 const context = { surface: payload.executionSurface, authority,
                     actionCaller: callerBinding ? { kind: 'plugin' as const, pluginId: callerBinding.pluginId,
                         contributionLocalId: callerBinding.contributionLocalId, occurrenceId: callerBinding.occurrenceId,
@@ -1068,7 +1071,7 @@ export async function machinePluginStructuredMessageActionExecute(
                 };
                 let result = await executeOriginalAccountMachineAction({ account, actionId: ACTION_INVOKE_ACTION_ID_V1,
                     requestId, machineId, authority, input,
-                    ...(mounted ? { pluginInvocation: mounted } : {}),
+                    ...(pluginInvocation ? { pluginInvocation } : {}),
                     ...(invocation ? { invocation: { ...invocation,
                         ...(mounted && payload.selectedActionInputCarrier ? { selectedActionInput: {
                             carrier: payload.selectedActionInputCarrier, input: projectNativeJsonValueForTransport(input),

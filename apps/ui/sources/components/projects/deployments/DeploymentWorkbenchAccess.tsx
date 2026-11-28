@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Button, ErrorState, Item, ItemGroup, Row, Stack, Text } from '@happier-dev/plugin-ui';
 import type { HostDatabaseWorkbench } from '@happier-dev/plugin-ui/hostApi';
+import { summarizeDatabaseAccessV1 } from '@happier-dev/databases/access';
 import { useDestinationVisibilitySignal } from '@/components/appShell/workspace/destinationInstanceContext';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -15,6 +16,7 @@ import { useDeploymentEnvironmentRecord } from './useDeploymentReads';
 
 type AccessObserverInput = Parameters<NonNullable<HostDatabaseWorkbench['renderEnvironmentAccessObserver']>>[0];
 type AccessSettingsInput = Parameters<NonNullable<HostDatabaseWorkbench['renderEnvironmentAccessSettings']>>[0];
+type ViewerAccessTarget = Parameters<NonNullable<HostDatabaseWorkbench['useEnvironmentViewerAccess']>>[0];
 export type DeploymentWorkbenchPresentationScope = Readonly<{
     accountLifetime: ServerAccountScopeLifetime | null;
     isCurrent(): boolean;
@@ -24,6 +26,21 @@ export function readDeploymentWorkbenchLifetime(scope: DeploymentWorkbenchPresen
     const lifetime = scope.accountLifetime;
     return scope.isCurrent() && lifetime?.isCurrent() && areServerProfileIdentifiersEquivalent(lifetime.scope.serverId, serverId)
         ? lifetime : null;
+}
+
+/** The presented Home record already resolved this Person's inherited Environment policy. */
+export function useDeploymentWorkbenchViewerAccess(target: ViewerAccessTarget, scope: DeploymentWorkbenchPresentationScope) {
+    const address = target?.environment;
+    const presented = useDeploymentPresentationDemand(Boolean(address));
+    const lifetime = address ? readDeploymentWorkbenchLifetime(scope, address.serverId) : null;
+    const { controller } = useDeploymentProject(lifetime, address?.projectSourceId ?? null, presented);
+    const record = useDeploymentEnvironmentRecord(controller, address?.environmentId ?? null, presented);
+    const environment = record.snapshot.status === 'ready' ? record.snapshot.value?.environment : undefined;
+    return React.useMemo(() => environment && summarizeDatabaseAccessV1({
+        requester: 'person',
+        agentAccess: environment.dataAgentAccess ?? 'none',
+        person: { mayWrite: environment.capabilities.editData, editingOff: environment.dataEditorMode === 'off' },
+    }), [environment]);
 }
 
 /** Listen through the existing Home wake. A Preview additionally tracks its template identity. */

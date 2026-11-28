@@ -24,6 +24,40 @@ const { PluginUiHostPresentationScope } = await import('@happier-dev/plugin-ui/a
 const { projectHappierUiEnvironment } = await import('@happier-dev/plugin-ui/environment');
 const { createSurfaceContextFixture } = await import('@happier-dev/plugin-sdk/testing');
 
+it('presents the chosen Person editor independently of the Agent read ceiling', async () => {
+    const serverId = await homes.addHome({ name: 'Workbench viewer', serverUrl: 'https://workbench-viewer.test', accountId: 'member', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const environment = createDeploymentEnvironmentHeaderV1({ serverId, dataEditorMode: 'chosen', dataAgentAccess: 'read' });
+    const content = createDeploymentEnvironmentDetailV1().content;
+    await account.createArtifactDocument({ artifactId: environment.contentArtifactId,
+        header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: content.name }, body: JSON.stringify(content) });
+    let editData = true;
+    let revision = environment.revision;
+    homes.answer(serverId, `/v1/deployments/environments/${environment.id}`, { select: () => ({ body: { ok: true,
+        environment: { ...environment, revision, capabilities: { ...environment.capabilities, editData } }, targetLinks: [] } }) });
+    const target = { kind: 'deployment_service', environment: { serverId, projectSourceId: environment.projectSourceId, environmentId: environment.id },
+        deploymentId: 'deployment', targetLinkId: 'link', serviceId: 'postgres', database: 'main' } as const;
+    const scope = { accountLifetime: account.accountLifetime, isCurrent: () => true };
+    const access = await import('./DeploymentWorkbenchAccess');
+    let seen: unknown;
+    function Probe() {
+        seen = access.useDeploymentWorkbenchViewerAccess?.(target, scope);
+        return null;
+    }
+    const screen = await renderAccountScreen(<Probe />);
+    try {
+        await waitForHomeGovernance(() => expect(seen).toEqual({ canRead: true, canWrite: true }));
+        editData = false;
+        revision++;
+        const change = buildDeploymentAccountChangeV1({ projectSourceId: environment.projectSourceId, environmentId: environment.id, revision });
+        await act(async () => publishHomeAccountChange(serverId, [change.entityId], { changeKinds: ['account'] }));
+        await waitForHomeGovernance(() => expect(seen).toEqual({ canRead: true, canWrite: false, reason: 'database_not_an_editor' }));
+    } finally {
+        await screen.unmount();
+        account.dispose();
+    }
+});
+
 afterEach(async () => {
     vi.useRealTimers();
     await standardCleanup();

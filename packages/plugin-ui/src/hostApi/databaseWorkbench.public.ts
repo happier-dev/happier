@@ -1,5 +1,6 @@
 import type {
   DatabaseAccessReadResultV1,
+  DatabaseAccessSummaryV1,
   DatabaseDescriptorV1,
   DatabaseStatsCounterComparisonV1,
   DatabaseStatsObservationV1,
@@ -46,6 +47,8 @@ export type HostDatabaseWorkbench = Readonly<{
   }>): HostDatabaseActivityResource<T>;
   /** Scope is the mounted viewer's explicit Home/Account, never the focused tab. */
   lastLook(scope: Readonly<{ serverId: string; accountId: string }>, target: DatabaseTargetV1): HostDatabaseLastLook;
+  /** Display the mounted Person's Environment access from the Home record. */
+  useEnvironmentViewerAccess?(target: DeploymentDatabaseTarget | null): DatabaseAccessSummaryV1 | undefined;
   renderEnvironmentAccessObserver?(input: Readonly<{
     target: DeploymentDatabaseTarget;
     environment?: DatabaseDescriptorV1['origin']['environment'];

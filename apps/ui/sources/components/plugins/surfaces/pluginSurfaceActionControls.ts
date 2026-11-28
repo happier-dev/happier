@@ -205,6 +205,7 @@ export function createPluginSurfaceActionControls(input: Readonly<{
             const occurrenceId = declaration?.execution.target === 'daemon' ? declaration.occurrenceId : undefined;
             const machineId = occurrenceId ? input.readMountedActionMachineId?.(occurrenceId) : undefined;
             const context = { ...input.hostAction.context, signal, actionRequestId: requestId,
+                presentedActionControlRequestId: requestId,
                 surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const },
                 bypassApprovals: false,
                 ...(machineId ? { externalActionTarget: { kind: 'machine' as const, machineId } } : {}) };
