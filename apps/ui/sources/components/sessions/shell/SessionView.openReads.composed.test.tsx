@@ -99,7 +99,8 @@ const runtime = installSessionPaneRuntimeTestHarness({
     rpc: async method => { machineRequests.push(method); return null; },
     onHttpRequest: (input, init) => {
         httpRequests.push(String(input));
-        const path = new URL(String(input)).pathname;
+        const url = new URL(String(input));
+        const path = url.pathname;
         const method = init?.method ?? 'GET';
         if (method === 'GET' && [
             `/v1/sessions/${revisitId}/turns`, `/v2/sessions/${revisitId}`, `/v1/sessions/${revisitId}/messages`,
