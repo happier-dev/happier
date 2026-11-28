@@ -14,9 +14,8 @@ import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { useQualifiedConnectedAccountTargetPresentations } from './useQualifiedConnectedAccountTargetPresentations';
-import { useConnectedMetadataCatalog } from './useConnectedMetadataCatalog';
+import { getConnectedMetadataCatalog } from '@/sync/store/settings/connectedMetadataCatalogSnapshot';
 import { storage } from '@/sync/domains/state/storageStore';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 installApprovalCommonModuleMocks();
 afterEach(() => { retireActiveServerAccountScopeLifetime(); resetRuntimeFetch(); invalidateAccountEncryptionModeCache(); vi.restoreAllMocks(); });
@@ -97,14 +96,13 @@ describe('captured Home qualified Account presentation', () => {
             browserLocks.restore(); browserStorage.restore();
         }
     });
-    it.each(['unauthorized', 'forbidden', 'unsupported', 'offline', 'missing-credentials'] as const)('withdraws sensitive catalog labels on %s currentness admission loss, retaining them only offline', async (failure) => {
+    it.each(['unauthorized', 'forbidden', 'unsupported', 'offline', 'missing-credentials'] as const)('withdraws sensitive catalog labels on %s admission loss, retaining them only offline', async (failure) => {
         const browserStorage = installLocalStorageMock();
         const browserLocks = installWebLockManagerMock();
         let hook: Readonly<{ unmount(): Promise<void> }> | undefined;
         let failCurrentnessRead = false;
         const rejectedCurrentnessPaths: string[] = [];
         const transportError = new TypeError('Network request failed');
-        const observed: { scope: ServerAccountScope | null } = { scope: null };
         try {
             const target = await upsertAndActivateServer({ serverUrl: `https://catalog-admission-${failure}.test`, scope: 'tab' });
             await setServerProfileIdentityForUrl(target.serverUrl, `srv_catalog_admission_${failure}`);
@@ -137,49 +135,57 @@ describe('captured Home qualified Account presentation', () => {
                 });
                 return Response.json({ error: 'not_found' }, { status: 404 });
             });
-            const rendered = await renderHook(() => {
-                const { binding } = useServerCredentialAccountScopeBinding(target.id);
-                observed.scope = binding?.scope ?? null;
-                return useConnectedMetadataCatalog(binding?.scope ?? null);
-            }, { flushOptions: { cycles: 30 } });
+            const readTargets = () => {
+                const { binding, resolution } = useServerCredentialAccountScopeBinding(target.id);
+                return { binding, resolution, ...useQualifiedConnectedAccountTargetPresentations({ binding, targets }) };
+            };
+            let rendered = await renderHook(readTargets, { flushOptions: { cycles: 30 } });
             hook = rendered;
             await vi.waitFor(async () => {
                 await flushHookEffects();
-                expect(Object.values(rendered.getCurrent().labelsByKey)).toContain('Private catalog label');
+                expect(rendered.getCurrent().presentationsByKey['credential:0']?.primaryLabel).toBe('Private catalog label');
             });
+            const scope = rendered.getCurrent().binding?.scope;
+            if (!scope) throw new Error('The credential scope did not publish its Account');
+
             if (failure === 'missing-credentials') {
-                const scope = observed.scope;
-                if (!scope) throw new Error('The credential scope did not publish its Account');
-                // No observer is present when the genuine credential event fires.
-                // A newly acquired catalog must classify its fresh capture refusal,
-                // rather than relying on the earlier observer's withdrawal callback.
                 await rendered.unmount();
                 hook = undefined;
                 expect(await TokenStorage.removeCredentialsForServerUrl(target.serverUrl, { serverId: target.id })).toBe(true);
-                expect(await TokenStorage.getCredentialsForServerUrl(target.serverUrl, { serverId: target.id })).toBeNull();
-                const { getConnectedMetadataCatalog } = await import('@/sync/store/settings/connectedMetadataCatalogSnapshot');
-                expect(Object.values(getConnectedMetadataCatalog(scope).labelsByKey)).toContain('Private catalog label');
-                const reacquired = await renderHook(() => useConnectedMetadataCatalog(scope), { flushOptions: { cycles: 30 } });
-                hook = reacquired;
-                const { refreshConnectedMetadataCatalog } = await import('@/sync/engine/settings/connectedMetadataCatalogEngine');
-                // Await the real fresh-read owner, not the expected refusal reason:
-                // a settled wrong reason must fail immediately rather than poll
-                // until the containing case times out.
-                await act(async () => {
-                    await refreshConnectedMetadataCatalog(scope);
+                // Retained catalog admission is withdrawn even without a mounted observer.
+                expect(getConnectedMetadataCatalog(scope)).toMatchObject({
+                    presentation: { status: 'unavailable', reason: 'unauthorized' },
                 });
-                await flushHookEffects();
-                expect(reacquired.getCurrent().presentation).toMatchObject({ status: 'unavailable', reason: 'unauthorized' });
-                expect(Object.values(reacquired.getCurrent().labelsByKey)).toEqual([]);
-                return;
+                expect(getConnectedMetadataCatalog(scope).labelsByKey).toEqual({});
+                rendered = await renderHook(readTargets, { flushOptions: { cycles: 30 } });
+                hook = rendered;
+            } else {
+                failCurrentnessRead = true;
+                await act(async () => publishHomeAccountChange(target.id));
             }
-            failCurrentnessRead = true;
-            await act(async () => publishHomeAccountChange(target.id));
+
             await vi.waitFor(async () => {
                 await flushHookEffects();
-                expect(rejectedCurrentnessPaths).toContain('/v1/account/encryption/currentness');
-                expect(rendered.getCurrent().presentation).toMatchObject({ status: 'unavailable', reason: failure === 'offline' ? 'unreachable' : failure });
-                expect(Object.values(rendered.getCurrent().labelsByKey)).toEqual(failure === 'offline' ? ['Private catalog label'] : []);
+                if (failure !== 'missing-credentials') {
+                    expect(rejectedCurrentnessPaths).toContain('/v1/account/encryption/currentness');
+                }
+                const current = rendered.getCurrent();
+                expect(Object.values(current.labelsByKey)).toEqual(failure === 'offline' ? ['Private catalog label'] : []);
+                if (failure === 'unauthorized' || failure === 'missing-credentials') {
+                    expect(current).toMatchObject({
+                        resolution: { kind: 'signed_out' },
+                        binding: null,
+                        loading: false,
+                        resolved: false,
+                        accounts: [],
+                        presentationsByKey: { 'credential:0': { primaryLabel: 'common.unavailable', targetMissing: true } },
+                    });
+                } else {
+                    expect(getConnectedMetadataCatalog(scope).presentation).toMatchObject({
+                        status: 'unavailable',
+                        reason: failure === 'offline' ? 'unreachable' : failure,
+                    });
+                }
             });
         } finally { await hook?.unmount(); browserLocks.restore(); browserStorage.restore(); }
     });
