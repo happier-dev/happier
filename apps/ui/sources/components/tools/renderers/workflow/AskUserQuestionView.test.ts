@@ -1820,6 +1820,42 @@ describe('AskUserQuestionView', () => {
         expect(editable()[0]?.props.value).toBe('A held answer');
     });
 
+    it('moves a held answer from the composer tray into the Work Send group', async () => {
+        const { AgentInputPermissionRequests } = await import('@/components/sessions/agentInput/components/AgentInputPermissionRequests');
+        const { SessionPendingPromptCards } = await import('@/components/tools/shell/permissions/SessionPendingPromptCards');
+        const request = { id: 'toolu_1', tool: 'AskUserQuestion', kind: 'user_action' as const,
+            turnId: 'tray-turn', createdAt: 1, arguments: makeFreeformTool().input };
+        askUserQuestionSessionState.current = { agentState: { requests: { toolu_1: request } } };
+        let openWork: React.Dispatch<React.SetStateAction<boolean>> = () => {};
+        function Surfaces() {
+            const [work, setWork] = React.useState(false);
+            openWork = setWork;
+            return React.createElement(React.Fragment, null,
+                React.createElement(AgentInputPermissionRequests, {
+                    sessionId: 's1', permissionRequests: [], questionRequests: [request], permissionLocationsById: new Map(),
+                    metadata: null, canApprovePermissions: true, maxHeightPx: 500,
+                    onContentSizeChange: () => {}, onLayout: () => {}, onScroll: () => {},
+                }),
+                work ? React.createElement(QuestionSendGroup, null, React.createElement(SessionPendingPromptCards, {
+                    testID: 'work-needs-you-prompts', sessionId: 's1', serverId: account.serverId, session: readSessionFixture(),
+                    permissions: [], userActions: [request],
+                })) : null,
+            );
+        }
+        const screen = await renderScreen(React.createElement(Surfaces));
+        const editable = () => screen.findAll(node => node.props.testID === 'ask-user-question.freeform:0'
+            && node.props.editable === true && typeof node.type === 'string');
+        expect(screen.findByTestId('agentInput.permissionRequests.chrome')).toBeTruthy();
+        expect(editable()).toHaveLength(1);
+        await act(async () => changeTextTestInstance(editable()[0], 'held in composer', 'composer answer'));
+        await act(async () => openWork(true));
+        expect(editable()).toHaveLength(1);
+        expect(editable()[0]?.props.value).toBe('held in composer');
+        await screen.pressByTestIdAsync('question-group-send');
+        expect(sessionAllowWithAnswers).toHaveBeenCalledExactlyOnceWith({ id: 'toolu_1', turnId: 'tray-turn',
+            answers: { 'Which file should I inspect?': ['held in composer'] } });
+    });
+
     it('keeps a stale answer as recoverable text without filling the replacement question', async () => {
         const form = makeToolViewProps(makeFreeformTool(), { sessionId: 's1' });
         activeAskUserQuestionRequest = { tool: 'AskUserQuestion', kind: 'user_action', turnId: 'old-turn' };

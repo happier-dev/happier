@@ -840,6 +840,7 @@ interface AgentInputProps {
     /** The submit owner has staged changes that can be applied without a message. */
     hasSendableChanges?: boolean;
     permissionRequests?: ReadonlyArray<PendingPermissionRequest>;
+    questionRequests?: ReadonlyArray<PendingPermissionRequest>;
     approvalRequests?: ReadonlyArray<OpenApprovalAttentionArtifactForSession>;
     canApprovePermissions?: boolean;
     permissionDisabledReason?: TranscriptPermissionDisabledReason;
@@ -860,7 +861,7 @@ const AgentInputAttentionRequestsWithLocations = React.memo(function AgentInputA
     const committedMessagesReducerState = source.useReducerState();
 
     const permissionLocationsById = useRetainedToolCallLocations(React.useMemo(() => {
-        const ids = props.permissionRequests.map((request) => request.id);
+        const ids = [...props.permissionRequests, ...props.questionRequests ?? []].map((request) => request.id);
         if (ids.length === 0) return EMPTY_PERMISSION_LOCATIONS_BY_ID;
         return new Map(
             resolvePermissionToolCallLocations({
@@ -880,6 +881,7 @@ const AgentInputAttentionRequestsWithLocations = React.memo(function AgentInputA
         committedMessagesById,
         committedMessagesReducerState,
         props.permissionRequests,
+        props.questionRequests,
     ]));
 
     const approvalLocationsByArtifactId = useRetainedToolCallLocations(React.useMemo(() => {
@@ -911,6 +913,7 @@ const AgentInputAttentionRequestsWithLocations = React.memo(function AgentInputA
     return (
         <AgentInputPermissionRequests
             {...props}
+            serverId={source.serverId ?? undefined}
             permissionLocationsById={permissionLocationsById}
             approvalLocationsByArtifactId={approvalLocationsByArtifactId}
         />
@@ -1626,6 +1629,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     );
     const hasComposerAttentionRequests =
         (showComposerPermissionCards && composerPermissionRequests.length > 0)
+        || (props.questionRequests?.length ?? 0) > 0
         || composerApprovalRequests.length > 0;
     React.useEffect(() => {
         if (!hasComposerAttentionRequests) {
@@ -2824,6 +2828,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         const sharedProps: Omit<AgentInputPermissionRequestsProps, 'permissionLocationsById'> = {
             sessionId: attentionRequestSessionId,
             permissionRequests: composerPermissionRequests,
+            questionRequests: props.questionRequests,
             approvalRequests: composerApprovalRequests,
             metadata: props.metadata || null,
             canApprovePermissions,
@@ -2842,16 +2847,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             },
             fadeVisibility: permissionRequestsFades.visibility,
         };
-        if (composerPermissionRequests.length > 0 || composerApprovalRequests.length > 0) {
-            return <AgentInputAttentionRequestsWithLocations {...sharedProps} />;
-        }
-        return (
-            <AgentInputPermissionRequests
-                {...sharedProps}
-                permissionLocationsById={EMPTY_PERMISSION_LOCATIONS_BY_ID}
-                approvalLocationsByArtifactId={EMPTY_APPROVAL_LOCATIONS_BY_ARTIFACT_ID}
-            />
-        );
+        return <AgentInputAttentionRequestsWithLocations {...sharedProps} />;
     }, [
         canApprovePermissions,
         compactCommandMenu,
@@ -2863,6 +2859,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         permissionRequestsMaxHeightPx,
         props.metadata,
         props.permissionDisabledReason,
+        props.questionRequests,
         attentionRequestSessionId,
     ]);
     const fixedComposerAttentionRequestsNode = composerAttentionRequestsNode ? (

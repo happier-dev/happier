@@ -11,6 +11,7 @@ import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import { useCurrentUiContextLocalCommands, type CurrentUiContextLocalCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { PermissionPromptCard } from '@/components/tools/shell/permissions/PermissionPromptCard';
+import { UserActionPromptCard } from '@/components/tools/shell/userActions/UserActionPromptCard';
 import { ApprovalPromptCard } from '@/components/tools/shell/approvals/ApprovalPromptCard';
 import { ApprovalPromptRoomContext, resolveApprovalPromptTrayMaxHeight, shareApprovalPromptRoom, type ApprovalPromptCardHeights, type ApprovalPromptRoom } from '@/components/tools/shell/approvals/ApprovalPromptChrome';
 import { Typography } from '@/constants/Typography';
@@ -23,21 +24,25 @@ import { t } from '@/text';
 
 type AttentionRequest =
     | Readonly<{ kind: 'permission'; request: PendingPermissionRequest }>
+    | Readonly<{ kind: 'question'; request: PendingPermissionRequest }>
     | Readonly<{ kind: 'approval'; request: OpenApprovalAttentionArtifactForSession }>;
 
 const NO_ATTENTION_REQUESTS: readonly AttentionRequest[] = Object.freeze([]);
+const NO_PENDING_REQUESTS: readonly PendingPermissionRequest[] = Object.freeze([]);
 const NO_COMMANDS: readonly CurrentUiContextLocalCommand[] = Object.freeze([]);
 const EARLIER_FAILURES_COMMAND = 'earlierFailures';
 
 /** A request still waiting for the person's decision; the rest are settled failures kept until dismissed. */
 function isPendingAttentionRequest(request: AttentionRequest): boolean {
-    return request.kind === 'permission' || request.request.approval.status === 'open';
+    return request.kind !== 'approval' || request.request.approval.status === 'open';
 }
 
 function getAttentionRequestKey(request: AttentionRequest): string {
     switch (request.kind) {
         case 'permission':
             return request.request.id;
+        case 'question':
+            return `question:${request.request.id}`;
         case 'approval':
             return `approval:${request.request.artifact.id}`;
     }
@@ -118,7 +123,9 @@ const stylesheet = StyleSheet.create((theme) => ({
 
 export const AgentInputPermissionRequests = React.memo(function AgentInputPermissionRequests(props: Readonly<{
     sessionId: string;
+    serverId?: string;
     permissionRequests: readonly PendingPermissionRequest[];
+    questionRequests?: readonly PendingPermissionRequest[];
     approvalRequests?: readonly OpenApprovalAttentionArtifactForSession[];
     permissionLocationsById: ReadonlyMap<string, PermissionToolCallMessageLocation | null>;
     approvalLocationsByArtifactId?: ReadonlyMap<string, PermissionToolCallMessageLocation | null>;
@@ -143,11 +150,13 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
     const { theme } = useUnistyles();
 
     const permissionRequests = props.disabledReason === 'inactive' ? [] : props.permissionRequests;
+    const questionRequests = props.disabledReason === 'inactive' ? NO_PENDING_REQUESTS : props.questionRequests ?? NO_PENDING_REQUESTS;
     const approvalRequests = props.approvalRequests ?? [];
     const attentionRequests = React.useMemo<AttentionRequest[]>(() => [
+        ...questionRequests.map((request) => ({ kind: 'question' as const, request })),
         ...permissionRequests.map((request) => ({ kind: 'permission' as const, request })),
         ...approvalRequests.map((request) => ({ kind: 'approval' as const, request })),
-    ], [approvalRequests, permissionRequests]);
+    ], [approvalRequests, permissionRequests, questionRequests]);
     // A pending request is the one thing the person must act on. While one waits, the failures settled before it
     // fold into one quiet row so its decision has the tray; they stay in the transcript where they happened, and
     // the tray lists them only when the person asks. With nothing pending, the failures are the tray, as before.
@@ -255,7 +264,18 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
                     style={styles.divider}
                 />
             ) : null}
-            {item.kind === 'permission' ? (
+            {item.kind === 'question' ? (
+                <UserActionPromptCard
+                    chrome="inline"
+                    request={item.request}
+                    location={props.permissionLocationsById.get(item.request.id) ?? null}
+                    sessionId={props.sessionId}
+                    serverId={props.serverId}
+                    metadata={props.metadata}
+                    canApprovePermissions={props.canApprovePermissions}
+                    disabledReason={props.disabledReason}
+                />
+            ) : item.kind === 'permission' ? (
                 <PermissionPromptCard
                     chrome="inline"
                     request={item.request}

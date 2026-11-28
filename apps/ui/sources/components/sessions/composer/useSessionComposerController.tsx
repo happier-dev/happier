@@ -169,6 +169,7 @@ import { trackMessageSent } from "@/track";
 import { randomUUID } from "@/platform/randomUUID";
 import { shouldShowAbortButtonForSessionState, useSessionStatus } from "@/utils/sessions/sessionUtils";
 import { useSessionTranscriptSource } from "@/components/sessions/transcript/source/SessionTranscriptSourceContext";
+import { isStructuredAgentQuestion } from '@happier-dev/protocol/activity/agentRequestSummary';
 import { fireAndForget } from "@/utils/system/fireAndForget";
 import type { ModelMode, PermissionMode } from "@/sync/domains/permissions/permissionTypes";
 import { getPermissionModeOverrideForSpawn } from "@/sync/domains/permissions/permissionModeOverride";
@@ -796,6 +797,8 @@ export function useSessionComposerController({
     const transcriptSource = useSessionTranscriptSource();
     const pendingRequestLists = transcriptSource.usePendingRequests();
     const pendingPermissionRequests = pendingRequestLists.permissionRequests;
+    const pendingQuestionRequests = React.useMemo(() => pendingRequestLists.userActionRequests.filter(request =>
+        isStructuredAgentQuestion({ toolName: request.tool, requestKind: request.kind, questionV1: request.questionV1 })), [pendingRequestLists.userActionRequests]);
     const intentionalRestartSourceEvents = useSessionIntentionalRestartSourceEvents();
     // One derivation of this Session's Home, used for routing and for every
     // capability/feature scope below. `routeServerId` is already the outer view's
@@ -6585,6 +6588,7 @@ export function useSessionComposerController({
                     || composerAttachmentViews.some((attachment) => attachment.availability.status === 'ready')
                 }
                 permissionRequests={pendingPermissionRequests}
+                questionRequests={pendingQuestionRequests}
                 approvalRequests={approvalRequests}
                 canApprovePermissions={transcriptInteraction.canApprovePermissions}
                 permissionDisabledReason={transcriptInteraction.permissionDisabledReason}
