@@ -64,7 +64,7 @@ it('says each Machine’s Security, All, Restart and when it last checked in its
       onOpen={onOpen}
       rows={[
         row('hetzner', { security: 3, all: 7, checkedAt: CHECKED }),
-        row('vps', { security: 0, all: 2, restartNeeded: true, checkedAt: CHECKED }),
+        row('vps', { security: 0, all: 2, held: 1, restartNeeded: true, checkedAt: CHECKED }),
         row('fresh', {}),
         // Offline: its last answer is not today's count (readFleetUpdatesRow drops it), but when it last checked stays true.
         row('build', { online: false, security: 4, all: 9, checkedAt: CHECKED }),
@@ -93,7 +93,7 @@ it('says each Machine’s Security, All, Restart and when it last checked in its
   // Each row reads the Machine and its system, then Security · All · Restart · Checked, in the columns' order.
   const checked = formatAsOfTime(CHECKED);
   expect(rowText('hetzner')).toContain(`hetzner Linux 3 7 ${notNeeded} ${checked}`);
-  expect(rowText('vps')).toContain(`vps Linux 0 2 ${needed} ${checked}`);
+  expect(rowText('vps')).toContain(`vps Linux · ${t('machineDetailPage.security.heldPackageCount', { count: 1 })} 0 2 ${needed} ${checked}`);
   expect(rowText('fresh')).toContain('fresh Linux — — — —');
   // Offline (lab fUpd build-01): the counts are not today's, the check time is the last one it reported.
   expect(rowText('build')).toContain(`build Linux — — — ${t('machineFleetUpdates.checkedAsOf', { time: checked })}`);

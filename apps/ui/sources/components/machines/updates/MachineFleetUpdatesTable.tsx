@@ -30,6 +30,10 @@ const CHECKED_COLUMN_WIDTH_PX = 136;
 
 const keyOfRow = (row: FleetUpdatesRow) => row.machineId;
 
+function describeHolds(row: FleetUpdatesRow): string | null {
+  return row.held ? t('machineDetailPage.security.heldPackageCount', { count: row.held }) : null;
+}
+
 /** What the row knows: its pushed facts, or that it can't say today (offline, not checked yet). */
 function known(row: FleetUpdatesRow): boolean {
   return row.online === true && (row.security !== null || row.all !== null);
@@ -42,6 +46,7 @@ function describeFacts(row: FleetUpdatesRow): string {
   return [
     row.security === null ? null : t(`${s}.security`, { count: row.security }),
     row.all === null ? null : t(`${s}.all`, { count: row.all }),
+    describeHolds(row),
     row.restartNeeded ? t(`${s}.restartNeeded`) : null,
   ]
     .filter(Boolean)
@@ -127,7 +132,7 @@ export function MachineFleetUpdatesTable(
       ),
       title: (row) => row.name,
       // What the Machine runs beside its name, as the Machines table says its facts (lab fUpd: \"Ubuntu 24.04\").
-      titleSuffix: (row) => (phone ? null : formatOSPlatform(row.platform) || null),
+      titleSuffix: (row) => phone ? null : [formatOSPlatform(row.platform), describeHolds(row)].filter(Boolean).join(' · ') || null,
       // The list's second line (where the table recomposes on a phone, lab fUpd · 390): the system and the same facts
       // as the columns; the table draws its columns instead. A phone keeps the check time at the row's end.
       byline: (row) => [formatOSPlatform(row.platform), describeFacts(row)].filter(Boolean).join(' · '),

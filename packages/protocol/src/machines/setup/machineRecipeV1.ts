@@ -188,6 +188,15 @@ export const MachineRecipePackageStepV1Schema =
             if (message) context.addIssue({ code: 'custom', path: ['packages', index], message });
         });
     });
+export const MachineSetupPackageHoldV1Schema = z.object({
+    name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9+_.-]*$/),
+    operation: z.enum(['hold', 'release']),
+}).strict();
+export type MachineSetupPackageHoldV1 = z.infer<typeof MachineSetupPackageHoldV1Schema>;
+const MachineRecipePackageHoldStepV1Schema = MachineSetupPackageHoldV1Schema.extend({
+    ...Step, kind: z.literal('packageHold'), manager: z.enum(['apt', 'dnf']),
+}).refine(({ manager, name }) => packageIdentityError({ manager, name }) === undefined,
+    { message: 'A manager-native exact package identity is required.' });
 const PackageSource = { ...Step, kind: z.literal('packageSource'), path: Path, keyPath: Path,
     url: z.url().startsWith('https://'), keyUrl: z.url().startsWith('https://'),
     keyFingerprint: z.string().regex(/^[A-F0-9]{40}$/),
@@ -215,7 +224,8 @@ export const MachineRecipeRebootStepV1Schema = z.object({ ...Step, kind: z.liter
 export const MachineRecipeStepV1Schema = z.discriminatedUnion('kind', [
     MachineRecipeUserStepV1Schema, MachineRecipeGroupStepV1Schema, MachineRecipeDirectoryStepV1Schema,
     MachineRecipeWorkspaceAccessStepV1Schema, MachineRecipePathTraversalStepV1Schema, MachineRecipeFileStepV1Schema,
-    MachineRecipeCommandStepV1Schema, MachineRecipeScriptStepV1Schema, MachineRecipePackageStepV1Schema, MachineRecipePackageSourceStepV1Schema,
+    MachineRecipeCommandStepV1Schema, MachineRecipeScriptStepV1Schema, MachineRecipePackageStepV1Schema,
+    MachineRecipePackageHoldStepV1Schema, MachineRecipePackageSourceStepV1Schema,
     MachineRecipeServiceUnitStepV1Schema, MachineRecipeFirewallStepV1Schema, MachineRecipeRebootStepV1Schema,
 ]);
 export type MachineRecipeStepV1 = z.infer<typeof MachineRecipeStepV1Schema>;
@@ -599,13 +609,17 @@ export function isMachineSetupBootstrapBasisV1(basis: MachineSetupEffectPlanV1['
 export const MachineSetupPreparationBasisV1Schema = z.object({ kind: z.literal('preparation'),
     operationId: z.string().min(1) }).strict();
 export type MachineSetupPreparationBasisV1 = z.infer<typeof MachineSetupPreparationBasisV1Schema>;
+export const MachineSetupUpdatesBasisV1Schema = z.object({
+    kind: z.literal('updates'), machineId: z.string().min(1), scope: z.enum(['security', 'all']),
+    hold: MachineSetupPackageHoldV1Schema.optional(),
+}).strict();
 export const MachineSetupEffectBasisV1Schema = z.discriminatedUnion('kind', [
     ...MachineSetupBootstrapBasisV1Schema.options,
     MachineSetupBoundTargetBasisV1Schema,
     MachineSetupPreparationBasisV1Schema,
     z.object({ kind: z.literal('setup'), machineId: z.string().min(1), desiredRevision: z.number().int().nonnegative(),
         selection: MachineRecipeSelectionV1Schema.optional() }).strict(),
-    z.object({ kind: z.literal('updates'), machineId: z.string().min(1), scope: z.enum(['security', 'all']) }).strict(),
+    MachineSetupUpdatesBasisV1Schema,
     // Administrator policy is its own admitted Machine operation, not a
     // desired setup revision. Both reviewed policies participate in the digest.
     z.object({ kind: z.literal('adminAccess'), machineId: z.string().min(1), operationId: z.string().min(1),
@@ -631,6 +645,11 @@ export const MachineSetupEffectPlanV1Schema = z.object({
     planDigest: z.string().regex(/^[a-f0-9]{64}$/),
 }).strict().superRefine((plan, context) => {
     const checks = plan.checks ?? [], checkFacts = plan.checkFacts ?? [];
+    const hold = plan.basis.kind === 'updates' ? plan.basis.hold : undefined;
+    const holdStep = plan.steps.find(step => step.kind === 'packageHold');
+    if (hold ? plan.steps.length !== 1 || holdStep?.name !== hold.name || holdStep.operation !== hold.operation : holdStep !== undefined) {
+        context.addIssue({ code: 'custom', message: 'A package hold requires its exact standalone reviewed update operand' });
+    }
     const reboot = plan.steps.some(step => step.kind === 'reboot');
     if (plan.basis.kind === 'reboot' ? plan.steps.length !== 1 || !reboot || plan.checks !== undefined
         || plan.selectedCheckIds !== undefined : reboot) {

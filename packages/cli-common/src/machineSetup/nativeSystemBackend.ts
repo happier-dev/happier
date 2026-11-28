@@ -1,6 +1,7 @@
 import { MachineSetupEffectError, type MachineRecipeStepV1, type MachineSetupBackend, type MachineSetupStepObservationV1 } from './index.js';
 import type { MachineSetupNativeCommandResult } from './nativeBackend.js';
 import { createNativePackageBackend } from './nativePackageBackend.js';
+import { applyNativeUpdateHold, observeNativeUpdateHold } from './nativeUpdateHolds.js';
 import { evaluateInputPredicate } from '@happier-dev/protocol/inputs';
 export { inspectAptLocks, mutateApt } from './nativePackageBackend.js';
 
@@ -123,6 +124,9 @@ export function createNativeSystemBackend(run: NativeRun, runAsDaemonUser?: Nati
         if (step.kind === 'user') return inspectUser(step);
         if (step.kind === 'group') return inspectGroup(step);
         if (step.kind === 'package') return packages.observe(step);
+        if (step.kind === 'packageHold') return platform === 'linux'
+            ? observeNativeUpdateHold(run, step)
+            : observation(step, 'unsupported', { platform }, 'platform_unsupported');
         if (step.kind === 'serviceUnit') return inspectService(step);
         if (step.kind === 'script') {
             if (platform === 'win32') return observation(step, 'unsupported', { platform }, 'platform_unsupported');
@@ -148,8 +152,9 @@ export function createNativeSystemBackend(run: NativeRun, runAsDaemonUser?: Nati
     };
     return {
         observe,
-        async apply(step) {
+        async apply(step, observed) {
             if (step.kind === 'package') return packages.apply(step);
+            if (step.kind === 'packageHold') return applyNativeUpdateHold(run, step, observed);
             let state = await observe(step);
             if (state.status === 'satisfied') return;
             if (state.status !== 'drifted') throw new MachineSetupEffectError(state.reason === 'package_manager_busy' ? 'package_manager_busy'

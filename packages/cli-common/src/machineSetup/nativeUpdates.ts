@@ -1,14 +1,17 @@
 import type { MachineSetupObservationV1 } from '@happier-dev/protocol/machines/setup/machineSetupObservationV1';
-import { MachineRecipePackageStepV1Schema } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import { MachineRecipePackageStepV1Schema, MachineRecipeStepV1Schema,
+    type MachineSetupPackageHoldV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import type { MachineRecipeStepV1 } from './index.js';
 import type { MachineSetupNativeCommandResult } from './nativeBackend.js';
 import type { NativeRun } from './nativeSystemBackend.js';
 import { readNativeAptPackages } from './nativeAptPackages.js';
+import { dnfRuleMatchesName, readDnfVersionLocks } from './nativeUpdateHolds.js';
 
 export type NativeUpdatesCandidates = Readonly<{
     manager: 'apt' | 'dnf';
     all: readonly Readonly<{ name: string; version: string }>[];
     security: readonly Readonly<{ name: string; version: string }>[];
+    held?: readonly string[];
     configurationPending?: readonly Readonly<{ name: string; version: string }>[];
 }>;
 export type NativeUpdatesObservation = Readonly<{
@@ -49,10 +52,17 @@ function candidates(manager: 'apt' | 'dnf', values: unknown): NativeUpdatesCandi
     return packages.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
 }
 function observed(value: NativeUpdatesCandidates, rebootNeeded: boolean): NativeUpdatesObservation {
-    const recovery = Boolean(value.configurationPending?.length);
-    return { observation: { status: value.all.length || rebootNeeded || recovery ? 'drifted' : 'satisfied', backend: value.manager,
+    const held = new Set(value.held);
+    const available = (packages: NativeUpdatesCandidates['all']) => packages.filter(pkg => !held.has(pkg.name));
+    const all = available(value.all);
+    const security = available(value.security);
+    const configurationPending = value.configurationPending && available(value.configurationPending);
+    const recovery = Boolean(configurationPending?.length);
+    return { observation: { status: all.length || rebootNeeded || recovery ? 'drifted' : 'satisfied', backend: value.manager,
         ...(recovery ? { reason: 'native_effect_failed' as const } : {}),
-        pendingAll: value.all.length, pendingSecurity: value.security.length, rebootNeeded, checkedAt: Date.now() }, candidates: value };
+        ...(value.held ? { heldPackages: [...value.held] } : {}),
+        pendingAll: all.length, pendingSecurity: security.length, rebootNeeded, checkedAt: Date.now() },
+        candidates: { ...value, all, security, ...(configurationPending ? { configurationPending } : {}) } };
 }
 async function apt(run: NativeRun): Promise<NativeUpdatesObservation> {
     const result = await run('python3', ['-c', aptInspector], locale);
@@ -76,9 +86,10 @@ async function apt(run: NativeRun): Promise<NativeUpdatesObservation> {
     if (pending.some(pkg => pkg.architecture !== architecture && pkg.architecture !== 'all')) return unavailable('apt');
     const configurationPending = candidates('apt', pending);
     if (!configurationPending) return unavailable('apt');
+    const held = [...new Set(states.filter(pkg => pkg.held).map(pkg => pkg.name))].sort();
     const reboot = await run('test', ['-e', '/var/run/reboot-required'], locale);
     if ((reboot.code !== 0 && reboot.code !== 1) || reboot.errorCode) return unavailable('apt', reboot);
-    return observed({ manager: 'apt', all, security, configurationPending }, reboot.code === 0);
+    return observed({ manager: 'apt', all, security, configurationPending, held }, reboot.code === 0);
 }
 async function dnf(run: NativeRun): Promise<NativeUpdatesObservation> {
     const version = await run('dnf', ['--version'], locale);
@@ -104,13 +115,18 @@ async function dnf(run: NativeRun): Promise<NativeUpdatesObservation> {
         if (!packages) return unavailable('dnf');
         selected[scope] = packages;
     }
+    const locks = await readDnfVersionLocks(run, dnf5);
+    if (!locks) return unavailable('dnf');
+    const held = locks === 'unsupported' ? undefined : [...new Set(locks.filter(lock => lock.hold).flatMap(lock =>
+        /^[A-Za-z0-9][A-Za-z0-9+_.-]*$/.test(lock.name) ? [lock.name] :
+            [...selected.all!, ...selected.security!].filter(pkg => dnfRuleMatchesName(lock, pkg.name)).map(pkg => pkg.name)))].sort();
     // DNF5 defaults to the reboot hint; DNF4 needs -r. Both use exit 1/0.
     // A missing plugin also exits 1 but writes an error, never a reboot fact.
     // https://dnf-plugins-core.readthedocs.io/en/latest/needs_restarting.html
     // https://dnf5.readthedocs.io/en/stable/dnf5_plugins/needs_restarting.8.html
     const reboot = await run('dnf', ['--quiet', 'needs-restarting', ...(dnf5 ? [] : ['-r'])], locale);
     if ((reboot.code !== 0 && reboot.code !== 1) || reboot.errorCode || reboot.stderr.trim()) return unavailable('dnf', reboot);
-    return observed({ manager: 'dnf', all: selected.all!, security: selected.security! }, reboot.code === 1);
+    return observed({ manager: 'dnf', all: selected.all!, security: selected.security!, ...(held ? { held } : {}) }, reboot.code === 1);
 }
 
 /** Demand-only inspection of the target's current package metadata; never elevates or reboots. */
@@ -130,4 +146,11 @@ export function createNativeUpdatesSteps(input: Readonly<{ scope: 'security' | '
         if (!packages.some(candidate => candidate.name === pkg.name)) packages.push(pkg);
     }
     return packages.length ? [{ id: 'os-updates', kind: 'package', manager: input.candidates.manager, packages: [...packages] }] : [];
+}
+
+/** The native manager and exact package address are selected on the target. */
+export function createNativeUpdateHoldStep(candidates: NativeUpdatesCandidates, hold: MachineSetupPackageHoldV1): MachineRecipeStepV1 | null {
+    if (!candidates.held) return null;
+    const step = MachineRecipeStepV1Schema.safeParse({ id: 'os-update-hold', kind: 'packageHold', manager: candidates.manager, ...hold });
+    return step.success ? step.data : null;
 }

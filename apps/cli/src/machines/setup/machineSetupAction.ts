@@ -289,14 +289,16 @@ export function createMachineSetupPlanAction(params: Readonly<{
         ...(params.runNative ? { runNative: params.runNative } : {}) };
       try {
         const updates = input.mode === 'effects'
-          ? await prepareMachineSetupUpdatesPlanV1({ machineId: params.machineId, scope: input.updates.scope, ...options })
+          ? await prepareMachineSetupUpdatesPlanV1({ machineId: params.machineId, ...input.updates, ...options })
           : { observation: await params.apiMachine.refreshMachineSetupUpdates(options) };
         if (input.mode === 'effects') await params.apiMachine.publishMachineSetupUpdates(updates.observation);
         return withAdministratorPrerequisite(projectMachineSetupPlanResult({ desiredRevision: current.policy.revision, sources: current.policy.sources,
           exclusions: current.policy.exclusions, support: [], updates,
           ...(input.mode === 'effects' ? { review: { target: { homeId: input.homeId, machineId: input.machineId },
             administratorRequired: 'plan' in updates && updates.plan ? machineSetupPlansRequireAdministratorV1([updates.plan]) : null,
-            downtime: 'plan' in updates && updates.plan ? updates.plan.steps.length ? 'possible' as const : 'none' as const : 'unknown' as const,
+            downtime: 'plan' in updates && updates.plan
+              ? input.updates.hold || !updates.plan.steps.length ? 'none' as const : 'possible' as const
+              : 'unknown' as const,
           } } : {}),
         }));
       } catch (error) {

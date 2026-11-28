@@ -28,6 +28,7 @@ function dnf5Run(mode: 'updates' | 'empty' | 'security-failure' | 'reboot-failur
         if (executable === 'rpm') return dnf5Fixtures.architecture.result;
         if (executable !== 'dnf') throw new Error('Unexpected executable');
         if (args.includes('--version')) return dnf5Fixtures.version.result;
+        if (args.includes('versionlock')) return ok();
         if (args.includes('needs-restarting')) {
             expect(args).toEqual(['--quiet', 'needs-restarting']);
             return mode === 'reboot-failure' ? dnf5Fixtures.rebootFailure.result : dnf5Fixtures.reboot.result;
@@ -47,6 +48,90 @@ function dnf5Run(mode: 'updates' | 'empty' | 'security-failure' | 'reboot-failur
 }
 
 describe('native OS updates', () => {
+    it('reports held packages and leaves them out of both upgrade scopes', async () => {
+        const result = await observeNativeUpdates({ platform: 'linux', run: async (executable, args, env) =>
+            executable === 'dpkg-query'
+                ? ok('openssl\thold ok installed\t3.0.2-1ubuntu1.19\tamd64\n')
+                : aptRun([ordinary, security])(executable, args, env) });
+
+        expect(result.candidates?.held).toEqual(['openssl']);
+        expect(result.observation).toMatchObject({ pendingAll: 1, pendingSecurity: 0, heldPackages: ['openssl'] });
+        expect(createNativeUpdatesSteps({ scope: 'security', candidates: result.candidates! })).toEqual([]);
+        expect(createNativeUpdatesSteps({ scope: 'all', candidates: result.candidates! })).toMatchObject([
+            { kind: 'package', packages: [{ name: 'curl', version: ordinary.version }] },
+        ]);
+    });
+
+    it.each(['4.22.0', 'dnf5 version 5.2.6'] as const)('excludes a versionlocked RPM from exact selections (%s)', async version => {
+        const result = await observeNativeUpdates({ platform: 'linux', run: async (executable, args) => {
+            if (executable === 'apt-get') return missing;
+            if (executable === 'rpm') return ok('x86_64');
+            if (args.includes('--version')) return ok(version);
+            if (args.includes('versionlock')) return ok(version.startsWith('4.')
+                ? 'openssl-libs-1:3.2.1-1.fc41.*\n!curl-0:8.5.0-1.fc41.*\n'
+                : 'Package name: openssl-libs\nevr = 1:3.2.1-1.fc41\n\nPackage name: curl\nevr != 8.5.0-1.fc41\n');
+            if (args.includes('needs-restarting')) return ok();
+            return ok(args.includes('--security') ? 'openssl-libs\t1:3.2.1-2.fc41\tx86_64\n'
+                : 'curl\t0:8.5.0-2.fc41\tx86_64\nopenssl-libs\t1:3.2.1-2.fc41\tx86_64\n');
+        } });
+        expect(result.observation).toMatchObject({ pendingAll: 1, pendingSecurity: 0, heldPackages: ['openssl-libs'] });
+        expect(createNativeUpdatesSteps({ scope: 'security', candidates: result.candidates! })).toEqual([]);
+    });
+
+    it.each(['hold', 'release'] as const)('runs the exact reviewed apt %s and verifies it', async operation => {
+        let held = operation === 'release';
+        const effects: string[][] = [];
+        const backend = createMachineSetupNativeBackend({ platform: 'linux', run: async ({ executable, args }) => {
+            if (executable === 'dpkg-query') return ok(`openssl\t${held ? 'hold' : 'install'} ok installed\t3.0.2\tamd64\n`);
+            if (executable === 'apt-mark') {
+                effects.push([...args]);
+                held = args[0] === 'hold';
+                return ok();
+            }
+            throw new Error(`Unexpected command ${executable}`);
+        } });
+        const plan = await checkMachineSetupEffectPlan({
+            basis: { kind: 'updates', machineId: 'one', scope: 'all', hold: { name: 'openssl', operation } },
+            steps: [{ id: 'os-update-hold', kind: 'packageHold', manager: 'apt', name: 'openssl', operation }],
+            backend,
+        });
+        expect(plan.nativeFacts[0]?.status).toBe('drifted');
+        expect((await applyMachineSetupEffectPlan({ plan, backend })).status).toBe('applied');
+        expect(effects).toEqual([[operation === 'hold' ? 'hold' : 'unhold', '--', 'openssl']]);
+    });
+
+    it.each(['4.22.0', 'dnf5 version 5.2.6'] as const)('holds and releases an exact installed RPM (%s)', async version => {
+        let held = false;
+        const effects: string[][] = [];
+        const name = 'openssl-libs';
+        const backend = createMachineSetupNativeBackend({ platform: 'linux', run: async ({ executable, args }) => {
+            if (executable === 'rpm') return ok(`${name}\t1:3.2.1-1.fc41\n`);
+            if (executable !== 'dnf') throw new Error(`Unexpected command ${executable}`);
+            if (args.includes('--version')) return ok(version);
+            if (args.includes('list')) return ok(!held ? '' : version.startsWith('4.')
+                ? `${name}-1:3.2.1-1.fc41.*\n`
+                : `Package name: ${name}\nevr = 1:3.2.1-1.fc41\n`);
+            effects.push([...args]);
+            held = args.includes('add');
+            return ok();
+        } });
+        for (const operation of ['hold', 'release'] as const) {
+            const plan = await checkMachineSetupEffectPlan({
+                basis: { kind: 'updates', machineId: 'one', scope: 'all', hold: { name, operation } },
+                steps: [{ id: 'os-update-hold', kind: 'packageHold', manager: 'dnf', name, operation }],
+                backend,
+            });
+            expect(plan.nativeFacts[0]?.status).toBe('drifted');
+            expect((await applyMachineSetupEffectPlan({ plan, backend })).status).toBe('applied');
+        }
+        const exact = `${name}-1:3.2.1-1.fc41`;
+        expect(effects).toEqual([
+            ['--quiet', 'versionlock', 'add', exact],
+            ['--quiet', 'versionlock', 'delete', version.startsWith('4.') ? `${exact}.*` : name],
+        ]);
+        expect(held).toBe(false);
+    });
+
     it.each([
         { scope: 'all', upgrade: false }, { scope: 'security', upgrade: false },
         { scope: 'all', upgrade: true }, { scope: 'security', upgrade: true },
@@ -125,7 +210,7 @@ describe('native OS updates', () => {
 
     it('decodes Fedora 41 DNF5 output into the existing observation and exact package steps', async () => {
         const result = await observeNativeUpdates({ platform: 'linux', run: dnf5Run() });
-        expect(result.observation).toEqual({ status: 'drifted', backend: 'dnf', pendingAll: 2, pendingSecurity: 1, rebootNeeded: false, checkedAt: expect.any(Number) });
+        expect(result.observation).toEqual({ status: 'drifted', backend: 'dnf', pendingAll: 2, pendingSecurity: 1, rebootNeeded: false, heldPackages: [], checkedAt: expect.any(Number) });
         expect(createNativeUpdatesSteps({ scope: 'all', candidates: result.candidates! })).toEqual([
             { id: 'os-updates', kind: 'package', manager: 'dnf', packages: [
                 { name: 'bash', version: '0:5.2.32-1.fc41' }, { name: 'fedora-release-common', version: '0:41-33' },
@@ -138,7 +223,7 @@ describe('native OS updates', () => {
 
     it('recognizes empty DNF5 selections including the no-advisory diagnostic', async () => {
         const result = await observeNativeUpdates({ platform: 'linux', run: dnf5Run('empty') });
-        expect(result.observation).toEqual({ status: 'satisfied', backend: 'dnf', pendingAll: 0, pendingSecurity: 0, rebootNeeded: false, checkedAt: expect.any(Number) });
+        expect(result.observation).toEqual({ status: 'satisfied', backend: 'dnf', pendingAll: 0, pendingSecurity: 0, rebootNeeded: false, heldPackages: [], checkedAt: expect.any(Number) });
         expect(createNativeUpdatesSteps({ scope: 'all', candidates: result.candidates! })).toEqual([]);
     });
 
@@ -162,7 +247,7 @@ describe('native OS updates', () => {
 
     it('plans only exact security candidates and publishes the native reboot marker', async () => {
         const result = await observeNativeUpdates({ platform: 'linux', run: aptRun([ordinary, security], 0) });
-        expect(result.observation).toEqual({ status: 'drifted', backend: 'apt', pendingAll: 2, pendingSecurity: 1, rebootNeeded: true, checkedAt: expect.any(Number) });
+        expect(result.observation).toEqual({ status: 'drifted', backend: 'apt', pendingAll: 2, pendingSecurity: 1, rebootNeeded: true, heldPackages: [], checkedAt: expect.any(Number) });
         expect(createNativeUpdatesSteps({ scope: 'security', candidates: result.candidates! })).toEqual([
             { id: 'os-updates', kind: 'package', manager: 'apt', packages: [{ name: security.name, version: security.version }] },
         ]);
@@ -173,7 +258,7 @@ describe('native OS updates', () => {
 
     it('distinguishes an empty native result from absent or malformed security inspection', async () => {
         const empty = await observeNativeUpdates({ platform: 'linux', run: aptRun([]) });
-        expect(empty.observation).toEqual({ status: 'satisfied', backend: 'apt', pendingAll: 0, pendingSecurity: 0, rebootNeeded: false, checkedAt: expect.any(Number) });
+        expect(empty.observation).toEqual({ status: 'satisfied', backend: 'apt', pendingAll: 0, pendingSecurity: 0, rebootNeeded: false, heldPackages: [], checkedAt: expect.any(Number) });
         expect(createNativeUpdatesSteps({ scope: 'security', candidates: empty.candidates! })).toEqual([]);
         for (const response of [missing, ok('{"packages":[]}'), ok(JSON.stringify({ architecture: 'amd64', packages: [{ ...security, security: undefined }] }))]) {
             const result = await observeNativeUpdates({ platform: 'linux', run: async (executable, args, env) =>
@@ -212,10 +297,11 @@ describe('native OS updates', () => {
             if (executable === 'apt-get') return missing;
             if (executable === 'rpm') return ok('x86_64');
             if (args.includes('--version')) return ok('4.22.0');
+            if (args.includes('versionlock')) return ok();
             if (args.includes('needs-restarting')) return { ...ok('Reboot is required'), code: 1 };
             return ok(args.includes('--security') ? 'openssl\t1:3.0.2-1\tx86_64\n' : 'curl\t0:8.5.0-2\tx86_64\nopenssl\t1:3.0.2-1\tx86_64\n');
         } });
-        expect(result.observation).toEqual({ status: 'drifted', backend: 'dnf', pendingAll: 2, pendingSecurity: 1, rebootNeeded: true, checkedAt: expect.any(Number) });
+        expect(result.observation).toEqual({ status: 'drifted', backend: 'dnf', pendingAll: 2, pendingSecurity: 1, rebootNeeded: true, heldPackages: [], checkedAt: expect.any(Number) });
         expect(createNativeUpdatesSteps({ scope: 'security', candidates: result.candidates! })[0]).toMatchObject({ manager: 'dnf', packages: [{ name: 'openssl', version: '1:3.0.2-1' }] });
         expect(commands.filter(command => command.includes('repoquery')).every(command => command.includes('--upgrades'))).toBe(true);
     });
@@ -226,6 +312,7 @@ describe('native OS updates', () => {
                 if (executable === 'apt-get') return missing;
                 if (executable === 'rpm') return ok('x86_64');
                 if (args.includes('--version')) return ok('4.22.0');
+                if (args.includes('versionlock')) return ok();
                 if (args.includes(failed)) return { code: 1, stdout: '', stderr: 'No such command' };
                 if (args.includes('needs-restarting')) return ok();
                 return ok('openssl\t1:3.0.2-1\tx86_64\n');

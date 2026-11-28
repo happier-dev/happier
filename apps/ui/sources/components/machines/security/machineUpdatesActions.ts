@@ -1,5 +1,5 @@
 import type { MachineSetupUpdatesRolloutInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import type { MachineSetupEffectPlanV1, MachineSetupPackageHoldV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
 const execute = createFrontDoorActionExecute();
@@ -8,8 +8,9 @@ export type MachineUpdatesTarget = Readonly<{ serverId: string; homeId: string; 
 export type MachineUpdatesScope = 'security' | 'all';
 
 /** Read/check and exact effect preparation share the canonical setup Plan Action. */
-export function planMachineUpdates(target: MachineUpdatesTarget, scope: MachineUpdatesScope, mode: 'check' | 'effects', context?: Context) {
-  return execute('machines.setup.plan', { homeId: target.homeId, machineId: target.machineId, updates: { scope }, mode }, {
+export function planMachineUpdates(target: MachineUpdatesTarget, scope: MachineUpdatesScope, mode: 'check' | 'effects',
+  context?: Context, hold?: MachineSetupPackageHoldV1) {
+  return execute('machines.setup.plan', { homeId: target.homeId, machineId: target.machineId, updates: { scope, ...(hold ? { hold } : {}) }, mode }, {
     ...context, surface: 'ui', serverId: target.serverId,
   });
 }

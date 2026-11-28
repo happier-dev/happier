@@ -20,7 +20,8 @@ export { MachineSetupEffectPlanV1Schema } from '@happier-dev/protocol/machines/s
 export { createMachineSetupNativeBackend, runMachineSetupNativeCommand, type MachineSetupNativeCommand, type MachineSetupNativeCommandResult, type MachineSetupSecretGrantMaterial } from './nativeBackend.js';
 export { createDockerEngineSetupSteps } from './dockerEngine.js';
 export { parseNativeDockerEngineInfo, type NativeDockerEngineFacts } from './nativeDockerEngine.js';
-export { observeNativeUpdates, createNativeUpdatesSteps, type NativeUpdatesObservation, type NativeUpdatesCandidates } from './nativeUpdates.js';
+export { observeNativeUpdates, createNativeUpdatesSteps, createNativeUpdateHoldStep,
+    type NativeUpdatesObservation, type NativeUpdatesCandidates } from './nativeUpdates.js';
 export * from './effectInternalProtocol.js';
 export { MANAGED_SUDOERS_PATH, resolveManagedSudoersPath, buildManagedSudoersSteps, recognizeManagedSudoersDropIn } from './managedSudoers.js';
 export { assertAgentIsolationLaunchPrincipal, buildAgentIsolationBootstrapSteps, buildAgentIsolationToolsRootStep } from './agentIsolationBootstrap.js';
@@ -69,7 +70,7 @@ function isUnconfirmedNativeProcessStop(error: unknown): boolean {
 export interface MachineSetupBackend {
     observe(step: MachineRecipeStepV1 | MachineRecipeCheckV1): Promise<MachineSetupStepObservationV1>;
     /** Only the native useradd owner can report that this invocation created an account. */
-    apply(step: MachineRecipeStepV1): Promise<void | Readonly<{ createdUser: true }>>;
+    apply(step: MachineRecipeStepV1, observed?: MachineSetupStepObservationV1): Promise<void | Readonly<{ createdUser: true }>>;
     /** Retire private files owned by this finite invocation, including on cancellation. */
     finishInvocation?(): Promise<void>;
     /** Native OS metadata only; daemon identity stays with the captured P10 owner. */
@@ -84,6 +85,7 @@ export function readMachineSetupStepExecutionUserV1(step: MachineRecipeStepV1 | 
     switch (step.kind) {
         case 'package':
             return step.manager === 'brew' || step.manager === 'winget' ? 'daemon' : 'administrator';
+        case 'packageHold':
         case 'user':
         case 'group':
         case 'directory':
@@ -442,7 +444,8 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
                         if (handler && (service?.kind !== 'serviceUnit' || !input.backend.onChange)) {
                             throw new MachineSetupEffectError('required_fact_unavailable');
                         }
-                        const applied = await input.backend.apply(accountStep);
+                        const applied = step.kind === 'packageHold' ? await input.backend.apply(step, observed)
+                            : await input.backend.apply(accountStep);
                         createdUser = applied?.createdUser === true;
                         completedStepIds.push(step.id);
                         if (handler && service?.kind === 'serviceUnit') await input.backend.onChange!(service, handler.action);

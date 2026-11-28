@@ -5,6 +5,10 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { UpdatesContent } from '@/components/updates/UpdatesContent';
 import { UpdatesPopoverButton } from '@/components/updates/UpdatesPopoverButton';
+import { MachineSecurityView, type MachineUpdatesModel } from '@/components/machines/security/MachineSecuritySection';
+import type { MachineUpdatesReview } from '@/components/machines/security/useMachineUpdatesReview';
+import { MachineFleetUpdatesTable } from '@/components/machines/updates/MachineFleetUpdatesTable';
+import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { projectMachineAgent } from '@/agents/machineAgents/machineAgentModel';
 import { Text } from '@/components/ui/text/Text';
 import type { DesktopUpdaterSnapshot } from '@/desktop/updates/desktopUpdater';
@@ -145,6 +149,54 @@ function buildDemoGroups(state: DemoState): UpdatesGroup[] {
 const noop = () => {};
 const asyncNoop = async () => {};
 
+function MachineHoldsSpecimen() {
+    const [held, setHeld] = React.useState(true);
+    const [review, setReview] = React.useState<MachineUpdatesReview>({ kind: 'idle' });
+    const machine = { machineId: 'shop-prod', name: 'shop-prod', online: true, installationId: null, platform: 'linux' };
+    const heldPackages = held ? ['openssl'] : [];
+    const pendingAll = held ? 0 : 1;
+    const status = held ? 'satisfied' : 'drifted';
+    const updates: MachineUpdatesModel = {
+        observation: { backend: 'apt', status, heldPackages, pendingAll, pendingSecurity: pendingAll, rebootNeeded: false },
+        backend: 'apt', status, reason: null, pendingSecurity: pendingAll, pendingAll, rebootNeeded: false,
+        stale: false, refreshing: false, read: { kind: 'settled' }, failure: null, approval: null, refresh: asyncNoop,
+    };
+    return (
+        <View style={styles.screen} testID="updates-demo.machine-holds">
+            <MachineSecurityView machineName={machine.name} updates={updates} online controls={{
+                review,
+                onPrepare: (scope, hold) => {
+                    const stepId = 'os-update-hold';
+                    setReview({ kind: 'review', scope, hold, canHold: true,
+                        plan: {
+                            v: 1, basis: { kind: 'updates', machineId: machine.machineId, scope, hold },
+                            steps: hold ? [{ id: stepId, kind: 'packageHold', manager: 'apt', ...hold }] : [],
+                            nativeFacts: [], planDigest: '0'.repeat(64),
+                        },
+                        packages: hold ? [] : [{ name: 'openssl', version: '3.0.2' }],
+                    });
+                },
+                onApply: () => {
+                    if (review.kind === 'review' && review.hold) {
+                        setHeld(review.hold.operation === 'hold');
+                        setReview({ kind: 'settled', scope: review.scope, hold: review.hold,
+                            operationId: 'hold-specimen', count: 0, state: 'succeeded' });
+                    }
+                },
+                onCancel: () => setReview({ kind: 'idle' }),
+                reboot: { kind: 'idle' }, canReboot: false, onReboot: noop,
+                onDismissReboot: noop, onOpenApproval: noop, onOpenOperation: noop,
+            }} />
+            <CoreCollectionScope>
+                <MachineFleetUpdatesTable testID="updates-demo.fleet-holds" onOpen={noop} rows={[{
+                    ...machine, security: pendingAll, all: pendingAll, held: heldPackages.length,
+                    restartNeeded: false, checkedAt: null,
+                }]} />
+            </CoreCollectionScope>
+        </View>
+    );
+}
+
 const PILL_SUMMARIES: ReadonlyArray<UpdatesSummary> = [
     { actionableCount: 3, manualCount: 0, failedCount: 0, runningCount: 0, phase: 'available', status: 'available', visible: true },
     { actionableCount: 0, manualCount: 0, failedCount: 0, runningCount: 0, phase: 'running', status: 'running', visible: true },
@@ -157,7 +209,8 @@ const PILL_SUMMARIES: ReadonlyArray<UpdatesSummary> = [
 export default function UpdatesDemoScreen() {
     const params = useLocalSearchParams<{ state?: string; only?: string }>();
     // `only=` renders one section at the top, for a capture that nothing else scrolls over.
-    const only = params.only === 'pills' || params.only === 'popover' || params.only === 'screen' ? params.only : null;
+    const only = params.only === 'pills' || params.only === 'popover' || params.only === 'screen' || params.only === 'machine-holds'
+        ? params.only : null;
     const state: DemoState = params.state === 'downloading' || params.state === 'ready' || params.state === 'failed' || params.state === 'checking' ? params.state : 'available';
     const model = React.useMemo<UpdatesContentModel>(() => {
         const groups = buildDemoGroups(state);
@@ -183,6 +236,7 @@ export default function UpdatesDemoScreen() {
 
     return (
         <ScrollView style={styles.page} contentContainerStyle={styles.content} testID="updates-demo">
+            {only === 'machine-holds' ? <MachineHoldsSpecimen /> : null}
             {only == null || only === 'pills' ? <>
             <Text style={styles.caption}>Pill</Text>
             <View style={styles.pills} testID="updates-demo.pills">

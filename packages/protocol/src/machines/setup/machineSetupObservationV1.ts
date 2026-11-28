@@ -15,6 +15,8 @@ export const MachineSetupUpdatesObservationV1Schema = lazyZodSchema(() => z.stri
     status: MachineSetupObservationStatusV1Schema, reason: z.optional(MachineSetupObservationReasonV1Schema),
     backend: z.optional(backend()), pendingSecurity: z.optional(z.number().check(z.int(), z.nonnegative())),
     pendingAll: z.optional(z.number().check(z.int(), z.nonnegative())), rebootNeeded: z.optional(z.boolean()),
+    /** Exact native names with a hold. Absence means no hold facts have been published. */
+    heldPackages: z.optional(z.array(z.string().check(z.minLength(1)))),
     /** Unix epoch milliseconds when the last successful native update check completed. */
     checkedAt: z.optional(z.number().check(z.int(), z.nonnegative())),
 }));

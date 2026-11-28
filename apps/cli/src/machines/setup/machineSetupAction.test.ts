@@ -833,7 +833,7 @@ describe('admitted Machine setup snapshot lifetime', () => {
       recipePlans: plan.recipePlans ?? [] }, context: fixture.context('machines.setup.apply') }))
       .toMatchObject({ operationId: expect.any(String) });
     expect(fixture.machine.daemonState?.setup?.updates).toEqual({ status: 'satisfied', backend: 'apt',
-      pendingAll: 0, pendingSecurity: 0, rebootNeeded: false, checkedAt: expect.any(Number) });
+      pendingAll: 0, pendingSecurity: 0, rebootNeeded: false, heldPackages: [], checkedAt: expect.any(Number) });
     expect(JSON.parse(await readFile(fixture.statePath, 'utf8'))).toMatchObject({ installed: true, updatesChecks: 1 });
   });
   it.each([1, 3])('consumes one admitted snapshot without desired/currentness rereads across %i script steps', async steps => {

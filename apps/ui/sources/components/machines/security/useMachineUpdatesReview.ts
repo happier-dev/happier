@@ -2,7 +2,7 @@ import * as React from 'react';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionOperationFailureV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { ManagedMachineActionOutputSchemasV1, type MachineSetupPlanReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import type { MachineSetupEffectPlanV1, MachineSetupPackageHoldV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 
 import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { useInStepActionConfirmation, type InStepActionConfirmation } from '@/components/approvals/useInStepActionConfirmation';
@@ -24,29 +24,26 @@ export type MachineUpdatePackage = Readonly<{
 }>;
 
 /**
- * One reviewed install: the Machine prepares the exact package plan (`machines.setup.plan`, effects), the person
- * installs exactly that plan (`machines.setup.updates.apply`, which asks first), and the accepted operation's own
- * lifecycle is the progress. Installing never restarts the Machine.
+ * One reviewed package change. The Machine prepares the exact effects, and the accepted Apply operation reports progress.
  */
 export type MachineUpdatesReview =
   | Readonly<{ kind: 'idle' }>
-  | Readonly<{
+  | (Readonly<{ scope: MachineUpdatesScope; hold?: MachineSetupPackageHoldV1 }> & (
+  Readonly<{
       kind: 'preparing';
-      scope: MachineUpdatesScope;
       approval: ActionApprovalContinuation | null;
     }>
   | Readonly<{
       kind: 'review';
-      scope: MachineUpdatesScope;
       plan: MachineSetupEffectPlanV1;
       packages: readonly MachineUpdatePackage[];
       setupReview?: MachineSetupPlanReviewV1;
+      canHold?: boolean;
     }>
   /** The Machine found nothing to install for this scope when it planned. */
-  | Readonly<{ kind: 'nothing'; scope: MachineUpdatesScope }>
+  | Readonly<{ kind: 'nothing' }>
   | Readonly<{
       kind: 'applying';
-      scope: MachineUpdatesScope;
       plan: MachineSetupEffectPlanV1;
       packages: readonly MachineUpdatePackage[];
       approval: ActionApprovalContinuation | null;
@@ -55,13 +52,11 @@ export type MachineUpdatesReview =
     }>
   | Readonly<{
       kind: 'installing';
-      scope: MachineUpdatesScope;
       operationId: string;
       count: number;
     }>
   | Readonly<{
       kind: 'settled';
-      scope: MachineUpdatesScope;
       operationId: string;
       count: number;
       state: 'succeeded' | 'failed' | 'cancelled';
@@ -69,10 +64,9 @@ export type MachineUpdatesReview =
     }>
   | Readonly<{
       kind: 'failed';
-      scope: MachineUpdatesScope;
       failure: Failure;
       during: 'prepare' | 'apply';
-    }>;
+    }>));
 
 const invalidOutput = (error: string): Failure => ({
   ok: false,
@@ -129,13 +123,14 @@ export function useMachineUpdatesReview(
   );
 
   const prepare = React.useCallback(
-    async (scope: MachineUpdatesScope) => {
+    async (scope: MachineUpdatesScope, hold?: MachineSetupPackageHoldV1) => {
       if (inFlight() || !target) return;
-      setReview({ kind: 'preparing', scope, approval: null });
+      const intent = { scope, ...(hold ? { hold } : {}) };
+      setReview({ kind: 'preparing', ...intent, approval: null });
       const actionInput = {
         homeId: target.homeId,
         machineId: target.machineId,
-        updates: { scope },
+        updates: intent,
         mode: 'effects',
       };
       const result = await run(
@@ -145,14 +140,14 @@ export function useMachineUpdatesReview(
           planMachineUpdates(target, scope, 'effects', {
             expectedAccountId: bound.scope.accountId,
             signal,
-          }),
-        (approval) => setReview({ kind: 'preparing', scope, approval }),
+          }, hold),
+        (approval) => setReview({ kind: 'preparing', ...intent, approval }),
       );
       if (!result) return;
       if (!result.ok) {
         setReview({
           kind: 'failed',
-          scope,
+          ...intent,
           failure: result,
           during: 'prepare',
         });
@@ -169,18 +164,27 @@ export function useMachineUpdatesReview(
       if (!updates) {
         setReview({
           kind: 'failed',
-          scope,
+          ...intent,
           failure: invalidOutput('machines.setup.plan'),
           during: 'prepare',
         });
         return;
       }
       const plan = updates.plan;
+      const holdStep = plan?.steps.find(step => step.kind === 'packageHold');
+      const holdFact = plan?.nativeFacts[0];
+      if (hold && (!holdStep || holdStep.name !== hold.name || holdStep.operation !== hold.operation
+        || holdFact?.status === 'unavailable' || holdFact?.status === 'unsupported')) {
+        const reason = holdFact?.reason ?? updates.observation.reason ?? 'required_fact_unavailable';
+        setReview({ kind: 'failed', ...intent, during: 'prepare', failure: { ok: false, errorCode: reason, error: reason } });
+        return;
+      }
       const packages = plan ? readMachineUpdatePackages(plan) : [];
       setReview(
-        plan && packages.length > 0
-          ? { kind: 'review', scope, plan, packages, ...(planned?.review ? { setupReview: planned.review } : {}) }
-          : { kind: 'nothing', scope },
+        plan && (hold || packages.length > 0)
+          ? { kind: 'review', ...intent, plan, packages, canHold: updates.observation.heldPackages !== undefined,
+              ...(planned?.review ? { setupReview: planned.review } : {}) }
+          : { kind: 'nothing', ...intent },
       );
     },
     [inFlight, run, target],
@@ -193,8 +197,9 @@ export function useMachineUpdatesReview(
       return;
     }
     if (inFlight() || review.kind !== 'review' || !target) return;
-    const { scope, plan, packages } = review;
-    setReview({ kind: 'applying', scope, plan, packages, approval: null, confirmation: null });
+    const { scope, hold, plan, packages } = review;
+    const intent = { scope, ...(hold ? { hold } : {}) };
+    setReview({ kind: 'applying', ...intent, plan, packages, approval: null, confirmation: null });
     const actionInput = {
       homeId: target.homeId,
       machineId: target.machineId,
@@ -210,11 +215,11 @@ export function useMachineUpdatesReview(
           signal,
         }, confirm),
       (approval) =>
-        setReview({ kind: 'applying', scope, plan, packages, approval, confirmation: null }),
+        setReview({ kind: 'applying', ...intent, plan, packages, approval, confirmation: null }),
     );
     if (!result) return;
     if (!result.ok) {
-      setReview({ kind: 'failed', scope, failure: result, during: 'apply' });
+      setReview({ kind: 'failed', ...intent, failure: result, during: 'apply' });
       return;
     }
     const parsed = ManagedMachineActionOutputSchemasV1[
@@ -224,13 +229,13 @@ export function useMachineUpdatesReview(
       parsed.success
         ? {
             kind: 'installing',
-            scope,
+            ...intent,
             operationId: parsed.data.operationId,
             count: packages.length,
           }
         : {
             kind: 'failed',
-            scope,
+            ...intent,
             failure: invalidOutput('machines.setup.updates.apply'),
             during: 'apply',
           },
@@ -255,6 +260,7 @@ export function useMachineUpdatesReview(
     setReview({
       kind: 'settled',
       scope: review.scope,
+      ...(review.hold ? { hold: review.hold } : {}),
       operationId: review.operationId,
       count: review.count,
       failure: operationFailure,

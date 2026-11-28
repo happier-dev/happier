@@ -36,7 +36,7 @@ import { MachineSetupOpaquePresetSourceV1Schema, MachineSetupSourceApplyEntryV1S
   MachineSetupExclusionsV1Schema, MachineSetupSourceFactsMapV1Schema, MachineSetupAppOriginV1Schema,
   MachineSetupPresetCandidateV1Schema, MachineSetupRemovalKeysV1Schema, MachineSetupSourceProposalV1Schema } from '../setup/machineSetupSourcesV1.js';
 import { MachineSetupObservationStatusV1Schema, MachineSetupObservationReasonV1Schema, MachineSetupUpdatesObservationV1Schema } from '../setup/machineSetupObservationV1.js';
-import { MachineSetupEffectPlanV1Schema, MachineRecipeSelectionV1Schema } from '../setup/machineRecipeV1.js';
+import { MachineSetupEffectPlanV1Schema, MachineRecipeSelectionV1Schema, MachineSetupUpdatesBasisV1Schema } from '../setup/machineRecipeV1.js';
 import { MachineRecipeReferenceV1Schema } from '../setup/machineRecipeReferenceV1.js';
 import { MachineSetupBackupReceiverResultV1Schema } from '../setup/backupReceiverV1.js';
 import { MachineSetupApplyResultV1Schema, MachineSetupReviewedStepV1Schema, MachineSetupRetryV1Schema } from '../setup/machineSetupOperationV1.js';
@@ -181,15 +181,20 @@ export const MachineSetupPlanInputV1Schema = lazyZodSchema(() => z.strictObject(
   exclusions: z.optional(MachineSetupExclusionsV1Schema), removeItemKeys: z.optional(MachineSetupRemovalKeysV1Schema),
   mode: z.optional(z.enum(['check', 'effects'])),
   appChildren: z.optional(z.array(MachineSetupAppChildV1Schema)),
-  updates: z.optional(z.strictObject({ scope: z.enum(['security', 'all']) })),
+  updates: z.optional(z.strictObject({
+    scope: MachineSetupUpdatesBasisV1Schema.shape.scope,
+    hold: z.optional(MachineSetupUpdatesBasisV1Schema.shape.hold.unwrap()),
+  })),
 }).check(z.refine(input => input.candidatePreset === undefined || input.sources === undefined && input.updates === undefined,
 { message: 'A candidate replaces one attached preset, without a separate source proposal.' }),
+z.refine(input => input.updates?.hold === undefined || input.mode === 'effects',
+{ message: 'A package hold is prepared as an effect.' }),
 z.refine(input => input.updates === undefined || input.sources === undefined && input.exclusions === undefined
   && input.removeItemKeys === undefined && input.appChildren === undefined,
 { message: 'Updates cannot include setup source changes or app operands.' })));
 export type MachineSetupPlanInputV1 = z.infer<typeof MachineSetupPlanInputV1Schema>;
 export const MachineSetupUpdatesApplyInputV1BaseSchema = lazyZodSchema(() => z.strictObject({
-  homeId: id(), machineId: id(), scope: z.enum(['security', 'all']), plan: MachineSetupEffectPlanV1Schema,
+  homeId: id(), machineId: id(), scope: MachineSetupUpdatesBasisV1Schema.shape.scope, plan: MachineSetupEffectPlanV1Schema,
 }));
 const exactUpdatesInput = (input: z.infer<typeof MachineSetupUpdatesApplyInputV1BaseSchema>) =>
   input.plan.basis.kind === 'updates' && input.plan.basis.machineId === input.machineId && input.plan.basis.scope === input.scope;
@@ -199,7 +204,8 @@ export const MachineSetupUpdatesRolloutTargetV1BaseSchema = lazyZodSchema(() => 
   reboot: z.optional(z.strictObject({ expectedInstallationId: id() })),
 }));
 export const MachineSetupUpdatesRolloutTargetV1Schema = lazyZodSchema(() => MachineSetupUpdatesRolloutTargetV1BaseSchema.check(
-  z.refine(exactUpdatesInput, { message: 'Updates require the exact reviewed target and scope.' })));
+  z.refine(input => exactUpdatesInput(input) && input.plan.basis.kind === 'updates' && input.plan.basis.hold === undefined,
+    { message: 'A rollout requires the exact reviewed target and upgrade scope.' })));
 export const MachineSetupUpdatesRolloutInputV1BaseSchema = lazyZodSchema(() => z.strictObject({
   homeId: id(), machineId: id(),
   batches: z.array(z.array(MachineSetupUpdatesRolloutTargetV1Schema).check(z.minLength(1))).check(z.minLength(1)),

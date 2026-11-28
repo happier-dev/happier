@@ -12591,7 +12591,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `machines.setup.plan`
 
-**Review machine setup** — Review machine setup on the exact Home without starting or waking compute.
+**Review machine setup** — Review setup or OS updates on the exact Machine. To prepare a package hold or release, use mode effects and supply updates.scope all and updates.hold with the package name and operation hold or release. Pass the returned OS update plan to machines.setup.updates.apply.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -12633,7 +12633,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `machines.setup.updates.apply`
 
-**Install machine updates** — Install the exact reviewed security or all OS package updates through native setup admission. Package updates may restart services; this operation never reboots the Machine.
+**Apply machine package changes** — Apply the exact reviewed OS update, package hold or release plan from machines.setup.plan. Package updates may restart services. This operation never reboots the Machine.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.

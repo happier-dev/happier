@@ -1,6 +1,6 @@
 /** Decode dpkg's installed state once for update review and exact package effects. */
 export function readNativeAptPackages(stdout: string) {
-    const packages: { name: string; version: string; architecture: string; configurationPending: boolean }[] = [];
+    const packages: { name: string; version: string; architecture: string; configurationPending: boolean; held: boolean }[] = [];
     for (const line of stdout.trim().split(/\r?\n/).filter(Boolean)) {
         const [nativeId, status, version, architecture, ...extra] = line.split('\t');
         if (!nativeId || !status || extra.length) return null;
@@ -14,7 +14,7 @@ export function readNativeAptPackages(stdout: string) {
         // dpkg --configure accepts unpacked, not-yet-configured packages. Other
         // incomplete/error states need administrator diagnosis, not this repair.
         const configurationPending = state !== 'installed';
-        packages.push({ name, version, architecture, configurationPending });
+        packages.push({ name, version, architecture, configurationPending, held: status.startsWith('hold ') });
     }
     return packages;
 }

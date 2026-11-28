@@ -1,13 +1,13 @@
 import { homedir } from 'node:os';
 import {
-  checkMachineSetupEffectPlan, createMachineSetupNativeBackend, createNativeUpdatesSteps,
+  checkMachineSetupEffectPlan, createMachineSetupNativeBackend, createNativeUpdatesSteps, createNativeUpdateHoldStep,
   observeNativeUpdates, readMachineSetupEffectPlanV1, runMachineSetupNativeCommand,
   type MachineSetupNativeCommand, type MachineSetupNativeCommandResult,
 } from '@happier-dev/cli-common/machineSetup';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { MachineSetupUpdatesApplyInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import type { MachineSetupEffectPlanV1, MachineSetupPackageHoldV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import type { MachineSetupObservationV1 } from '@happier-dev/protocol/machines/setup/machineSetupObservationV1';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
@@ -24,6 +24,7 @@ import { machineSetupTargetUnavailable, type MachineSetupInstallation } from './
 export async function prepareMachineSetupUpdatesPlanV1(params: Readonly<{
   machineId: string;
   scope: 'security' | 'all';
+  hold?: MachineSetupPackageHoldV1;
   runNative?: (command: MachineSetupNativeCommand) => Promise<MachineSetupNativeCommandResult>;
   signal?: AbortSignal;
   platform?: NodeJS.Platform;
@@ -39,8 +40,11 @@ export async function prepareMachineSetupUpdatesPlanV1(params: Readonly<{
     ...(params.platform ? { platform: params.platform } : {}),
   });
   if (!observed.candidates) return { observation: observed.observation };
-  const steps = [...createNativeUpdatesSteps({ scope: params.scope, candidates: observed.candidates })];
-  const plan = await checkMachineSetupEffectPlan({ basis: { kind: 'updates', machineId: params.machineId, scope: params.scope },
+  const holdStep = params.hold ? createNativeUpdateHoldStep(observed.candidates, params.hold) : null;
+  if (params.hold && !holdStep) return { observation: observed.observation };
+  const steps = holdStep ? [holdStep] : [...createNativeUpdatesSteps({ scope: params.scope, candidates: observed.candidates })];
+  const plan = await checkMachineSetupEffectPlan({ basis: { kind: 'updates', machineId: params.machineId, scope: params.scope,
+    ...(params.hold ? { hold: params.hold } : {}) },
     steps, backend: createMachineSetupNativeBackend({ run, ...(params.signal ? { signal: params.signal } : {}),
       ...(params.platform ? { platform: params.platform } : {}) }),
   });
@@ -87,9 +91,10 @@ export function createMachineSetupUpdatesAction(params: Readonly<{
       let nativeStarted = false;
       try {
         const reviewed = readMachineSetupEffectPlanV1(input.plan);
-        const planned = await prepareMachineSetupUpdatesPlanV1({ machineId: params.machineId, scope: input.scope, signal: cancellationSignal });
+        const planned = await prepareMachineSetupUpdatesPlanV1({ machineId: params.machineId, scope: input.scope, signal: cancellationSignal,
+          ...(reviewed?.basis.kind === 'updates' && reviewed.basis.hold ? { hold: reviewed.basis.hold } : {}) });
         if (cancellationSignal.aborted) return fail('cancelled');
-        if (!planned.plan) return fail(planned.observation.reason ?? planned.observation.status);
+        if (!planned.plan) return fail(planned.observation.reason ?? 'required_fact_unavailable');
         if (!reviewed || reviewed.planDigest !== planned.plan.planDigest) return fail('plan_changed');
         const isActive = async () => !cancellationSignal.aborted;
         const administrator = params.apiMachine.captureMachineAdminAccess();

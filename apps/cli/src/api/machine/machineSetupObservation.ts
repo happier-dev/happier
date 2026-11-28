@@ -52,6 +52,7 @@ export function projectMachineSetupUpdatesObservation(
         ...(previous?.updates?.pendingAll !== undefined ? { pendingAll: previous.updates.pendingAll } : {}),
         ...(previous?.updates?.pendingSecurity !== undefined ? { pendingSecurity: previous.updates.pendingSecurity } : {}),
         ...(previous?.updates?.rebootNeeded !== undefined ? { rebootNeeded: previous.updates.rebootNeeded } : {}),
+        ...(previous?.updates?.heldPackages !== undefined ? { heldPackages: previous.updates.heldPackages } : {}),
         ...(previous?.updates?.checkedAt !== undefined ? { checkedAt: previous.updates.checkedAt } : {}),
         ...updates,
     } : updates;

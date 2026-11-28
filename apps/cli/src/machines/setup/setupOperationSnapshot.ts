@@ -19,6 +19,7 @@ type SetupStep = MachineSetupEffectPlanV1['steps'][number];
 function describeUntitledSetupStep(step: SetupStep): string {
   switch (step.kind) {
     case 'package': return `${step.state === 'absent' ? 'Remove' : 'Install'} ${step.packages.map(pkg => pkg.name).join(', ')}`;
+    case 'packageHold': return step.operation === 'hold' ? `Hold updates to ${step.name}` : `Release the hold on ${step.name}`;
     case 'packageSource': return `Add the ${step.manager} package source`;
     case 'serviceUnit': return `${step.running ? 'Start' : 'Stop'} ${step.unit}`;
     case 'firewall': return 'Firewall rules';

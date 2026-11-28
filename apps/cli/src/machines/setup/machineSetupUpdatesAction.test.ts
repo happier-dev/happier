@@ -1,6 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
-import { MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema,
+  MachineSetupUpdatesApplyInputV1Schema, MachineSetupUpdatesRolloutTargetV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MachineSetupObservationV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupObservationV1';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 import { createNativeSoftwareInstallFixture } from '@/testkit/machines/nativeSoftwareInstall';
@@ -11,6 +12,28 @@ import { createMachineSetupUpdatesAction } from './machineSetupUpdatesAction';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 
 describe('reviewed Machine OS update Action', () => {
+  it('returns one exact hold for individual Apply and refuses it as a Fleet upgrade target', async () => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt' });
+    packageOs.runNative = async ({ executable }) => executable === 'dpkg-query'
+      ? { code: 0, stdout: 'jq\tinstall ok installed\t0.5\tamd64\n', stderr: '' } : null;
+    const target = { homeId: 'srv_home', machineId: fixture.machine.id };
+    const hold = { name: 'jq', operation: 'hold' as const };
+    const scope = 'all';
+    const reviewed = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
+      input: MachineSetupPlanInputV1Schema.parse({ ...target, mode: 'effects', updates: { scope, hold } }),
+      context: fixture.context('machines.setup.plan'),
+    }));
+    expect(reviewed.review).toMatchObject({ administratorRequired: true, downtime: 'none' });
+    expect(reviewed.updates?.plan).toMatchObject({
+      basis: { kind: 'updates', machineId: target.machineId, scope, hold },
+      steps: [{ kind: 'packageHold', name: 'jq', operation: 'hold' }],
+    });
+    const input = { ...target, scope, plan: reviewed.updates?.plan };
+    expect(MachineSetupUpdatesApplyInputV1Schema.safeParse(input).success).toBe(true);
+    expect(MachineSetupUpdatesRolloutTargetV1Schema.safeParse(input).success).toBe(false);
+    expect(fixture.rootLaunches).toEqual([]);
+  });
+
   it('cancels an admitted update through the operation owner and settles its native installation', async () => {
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt' });
     const reviewed = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
@@ -117,7 +140,7 @@ describe('reviewed Machine OS update Action', () => {
     expect(fixture.machine.metadata?.setup).toEqual(desired);
     expect(fixture.metadataWrites).toEqual([]);
     expect(fixture.machine.daemonState?.setup?.updates).toEqual({ status: 'satisfied', backend: 'apt',
-      pendingAll: 0, pendingSecurity: 0, rebootNeeded: false, checkedAt: expect.any(Number) });
+      pendingAll: 0, pendingSecurity: 0, rebootNeeded: false, heldPackages: [], checkedAt: expect.any(Number) });
     // Review, admission and post-settlement refresh each inspect the OS once;
     // the root interpreter never enumerates a broader update set.
     expect(JSON.parse(await readFile(fixture.statePath, 'utf8'))).toMatchObject({ updatesChecks: 3 });

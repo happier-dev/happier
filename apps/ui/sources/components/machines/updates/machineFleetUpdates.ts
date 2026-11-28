@@ -19,6 +19,7 @@ export type FleetUpdatesRow = FleetMachine &
   Readonly<{
     security: number | null;
     all: number | null;
+    held?: number;
     restartNeeded: boolean;
     /** When the Machine's last native update check completed (epoch ms); null when it never reported one. */
     checkedAt: number | null;
@@ -30,9 +31,12 @@ export function readFleetUpdatesRow(
 ): FleetUpdatesRow {
   // An offline Machine's last answer is not today's count (lab fUpd: "—", never zero); when it last checked stays
   // true, so the row keeps it ("As of 14:02").
+  const observation = machine.online === true ? entry?.observation ?? null : null;
+  const held = observation?.heldPackages?.length;
   return {
     ...machine,
-    ...readMachineUpdateFacts(machine.online === true ? (entry?.observation ?? null) : null),
+    ...readMachineUpdateFacts(observation),
+    ...(held ? { held } : {}),
     checkedAt: entry?.observation?.checkedAt ?? null,
   };
 }

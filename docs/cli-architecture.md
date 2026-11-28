@@ -4159,6 +4159,15 @@ finite setup task and administrator interpreter. It never rewrites desired
 Software and never reboots. Package updates may restart services; review reports
 possible downtime when packages will change.
 
+To hold or release one package, an agent first calls `machines.setup.plan` with
+`mode: 'effects'` and `updates: { scope: 'all', hold: { name, operation } }`.
+`operation` is `hold` or `release`. The agent submits the returned exact plan
+to `machines.setup.updates.apply` using the same Machine and scope. The
+administrator interpreter changes the native APT selection or DNF version lock.
+DNF must have versionlock available, and a release preserves overlapping rules
+created outside Happier. Rollout accepts upgrade plans and uses the same native
+selection that excludes held packages on an individual Machine.
+
 The 0.3 development Action `machines.setup.updates.rollout` composes exact native
 plans into ordered batches on one selected controller. Callers resolve all,
 manual, or active approved-role selections through `machines.list` and
@@ -4177,7 +4186,7 @@ refuses a stale plan rather than choosing unreviewed updates. If the controller 
 interrupted/uncertain status and Workflow inspection/recovery apply; acceptance
 of a reboot is not proof of successful Run completion.
 
-The native owner publishes counts, the reboot-needed fact and optional `checkedAt`
+The native owner publishes counts, the reboot-needed fact, optional `heldPackages` and optional `checkedAt`
 at `daemonState.setup.updates`, through the normal Machine publication owner.
 `checkedAt` is Unix epoch milliseconds when a successful native update inspection
 completed, never when its observation was read. Each completed check therefore
@@ -4186,7 +4195,7 @@ the same observation produces no publication. Reads occur on explicit Security d
 (open, reconnect or refresh), before an updates Apply, and after native
 setup/Software/updates settlement, without a polling timer. A missing count or
 reboot fact stays unknown. Native unavailable/unverifiable observations retain
-last-known counts, reboot state and successful check time at the publication owner; the Security hook
+last-known counts, holds, reboot state and successful check time at the publication owner; the Security hook
 labels those facts stale, as it does during refresh or while offline. The data port also exposes explicit refresh for the separately composed P30
 reboot consumer to call after reboot settlement.
 Linux APT uses python-apt's native security classification and the

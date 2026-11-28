@@ -79,6 +79,23 @@ const row = (screen: Awaited<ReturnType<typeof render>>, testID: string) =>
   findTestInstanceByTypeWithProps(screen, Item, { testID });
 
 describe('Machine → Security page', () => {
+  it('explains why held packages are skipped and offers Release only with Manage', async () => {
+    const observation = model({ status: 'satisfied', backend: 'apt', pendingAll: 0, pendingSecurity: 0,
+      heldPackages: ['openssl'] });
+    const onPrepare = vi.fn();
+    const owner = await render(observation, true, controls({ onPrepare }));
+    expect(row(owner, 'machine-security-held-openssl')?.props.subtitle).toBe(
+      t('machineDetailPage.security.heldPackageReason'),
+    );
+    expect(row(owner, 'machine-security-install')).toBeUndefined();
+    await owner.pressByTestIdAsync('machine-security-release-openssl');
+    expect(onPrepare).toHaveBeenCalledWith('all', { name: 'openssl', operation: 'release' });
+
+    const reader = await render(observation, true, controls(), false);
+    expect(row(reader, 'machine-security-held-openssl')).toBeDefined();
+    expect(findTestInstanceByTypeWithProps(reader, RoundButton, { testID: 'machine-security-release-openssl' })).toBeUndefined();
+  });
+
   it('offers the existing reviewed Apply for pending configuration with zero upgrades, but not a clean machine', async () => {
     const onPrepare = vi.fn();
     const recovery = await render(model({ status: 'drifted', reason: 'native_effect_failed',

@@ -319,7 +319,7 @@ export function createMachineSetupNativeBackend(options: Readonly<{
             }
         },
         establishAdministrator: input => establishNativeAdministrator(run, input),
-        async apply(step) {
+        async apply(step, observed) {
             options.signal?.throwIfAborted();
             if (step.kind === 'reboot') {
                 const observed = await observeReboot(step);
@@ -373,7 +373,7 @@ export function createMachineSetupNativeBackend(options: Readonly<{
                 return;
             }
             if (step.kind === 'packageSource') return sources.apply(step);
-            if (step.kind !== 'file') return await system.apply(step);
+            if (step.kind !== 'file') return await system.apply(step, observed);
             if (step.content?.kind === 'secretGrant') {
                 assertPortableFileTarget(step.path);
                 if (step.owner !== 'root' || step.group !== 'root' || step.mode !== 0o600) throw new MachineSetupEffectError('foreign_effect_conflict');

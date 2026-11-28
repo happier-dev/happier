@@ -36,6 +36,7 @@ import {
   isManagedEffectActionIdV1,
   isManagedProvisionerPlacementActionIdV1,
   MACHINE_SETUP_APPLY_ACTION_ID_V1,
+  MACHINE_SETUP_PLAN_ACTION_ID_V1,
   MACHINE_SETUP_REMOVE_ACTION_ID_V1,
   MACHINE_SETUP_UPDATES_APPLY_ACTION_ID_V1,
   MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1,
@@ -74,7 +75,7 @@ const titles: Record<ManagedMachineActionIdV1, string> = {
   'machines.setup.plan': 'Review machine setup',
   'machines.setup.apply': 'Apply machine setup',
   'machines.setup.remove': 'Remove machine setup items',
-  'machines.setup.updates.apply': 'Install machine updates',
+  'machines.setup.updates.apply': 'Apply machine package changes',
   'machines.setup.updates.rollout': 'Update a fleet of Machines',
   'machines.managed.cancel': 'Cancel managed machine creation',
   'machines.managed.power.set': 'Change machine power',
@@ -170,7 +171,7 @@ function createManagedMachineActionSpecs() {
       'machines.managed.cancel': { confirmVerb: { key: 'managedMachines.actions.cancelCreation', fallback: 'Cancel creation' } },
       'machines.setup.apply': { confirmVerb: { key: 'common.run', fallback: 'Run' } },
       'machines.setup.remove': { confirmVerb: { key: 'common.remove', fallback: 'Remove' } },
-      'machines.setup.updates.apply': { confirmVerb: { key: 'common.install', fallback: 'Install' } },
+      'machines.setup.updates.apply': { confirmVerb: { key: 'common.run', fallback: 'Run' } },
       'machines.managed.rebuild': { confirmVerb: { key: 'common.update', fallback: 'Update' } },
       'machines.managed.delete': { confirmVerb: { key: 'common.delete', fallback: 'Delete' }, irreversible: true },
       'machines.managed.retire': { confirmVerb: { key: 'common.remove', fallback: 'Remove' } },
@@ -185,8 +186,10 @@ function createManagedMachineActionSpecs() {
             ? 'Apply the reviewed setup sources on the exact Machine through current approval and native admission; acceptance does not confirm a native effect.'
           : actionId === MACHINE_SETUP_REMOVE_ACTION_ID_V1
             ? 'Remove only reviewed, declared, native-owned setup or software effects on this Machine; apps, scripts, toolchains and user data are not removal operands.'
+          : actionId === MACHINE_SETUP_PLAN_ACTION_ID_V1
+            ? 'Review setup or OS updates on the exact Machine. To prepare a package hold or release, use mode effects and supply updates.scope all and updates.hold with the package name and operation hold or release. Pass the returned OS update plan to machines.setup.updates.apply.'
           : actionId === MACHINE_SETUP_UPDATES_APPLY_ACTION_ID_V1
-            ? 'Install the exact reviewed security or all OS package updates through native setup admission. Package updates may restart services; this operation never reboots the Machine.'
+            ? 'Apply the exact reviewed OS update, package hold or release plan from machines.setup.plan. Package updates may restart services. This operation never reboots the Machine.'
           : actionId === MANAGED_POWER_SET_ACTION_ID_V1
             ? 'Apply the admitted power intent to the retained native resource; acceptance does not confirm a native effect.'
           : actionId === MANAGED_INSPECT_ACTION_ID_V1

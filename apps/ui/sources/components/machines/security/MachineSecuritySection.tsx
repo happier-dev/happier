@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
+import type { MachineSetupPackageHoldV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { describeMachineSetupReason } from '@/components/machines/setup/machineSetupReasonText';
 
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
@@ -45,7 +46,7 @@ export type MachineUpdatesModel = ReturnType<typeof useMachineUpdates>;
 
 export type MachineSecurityControls = Readonly<{
   review: MachineUpdatesReview;
-  onPrepare: (scope: MachineUpdatesScope) => void;
+  onPrepare: (scope: MachineUpdatesScope, hold?: MachineSetupPackageHoldV1) => void;
   onApply: () => void;
   onCancel: () => void;
   reboot: MachineSecurityReboot;
@@ -112,8 +113,8 @@ export function MachineSecuritySection(
   const { prepare, apply, cancel } = updatesReview;
   const controls: MachineSecurityControls = {
     review: updatesReview.review,
-    onPrepare: (scope) => {
-      void prepare(scope);
+    onPrepare: (scope, hold) => {
+      void prepare(scope, hold);
     },
     onApply: () => {
       void apply();
@@ -232,6 +233,27 @@ export function MachineSecurityView(
             ) : undefined
           }
         />
+        {updates.observation?.heldPackages?.map(name => (
+          <Item
+            key={name}
+            testID={`machine-security-held-${name}`}
+            title={name}
+            subtitle={t('machineDetailPage.security.heldPackageReason')}
+            icon={<Icon name="lock" size={ICON_SIZE.xl} color={theme.colors.text.secondary} />}
+            showChevron={false}
+            accessoryLayout="adaptive"
+            rightElement={canManage && props.online === true ? (
+              <RoundButton
+                testID={`machine-security-release-${name}`}
+                size="small"
+                display="secondary"
+                title={t('machineDetailPage.security.releaseHold')}
+                disabled={busy}
+                onPress={() => controls.onPrepare('all', { name, operation: 'release' })}
+              />
+            ) : undefined}
+          />
+        ))}
         {/* Decided here, not inside the row: the group's child walk counts a row that renders nothing and draws its divider. */}
         {controls.reboot.kind !== 'idle' || updates.rebootNeeded === true ? (
           <RestartRow
@@ -256,7 +278,8 @@ export function MachineSecurityView(
           <StoreUpdateRow key={entry.key} entry={entry} host={props.store!.host} rowRole="item" testID={`machine-security-store-${entry.key}`} />
         ))}
       </ItemGroup>
-      <UpdatesReviewCard machineName={machine} controls={controls} serverId={props.serverId ?? null} />
+      <UpdatesReviewCard machineName={machine} controls={controls} serverId={props.serverId ?? null}
+        canHold={canManage && props.online === true} />
     </View>
   );
 }
@@ -597,11 +620,13 @@ const BLOCKED_KEYS = {
 
 /** The reviewed install opens under the section: exactly what the Machine planned, then its own progress. */
 function UpdatesReviewCard(
-  props: Readonly<{ machineName: string; controls: MachineSecurityControls; serverId: string | null }>,
+  props: Readonly<{ machineName: string; controls: MachineSecurityControls; serverId: string | null; canHold: boolean }>,
 ) {
   const { review } = props.controls;
   const machine = props.machineName;
   const s = 'machineDetailPage.security' as const;
+  const hold = review.kind === 'idle' ? undefined : review.hold;
+  const holdLabel = hold ? t(hold.operation === 'hold' ? `${s}.holdPackage` : `${s}.releaseHold`) : null;
   switch (review.kind) {
     case 'idle':
       return null;
@@ -628,7 +653,7 @@ function UpdatesReviewCard(
             testID="machine-security-review-failed"
             kind="error"
             layout="inline"
-            title={t(
+            title={hold ? t(`${s}.packageHoldFailed`, { name: hold.name }) : t(
               review.during === 'apply'
                 ? `${s}.applyFailed`
                 : `${s}.prepareFailed`,
@@ -637,7 +662,7 @@ function UpdatesReviewCard(
             diagnosticCode={review.failure.errorCode}
             action={{
               label: t('common.retry'),
-              onPress: () => props.controls.onPrepare(review.scope),
+              onPress: () => hold ? props.controls.onPrepare(review.scope, hold) : props.controls.onPrepare(review.scope),
             }}
             secondaryAction={{
               label: t('common.cancel'),
@@ -650,11 +675,11 @@ function UpdatesReviewCard(
       return (
         <ItemGroup
           testID="machine-security-installing"
-          title={t(`${s}.installingTitle`, { count: review.count })}
+          title={holdLabel ?? t(`${s}.installingTitle`, { count: review.count })}
         >
           <Item
             testID="machine-security-installing-row"
-            title={t(`${s}.installingRow`, { machine })}
+            title={hold?.name ?? t(`${s}.installingRow`, { machine })}
             loading
             showChevron={false}
             onPress={() => props.controls.onOpenOperation(review.operationId)}
@@ -662,7 +687,9 @@ function UpdatesReviewCard(
         </ItemGroup>
       );
     case 'settled': {
-      const fallback = t(review.state === 'succeeded' ? `${s}.installed` : `${s}.installFailed`, { machine });
+      const fallback = hold
+        ? t(review.state === 'succeeded' ? `${s}.packageHoldChanged` : `${s}.packageHoldFailed`, { name: hold.name })
+        : t(review.state === 'succeeded' ? `${s}.installed` : `${s}.installFailed`, { machine });
       const title = resolveMachineAvailabilityReasonCopy(review.failure?.errorCode, machine)
         ?? resolveActionExecutionErrorMessage(review.failure, fallback, { closedCodesOnly: true });
       return (
@@ -698,13 +725,15 @@ function UpdatesReviewCard(
         <>
         <ItemGroup
           testID="machine-security-review-card"
-          title={t(
+          title={holdLabel ?? t(
             review.scope === 'security'
               ? `${s}.reviewTitleSecurity`
               : `${s}.reviewTitleAll`,
             { machine },
           )}
-          description={prerequisite?.message ?? confirmation?.summary ?? t(`${s}.reviewDescription`)}
+          description={prerequisite?.message ?? confirmation?.summary ?? (hold
+            ? (hold.operation === 'hold' ? t(`${s}.heldPackageReason`) : undefined)
+            : t(`${s}.reviewDescription`))}
         >
           {review.kind === 'preparing' ? (
             <Item
@@ -713,6 +742,8 @@ function UpdatesReviewCard(
               loading
               showChevron={false}
             />
+          ) : hold ? (
+            <Item title={hold.name} showChevron={false} />
           ) : (
             packages.map((item) => (
               <Item
@@ -721,6 +752,16 @@ function UpdatesReviewCard(
                 title={item.name}
                 detail={item.version ?? undefined}
                 showChevron={false}
+                accessoryLayout="adaptive"
+                rightElement={props.canHold && review.kind === 'review' && review.canHold && item.version !== null ? (
+                  <RoundButton
+                    testID={`machine-security-hold-${item.name}`}
+                    size="small"
+                    display="secondary"
+                    title={t(`${s}.holdPackage`)}
+                    onPress={() => props.controls.onPrepare(review.scope, { name: item.name, operation: 'hold' })}
+                  />
+                ) : undefined}
               />
             ))
           )}
@@ -745,7 +786,7 @@ function UpdatesReviewCard(
             <RoundButton
               testID="machine-security-apply"
               size="small"
-              title={t(`${s}.installCount`, { count: packages.length })}
+              title={holdLabel ?? t(`${s}.installCount`, { count: packages.length })}
               disabled={(review.kind !== 'review' && !confirmation) || prerequisite !== null}
               {...(prerequisite ? { accessibilityHint: prerequisite.message } : {})}
               loading={review.kind === 'applying' && approval === null && !confirmation}
