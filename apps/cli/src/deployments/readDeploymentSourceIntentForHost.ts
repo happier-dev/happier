@@ -7,6 +7,7 @@ import { suggestProjectOpenCloneDestinationV1 } from '@happier-dev/protocol/proj
 import type { ProjectSourceRepositorySelectorV1, ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { isManagedWorkspaceRefV2, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm';
+import { ScmCommitOidSchema } from '@happier-dev/protocol/scm/commitPublication';
 import { normalizeScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import type { DeploymentTargetRepositoryAccessV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import type { DeploymentEnvironmentDetailV1, DeploymentSourceIntentV1 } from '@happier-dev/deployments/contracts/v1';
@@ -230,7 +231,16 @@ export async function readDeploymentSourceIntentForHost(input: DeploymentSourceR
         throw Object.assign(createActionExecuteFailureError(failure), { cause: failure });
     };
     const definition = environment.content.definition;
-    let sha = request.sha;
+    const provenance = environment.content.previewProvenance;
+    const previewHead = !intent && !publishedGitProviders && definition.kind === 'repository'
+        && sourceRepository && provenance?.repository.kind === 'github'
+        && sameScmHostingRepositoryIdentity(provenance.repository, normalizeScmHostingRepositoryIdentity({
+            kind: sourceRepository.provider.kind, deployment: sourceRepository.provider.baseUrl,
+            repository: sourceRepository.repository.nameWithOwner,
+        }))
+        ? { number: provenance.pullRequestNumber } : undefined;
+    const pullRequestHead = intent?.kind === 'repository' ? intent.pullRequestHead : previewHead;
+    let sha = request.sha ?? (previewHead && definition.kind === 'repository' ? ScmCommitOidSchema.safeParse(definition.ref).data : undefined);
     const pinnedSha = intent?.kind === 'repository' ? intent.sha : sha;
     if (repository && needsWorkspace) {
         for (const checkout of machineCheckouts) {
@@ -266,6 +276,9 @@ export async function readDeploymentSourceIntentForHost(input: DeploymentSourceR
                             expectedCommitSha: resolvedSha, signal }).catch(rethrowDeploymentSourceAcquisitionFailure);
                         sha = resolvedSha;
                     }
+                } else if (pullRequestHead && !publishedGitProviders) {
+                    // Materialization fetches the approved exact PR head into this repository.
+                    await requireWorkspaceCommitRepository(checkout.rootPath, signal);
                 } else if (!publishedGitProviders && pinnedSha) {
                     // Upload must choose a checkout containing the reviewed object.
                     try {
@@ -297,7 +310,8 @@ export async function readDeploymentSourceIntentForHost(input: DeploymentSourceR
             }
             if (!sha) return refuse('deployment_source_unavailable');
             intent = { kind: 'repository', projectSourceId: sourceId, sourceRevision,
-                ...(definition.compose === undefined ? {} : { compose: definition.compose }), sha };
+                ...(definition.compose === undefined ? {} : { compose: definition.compose }),
+                ...(previewHead ? { pullRequestHead: previewHead } : {}), sha };
         }
     }
     if (!intent) return refuse('deployment_source_unavailable');

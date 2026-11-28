@@ -396,7 +396,7 @@ export const deploymentSettingsTranslations = {
     rolloutRecreateShort: 'Restart in place',
     rolloutStartFirstShort: 'Start new first',
     previewsTitle: 'Previews',
-    previewsOn: 'On for new pull requests',
+    previewsOn: 'On for new pull requests. Turning this on skips pull requests that are already open.',
     previewsOff: 'Off',
     previewsEnrollmentUnavailable: "Saved, but new pull requests won't get previews yet",
     previewsRunsOn: 'Runs on',

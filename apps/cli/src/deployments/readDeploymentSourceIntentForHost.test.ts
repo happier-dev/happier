@@ -80,7 +80,7 @@ it.each(['dirty', 'unpushed', 'raw-commit-ref', 'published', 'published-with-new
     });
 });
 
-it.each(['remote preview', 'local-only'] as const)('pins and acquires the selected %s branch without moving the checkout', async kind => {
+it.each(['remote preview', 'local-only', 'pull request only'] as const)('pins and acquires the selected %s branch without moving the checkout', async kind => {
     const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
         runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
     onTestFinished(() => runtime.dispose());
@@ -99,6 +99,10 @@ it.each(['remote preview', 'local-only'] as const)('pins and acquires the select
         await writeFile(join(remote, 'index.html'), 'reviewed preview');
         git(remote, ['add', '.']); git(remote, ['commit', '--quiet', '-m', 'Preview source']);
         const sha = git(remote, ['rev-parse', 'HEAD']);
+        if (kind === 'pull request only') {
+            git(remote, ['update-ref', 'refs/pull/42/head', sha]);
+            expect(() => git(checkout, ['cat-file', '-e', sha])).toThrow();
+        }
         if (kind === 'local-only') git(checkout, ['branch', 'fixture-specimens-1112-20261112-review-native']);
         const expectedSha = kind === 'local-only' ? git(checkout, ['rev-parse', 'HEAD']) : sha;
         const cloneUrl = 'https://github.com/happier-dev/triage-qa-sandbox.git';
@@ -107,6 +111,13 @@ it.each(['remote preview', 'local-only'] as const)('pins and acquires the select
         git(checkout, ['config', `url.${pathToFileURL(remote).href}.insteadOf`, cloneUrl]);
         const environment = createDeploymentEnvironmentDetailV1();
         environment.content.definition = { kind: 'repository', ref: 'fixture-specimens-1112-20261112-review-native' };
+        if (kind === 'pull request only') {
+            const repository = { kind: 'github' as const, deployment: 'https://github.com', repository: 'happier-dev/triage-qa-sandbox' };
+            environment.content.definition = { kind: 'repository', ref: sha };
+            environment.content.previewProvenance = { v: 1, templateEnvironmentId: 'template', runtimeTargetLinkId: 'runtime',
+                repository, headRepository: repository, pullRequestId: '123', pullRequestNumber: 42,
+                author: { id: '123', login: 'author' } };
+        }
         const sourceId = environment.environment.projectSourceId;
         mockProjectAccountRowsHttpBoundary([createPlainProjectAccountRefRow({ id: 'workspace', serverId: 'home',
             machineId: 'controller', rootPath: checkout, createdAtMs: 1, source: { sourceId, revision: 1 } })]);
@@ -114,7 +125,8 @@ it.each(['remote preview', 'local-only'] as const)('pins and acquires the select
             canManage: true, source: { id: sourceId, revision: 1, name: 'App', audience: [], createdByAccountId: 'owner',
                 repository: { protocol: 'https', provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
                     repository: { nameWithOwner: 'happier-dev/triage-qa-sandbox', cloneUrl } } } }) });
-        const selected = await readDeploymentSourceIntentForHost({ request: { environment, context: {}, requireWorkspace: true },
+        const selected = await readDeploymentSourceIntentForHost({ request: { environment, context: {}, requireWorkspace: true,
+            ...(kind === 'pull request only' ? { sha } : {}) },
             host: { credentials: { token: 'fixture', encryption: null }, serverId: 'home', serverHttpBaseUrl: 'https://home.test',
                 machineId: 'controller', async assertAuthority() {}, async resolveRequesterIdentity() {
                     return { kind: 'owner_person' as const, requester: { serverId: 'home', accountId: 'owner',
@@ -126,6 +138,10 @@ it.each(['remote preview', 'local-only'] as const)('pins and acquires the select
                     return sha;
                 } } });
         expect(selected.sourceIntent).toMatchObject({ kind: 'repository', sha: expectedSha });
+        if (kind === 'pull request only') {
+            expect(selected.sourceIntent).toMatchObject({ pullRequestHead: { number: 42 } });
+            return;
+        }
         expect(git(checkout, ['show', `${expectedSha}:index.html`])).toBe(kind === 'local-only' ? 'main' : 'reviewed preview');
         expect(git(checkout, ['symbolic-ref', '--short', 'HEAD'])).toBe('main');
         expect(git(checkout, ['for-each-ref', '--format=%(refname)', 'refs/happier/source-fetch'])).toBe('');

@@ -1139,7 +1139,11 @@ preserves its push subscription. Disabling previews removes that subscription
 when no other Preview uses it. Signed pull request updates use the existing
 durable Automation receiver. A Home GitHub cannot reach compares the heads of
 open PRs that have a serving Preview against their serving Receipts in the
-existing repository poll. A changed head deploys the exact new commit.
+existing repository poll. Turning previews on applies to new pull requests.
+It does not backfill pull requests that are already open. A changed head
+deploys the exact new commit. Own-server previews fetch the approved head
+from the base GitHub repository's pull request ref and verify its commit
+before exporting the source.
 
 In 0.3 development, Deploy on push keeps the selected GitHub Events watcher
 when GitHub cannot reach the Home. The save notice explains why direct delivery
@@ -2089,7 +2093,9 @@ child is active. The captured own-server controller settles `cancelled` after
 that child returns a known outcome and before any later stage starts. This
 settlement is when After Deploy can run. An uncertain child leaves the
 cancellation pending as `outcome_unknown` and preserves the last uniform
-deployment. Cancellation does not assert container removal.
+deployment. Cancellation does not assert container removal. If the accepted
+controller Machine goes offline while a Receipt is active, Home settles that
+Receipt as `outcome_unknown` and publishes the update to observers.
 
 In development, preparation or admission for a different native request
 reconciles an unfinished receipt on its captured controller installation for the

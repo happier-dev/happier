@@ -285,6 +285,7 @@ function sourceFileRecovery(details: Record<string, unknown>) {
 
 /** What the press asked for, supplied by the caller that made the request; never inferred from the refusal. */
 export type DeploymentRefusalRequestV1 = Readonly<{ pullRequestHead?: boolean }>;
+export const DEPLOYMENT_PULL_REQUEST_SOURCE_ACQUISITION_PHASE_V1 = 'deployment.source.acquire.pull_request_head';
 // An exact pull-request head the Source can't supply is that head's problem, not the Source's setup.
 const pullRequestHeadRecovery = recovery('This pull request head could not be fetched for deploy. The pull request may be merged, closed or from a fork. Read its latest head again, or deploy its branch.', 'source', 'Open Source details');
 function unsupportedCloneProviderRecovery(providerDisplayName: string | undefined) {
@@ -399,6 +400,8 @@ function recoveryFor(details: Record<string, unknown>, errorCode?: string, reque
     // A recorded typed cause (an unconfirmed transition's Home refusal) is more specific than the outcome code it settled as.
     const failureCause = isRecord(details.failureCause) ? details.failureCause
         : isRecord(failure?.failureCause) ? failure.failureCause : undefined;
+    if (errorCode === 'deployment_source_unavailable'
+        && failureCause?.phase === DEPLOYMENT_PULL_REQUEST_SOURCE_ACQUISITION_PHASE_V1) return pullRequestHeadRecovery;
     const diagnostic = ActionRefusalDiagnosticV1Schema.safeParse(details.diagnostic).data;
     const codes = [sourceAdmission?.reason, failure?.reason, failureCause?.errorCode, failure?.code,
         diagnostic?.reason, details.reason, details.code, errorCode];

@@ -410,6 +410,10 @@ describe('deployment refusal recovery (a refused press: banner and platform shee
         const head = readDeploymentRefusalRecoveryV1('deployment_source_unavailable', undefined, { pullRequestHead: true });
         expect(head?.remedy).not.toBe(generic?.remedy);
         expect(head?.remedy).toMatch(/pull request/i);
+        const previewReceipt = readDeploymentRefusalRecoveryV1('deployment_source_unavailable', {
+            failureCause: { phase: 'deployment.source.acquire.pull_request_head', errorCode: 'not_found' },
+        });
+        expect(previewReceipt).toEqual(head);
         // A typed file cause still names its file, whatever the press asked for.
         const file = readDeploymentRefusalRecoveryV1('deployment_source_unavailable',
             { kind: 'deploymentSourceFileUnavailable', path: 'deploy/compose.yaml', reason: 'absent' }, { pullRequestHead: true });

@@ -13,7 +13,7 @@ import { readPluginActionError, readPluginActionFailureAuthorPayload } from '@ha
 import { DeploymentSourceAdmissionFailureV1Schema, DeploymentReceiptFailureV1Schema,
     type DeploymentReceiptFailureV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { DeploymentFailureRecoveryV1Schema, DeploymentImageResolutionFailureV1Schema, describeDeploymentImageResolutionFailureV1,
-    projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+    DEPLOYMENT_PULL_REQUEST_SOURCE_ACQUISITION_PHASE_V1, projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { readDeploymentBackupMaintenanceFailureEvidenceV1 } from '@happier-dev/deployments/contracts/v1';
 import { DeploymentMissingRequiredSecretsV1Schema } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { MachineCarrierError } from '@/daemon/peer/iroh/machineCarrier';
@@ -44,11 +44,12 @@ export function privateServiceForwardAcquisitionError(error: unknown): Error & {
 }
 
 /** Source acquisition translates SCM selection failures once; capability and stale-approval refusals keep their codes. */
-export function rethrowDeploymentSourceAcquisitionFailure(error: unknown): never {
+export function rethrowDeploymentSourceAcquisitionFailure(error: unknown, source?: 'pullRequestHead'): never {
     if (error instanceof Error && 'code' in error && (error.code === 'git_selection_unavailable' || error.code === SCM_OPERATION_ERROR_CODES.NOT_FOUND)) {
         throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_source_unavailable',
             error: 'Deployment source is unavailable',
-            failureCause: { ...projectActionFailureCauseV1(error, 'deployment.source.acquire'), errorCode: error.code } });
+            failureCause: { ...projectActionFailureCauseV1(error, source === 'pullRequestHead'
+                ? DEPLOYMENT_PULL_REQUEST_SOURCE_ACQUISITION_PHASE_V1 : 'deployment.source.acquire'), errorCode: error.code } });
     }
     throw error;
 }

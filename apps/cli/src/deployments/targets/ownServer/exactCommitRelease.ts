@@ -256,7 +256,8 @@ export function createDeploymentSourceMaterializationPort(input: Readonly<{
                         }
                         await fetchWorkspaceCommitRef({ sourcePath: admitted.sourcePath, cloneUrl,
                             ref: `refs/pull/${number}/head`, expectedCommitSha: admitted.commitSha,
-                            registry: input.registry, signal: options?.signal }).catch(rethrowDeploymentSourceAcquisitionFailure);
+                            registry: input.registry, signal: options?.signal })
+                            .catch(error => rethrowDeploymentSourceAcquisitionFailure(error, 'pullRequestHead'));
                         await assertCurrent();
                     }
                     exported = admitted.folderExport ? admitted.folderExport
