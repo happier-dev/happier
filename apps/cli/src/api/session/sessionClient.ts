@@ -145,7 +145,7 @@ import {
 } from './client/lifecycle/createSessionClientRecoveryRuntime';
 import { accountWakeNeedsHostChangesRead, registerAccountWakeConsumer, type SessionCatchUpRequest } from './sessionChangesSyncOnConnect';
 import { createSessionClientMaterializationRuntime } from './client/lifecycle/createSessionClientMaterializationRuntime';
-import { buildOutboundSessionMessagePayload } from './client/transport/outboundSessionMessagePayload';
+import { buildDurableOutboundSessionMessagePayload, buildOutboundSessionMessagePayload } from './client/transport/outboundSessionMessagePayload';
 import { redactTranscriptSecrets, registerSessionTranscriptSecret } from './client/transport/transcriptSecretRedaction';
 import { createSessionClientUpdateRuntime } from './client/transport/createSessionClientUpdateRuntime';
 import {
@@ -1629,6 +1629,10 @@ export class ApiSessionClient extends EventEmitter {
             // Delivery can run from a pooled socket callback; redaction uses this Session's secrets.
             buildOutboundSessionMessagePayload: bindToHostedSessionScope((content: unknown) =>
                 buildOutboundSessionMessagePayload(this.storedContentCrypto, content)),
+            buildDurableOutboundSessionMessagePayload: bindToHostedSessionScope((input: Parameters<typeof buildDurableOutboundSessionMessagePayload>[1]) =>
+                this.sessionSyncPendingInputServerContractResult?.transcriptTransport.mode === 'session_transcript_observation_v2'
+                    ? buildDurableOutboundSessionMessagePayload(this.storedContentCrypto, input)
+                    : { payload: buildOutboundSessionMessagePayload(this.storedContentCrypto, input.content) }),
             toolCallCanonicalNameByProviderAndId: this.toolCallCanonicalNameByProviderAndId,
             permissionToolCallRawInputByProviderAndId: this.permissionToolCallRawInputByProviderAndId,
             toolCallInputByProviderAndId: this.toolCallInputByProviderAndId,

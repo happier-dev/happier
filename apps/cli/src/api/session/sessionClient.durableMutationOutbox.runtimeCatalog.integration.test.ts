@@ -407,6 +407,53 @@ function createWorkStateMutation(): RegisteredSessionStateFieldMutationV1 {
 }
 
 describe('ApiSessionClient durable mutation outbox', () => {
+  it.each(['session_transcript_observation_v1', 'session_transcript_observation_v2'] as const)(
+    'preserves Shell output under the negotiated %s Home transport', async (transport) => {
+      const home = createSessionTranscriptHomeStub();
+      const transcript: Array<ReturnType<typeof SessionTranscriptObservationInputSchema.parse>> = [];
+      sessionSocketStub = createApiSessionSocketStub({ connected: false, emitWithAck: async (event, payload) => {
+        if (event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1) {
+          transcript.push(SessionTranscriptObservationInputSchema.parse(payload));
+        }
+        return home.answer(event, payload) ?? { ok: true };
+      } });
+      userSocketStub = createApiSessionSocketStub({ connected: false });
+      const client = createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({ id: 'tool-output' }));
+      sessionSocketStub.connected = true;
+      const contract = { ...serverContract('session_sync_v2_pending_input_v1'), socket: sessionSocketStub,
+        transcriptTransport: { mode: transport } };
+      const internals = client as unknown as {
+        sessionSyncPendingInputServerContractResult: typeof contract;
+        durableMutationOutbox: { setSessionSyncPendingInputServerContract: (result: typeof contract) => Promise<void> };
+      };
+      internals.sessionSyncPendingInputServerContractResult = contract;
+      await internals.durableMutationOutbox.setSessionSyncPendingInputServerContract(contract);
+      const toolNormalizationSource = { protocol: 'native', agent: { pluginId: 'happier.agent.claude', localId: 'claude' } } as const;
+      const provenance = { kind: 'non_dependent', source: 'external' } as const;
+      const admission = { signal: new AbortController().signal, requireDelivery: true };
+      try {
+        await client.enqueueAgentMessageCommitted('claude', {
+          type: 'tool-call', id: 'call', callId: 'shell', name: 'Bash', input: { command: 'printf fixture' },
+        }, { localId: 'call', createdAt: 100, toolNormalizationSource, provenance, admission });
+        await client.enqueueAgentMessageCommitted('claude', {
+          type: 'tool-result', id: 'result', callId: 'shell', output: { stdout: 'synthetic stdout', exitCode: 0 },
+        }, { localId: 'result', createdAt: 101, toolNormalizationSource, provenance, admission });
+        const result = transcript.find(row => row.localId === 'result');
+        expect(result).toBeDefined();
+        if (transport === 'session_transcript_observation_v2') {
+          expect(result?.toolOutputPart).toMatchObject({ t: 'plain', v: { fields: { stdout: 'synthetic stdout' } } });
+          expect(JSON.stringify(result?.content)).not.toContain('synthetic stdout');
+        } else {
+          expect(result?.toolOutputPart).toBeUndefined();
+          expect(JSON.stringify(result?.content)).toContain('synthetic stdout');
+        }
+      } finally {
+        sessionSocketStub.connected = false;
+        await client.close();
+      }
+    },
+  );
+
   it.each([
     { mode: 'e2ee', transcriptMode: 'e2ee' },
     { mode: 'plain', transcriptMode: 'plain' },
