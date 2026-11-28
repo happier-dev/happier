@@ -81,6 +81,7 @@ describe('createConcurrentServerSocketTransport', () => {
                     token: 'token-a',
                     clientType: 'user-scoped',
                     clientPurpose: 'concurrent-server-cache',
+                    liveTranscriptDisabled: true,
                 }),
                 forceNew: true,
                 multiplex: false,
@@ -90,6 +91,7 @@ describe('createConcurrentServerSocketTransport', () => {
             }),
         );
         expect(ioSpy.mock.calls[0]?.[1]?.auth).not.toHaveProperty('clientCompatibility');
+        expect(ioSpy.mock.calls[0]?.[1]?.auth).not.toHaveProperty('sessionUpdateInterest');
     });
 
     it('handles upgrade-required connect errors without classifying the server as unreachable', async () => {

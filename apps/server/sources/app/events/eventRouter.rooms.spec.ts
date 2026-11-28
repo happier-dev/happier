@@ -90,6 +90,48 @@ describe("eventRouter (rooms)", () => {
         expect(emit).toHaveBeenCalledTimes(2);
     });
 
+    it("keeps both session audiences for transcript streams and excludes passive sockets from each", () => {
+        const ioTo = vi.fn();
+        const emit = vi.fn();
+        const except = vi.fn(() => ({ emit }));
+        ioTo.mockReturnValue({ emit, except });
+        eventRouter.setIo({ to: ioTo } as any);
+
+        eventRouter.emitEphemeral({
+            userId: "u1",
+            payload: { type: "transcript-stream-segment-delta", sessionId: "s1" } as any,
+            recipientFilter: { type: "all-interested-in-session", sessionId: "s1" },
+        });
+
+        expect(ioTo).toHaveBeenCalledWith(["session:s1:u1", "user-scoped:u1"]);
+        expect(except).toHaveBeenCalledWith(["narrow-session-interest:u1", "live-transcript-disabled:u1"]);
+        expect(ioTo).toHaveBeenCalledWith(["account-socket-session-interest:s1:u1"]);
+        expect(except).toHaveBeenCalledWith("live-transcript-disabled:u1");
+        expect(emit).toHaveBeenCalledTimes(2);
+    });
+
+    it("preserves matching runner delivery and excludes passive sockets from in-memory transcript streams", () => {
+        const legacy = { emit: vi.fn() };
+        const narrow = { emit: vi.fn() };
+        const declared = { emit: vi.fn() };
+        const sessionScoped = { emit: vi.fn() };
+        eventRouter.addConnection("u1", { connectionType: "user-scoped", socket: legacy as any, userId: "u1" });
+        eventRouter.addConnection("u1", { connectionType: "user-scoped", socket: narrow as any, userId: "u1", sessionUpdateInterest: "s1" });
+        eventRouter.addConnection("u1", { connectionType: "user-scoped", socket: declared as any, userId: "u1", liveTranscriptDisabled: true });
+        eventRouter.addConnection("u1", { connectionType: "session-scoped", socket: sessionScoped as any, userId: "u1", sessionId: "s1" });
+
+        eventRouter.emitEphemeral({
+            userId: "u1",
+            payload: { type: "transcript-stream-segment-delta", sessionId: "s1" } as any,
+            recipientFilter: { type: "all-interested-in-session", sessionId: "s1" },
+        });
+
+        expect(legacy.emit).toHaveBeenCalledWith("ephemeral", expect.anything());
+        expect(sessionScoped.emit).toHaveBeenCalledWith("ephemeral", expect.anything());
+        expect(narrow.emit).toHaveBeenCalledWith("ephemeral", expect.anything());
+        expect(declared.emit).not.toHaveBeenCalled();
+    });
+
     it("routes machine-scoped-only to machine + user-scoped rooms", () => {
         const ioTo = vi.fn();
         const emit = vi.fn();
