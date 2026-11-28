@@ -12,6 +12,7 @@ import { decideApprovalRequestTransition } from '../approvals/approvalRequestTra
 import { buildApprovalExecutionOriginV1, createActionExecutor } from './actionExecutor.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './executor/types.js';
 
+import { createPluginInstallationReviewFixture } from '../testing/pluginInstallationReviewFixture.js';
 import { createActionAutomationPortV1 } from './executor/actionAutomationAdmission.js';
 
 describe('Machine approval replay composition', () => {
@@ -190,6 +191,68 @@ describe('Machine approval replay composition', () => {
     expect(policies).toEqual([expect.objectContaining({ requiredActionIds: required ? ['action.invoke'] : [] })]);
     expect(nativeEffects).toBe(required ? 0 : 1);
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: required ? 'failed' : 'executed', execution: { ok: !required } } });
+  });
+
+  it.each([true, false])('retains the exact plugin install outcome when requester cleanup fails (applied=%s)', async applied => {
+    const actionId = 'plugins.install';
+    const input = { kind: 'path', path: '/workspace/plugin' };
+    const target = { kind: 'machine', machineId: 'controller' } as const;
+    const envelope = { v: 1 as const, requestId: 'signed-plugin-install', input, target };
+    const keys = tweetnacl.sign.keyPair();
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-admission', binding: {
+      serverIdentityId: 'srv_home', accountId: 'owner', custodianAccountId: 'owner',
+      authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+      machineId: target.machineId, installationId: 'installation', actionId, requestId: envelope.requestId,
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target,
+    } });
+    const settings = ActionsSettingsV1Schema.parse({ v: 1 });
+    const context: ActionExecutorContext = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+      runtimeAccountId: 'owner', serverId: 'home', serverIdentityId: 'srv_home', actionRequestId: envelope.requestId,
+      externalActionExecutionAuthorization: authorization, externalActionTarget: target, originalActionEnvelope: envelope,
+      signExternalActionApprovalInput: request => signExternalActionApprovalInputV1({ ...request,
+        authorizationToken: authorization.token, privateKey: keys.secretKey }),
+    };
+    const pendingReview = { kind: 'reviewRequired', reviewKind: 'installation', pendingChangeId: 'exact-install-candidate',
+      reason: 'firstInstall', currentVersion: null, authorityExpansion: [], review: createPluginInstallationReviewFixture() };
+    let stored = ApprovalRequestV2Schema.parse({ v: 2, status: 'approved', createdAtMs: 1, updatedAtMs: 2,
+      createdBy: { surface: 'cli' }, requestedSurface: 'cli', summary: 'Install plugin', actionId, actionArgs: input,
+      decision: { kind: 'approve', decidedAtMs: 2 }, preview: { pluginInstall: { pendingReview } },
+      executionOriginV1: buildApprovalExecutionOriginV1({ actionId, input, context, targetSessionId: null }),
+    });
+    const effect = applied ? { ok: true, kind: 'plugins_install', outcome: 'applied' }
+      : { ok: false, errorCode: 'plugin_change_expired', error: 'plugin_change_expired', effectAttempted: false };
+    const diagnostics: string[] = [];
+    let nativeInstalls = 0;
+    const executor = createActionExecutor({
+      actionAutomations: createActionAutomationPortV1({
+        accountId: 'owner', seed: async () => ({ v: 1, rows: [] }), settle: async () => {},
+      }),
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
+      isApprovalExecutionOriginCurrent: async ({ origin, request }) => verifyExternalActionApprovalInputV1({
+        authorizationToken: authorization.token, actionId: request.actionId, input: request.actionArgs, target,
+        publicKey: keys.publicKey, signature: origin.externalActionInputSignature ?? '',
+      }),
+      prepareApprovalExecutionAuthorization: async () => ({ authorization, actionsSettings: settings,
+        dispose: async () => { throw new Error('Requester transport cleanup failed'); },
+      }),
+      pluginsDevLoopAction: async ({ context }) => {
+        expect(context.approvedActionReplay?.pluginInstallReview?.pendingChangeId).toBe(pendingReview.pendingChangeId);
+        nativeInstalls++;
+        return effect;
+      },
+      recordActionOutputDiagnostic: diagnostic => { if (diagnostic.phase) diagnostics.push(diagnostic.phase); },
+    });
+    const result = await executor.replayApprovedApprovalRequest({ artifactId: 'plugin-install-approval',
+      callerAuthority: 'present_user', currentAccount: { accountId: 'owner', serverId: 'home',
+        serverIdentityId: 'srv_home', actionsSettings: settings },
+    });
+    const expectedReceipt = applied ? { status: 'executed', execution: { ok: true, result: effect } }
+      : { status: 'failed', execution: { ok: false, errorCode: 'plugin_change_expired', effectAttempted: false } };
+    expect(nativeInstalls).toBe(1);
+    expect(stored, JSON.stringify(stored.execution)).toMatchObject(expectedReceipt);
+    expect(result).toMatchObject({ ok: true, result: expectedReceipt });
+    expect(diagnostics).toContain('approval.replay.dispose');
   });
 
   it.each(['standalone-cli', 'controller-without-externalActionClient'] as const)(

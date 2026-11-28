@@ -2567,11 +2567,13 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         return { ok: false, ...failure, error: redactBugReportSensitiveText(failure.error), effectAttempted: false };
       }
     }
-    let effectAttempted = false;
-    const claimOutcome = await claimExecution().finally(async () => {
-      if (request.status === 'executing') return;
+    const disposePrepared = async () => {
       try { await prepared?.dispose?.(); }
       catch (error) { recordCaughtActionCause(error, 'approval.replay.dispose'); }
+    };
+    let effectAttempted = false;
+    const claimOutcome = await claimExecution().finally(async () => {
+      if (request.status !== 'executing') await disposePrepared();
     });
     if (claimOutcome) return claimOutcome;
     const exec = await (async (): Promise<ActionExecuteResult> => {
@@ -2627,7 +2629,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         return await executeCoreTerminal(actionId, executionInput, executionContext, true, undefined, undefined, true, undefined,
           false, sameReplayHome, origin?.success === true && origin.data.hostChild === true && !appOwnedContextReplay);
       } finally {
-        await prepared?.dispose?.();
+        await disposePrepared();
       }
     })().catch((error): ActionExecuteFailure => {
       const failure = normalizeActionExecutorThrownError(error);
