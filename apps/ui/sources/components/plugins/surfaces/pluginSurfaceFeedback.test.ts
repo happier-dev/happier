@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  */
 const modalHarness = vi.hoisted(() => {
     let config: {
-        props: { description?: string; onConfirm(): void; onCancel(): void };
+        props: { description?: string; confirmLabel?: string; onConfirm(): void; onCancel(): void };
         onRequestClose(): void;
         onHostUnmount(): void;
         chrome?: { title?: string; testID?: string };
@@ -500,7 +500,10 @@ describe('mounted plugin surface feedback and confirmation (§3.4, UI-T21)', () 
             await openedDialog();
             const { props, chrome } = modalHarness.readConfig();
             expect(chrome?.title).toBe('Send to this Session?');
+            expect(props.confirmLabel).toBe('Send');
+            expect(props.description).toContain('no new Session starts.');
             expect(props.description).toContain('Action: Repair the regression');
+            expect(props.description).not.toContain('Configured action:');
             expect(props.description).toContain('Session: Release checks');
             expect(props.description).toContain('Session status: Stopped by a person');
             expect(props.description).not.toContain(session.sessionId);

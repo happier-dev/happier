@@ -21,6 +21,13 @@ describe('PluginActionConfirmationV2Schema', () => {
       ] },
     };
     expect(PluginActionContributionV2Schema.parse(action).confirmation).toEqual(action.confirmation);
+    const variant = { when: { op: 'eq', path: 'kind', value: 'withoutWaiting' },
+      title: 'Merge without waiting?', inputFields: action.confirmation.inputFields };
+    const conditional = { ...action, confirmation: { ...action.confirmation, variant } };
+    expect(PluginActionContributionV2Schema.parse(conditional).confirmation).toEqual(conditional.confirmation);
+    expect(PluginActionContributionV2Schema.safeParse({ ...conditional, confirmation: {
+      ...conditional.confirmation, variant: { ...variant, inputFields: [{ path: 'undeclared', title: 'Unknown' }] },
+    } }).success).toBe(false);
     for (const path of ['undeclared', 'skippedRequirements.[].missing', 'skippedRequirements.label']) {
       expect(PluginActionContributionV2Schema.safeParse({ ...action, confirmation: {
         ...action.confirmation, inputFields: [{ path, title: 'Skipping' }],

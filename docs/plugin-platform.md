@@ -2733,6 +2733,14 @@ hosts and after readmission. Other finite reads follow the ordinary placement
 rule. Authentication and established credential runtimes are separate from
 this Action placement contract.
 
+In 0.3 development, an Action confirmation can declare one optional
+`variant` with an input predicate and its own title, body, primary label and
+reviewed fields. The immediate host dialog and retained approval creation use
+the same selector over the redacted input. The default presentation still
+applies when the predicate does not match. Existing installed declarations can
+omit the variant. Development readers of the strict declaration reload together.
+The presentation leaves the Action's existing approval policy in charge.
+
 In 0.3 development, a person's settled Account Action confirmation travels with
 that relay in the existing private invocation context. It binds the exact
 `action.invoke` operand, Account, Home,

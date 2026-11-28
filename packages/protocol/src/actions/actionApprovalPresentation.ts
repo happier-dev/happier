@@ -16,7 +16,8 @@ import { StoredApprovalRequestSchema, ApprovalRequestV1Schema, ApprovalRequestV2
 import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1 } from '../approvals/targetActionApprovalRequestV1.js';
 import { AgentRuntimeJsonValueV1Schema } from '../runtime/agentSessionV1.js';
 import type { JsonValue } from '../json/strictJsonValue.js';
-import { InputPathSchema } from '../inputs/inputPredicates.js';
+import { evaluateInputPredicate, InputPathSchema } from '../inputs/inputPredicates.js';
+import type { PluginActionConfirmationV2 } from '../plugins/actions/v2.js';
 import { resolvePluginLocalizedStringV2Text } from '../plugins/contributions/publicTypes.js';
 import { getActionSpec, type ActionSpec, type ApprovalPresentationContext } from './actionSpecs.js';
 import type { ApprovalTechnicalInputPath } from './specs/definition.js';
@@ -1742,6 +1743,15 @@ export function projectTargetActionApprovalInput(input: unknown, secretInputPath
 }
 
 type TargetActionApprovalInputField = NonNullable<TargetActionApprovalRequestV1['inputFields']>[number];
+
+/** Choose the declared read-back for the projected intent before presenting or retaining it. */
+export function resolveTargetActionConfirmationPresentation(
+  confirmation: PluginActionConfirmationV2 | undefined,
+  projection: ReturnType<typeof projectTargetActionApprovalInput>,
+): Pick<PluginActionConfirmationV2, 'title' | 'body' | 'confirmLabel' | 'inputFields'> | undefined {
+  const variant = confirmation?.variant;
+  return variant && projection && evaluateInputPredicate(variant.when, projection.input) ? variant : confirmation;
+}
 
 /** Declared operands shared by immediate confirmations and retained target Action reviews. */
 export function projectTargetActionApprovalOperandRows(

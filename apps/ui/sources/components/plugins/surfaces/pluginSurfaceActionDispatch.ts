@@ -1211,7 +1211,9 @@ async function settleDaemonActionPresentUserIntent(
     // A caller-owned writer (admission only) validates its own input; the ordinary
     // per-Action default reads those operands rather than a no-input fallback.
     let normalizedInput: unknown = preparedInput?.input ?? (input.admissionOnly ? settledInput : undefined);
-    if (!preparedInput && (projectedAction.confirmationWhen !== undefined || projectedAction.confirmation?.inputFields?.length) && !input.admissionOnly) {
+    const readsInput = projectedAction.confirmationWhen !== undefined || projectedAction.confirmation?.inputFields?.length
+        || projectedAction.confirmation?.variant !== undefined;
+    if (!preparedInput && readsInput && !input.admissionOnly) {
         const binding = input.contributedAction;
         if (!binding) return failure('unavailable', 'plugin_surface_contributed_action_unavailable');
         const projectionScope = { machineId: binding.machineId, serverId: binding.accountLifetime?.scope.serverId ?? binding.serverId ?? null };

@@ -59,7 +59,15 @@ it.each([
         pullRequest: { repository: 'example/project', number: 4 },
         target: { automationId: 'automation-1', triggerId: 'trigger-1', triggerRevision: 0, triggerKind },
       }),
-      policyFingerprint: 'b'.repeat(64), confirmation: action.confirmation,
+      policyFingerprint: 'b'.repeat(64), confirmation: action.confirmation && {
+        ...action.confirmation,
+        variant: {
+          when: { op: 'eq', path: 'target.triggerKind', value: 'ciFailed' },
+          title: 'Attach the pull request to failed CI?',
+          body: 'The selected Workflow will receive failed CI events.',
+          inputFields: action.confirmation.inputFields,
+        },
+      },
     },
     fingerprint: 'a'.repeat(64), surface: 'agent', approvalInputCustody: 'live_only',
   })).resolves.toMatchObject({ status: 'rejected' });
@@ -74,7 +82,12 @@ it.each([
   expect(request.input).toMatchObject({ target: { triggerKind } });
   expect(facts.flat()).not.toContain('Target');
   expect(facts.flat()).not.toContain('Pull request');
-  expect(request.summary).toBe('Change this session’s pull request binding?');
+  if (triggerKind === 'ciFailed') {
+    expect(request.summary).toBe('Attach the pull request to failed CI?');
+    expect(request.detail).toBe('The selected Workflow will receive failed CI events.');
+  } else {
+    expect(request.summary).toBe('Change this session’s pull request binding?');
+  }
 });
 
 it('action.invoke exposes declared issue-create facts without the configuration token', () => {

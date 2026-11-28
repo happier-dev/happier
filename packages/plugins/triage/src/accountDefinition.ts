@@ -109,6 +109,24 @@ const configuredConfirmationText = (name: string, fallback: string) => ({
   key: `plugins.triage.approval.configured.${name}`, fallback,
 });
 
+const configuredDestinationField = {
+  path: 'handoff.sessionChoice.kind', title: configuredConfirmationText('destination', 'Destination'), valueLabels: {
+    existing: configuredConfirmationText('existing', 'Existing Session'),
+    new: configuredConfirmationText('new', 'New Session'),
+    configured: configuredConfirmationText('new', 'New Session'),
+  },
+} satisfies ActionConfirmationInputField;
+const configuredDeliveryField = {
+  path: 'handoff.delivery', title: configuredConfirmationText('delivery', 'Delivery'), valueLabels: {
+    send: configuredConfirmationText('send', 'Send now'),
+    compose: configuredConfirmationText('compose', 'Open a draft'),
+    configured: configuredConfirmationText('default', 'Use the selected launch mode'),
+  },
+} satisfies ActionConfirmationInputField;
+const configuredRecipientStatusField = {
+  path: 'recipientStopNotice', title: configuredConfirmationText('sessionStatus', 'Session status'),
+} satisfies ActionConfirmationInputField;
+
 const configuredConfirmationFields = [
   { path: 'singleIntent.launchMode', title: configuredConfirmationText('launch', 'Launch'), valueLabels: {
     start: configuredConfirmationText('start', 'Start a new Session'),
@@ -119,26 +137,17 @@ const configuredConfirmationFields = [
     oneSessionForAllEntries: configuredConfirmationText('shared', 'One new Session for all entries'),
     oneSessionPerEntry: configuredConfirmationText('separate', 'One new Session per entry'),
   } },
-  { path: 'handoff.sessionChoice.kind', title: configuredConfirmationText('destination', 'Destination'), valueLabels: {
-    existing: configuredConfirmationText('existing', 'Existing Session'),
-    new: configuredConfirmationText('new', 'New Session'),
-    configured: configuredConfirmationText('new', 'New Session'),
-  } },
-  { path: 'handoff.delivery', title: configuredConfirmationText('delivery', 'Delivery'), valueLabels: {
-    send: configuredConfirmationText('send', 'Send now'),
-    compose: configuredConfirmationText('compose', 'Open a draft'),
-    configured: configuredConfirmationText('default', 'Use the selected launch mode'),
-  } },
-  { path: 'sendPresentation.actionLabel', title: { key: 'plugins.triage.surface.bulk.action', fallback: 'Action' } },
-  { path: 'sendPresentation.sessionTitle', title: { key: 'plugins.triage.surface.detail.session', fallback: 'Session' } },
+  configuredDestinationField,
+  configuredDeliveryField,
   { path: 'handoff.configuredActionId', title: configuredConfirmationText('reference', 'Configured action'),
     valueLabels: Object.fromEntries(TRIAGE_SEEDED_ACTIONS_V1.actions.map(action => {
       const key = readTriageActionTitleKeyV1(action);
       return [action.actionId, key === null ? action.label : { key, fallback: action.label }];
     })) },
-  { path: 'recipientStopNotice', title: configuredConfirmationText('sessionStatus', 'Session status') },
+  configuredRecipientStatusField,
 ] satisfies readonly ActionConfirmationInputField[];
 
+const TRIAGE_EXISTING_SESSION_INPUT = { op: 'eq', path: 'handoff.sessionChoice.kind', value: 'existing' } as const;
 const TRIAGE_NEW_SESSION_COMPOSE_INPUT = { op: 'and', all: [
   { op: 'eq', path: 'handoff.sessionChoice.kind', value: 'new' },
   { op: 'eq', path: 'handoff.delivery', value: 'compose' },
@@ -153,7 +162,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         placementBindings: [],
         dangerLevel: 'writesLocal',
         confirmationWhen: {
-          presentUserUi: { op: 'eq', path: 'handoff.sessionChoice.kind', value: 'existing' },
+          presentUserUi: TRIAGE_EXISTING_SESSION_INPUT,
           default: { op: 'not', predicate: TRIAGE_NEW_SESSION_COMPOSE_INPUT },
         },
         sessionTarget: { field: 'handoff.sessionChoice.session', cardinality: 'one' },
@@ -162,6 +171,20 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
           body: configuredConfirmationText('body', 'Check what this action will do.'),
           confirmLabel: configuredConfirmationText('confirm', 'Run action'),
           inputFields: configuredConfirmationFields,
+          variant: {
+            when: { op: 'and', all: [TRIAGE_EXISTING_SESSION_INPUT, { op: 'truthy', path: 'sendPresentation.actionLabel' }] },
+            title: configuredConfirmationText('sendTitle', 'Send to this Session?'),
+            body: configuredConfirmationText('sendBody',
+              'Sends this entry and the action’s instructions to the Session below. Its agent picks them up there; no new Session starts.'),
+            confirmLabel: configuredConfirmationText('sendConfirm', 'Send'),
+            inputFields: [
+              configuredDestinationField,
+              configuredDeliveryField,
+              { path: 'sendPresentation.actionLabel', title: { key: 'plugins.triage.surface.bulk.action', fallback: 'Action' } },
+              { path: 'sendPresentation.sessionTitle', title: { key: 'plugins.triage.surface.detail.session', fallback: 'Session' } },
+              configuredRecipientStatusField,
+            ],
+          },
         },
         inputSchema: TriageRunConfiguredActionInputV1Schema,
         resultSchema: TriageRunConfiguredActionResultV1Schema,

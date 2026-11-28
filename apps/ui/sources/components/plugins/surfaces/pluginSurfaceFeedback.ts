@@ -1,5 +1,5 @@
 import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
-import { projectTargetActionApprovalInput, projectTargetActionApprovalOperandRows } from '@happier-dev/protocol/actions/actionApprovalPresentation';
+import { projectTargetActionApprovalInput, projectTargetActionApprovalOperandRows, resolveTargetActionConfirmationPresentation } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import type {
     InteractionTransientRequesterV1} from '@happier-dev/protocol/plugins/interactions/transientV1';
 import type {
@@ -142,7 +142,12 @@ export async function preparePluginActionConfirmation(input: Readonly<{
     // A non-safe Action always declares its own wording. An Action asked
     // about only because of the person's Ask-first setting may not, so it
     // is presented by its own title and description.
-    const confirmation = request.action.confirmation ?? {
+    const declaredConfirmation = request.action.confirmation;
+    const reviewedInput = declaredConfirmation?.inputFields?.length || declaredConfirmation?.variant
+        ? projectTargetActionApprovalInput(request.input,
+            request.action.inputHints?.fields.filter(field => field.widget === 'secret').map(field => field.path) ?? [])
+        : null;
+    const confirmation = resolveTargetActionConfirmationPresentation(declaredConfirmation, reviewedInput) ?? {
         title: request.action.title,
         ...(request.action.description ? { body: request.action.description } : {}),
     };
@@ -153,9 +158,7 @@ export async function preparePluginActionConfirmation(input: Readonly<{
         ? readConfirmationText(confirmation.confirmLabel)
         : readConfirmationText(request.action.title);
     const body = confirmation.body ? readConfirmationText(confirmation.body) : title;
-    const fields = request.action.confirmation?.inputFields ?? [];
-    const reviewedInput = fields.length ? projectTargetActionApprovalInput(request.input,
-        request.action.inputHints?.fields.filter(field => field.widget === 'secret').map(field => field.path) ?? []) : null;
+    const fields = 'inputFields' in confirmation ? confirmation.inputFields ?? [] : [];
     const operands = reviewedInput
         ? projectTargetActionApprovalOperandRows(reviewedInput, fields, readConfirmationText)
             .map(row => `${row.title}: ${row.value}`)

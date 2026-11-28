@@ -6,7 +6,7 @@ import type { TargetActionCurrentIntentRequest, TargetActionCurrentIntentResult 
 import { createLiveApprovalDecision } from './liveDecision';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { settleTargetActionApprovalReplayInputs } from '@happier-dev/protocol/approvals/targetActionApprovalRequestTransition';
-import { projectTargetActionApprovalInput, resolveApprovalRequestApproveAdmission } from '@happier-dev/protocol/actions/actionApprovalPresentation';
+import { projectTargetActionApprovalInput, resolveApprovalRequestApproveAdmission, resolveTargetActionConfirmationPresentation } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import type { createCliApprovalsArtifactStore } from './artifactStore';
 import { persistTargetActionReceipt } from './targetActionSettlement';
 import { buildTargetActionApprovalDecisionResult, createTargetActionAutomaticContinuationV1 } from '@happier-dev/protocol/actions/targetActionApprovalDecision';
@@ -36,6 +36,7 @@ function createTargetActionApprovalRequestCandidate(
     currentIntent.reportUnavailable?.('approval_input_unrepresentable');
     return null;
   }
+  const confirmation = resolveTargetActionConfirmationPresentation(action.confirmation, projected);
   const candidate = {
     v: 1,
     kind: 'plugin_target_action',
@@ -54,7 +55,7 @@ function createTargetActionApprovalRequestCandidate(
     input: projected.input,
     secretInputPaths: action.secretInputPaths ?? [],
     ...(action.secretInputLabels === undefined ? {} : { secretInputLabels: action.secretInputLabels }),
-    ...(action.confirmation?.inputFields === undefined ? {} : { inputFields: action.confirmation.inputFields }),
+    ...(confirmation?.inputFields === undefined ? {} : { inputFields: confirmation.inputFields }),
     ...(currentIntent.approvalInputCustody === 'live_only' || projected.confidentialPaths.length || requesterConfirmation && requestedSurface === 'plugin'
       ? { approvalInputCustody: 'live_only' } : {}),
     ...(action.accountId ? { accountId: action.accountId } : {}),
@@ -66,11 +67,11 @@ function createTargetActionApprovalRequestCandidate(
     ...(executionOriginV1 === undefined ? {} : { executionOriginV1 }),
     ...(requesterConfirmation === undefined ? {} : { requesterConfirmation }),
     ...(currentIntent.automaticChecks ? { automaticChecks: currentIntent.automaticChecks } : {}),
-    summary: action.confirmation
-      ? resolveLocalizedConfirmationText(action.confirmation.title)
+    summary: confirmation
+      ? resolveLocalizedConfirmationText(confirmation.title)
       : 'Action approval required',
-    ...(action.confirmation?.body
-      ? { detail: resolveLocalizedConfirmationText(action.confirmation.body) }
+    ...(confirmation?.body
+      ? { detail: resolveLocalizedConfirmationText(confirmation.body) }
       : {}),
   } as const;
   const parsed = TargetActionApprovalRequestV1Schema.safeParse(candidate);

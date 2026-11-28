@@ -6,7 +6,7 @@ import { TRIAGE_DISPLAY_NAME } from './displayName.js';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { createPluginActionPresentUserGate } from '@happier-dev/protocol';
-import { projectTargetActionApprovalInput, projectTargetActionApprovalOperandRows } from '@happier-dev/protocol/actions/actionApprovalPresentation';
+import { projectTargetActionApprovalInput, projectTargetActionApprovalOperandRows, resolveTargetActionConfirmationPresentation } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1, TriageRunConfiguredActionInputV1Schema } from './actions/configuredActionRunProtocol.js';
 import { checkTriageSourceContributionV1 } from '@happier-dev/triage-protocol/testing/v1';
 import { PLUGIN_MANIFEST as GITHUB_MANIFEST, GITHUB_TRIAGE_ACTION_IDS_V1 } from '../../scm-github/src/manifest.js';
@@ -81,11 +81,18 @@ describe('Triage plugin manifest', () => {
     }, ...(launch === undefined ? {} : { singleIntent: launch }),
     ...(mode === 'send' ? { sendPresentation: { actionLabel: 'Resolve production alert', sessionTitle: 'Production investigation' } } : {}) });
     const projection = projectTargetActionApprovalInput(input, []);
-    if (!action?.confirmation || !projection) throw new Error('The configured Action needs a reviewable confirmation');
-    const rows = projectTargetActionApprovalOperandRows(projection, action.confirmation.inputFields ?? []);
+    const confirmation = resolveTargetActionConfirmationPresentation(action?.confirmation, projection);
+    if (!confirmation || !projection) throw new Error('The configured Action needs a reviewable confirmation');
+    expect(confirmation.title).toMatchObject({ fallback: mode === 'send' ? 'Send to this Session?' : 'Run this Triage action?' });
+    expect(confirmation.confirmLabel).toMatchObject({ fallback: mode === 'send' ? 'Send' : 'Run action' });
+    const rows = projectTargetActionApprovalOperandRows(projection, confirmation.inputFields ?? []);
     expect(rows.map(row => row.value)).toContain(expected);
     expect(rows.map(row => row.value)).toContain(mode === 'send' ? 'Resolve production alert' : 'Fix');
-    if (mode === 'send') expect(rows.map(row => row.value)).toEqual(expect.arrayContaining(['Existing Session', 'Production investigation']));
+    if (mode === 'send') {
+      expect(rows.filter(row => row.title === 'Action' || row.title === 'Configured action'))
+        .toEqual([expect.objectContaining({ title: 'Action', value: 'Resolve production alert' })]);
+      expect(rows.map(row => row.value)).toEqual(expect.arrayContaining(['Existing Session', 'Production investigation']));
+    }
   });
 
   it('offers native failure investigation to MCP and CLI on the same answering client as Agent', () => {

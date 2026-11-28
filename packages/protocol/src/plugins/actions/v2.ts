@@ -237,11 +237,17 @@ export const PluginActionConfirmationInputFieldV2Schema = lazyZodSchema(() => z.
 }));
 export type PluginActionConfirmationInputFieldV2 = z.infer<typeof PluginActionConfirmationInputFieldV2Schema>;
 
-export const PluginActionConfirmationV2Schema = lazyZodSchema(() => z.strictObject({
+const confirmationPresentationShape = {
   title: PluginActionConfirmationTitleV2Schema,
   body: z.optional(PluginActionConfirmationBodyV2Schema),
   confirmLabel: z.optional(PluginActionConfirmationTitleV2Schema),
   inputFields: z.optional(z.array(PluginActionConfirmationInputFieldV2Schema)),
+};
+
+export const PluginActionConfirmationV2Schema = lazyZodSchema(() => z.strictObject({
+  ...confirmationPresentationShape,
+  /** Alternate wording and operands selected from the redacted admitted input. */
+  variant: z.optional(z.strictObject({ when: InputPredicateSchema, ...confirmationPresentationShape })),
   /** The plugin's mounted control presents the exact input before the host press. */
   mountedReview: z.optional(z.literal('exact_input')),
 }));
@@ -710,13 +716,18 @@ export const PluginActionContributionV2Schema = lazyZodSchema(() => z.strictObje
         : 'Connected Account purposes must map to exactly one credential selection.' });
   }
   const traversableInputSchema = declaresTraversableObjectInput(inputSchema) ? inputSchema : undefined;
-  value.confirmation?.inputFields?.forEach((field, index) => {
-    if (traversableInputSchema && resolveDeclaredInputLeaves(traversableInputSchema, field.path, 'review-field')) return;
-    ctx.addIssue({
-      code: 'custom', path: ['confirmation', 'inputFields', index, 'path'],
-      message: 'Confirmation input fields must resolve to a declared inputSchema leaf.',
+  const checkConfirmationFields = (fields: readonly PluginActionConfirmationInputFieldV2[] | undefined, prefix: readonly string[]) => {
+    fields?.forEach((field, index) => {
+      if (traversableInputSchema && resolveDeclaredInputLeaves(traversableInputSchema, field.path, 'review-field')) return;
+      ctx.addIssue({
+        code: 'custom',
+        path: [...prefix, 'inputFields', index, 'path'],
+        message: 'Confirmation input fields must resolve to a declared inputSchema leaf.',
+      });
     });
-  });
+  };
+  checkConfirmationFields(value.confirmation?.inputFields, ['confirmation']);
+  checkConfirmationFields(value.confirmation?.variant?.inputFields, ['confirmation', 'variant']);
   if (purposeBindings.length > 0 && !traversableInputSchema) {
     ctx.addIssue({
       code: "custom",
