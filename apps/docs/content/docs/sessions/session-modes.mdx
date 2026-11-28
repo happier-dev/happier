@@ -40,18 +40,15 @@ That means these combinations are valid:
 - **Mode = Build** + **Permission = YOLO**
 
 Behavioral modes such as Build and Plan do not replace permissions. Some ACP
-agents also expose approval presets through **Mode**. In development builds,
-an explicit approval-preset selection takes precedence over the permission-mode
-mapping for these agents. Changing **Permissions** preserves that explicit
-selection, including after resume.
+agents (Antigravity, CodeBuddy, Devin and FX) advertise their approval levels as
+modes. For those agents the permission picker chooses the approval level, and the
+mode picker offers only **Build** and the agent's real behavioral modes, such as
+**Plan**. Build follows your permission setting. An agent whose modes are all
+approval levels, such as Devin or FX, shows no mode picker.
 
-The permission picker shows the agent's reported native policy and explains
-when a Mode selection overrides the permission setting. A pending selection is
-shown separately from the reported policy. Clearing the Mode override returns
-to the current permission mapping when the agent declares one. If the agent has
-a native **Default** mode and a permission-mode mapping, choose **Use permission
-setting** to clear the override and keep **Default** available as a native choice. **Default**
-keeps the agent's own policy; it does not promise to reset its native settings.
+The permission picker shows the agent's reported native mode and how your
+permission setting maps onto it. While a Plan switch is pending, it is shown
+separately from the reported mode.
 
 ## Plan mode
 

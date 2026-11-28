@@ -49,6 +49,10 @@ export const MOTION_ANIMATIONS = [
     'setupActivity',
     /** A determinate progress bar's fill catching up with a new value. */
     'progressFill',
+    /** The Supporter pass turning over to the person's number when they join (Plans & Supporter). */
+    'supporterPassJoin',
+    /** The check arriving on the chosen picture tile (`SelectionTiles` visual variant). */
+    'selectionMark',
 ] as const;
 
 export type MotionAnimationId = (typeof MOTION_ANIMATIONS)[number];
@@ -113,6 +117,13 @@ const MOTION_REDUCED_MOTION_TABLE = {
     // A short timing, not a spring. Under reduced motion the fill jumps to the new value: the bar
     // and its accessible value still report every change, only the glide between them is removed.
     progressFill: { springRole: null, reduced: 'settleInstantly' },
+    // A one-shot turn of a card, which is rotation travel. Under reduced motion the blank face
+    // cross-fades into the numbered one: the pass still becomes yours in front of you, without
+    // the turn.
+    supporterPassJoin: { springRole: null, reduced: 'substitute' },
+    // A mark resolving in place on the chosen tile, the same settle as a status mark: under reduced
+    // motion the check is simply there; the tile's outline already carries the choice.
+    selectionMark: { springRole: 'statusSettle' },
 } as const satisfies Record<MotionAnimationId, MotionReducedMotionEntry>;
 
 /**

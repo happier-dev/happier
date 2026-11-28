@@ -873,6 +873,8 @@ export async function startDevServer({
     PUBLIC_URL: publicServerUrl,
     // Avoid noisy failures if a previous run left the metrics port busy.
     METRICS_ENABLED: baseEnv.METRICS_ENABLED ?? 'false',
+    // Dev servers are not self-hosted installs; keep them out of the instance heartbeat count.
+    HAPPIER_INSTANCE_PING: baseEnv.HAPPIER_INSTANCE_PING ?? '0',
   };
   applyServerComponentFlavorEnv({ serverComponentName, targetEnv: serverEnv });
   delete baseEnv.HAPPIER_STACK_SERVER_RESTART_PREFLIGHT_ALREADY_DONE;

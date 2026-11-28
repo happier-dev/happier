@@ -3,6 +3,8 @@ export const REACHABILITY_CHECK_NOT_IMPLEMENTED_REASON = 'reachability_check_not
 export type VerifyResumeReachableInput = Readonly<{
   targetMaterializedRoot: string;
   targetMaterializedEnv: Readonly<Record<string, string>>;
+  /** Base environment for probes that launch the provider with the materialized overlay. */
+  processEnv?: NodeJS.ProcessEnv;
   vendorResumeId: string | null;
   cwd: string;
   candidatePersistedSessionFile?: string | null;

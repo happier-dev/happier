@@ -37,7 +37,7 @@ describe('authGetToken key-challenge gate', () => {
 
         await expect(authGetToken(new Uint8Array(32))).rejects.toThrow(/key-challenge/i);
         expect(mocks.serverFetch).toHaveBeenCalledTimes(1);
-        expect(mocks.serverFetch.mock.calls[0]?.[0]).toBe('/v1/features');
+        expect(mocks.serverFetch.mock.calls[0]?.[0]).toBe('/v1/features?retentionNotice=1');
     });
 
     it('does not fail fast when server does not advertise key-challenge gate (legacy server)', async () => {
@@ -55,7 +55,7 @@ describe('authGetToken key-challenge gate', () => {
 
         await expect(authGetToken(new Uint8Array(32))).resolves.toBe('legacy-token');
         expect(mocks.serverFetch).toHaveBeenCalledTimes(2);
-        expect(mocks.serverFetch.mock.calls[0]?.[0]).toBe('/v1/features');
+        expect(mocks.serverFetch.mock.calls[0]?.[0]).toBe('/v1/features?retentionNotice=1');
         expect(mocks.serverFetch.mock.calls[1]?.[0]).toBe('/v1/auth');
     });
 
@@ -74,7 +74,7 @@ describe('authGetToken key-challenge gate', () => {
 
         await expect(authGetToken(new Uint8Array(32))).resolves.toBe('test-token');
         expect(mocks.serverFetch).toHaveBeenCalledTimes(2);
-        expect(mocks.serverFetch.mock.calls[0]?.[0]).toBe('/v1/features');
+        expect(mocks.serverFetch.mock.calls[0]?.[0]).toBe('/v1/features?retentionNotice=1');
         expect(mocks.serverFetch.mock.calls[1]?.[0]).toBe('/v1/auth');
     });
 

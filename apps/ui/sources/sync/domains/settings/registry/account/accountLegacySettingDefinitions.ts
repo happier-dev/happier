@@ -38,18 +38,6 @@ export const ACCOUNT_LEGACY_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Whether compact session view should use the narrow layout',
         storageScope: 'account',
     },
-    reviewPromptAnswered: {
-        schema: z.boolean(),
-        default: false,
-        description: 'Whether the review prompt has been answered',
-        storageScope: 'account',
-    },
-    reviewPromptLikedApp: {
-        schema: z.boolean().nullish(),
-        default: null,
-        description: 'Whether user liked the app when asked',
-        storageScope: 'account',
-    },
     lastUsedPermissionMode: {
         schema: z.string().nullable(),
         default: null,

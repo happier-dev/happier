@@ -310,8 +310,8 @@ vi.mock('@/encryption/libsodium.lib', () => ({
 vi.mock('posthog-react-native', () => {
     const React = require('react');
     return {
-        PostHogProvider: ({ children }: { children: React.ReactNode }) =>
-            React.createElement('PostHogProvider', { testID: 'posthog-provider' }, children),
+        PostHogProvider: ({ children, autocapture }: { children: React.ReactNode; autocapture?: unknown }) =>
+            React.createElement('PostHogProvider', { testID: 'posthog-provider', autocapture }, children),
     };
 });
 
@@ -618,6 +618,18 @@ describe('app/_layout init resilience', () => {
 
         expect(screen.findByTestId('posthog-provider')).toBeTruthy();
         expect(screen.findByTestId('settings-analytics-runtime')).toBeTruthy();
+    });
+
+    it('leaves $screen to useTrackScreens: the PostHog provider does not auto-capture navigation', async () => {
+        mockedPlatformOS = 'ios';
+        trackingState.client = {
+            identify: vi.fn(),
+            group: vi.fn(),
+            capture: vi.fn(),
+        };
+        const screen = await renderSettledRootLayout();
+
+        expect(screen.findByTestId('posthog-provider')?.props.autocapture).toBe(false);
     });
 
     it('navigates to the bug report screen on boot when a restart bug report intent is present', async () => {

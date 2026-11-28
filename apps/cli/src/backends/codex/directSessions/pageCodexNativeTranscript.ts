@@ -45,14 +45,14 @@ function fingerprint(entry: Entry): string { return createHash('sha256').update(
 export async function pageCodexNativeTranscript(params: Readonly<{
   client: Pick<CodexAppServerClient, 'request'>;
   home: string;
-  sqliteHome: string;
+  sqliteHome: string | null;
   remoteSessionId: string;
   direction: 'older' | 'newer';
   cursor?: string;
   maxItems: number;
   maxBytes: number;
   tailOnly?: boolean;
-  hasPaginatedRollout?: boolean;
+  hasLocalRollout?: boolean;
 }>) {
   try {
     const decoded = decodeCodexNativeTranscriptCursor(params.cursor);
@@ -66,10 +66,10 @@ export async function pageCodexNativeTranscript(params: Readonly<{
       threadId: params.remoteSessionId, sortDirection: params.tailOnly || params.direction === 'older' ? 'desc' : 'asc',
       limit: state.limit, ...(state.position ? { cursor: state.position } : {}),
     }));
-    // Codex can recreate an empty SQL projection from a surviving paginated
-    // rollout. That successful empty head does not establish complete history.
+    // Codex can recreate an empty SQL projection from a surviving rollout.
+    // That successful empty head does not establish complete history.
     // An exclusive forward frontier may legitimately be empty when caught up.
-    if (page.data.length === 0 && ((params.hasPaginatedRollout && (!decoded || params.tailOnly))
+    if (page.data.length === 0 && ((params.hasLocalRollout && (!decoded || params.tailOnly))
       || (params.direction === 'older' && state.tail.anchor !== null))) {
       throw new Error('Codex native history is empty but its source history cannot be confirmed');
     }
@@ -106,7 +106,7 @@ export async function pageCodexNativeTranscript(params: Readonly<{
       const messages = mapCodexProjectedEventsToDirectMessages({ projected,
         createdAtMs: entry.startedAtMs ?? entry.completedAtMs ?? 0,
         idForIndex: action => `codex:native:${params.remoteSessionId}:${key}:${action}` });
-      if (messages.length > 0 && entry.startedAtMs === null && entry.completedAtMs === null) {
+      if (params.sqliteHome && messages.length > 0 && entry.startedAtMs === null && entry.completedAtMs === null) {
         indexedDates ??= readCodexNativeHistoryTimestamps({ sqliteHome: params.sqliteHome,
           threadId: params.remoteSessionId, items: page.data
             .filter(candidate => candidate.startedAtMs === null && candidate.completedAtMs === null)

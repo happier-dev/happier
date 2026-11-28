@@ -64,6 +64,7 @@ const V2_SESSION_LIST_ROW_BASE_SELECT = {
     updatedAt: true,
     meaningfulActivityAt: true,
     archivedAt: true,
+    cloudCopyLeftAt: true,
     encryptionMode: true,
     metadata: true,
     metadataVersion: true,
@@ -108,6 +109,7 @@ const V2_SESSION_LIST_ROW_BASE_SELECT = {
 } as const satisfies Prisma.SessionSelect;
 
 const {
+    cloudCopyLeftAt: _legacySelectCloudCopyLeftAt,
     pendingRequestObservedAt: _legacySelectPendingRequestObservedAt,
     latestReadyEventSeq: _legacySelectLatestReadyEventSeq,
     latestReadyEventAt: _legacySelectLatestReadyEventAt,
@@ -286,6 +288,7 @@ export function mapStoredSessionRuntimeActivityProjection(row: object): SessionR
 export function mapV2SessionListRow(params: Readonly<{ row: V2SessionListRowCompat; userId: string }>): V2SessionRecord {
     const { row, userId } = params;
     const viewerShare = row.shares[0] ?? null;
+    const cloudCopyLeftAt = readNullableDateField(row, "cloudCopyLeftAt");
     const isOwner = row.accountId === userId;
     const latestTurnStatus = parseStoredSessionLatestTurnStatus(row.latestTurnStatus);
     const latestTurnStatusObservedAt = readNullableNumberField(row, "latestTurnStatusObservedAt");
@@ -305,6 +308,7 @@ export function mapV2SessionListRow(params: Readonly<{ row: V2SessionListRowComp
         active: row.active,
         activeAt: row.lastActiveAt.getTime(),
         archivedAt: row.archivedAt?.getTime() ?? null,
+        ...(isOwner && "cloudCopyLeftAt" in row ? { cloudCopyLeftAt: cloudCopyLeftAt?.getTime() ?? null } : {}),
         encryptionMode: row.encryptionMode === "plain" ? "plain" : "e2ee",
         metadata: row.metadata,
         metadataVersion: row.metadataVersion,

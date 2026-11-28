@@ -28,6 +28,12 @@ export function saveActiveAccountSettingsScope(scope: AccountSettingsScope | nul
     else getPersistenceStorage().delete('active-account-settings-scope');
 }
 
+/** The persisted account settings for the active scope (or the pre-scope legacy key). */
+export function loadActiveAccountSettings(): { settings: unknown; version: number | null } {
+    const scope = loadActiveAccountSettingsScope();
+    return scope ? loadAccountSettings(scope) : loadSettings();
+}
+
 export function loadActiveAccountSettingsScope(): AccountSettingsScope | null {
     const raw = getPersistenceStorage().getString('active-account-settings-scope');
     if (!raw) return null;

@@ -73,6 +73,7 @@ export function areStoredSessionsEqual(
         && previous.active === next.active
         && activeAtMatches
         && (previous.archivedAt ?? null) === (next.archivedAt ?? null)
+        && (previous.cloudCopyLeftAt ?? null) === (next.cloudCopyLeftAt ?? null)
         && (previous.pendingVersion ?? null) === (next.pendingVersion ?? null)
         && (previous.pendingCount ?? null) === (next.pendingCount ?? null)
         && (previous.pendingBlockedCount ?? null) === (next.pendingBlockedCount ?? null)

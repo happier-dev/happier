@@ -1,12 +1,23 @@
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import { FOOTER_COLUMNS } from '../data/navigation';
+import { Footer } from './Footer';
 import { GET_STARTED_SECTION_ID } from './GetStarted';
 import { SELF_HOST_STACK_NODES, SELF_HOST_TERMINAL_LINES } from './SelfHost';
 import { DISCORD_INVITE_URL } from '../data/community';
 import { GUIDES_URL } from '../data/downloads';
 
 describe('website public surface links', () => {
+    it('links the transparency page and all legal documents from the footer', () => {
+        const html = renderToStaticMarkup(createElement(Footer));
+        expect(html).toContain('href="/open"');
+        for (const page of ['privacy', 'terms', 'terms-of-sale', 'refunds', 'imprint']) {
+            expect(html).toContain(`href="https://docs.happier.dev/legal/${page}"`);
+        }
+    });
+
     it('keeps the footer get-started link aligned with the section anchor', () => {
         const productLinks = FOOTER_COLUMNS.find((column) => column.id === 'product')?.links ?? [];
 

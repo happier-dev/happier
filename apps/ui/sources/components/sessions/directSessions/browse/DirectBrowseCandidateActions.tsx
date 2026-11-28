@@ -14,6 +14,8 @@ export const DirectBrowseCandidateActions = React.memo(function DirectBrowseCand
     providerLabel: string;
     deleting: boolean;
     onDelete: () => void | Promise<void>;
+    canDelete?: boolean;
+    onKeep?: () => void;
 }>) {
     const { theme } = useUnistyles();
     const { candidateId, candidateTitle, deleting, onDelete, providerLabel } = props;
@@ -35,14 +37,23 @@ export const DirectBrowseCandidateActions = React.memo(function DirectBrowseCand
         })();
     }, [candidateTitle, onDelete, providerLabel]);
 
-    const actions = React.useMemo((): ItemAction[] => [{
-        id: 'delete_provider_session',
-        title: t('common.delete'),
-        icon: 'trash',
-        destructive: true,
-        disabled: deleting,
-        onPress: confirmDelete,
-    }], [confirmDelete, deleting]);
+    const { onKeep, canDelete = true } = props;
+    const actions = React.useMemo((): ItemAction[] => [
+        ...(onKeep ? [{
+            id: 'keep_local_session',
+            title: t('keepOrLetGo.localKeepSession'),
+            icon: 'clock' as const,
+            onPress: onKeep,
+        }] : []),
+        ...(canDelete ? [{
+            id: 'delete_provider_session',
+            title: t('common.delete'),
+            icon: 'trash' as const,
+            destructive: true,
+            disabled: deleting,
+            onPress: confirmDelete,
+        }] : []),
+    ], [canDelete, confirmDelete, deleting, onKeep]);
 
     return (
         <ItemRowActions

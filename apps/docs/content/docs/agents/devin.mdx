@@ -40,13 +40,17 @@ separate model choices rather than being guessed.
 
 ## Permissions
 
-Happier maps explicit choices to Devin's advertised modes:
+Devin's ACP modes are all approval levels, so Happier sets them from the
+permission picker and shows no mode picker for Devin sessions:
 
 - **Default** sends no override and preserves your Devin configuration.
-- **Read only** uses `ask`.
-- **Auto** (the canonical `safe-yolo` intent) uses `smart`.
-- **YOLO** uses `bypass`.
-- **Plan** uses `plan`.
+- **Read only** uses `normal`.
+- **Auto** (the canonical `safe-yolo` intent) uses `accept-edits`.
+- **YOLO** uses `dangerous`.
+
+Devin has no planning mode, so Happier's Plan setting leaves Devin's own mode in
+place. A session saved with a Devin mode picked in an earlier version's mode
+picker resumes with its current permission setting.
 
 ## MCP tools
 

@@ -593,6 +593,12 @@ that the saved Session is inactive. An active Session or an unavailable read
 leaves termination unconfirmed; cached UI activity and transport errors do not
 prove that a process stopped.
 
+After a daemon restart, explicit Stop and the Resume repair path can retire
+a legacy plain or Windows terminal attachment using persisted runner markers
+from the current daemon scope. A Windows attachment must name the same runner
+PID. Stop requires positive evidence that the runner exited and removes the
+captured attachment only if it still matches the record on disk.
+
 ### Confirmed daemon stop outcomes (development)
 
 Current 0.2 development source reports `not_running` separately from a confirmed `stopped`

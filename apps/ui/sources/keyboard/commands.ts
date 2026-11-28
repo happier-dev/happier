@@ -40,12 +40,13 @@ export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
     },
     {
         id: 'commandPalette.open',
+        // Cmd/Ctrl+K works everywhere, including while typing: browsers let a page take it.
+        // Alt+K stays on the web but not in text fields, where Option+K types "˚" on macOS.
         defaultBindings: [
-            { binding: 'Alt+K', platforms: ['web'] },
-            { binding: 'Mod+K', blockedSurfaces: ['web'] },
+            { binding: 'Mod+K', allowInEditable: true },
+            { binding: 'Alt+K', platforms: ['web'], allowInEditable: false },
         ],
         settingsTitleKey: 'settingsKeyboard.commands.commandPaletteOpen',
-        when: (context) => !context.isEditableTarget,
     },
     {
         id: 'mode.cycle',

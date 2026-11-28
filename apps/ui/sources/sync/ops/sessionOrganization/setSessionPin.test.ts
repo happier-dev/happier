@@ -44,4 +44,17 @@ describe('setSessionPin op', () => {
         expect(state.sessionOrganizationPinsBySessionKey['server-a:s1001']).toBeUndefined();
         expect(state.sessionOrganizationOptimisticRecords).toEqual({});
     });
+
+    it('names the limit the server refused at, instead of the structural ceiling', async () => {
+        const { setSessionPin } = await import('./setSessionPin');
+        const { SessionPinLimitExceededError } = await import('@/sync/api/session/sessionOrganizationApi');
+        apiMocks.setSessionPin.mockRejectedValueOnce(new SessionPinLimitExceededError(50));
+
+        await expect(setSessionPin({
+            credentials: { token: 'token-a', secret: 'secret-a' },
+            serverId: 'server-a',
+            sessionId: 's51',
+            pinned: true,
+        })).rejects.toThrow('You can pin up to 50 sessions. Unpin another session and try again.');
+    });
 });

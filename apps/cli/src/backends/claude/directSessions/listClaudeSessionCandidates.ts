@@ -127,6 +127,67 @@ export async function listClaudeSessionCandidates(params: ListClaudeSessionCandi
   }
 }
 
+export async function readClaudeSessionLogFacts(
+  configDir: string,
+  env = process.env,
+  projectEntries?: Awaited<ReturnType<typeof readClaudeProjectEntries>>,
+): Promise<DiscoveredClaudeSession[]> {
+  const projectsDir = join(configDir, 'projects');
+  const discoveryConcurrency = resolveClaudeSessionDiscoveryConcurrency(env);
+  const entries = projectEntries ?? await readClaudeProjectEntries(projectsDir);
+  return (
+    await mapWithConcurrency(entries, discoveryConcurrency, async (projectEntry): Promise<DiscoveredClaudeSession[]> => {
+      if (!projectEntry.isDirectory()) return [];
+      if (projectEntry.isSymbolicLink()) return [];
+
+      const projectId = typeof projectEntry.name === 'string' ? projectEntry.name : String(projectEntry.name);
+      const projectPath = join(projectsDir, projectId);
+
+      let sessionEntries: Awaited<ReturnType<typeof readClaudeProjectEntries>>;
+      try {
+        sessionEntries = await readdir(projectPath, { withFileTypes: true });
+      } catch {
+        return [];
+      }
+
+      const sessions = await mapWithConcurrency(sessionEntries, discoveryConcurrency, async (entry): Promise<DiscoveredClaudeSession | null> => {
+        if (!entry.isFile()) return null;
+        if (entry.isSymbolicLink()) return null;
+        const name = typeof entry.name === 'string' ? entry.name : String(entry.name);
+        if (!name.endsWith('.jsonl')) return null;
+        const remoteSessionId = name.slice(0, -'.jsonl'.length);
+        if (!remoteSessionId) return null;
+        if (remoteSessionId.includes('/') || remoteSessionId.includes('\\')) return null;
+
+        const full = join(projectPath, name);
+        try {
+          const s = await stat(full);
+          return {
+            remoteSessionId,
+            projectId,
+            fullPath: full,
+            updatedAtMs: Math.trunc(s.mtimeMs),
+          } satisfies DiscoveredClaudeSession;
+        } catch {
+          return null;
+        }
+      });
+
+      return sessions.filter((session): session is DiscoveredClaudeSession => session !== null);
+    })
+  ).flat();
+
+}
+
+async function readClaudeProjectEntries(projectsDir: string) {
+  try {
+    return await readdir(projectsDir, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+}
+
 async function scanClaudeSessionCandidates(params: ListClaudeSessionCandidatesParams): Promise<ClaudeSessionCandidatesListing> {
   const env = params.env ?? process.env;
   const startedAtMs = Date.now();
@@ -140,12 +201,7 @@ async function scanClaudeSessionCandidates(params: ListClaudeSessionCandidatesPa
   const rawSearchTerm = typeof params.searchTerm === 'string' ? params.searchTerm.trim() : '';
   const searchTerm = rawSearchTerm.toLowerCase();
 
-  let projectEntries: any[];
-  try {
-    projectEntries = await readdir(projectsDir, { withFileTypes: true });
-  } catch {
-    projectEntries = [];
-  }
+  const projectEntries = await readClaudeProjectEntries(projectsDir).catch(() => []);
 
   const exactSessionMatches = searchTerm && canSearchClaudeFilename(rawSearchTerm)
     ? (await mapWithConcurrency(projectEntries, discoveryConcurrency, async (projectEntry): Promise<DiscoveredClaudeSession | null> => {
@@ -185,47 +241,7 @@ async function scanClaudeSessionCandidates(params: ListClaudeSessionCandidatesPa
     return { candidates, nextCursor };
   }
 
-  const discoveredSessions = (
-    await mapWithConcurrency(projectEntries, discoveryConcurrency, async (projectEntry): Promise<DiscoveredClaudeSession[]> => {
-      if (!projectEntry.isDirectory()) return [];
-      if (projectEntry.isSymbolicLink()) return [];
-
-      const projectId = typeof projectEntry.name === 'string' ? projectEntry.name : String(projectEntry.name);
-      const projectPath = join(projectsDir, projectId);
-
-      let sessionEntries: any[];
-      try {
-        sessionEntries = await readdir(projectPath, { withFileTypes: true });
-      } catch {
-        return [];
-      }
-
-      const sessions = await mapWithConcurrency(sessionEntries, discoveryConcurrency, async (entry): Promise<DiscoveredClaudeSession | null> => {
-        if (!entry.isFile()) return null;
-        if (entry.isSymbolicLink()) return null;
-        const name = typeof entry.name === 'string' ? entry.name : String(entry.name);
-        if (!name.endsWith('.jsonl')) return null;
-        const remoteSessionId = name.slice(0, -'.jsonl'.length);
-        if (!remoteSessionId) return null;
-        if (remoteSessionId.includes('/') || remoteSessionId.includes('\\')) return null;
-
-        const full = join(projectPath, name);
-        try {
-          const s = await stat(full);
-          return {
-            remoteSessionId,
-            projectId,
-            fullPath: full,
-            updatedAtMs: Math.trunc(s.mtimeMs),
-          } satisfies DiscoveredClaudeSession;
-        } catch {
-          return null;
-        }
-      });
-
-      return sessions.filter((session): session is DiscoveredClaudeSession => session !== null);
-    })
-  ).flat();
+  const discoveredSessions = await readClaudeSessionLogFacts(configDir, env, projectEntries);
 
   const sortedSessions = discoveredSessions
     .sort((a, b) => b.updatedAtMs - a.updatedAtMs || String(a.remoteSessionId).localeCompare(String(b.remoteSessionId)));

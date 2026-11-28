@@ -40,7 +40,7 @@ function PageScopedEffects() {
     return null;
 }
 
-export function mount(locale: Locale): void {
+export function mount(locale: Locale, { analytics = true } = {}): void {
     /**
      * Analytics starts before React, not inside it.
      *
@@ -51,8 +51,10 @@ export function mount(locale: Locale): void {
      * initAnalytics() is a no-op when the visitor sends Global Privacy Control,
      * when they have opted out, or when the key is missing.
      */
-    initAnalytics();
-    exposeAnalyticsControls();
+    if (analytics) {
+        initAnalytics();
+        exposeAnalyticsControls();
+    }
 
     mountIslands(locale, ISLANDS);
     armReveals();
@@ -79,7 +81,7 @@ export function mount(locale: Locale): void {
     createRoot(suggestion).render(
         <StrictMode>
             <LocaleProvider locale={locale} path={window.location.pathname}>
-                <PageScopedEffects />
+                {analytics && <PageScopedEffects />}
                 <LocaleSuggestion />
             </LocaleProvider>
         </StrictMode>,

@@ -76,3 +76,10 @@ export async function fetchSessionMessagesPage(params: Readonly<{
     const response = await params.request(params.path);
     return parseSessionMessagesResponseJson(await response.json());
 }
+
+export { serializeTranscript, type TranscriptExportFormat } from './serializeTranscript';
+
+export async function exportTranscript(params: import('./readTranscriptForExport').HostedTranscriptExport): Promise<string> {
+    const { readTranscriptForExport } = await import('./readTranscriptForExport');
+    return await readTranscriptForExport(params);
+}

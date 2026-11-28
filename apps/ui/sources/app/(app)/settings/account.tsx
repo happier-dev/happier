@@ -1,3 +1,4 @@
+import { showExportSheet } from '@/components/sessions/export/ExportSheet';
 import React, { useState } from 'react';
 import { View, Pressable, Platform, useWindowDimensions } from 'react-native';
 import { useAuth } from '@/auth/context/AuthContext';
@@ -206,6 +207,17 @@ export default React.memo(() => {
                         copy={!!sync.serverID}
                     />
                 </ItemGroup>
+
+                {auth.isAuthenticated ? (
+                    <ItemGroup>
+                        <Item
+                            testID="settings-account-export-transcripts"
+                            title={t('transcriptExport.everything')}
+                            onPress={() => showExportSheet({ initialScope: 'everything' })}
+                            showChevron={false}
+                        />
+                    </ItemGroup>
+                ) : null}
 
                 {/* Account access / linking */}
                 {showAccountAccessGroup ? (

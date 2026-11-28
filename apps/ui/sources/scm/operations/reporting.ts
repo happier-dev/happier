@@ -64,6 +64,7 @@ export function reportSessionScmOperation(input: {
         has_path: Boolean(input.path),
         has_detail: Boolean(input.detail),
         detail_length: input.detail?.length ?? 0,
-        ...(input.rawError ? { raw_error: input.rawError, raw_error_length: input.rawError.length } : {}),
+        // The raw text is git stderr (paths, branches, remote URLs); only its length is reported.
+        ...(input.rawError ? { raw_error_length: input.rawError.length } : {}),
     });
 }

@@ -25,8 +25,11 @@ export async function writeGeneratedTextAtomicallyIfChanged(params: Readonly<{
   path: string;
   contents: string;
   mode: number;
+  previousContents?: string | null;
 }>): Promise<void> {
-  const existing = await readFile(params.path, 'utf8').catch(() => null);
+  const existing = params.previousContents === undefined
+    ? await readFile(params.path, 'utf8').catch(() => null)
+    : params.previousContents;
   if (existing === params.contents) return;
 
   const temporaryPath = join(

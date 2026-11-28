@@ -10,10 +10,6 @@ describe('buildAccountSettingsSnapshot', () => {
     it('tracks count-only collection summaries through canonical analytics serializers', () => {
         const snapshot = buildAccountSettingsSnapshot({
             ...settingsDefaults,
-            recentMachinePaths: [
-                { machineId: 'm1', path: '/repo-one' },
-                { machineId: 'm2', path: '/repo-two' },
-            ],
             favoriteDirectories: ['/a', '/b', '/c'],
             favoriteMachines: ['m1'],
             favoriteProfiles: ['default', 'custom:work'],
@@ -33,7 +29,6 @@ describe('buildAccountSettingsSnapshot', () => {
             },
         });
 
-        expect(snapshot.properties.acct_setting__recentMachinePaths).toBe(2);
         expect(snapshot.properties.acct_setting__favoriteDirectories).toBe(3);
         expect(snapshot.properties.acct_setting__favoriteMachines).toBe(1);
         expect(snapshot.properties.acct_setting__favoriteProfiles).toBe(2);
@@ -44,30 +39,6 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties).not.toHaveProperty('acct_setting__sessionListGroupOrderV1__groupOverrideCount');
         expect(snapshot.properties).not.toHaveProperty('acct_setting__sessionListGroupOrderV1__totalOrderedKeyCount');
         expect(snapshot.properties).not.toHaveProperty('acct_setting__collapsedGroupKeysV1');
-    });
-
-    it('tracks dismissed cli warnings through canonical analytics serializers', () => {
-        const snapshot = buildAccountSettingsSnapshot({
-            ...settingsDefaults,
-            dismissedCLIWarnings: {
-                global: {
-                    upgrade: true,
-                    reconnect: true,
-                },
-                perMachine: {
-                    machine_a: {
-                        install: true,
-                        auth: true,
-                    },
-                    machine_b: {
-                        install: true,
-                    },
-                },
-            },
-        });
-
-        expect(snapshot.properties.acct_setting__dismissedCLIWarnings__globalDismissedCount).toBe(2);
-        expect(snapshot.properties.acct_setting__dismissedCLIWarnings__perMachineDismissedCount).toBe(3);
     });
 
     it('tracks connected services summaries through canonical analytics serializers', () => {
@@ -254,14 +225,6 @@ describe('buildAccountSettingsSnapshot', () => {
                     { id: 's2', adapterId: 'git', title: 'Repo 2', enabled: false, config: { repositoryUrl: 'file:///repo-2' } },
                 ],
             },
-            contextSelectionsV1: {
-                v: 1,
-                selectionsByKey: {
-                    one: { machineId: 'm1', workspacePath: '/repo-one' },
-                    two: { machineId: 'm2', workspacePath: '/repo-two' },
-                    three: { machineId: null, workspacePath: '/repo-three' },
-                },
-            },
         });
 
         expect(snapshot.properties.acct_setting__promptStacksV1__codingCount).toBe(2);
@@ -271,7 +234,6 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties.acct_setting__promptInvocationsV1).toBe(2);
         expect(snapshot.properties.acct_setting__promptExternalLinksV1).toBe(1);
         expect(snapshot.properties.acct_setting__promptRegistrySourcesV1).toBe(2);
-        expect(snapshot.properties.acct_setting__contextSelectionsV1).toBe(3);
     });
 
     it('tracks execution guidance, tmux overrides, and installables policy summaries through canonical analytics serializers', () => {
@@ -374,7 +336,6 @@ describe('buildAccountSettingsSnapshot', () => {
                     envVarRequirements: [{ name: 'OPENAI_API_KEY', kind: 'secret', required: true }],
                 }),
             ],
-            lastUsedProfile: 'work',
             secrets: [
                 {
                     id: 'secret-1',
@@ -477,7 +438,6 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties.acct_setting__profiles__customEnvVarProfileCount).toBe(1);
         expect(snapshot.properties.acct_setting__profiles__builtInCount).toBe(1);
         expect(snapshot.properties.acct_setting__profiles__machineLoginCount).toBe(1);
-        expect(snapshot.properties.acct_setting__lastUsedProfile).toBe('custom');
         expect(snapshot.properties.acct_setting__secrets).toBe(2);
         expect(snapshot.properties.acct_setting__secretBindingsByProfileId__boundProfileCount).toBe(2);
         expect(snapshot.properties.acct_setting__secretBindingsByProfileId__totalBindingCount).toBe(3);

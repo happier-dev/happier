@@ -1,5 +1,5 @@
 import { RevealText } from '../components/RevealText';
-import { trackFaqOpened } from '../analytics/events';
+import { FaqList } from '../components/FaqList';
 import { useSiteData } from '../i18n/siteData';
 import { rich } from '../i18n/rich';
 
@@ -49,63 +49,7 @@ export function Faq() {
                     />
                 </div>
 
-                <div className="mx-auto max-w-[820px]">
-                    {FAQ_ITEMS.map((item) => (
-                        <details
-                            key={item.id}
-                            className="faq__item"
-                            /* Now that these start closed this fires on OPEN, which
-                               is the more direct signal than the collapse it used to
-                               record: an entry people open is an entry the page left
-                               them wondering about. `question` carries the literal
-                               text rather than a slug, so the PostHog breakdown is
-                               the keyword report. */
-                            onToggle={(event) =>
-                                trackFaqOpened({
-                                    question: item.q,
-                                    open: (event.currentTarget as HTMLDetailsElement).open,
-                                })
-                            }
-                        >
-                            <summary className="faq__q" style={{ color: 'var(--fg)' }}>
-                                {/* The question is a heading, not a styled span.
-                                    Ten question-shaped H3s is exactly what passage
-                                    ranking eats, and inside a bare <summary> these
-                                    were absent from the document outline entirely. */}
-                                <h3 className="text-[18px] font-semibold leading-[1.35] md:text-[20px]">
-                                    {item.q}
-                                </h3>
-                                {/* A closed row with no affordance is just text that
-                                    mysteriously does something when pressed. Inline
-                                    SVG rather than a glyph so it inherits colour and
-                                    rotates on the compositor. */}
-                                <svg
-                                    aria-hidden
-                                    className="faq__chev"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="1.6"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                >
-                                    <path d="m6 9 6 6 6-6" />
-                                </svg>
-                            </summary>
-                            <div className="faq__a">
-                                {item.a.map((paragraph, i) => (
-                                    <p
-                                        key={i}
-                                        className="mt-4 text-[15px] leading-[1.62] md:text-[16px]"
-                                        style={{ color: 'var(--muted)' }}
-                                    >
-                                        {paragraph}
-                                    </p>
-                                ))}
-                            </div>
-                        </details>
-                    ))}
-                </div>
+                <FaqList className="mx-auto max-w-[820px]" items={FAQ_ITEMS} />
             </div>
         </section>
     );

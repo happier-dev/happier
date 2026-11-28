@@ -2,7 +2,6 @@ import {
     SESSION_ORGANIZATION_MAX_ATTENTION_STANDINGS,
     SESSION_ORGANIZATION_MAX_FOLDERS,
     SESSION_ORGANIZATION_MAX_LABELS,
-    SESSION_ORGANIZATION_MAX_PINNED_SESSIONS,
     SESSION_ORGANIZATION_MAX_SESSION_APPEARANCES,
     SESSION_ORGANIZATION_MAX_TAGS,
     type CreateOrUpdateSessionOrganizationFolderRequest,
@@ -56,6 +55,7 @@ import {
 } from "./organizationOrdering";
 import { validateSessionOrganizationSessionOrderItems } from "./organizationOrderValidation";
 import { createVisibleUnarchivedOrganizationSessionWhere } from "./sessionVisibility";
+import { countAccountPinsInTx, readSessionPinLimitInTx } from "./sessionPinLimit";
 import type { SessionOrganizationTx } from "./types";
 
 type ImportLegacySessionOrganizationErrorCode =
@@ -295,11 +295,16 @@ export async function importLegacySessionOrganization(params: Readonly<{
     }
 }
 
+export type SetSessionPinResult =
+    | Readonly<{ pin: ReturnType<typeof mapSessionOrganizationPin> | null }>
+    | Readonly<{ error: "session-pin-limit-exceeded"; limit: number }>
+    | Readonly<{ error: "session-not-found" }>;
+
 export async function setSessionPinInTx(tx: SessionOrganizationTx, params: Readonly<{
     accountId: string;
     sessionId: string;
     request: SetSessionPinRequest;
-}>): Promise<Readonly<{ pin: ReturnType<typeof mapSessionOrganizationPin> | null }> | { error: "session-pin-limit-exceeded" | "session-not-found" }> {
+}>): Promise<SetSessionPinResult> {
     if (!params.request.pinned) {
         await tx.sessionPin.deleteMany({
             where: { accountId: params.accountId, sessionId: params.sessionId },
@@ -325,14 +330,12 @@ export async function setSessionPinInTx(tx: SessionOrganizationTx, params: Reado
         select: { id: true },
     });
     if (!existingPin) {
-        const pinnedCount = await tx.sessionPin.count({
-            where: {
-                accountId: params.accountId,
-                session: createVisibleUnarchivedOrganizationSessionWhere(params.accountId),
-            },
-        });
-        if (pinnedCount >= SESSION_ORGANIZATION_MAX_PINNED_SESSIONS) {
-            return { error: "session-pin-limit-exceeded" };
+        const [pinnedCount, limit] = await Promise.all([
+            countAccountPinsInTx(tx, params.accountId),
+            readSessionPinLimitInTx(tx, params.accountId),
+        ]);
+        if (pinnedCount >= limit) {
+            return { error: "session-pin-limit-exceeded", limit };
         }
     }
 
@@ -360,7 +363,7 @@ export async function setSessionPin(params: Readonly<{
     accountId: string;
     sessionId: string;
     request: SetSessionPinRequest;
-}>): Promise<Readonly<{ pin: ReturnType<typeof mapSessionOrganizationPin> | null }> | { error: "session-pin-limit-exceeded" | "session-not-found" }> {
+}>): Promise<SetSessionPinResult> {
     return await inTx(async (tx) => await setSessionPinInTx(tx, params));
 }
 

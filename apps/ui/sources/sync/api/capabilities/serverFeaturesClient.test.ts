@@ -296,7 +296,7 @@ describe('serverFeaturesClient', () => {
 
         expect(result.status).toBe('ready');
         expect(featuresFetchMock).toHaveBeenCalledTimes(1);
-        expect(String(featuresFetchMock.mock.calls[0]?.[0] ?? '')).toBe('https://active.example.test/v1/features');
+        expect(String(featuresFetchMock.mock.calls[0]?.[0] ?? '')).toBe('https://active.example.test/v1/features?retentionNotice=1');
     });
 
     it('treats an explicit profile id for the active durable identity as the active server', async () => {
@@ -332,7 +332,7 @@ describe('serverFeaturesClient', () => {
         const rawCalls = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls;
         expect(rawCalls.some(([input]) => String(input).includes('/health'))).toBe(false);
         expect(featuresFetchMock).toHaveBeenCalledTimes(1);
-        expect(String(featuresFetchMock.mock.calls[0]?.[0] ?? '')).toBe('https://active.example.test/v1/features');
+        expect(String(featuresFetchMock.mock.calls[0]?.[0] ?? '')).toBe('https://active.example.test/v1/features?retentionNotice=1');
     });
 
     it('stores the server identity advertised by the active server features payload', async () => {

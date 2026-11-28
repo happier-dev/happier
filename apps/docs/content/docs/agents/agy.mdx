@@ -77,7 +77,11 @@ existing context indicator.
 
 ## Permissions
 
-Happier's permission mode chooses the Antigravity mode a session starts or resumes in:
+Antigravity's own modes mix approval levels (Default, Accept edits, Auto) with Plan.
+Happier splits them: the permission picker chooses the approval level, and the mode
+picker offers **Build** and **Plan**, like a Claude session.
+
+In Build, the permission mode chooses the Antigravity mode a session starts or resumes in:
 
 | Happier permission mode | Antigravity mode |
 | --- | --- |
@@ -85,17 +89,16 @@ Happier's permission mode chooses the Antigravity mode a session starts or resum
 | Read Only | Default, which asks before edits and commands |
 | Auto | Auto when the CLI offers it, otherwise Accept edits |
 | YOLO | Auto when the CLI offers it, otherwise Accept edits; Happier approves the remaining permission requests |
-| Plan Mode | Plan |
 
 Antigravity has no read-only mode, so in Read Only Happier still shows each edit or
-command request for you to decide. A mode you pick in the session's mode picker takes
-precedence over this mapping.
+command request for you to decide. Auto approves edits inside the workspace and runs
+commands in Antigravity's terminal sandbox, asking only before commands that would leave
+it. Happier does not use Auto when the CLI does not advertise it.
 
-The mode picker lists exactly the modes `agy acp` advertises for the session: Default,
-Accept edits and Plan, plus Auto on accounts and platforms where the Antigravity CLI
-offers it. Auto approves edits inside the workspace and runs commands in Antigravity's
-terminal sandbox, asking only before commands that would leave it. Happier does not
-add Auto when the CLI does not advertise it.
+Plan switches Antigravity to its Plan mode until you choose Build again; Build returns to
+the mode your permission setting maps to. Plan appears when `agy acp` advertises it for the
+session. A session saved with an Antigravity approval mode picked in an earlier version's
+mode picker resumes in Build with its current permission setting.
 
 ## Questions and images
 

@@ -40,7 +40,6 @@ vi.mock('@/components/sessions/runs/launcher/SessionExecutionRunLauncherView', (
 }));
 
 vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({ ActivitySpinner: 'ActivityIndicator' }));
-vi.mock('@/components/ui/scroll/useWebScrollLockBypass', () => ({ useWebScrollLockBypass: () => {} }));
 vi.mock('@/components/ui/scroll/resolveWebScrollableElement', () => ({ resolveWebScrollableElementWithin: () => null }));
 vi.mock('@/utils/platform/deferOnWeb', () => ({ deferOnWeb: (fn: () => void) => fn() }));
 vi.mock('@/components/ui/buttons/IconAction', () => ({

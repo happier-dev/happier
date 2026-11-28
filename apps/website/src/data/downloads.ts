@@ -80,8 +80,18 @@ export const ANDROID_PLAY_URL = downloads.androidPlayUrl;
 
 export const WEB_APP_URL = downloads.webAppUrl;
 export const DOCS_URL = downloads.docsUrl;
+export const SELF_HOST_DOCS_URL = `${DOCS_URL}deployment/self-host-runtime`;
+export const LEGAL_URLS = {
+    privacy: `${DOCS_URL}legal/privacy`,
+    terms: `${DOCS_URL}legal/terms`,
+    termsOfSale: `${DOCS_URL}legal/terms-of-sale`,
+    refunds: `${DOCS_URL}legal/refunds`,
+    imprint: `${DOCS_URL}legal/imprint`,
+} as const;
 export const GUIDES_URL = downloads.guidesUrl;
 export const GITHUB_REPO_URL = downloads.githubRepoUrl;
+/** The Sponsors listing named in .github/FUNDING.yml; a Supporter Pack route for anyone, self-hosters included. */
+export const GITHUB_SPONSORS_URL = 'https://github.com/sponsors/happier-dev';
 
 /** The repo spells it LICENCE. `…/blob/main/LICENSE` is a 404. */
 export const LICENSE_URL = downloads.licenseUrl;

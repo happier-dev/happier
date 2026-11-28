@@ -25,7 +25,7 @@ describe('ConnectedServiceOauthAdapters (proxy exchange)', () => {
   it('uses Antigravity OAuth without borrowing the Gemini client or account identity', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input)).pathname;
-      if (url === '/v1/features') return new Response(JSON.stringify(createRootLayoutFeaturesResponse({ capabilities: { connectedServices: { credentialDelete: { revisionGuard: false }, credentialWrite: { revisionGuard: false }, supportedServiceIds: [...ConnectedServiceIdSchema.options] } } })), { status: 200, headers: { 'content-type': 'application/json' } });
+      if (url.split('?')[0] === '/v1/features') return new Response(JSON.stringify(createRootLayoutFeaturesResponse({ capabilities: { connectedServices: { credentialDelete: { revisionGuard: false }, credentialWrite: { revisionGuard: false }, supportedServiceIds: [...ConnectedServiceIdSchema.options] } } })), { status: 200, headers: { 'content-type': 'application/json' } });
       if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) return new Response('', { status: 200 });
       if (url.endsWith('/v2/connect/antigravity/oauth/exchange') && init?.method === 'POST') {
         const body = JSON.parse(String(init.body));
@@ -73,7 +73,7 @@ describe('ConnectedServiceOauthAdapters (proxy exchange)', () => {
 
     const fetchMock = vi.fn(async (input: any, init?: any) => {
       const url = new URL(String(input)).pathname;
-      if (url === '/v1/features') return new Response(JSON.stringify(createRootLayoutFeaturesResponse({ capabilities: { connectedServices: { credentialDelete: { revisionGuard: false }, credentialWrite: { revisionGuard: false }, supportedServiceIds: [...ConnectedServiceIdSchema.options] } } })), { status: 200, headers: { 'content-type': 'application/json' } });
+      if (url.split('?')[0] === '/v1/features') return new Response(JSON.stringify(createRootLayoutFeaturesResponse({ capabilities: { connectedServices: { credentialDelete: { revisionGuard: false }, credentialWrite: { revisionGuard: false }, supportedServiceIds: [...ConnectedServiceIdSchema.options] } } })), { status: 200, headers: { 'content-type': 'application/json' } });
       const method = String(init?.method ?? 'GET').toUpperCase();
       if (url.endsWith('/health') && method === 'GET') {
         return new Response('', { status: 200 });
@@ -138,7 +138,7 @@ describe('ConnectedServiceOauthAdapters (proxy exchange)', () => {
 
     const fetchMock = vi.fn(async (input: any, init?: any) => {
       const url = new URL(String(input)).pathname;
-      if (url === '/v1/features') return new Response(JSON.stringify(createRootLayoutFeaturesResponse({ capabilities: { connectedServices: { credentialDelete: { revisionGuard: false }, credentialWrite: { revisionGuard: false }, supportedServiceIds: [...ConnectedServiceIdSchema.options] } } })), { status: 200, headers: { 'content-type': 'application/json' } });
+      if (url.split('?')[0] === '/v1/features') return new Response(JSON.stringify(createRootLayoutFeaturesResponse({ capabilities: { connectedServices: { credentialDelete: { revisionGuard: false }, credentialWrite: { revisionGuard: false }, supportedServiceIds: [...ConnectedServiceIdSchema.options] } } })), { status: 200, headers: { 'content-type': 'application/json' } });
       const method = String(init?.method ?? 'GET').toUpperCase();
       if (url.endsWith('/health') && method === 'GET') {
         return new Response('', { status: 200 });

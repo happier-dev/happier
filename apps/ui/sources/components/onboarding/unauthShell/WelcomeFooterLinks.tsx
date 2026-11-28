@@ -5,8 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
-import { HAPPIER_CLOUD_SERVER_URL } from '@/sync/domains/server/serverProfiles';
-import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
+import { isHappierCloudServerUrl } from '@/sync/domains/server/serverProfiles';
 import { derivePresentableRelayHost } from '@/sync/domains/server/url/serverUrlDisplay';
 import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -16,7 +15,6 @@ const DOCS_URL = 'https://docs.happier.dev';
 const GITHUB_URL = 'https://github.com/happier-dev/happier';
 const DISCORD_URL = 'https://discord.gg/W6Pb8KuHfg';
 
-const HAPPIER_CLOUD_COMPARABLE_KEY = createServerUrlComparableKey(HAPPIER_CLOUD_SERVER_URL);
 
 export type WelcomeFooterLinksProps = Readonly<{
     variant: 'desktop' | 'mobile';
@@ -56,7 +54,7 @@ export const WelcomeFooterLinks = React.memo(function WelcomeFooterLinks(props: 
     // doesn't flicker into the custom layout for a single render.
     const activeServer = useActiveServerSnapshot();
     const isCustomRelay = activeServer.serverUrl.length > 0
-        && createServerUrlComparableKey(activeServer.serverUrl) !== HAPPIER_CLOUD_COMPARABLE_KEY;
+        && !isHappierCloudServerUrl(activeServer.serverUrl);
     const customRelayHost = isCustomRelay
         ? (derivePresentableRelayHost(activeServer.serverUrl) ?? activeServer.serverUrl)
         : null;

@@ -448,7 +448,6 @@ describe('codex session handoff bundle', () => {
       resume: 'thread_1',
       environmentVariables: {
         CODEX_HOME: codexHome,
-        CODEX_SQLITE_HOME: codexHome,
       },
       transcriptStorage: 'direct',
       approvedNewDirectoryCreation: true,
@@ -650,7 +649,6 @@ describe('codex session handoff bundle', () => {
       resume: 'thread_2',
       environmentVariables: {
         CODEX_HOME: codexHome,
-        CODEX_SQLITE_HOME: codexHome,
       },
       transcriptStorage: 'persisted',
       approvedNewDirectoryCreation: true,
