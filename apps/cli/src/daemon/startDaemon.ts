@@ -3144,6 +3144,7 @@ export async function startDaemon(
       activeServerDir: configuration.activeServerDir, policy: machineResourcesPolicy,
       sampler: machineVitals, keepAwake: daemonKeepAwake, summary: machineResourceSummary,
       ownership: processOwnershipRuntime, inventory: managedActivity,
+      readIdleSessionHost: guardSources.readIdleSessionHost,
       // The planning tick reads only runners whose pushed live-work changed; actions confirm fresh.
       readFacts: async (ownership, signal, scope) => guardFacts({ ownership, inventory: await managedActivity.read(scope), signal, scope }),
       readTarget: () => {

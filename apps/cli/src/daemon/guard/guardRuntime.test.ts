@@ -101,6 +101,7 @@ describe('memory guard episode on the incumbent minute sampler', () => {
     const roots = kind === 'session' ? sessions.map(session => session === tracked ? root : {
       ...root, pid: session.pid, owner: { kind: 'session' as const, sessionId: session.happySessionId! } }) : [root];
     let present = true;
+    let sessionHost: { pid: number; stop(signal: AbortSignal): Promise<boolean> } | undefined;
     let failed = false;
     let connections: number | null = 0;
     let stops = 0;
@@ -130,7 +131,7 @@ describe('memory guard episode on the incumbent minute sampler', () => {
             memory: footprint === undefined ? null : { bytes: footprint, kind: 'rss' }, cpuTimeUs: 0 })) : [] };
         const facts = await inventory.read();
         return { ownership: { status: 'ok', snapshot, roots: present ? roots : [], rows: resolveProcessOwnership({ snapshot,
-          roots: present ? roots : [], platform: 'darwin', daemonPrincipal: { kind: 'uid', value: '1' } }) }, inventory: facts,
+          roots: present ? roots : [], platform: 'darwin', daemonPrincipal: { kind: 'uid', value: '1' } }) }, inventory: facts, sessionHost,
           targets: !present ? [] : kind === 'browser' ? [{ kind: 'browser', root, ownerRef: root, label: 'Browser', ...browserIdle,
             wayBack: [{ label: 'reopen', actionId: 'browser.view.open', input: { machineId: 'm' } }] }]
             : kind === 'service' ? [{ kind: 'service', scope: 'project', workspacePath: '/project',
@@ -182,6 +183,7 @@ describe('memory guard episode on the incumbent minute sampler', () => {
     await drain();
     return { runtime, sampler, activity, sampled, notices, stoppedIds, drain, changed, get stops() { return stops; }, get notifications() { return notifications; }, get reads() { return reads; }, get activityReads() { return activityReads; },
       setPresent: (value: boolean, notify = true) => { present = value; if (notify) changed(); }, setFailed: (value: boolean) => { failed = value; },
+      setSessionHost: (value: typeof sessionHost) => { sessionHost = value; changed(); },
       setLevel: (value: typeof level) => { level = value; }, setAvailable: (value: number) => { available = value; },
       setLowMemorySignal: (value: typeof lowMemorySignal) => { lowMemorySignal = value; },
       setDraft: (value: SessionDraftPresence) => { draft = value; changed(); },
@@ -731,6 +733,22 @@ describe('memory guard episode on the incumbent minute sampler', () => {
       expect(fixture.stops).toBe(1);
     } finally { await fixture.close(); }
   });
+  it('reclaims an idle Session host only under sustained scarcity, before user resources', async () => {
+    const fixture = await setup('browser');
+    const reclaim = vi.fn(async () => { fixture.setPresent(false); return true; });
+    try {
+      fixture.setAvailable(600);
+      fixture.setSessionHost({ pid: 10, stop: reclaim });
+      for (let minute = 0; minute < 3; minute++) { await vi.advanceTimersByTimeAsync(60_000); await fixture.drain(); }
+      expect(reclaim).not.toHaveBeenCalled();
+      fixture.setAvailable(50);
+      for (let minute = 0; minute < 3; minute++) { await vi.advanceTimersByTimeAsync(60_000); await fixture.drain(); }
+      expect(reclaim).toHaveBeenCalledTimes(1);
+      expect(fixture.stops).toBe(0);
+      expect(fixture.notices).toEqual([]);
+    } finally { await fixture.close(); }
+  });
+
   it('acts only on real scarcity: a kernel stall with most memory available releases nothing, scarcity releases the idle Session', async () => {
     const fixture = await setup('session');
     try {

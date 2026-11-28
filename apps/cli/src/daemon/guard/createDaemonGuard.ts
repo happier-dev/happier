@@ -8,6 +8,7 @@ import type { KeepAwake } from '@/integrations/keepAwake';
 import { waitForChangeOrDeadline } from '../lifecycle/waitForChangeOrDeadline';
 
 import { createActivityLog, type ActivityLog } from './activityLog';
+import type { GuardSessionHost } from './guardPlanner';
 import { createGuardRuntime, type GuardPolicyWork, type GuardRuntimeInput } from './guardRuntime';
 import { createGuardStatePublication, type GuardStatePublication } from './guardStatePublication';
 import { createGuardWatch, type GuardWatchInput, type GuardViewRequester } from './view/guardWatch';
@@ -27,6 +28,7 @@ export type DaemonGuardInput = Readonly<{
     ownership: GuardWatchInput['ownership'];
     inventory: Pick<ManagedActivityInventory, 'subscribeFacts'>;
     readFacts: GuardWatchInput['readFacts'];
+    readIdleSessionHost?(signal: AbortSignal): Promise<GuardSessionHost | undefined>;
     readLeftBehind: GuardWatchInput['readLeftBehind'];
     readTarget: GuardWatchInput['readTarget'];
     readManagedRetentionRef?: GuardWatchInput['readManagedRetentionRef'];
@@ -105,7 +107,11 @@ export async function createDaemonGuard(input: DaemonGuardInput): Promise<Daemon
             await waitForChangeOrDeadline({ signal, waitForChange: async () => {
                 const ownership = await input.ownership.readOwners({ freshness: 'fresh' });
                 signal.throwIfAborted();
-                facts = await input.readFacts(ownership, signal, scope);
+                const [observed, sessionHost] = await Promise.all([
+                    input.readFacts(ownership, signal, scope),
+                    ownership.status === 'ok' && readPolicy().memoryGuard.enabled ? input.readIdleSessionHost?.(signal) : undefined,
+                ]);
+                facts = sessionHost ? { ...observed, sessionHost } : observed;
             } });
             signal.throwIfAborted();
             if (!facts) throw new Error('Guard fact read did not complete');

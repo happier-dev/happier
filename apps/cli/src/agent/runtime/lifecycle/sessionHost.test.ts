@@ -151,14 +151,15 @@ describe('session host', () => {
     await rm(testHome, { recursive: true, force: true });
   });
 
-  it('reuses the host after its last Session ends and expires after the next idle period', async () => {
+  it('reuses the host after its last Session ends and stays warm without a retirement request', async () => {
     const nextTurn = deferred();
-    const running = await startHost(async argv => {
+    await startHost(async argv => {
       if (argv[0] === 'next') await nextTurn.promise;
     });
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await expect(add('first')).resolves.toEqual({ exitCode: 0 });
-    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(hostExit).not.toHaveBeenCalled();
 
     const next = add('next');
     await vi.advanceTimersByTimeAsync(60_000);
@@ -168,11 +169,10 @@ describe('session host', () => {
     expect(hostExit).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(60_000);
-    await running.whenEnded;
-    expect(hostExit).toHaveBeenCalledExactlyOnceWith(0);
+    expect(hostExit).not.toHaveBeenCalled();
   });
 
-  it('honors process termination during the idle grace period', async () => {
+  it('honors process termination while the host is idle', async () => {
     const running = await startHost(async () => {});
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await add('ends-before-stop');
@@ -314,8 +314,7 @@ describe('session host', () => {
 
     turnB.resolve();
     expect(await settledWithin(endedB)).toEqual({ exitCode: 0 });
-    await host!.whenEnded;
-    expect(hostExit).toHaveBeenCalledTimes(1);
+    expect(hostExit).not.toHaveBeenCalled();
   });
 
   it('ends only the Session whose own work raised a fatal error, and only on its own end', async () => {
@@ -341,10 +340,9 @@ describe('session host', () => {
     expect(hostExit).not.toHaveBeenCalled();
     expect(processExit).not.toHaveBeenCalled();
 
-    // The daemon's Stop of B ends B through the host; the host then ends with its last Session.
+    // The daemon's Stop of B ends B through the host.
     expect(host!.endSession('session-b')).toEqual({ status: 'termination_requested' });
     expect(await settledWithin(endedB)).toEqual({ exitCode: 0 });
-    await host!.whenEnded;
-    expect(hostExit).toHaveBeenCalledTimes(1);
+    expect(hostExit).not.toHaveBeenCalled();
   });
 });

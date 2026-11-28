@@ -1,4 +1,3 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
 import type { SessionLifecycleStateReason } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import type { EventEmitter } from 'node:events';
 
@@ -16,16 +15,9 @@ import { shareAccountUpdatesInThisProcess } from '@/api/session/sharedAccountUpd
 
 import { readHostedSessionScope, runAddedHostedSession, saveHostedSessionForHandover, type HostedSessionScope } from './hostedSessionScope';
 import { registerRunnerTerminationHandlers, requestHostedSessionTermination } from './runnerTerminationHandlers';
-import type { RunnerTerminationEvent } from './runnerTerminationOutcome';
 import type { ProcessBirthWitness } from '@/daemon/processIdentity';
 
-export { SESSION_HOST_IDLE_EXPIRED_LINE, SESSION_HOST_READY_LINE } from '@/session/transport/rpc/localSessionRpcChannel';
-
-// Cover an immediate follow-up Start while bounding retention of a loaded runner.
-// The P03 source fixture exercises a two-second idle gap, and the New Session prestart
-// fixture exercises ten seconds of think time. The compiled host import alone was
-// about 105 MiB PSS, and a provider-loaded host can retain about 336 MiB.
-const SESSION_HOST_IDLE_GRACE_MS = 10_000;
+export { SESSION_HOST_READY_LINE } from '@/session/transport/rpc/localSessionRpcChannel';
 
 export type SessionHost = Readonly<{
   /** Same contract as the daemon's add call: resolves with the Session's exit code when it ends. */
@@ -46,7 +38,7 @@ export type SessionHost = Readonly<{
  * command (its own argv, environment and working directory) inside its own hosted Session scope; a
  * Session that fails or is stopped ends only itself. The host holds its own registration with the
  * process termination owner, so the process lives while the host runs and signals still fan out to
- * every Session. It stays warm for a grace period after its last Session or hold ends. A daemon
+ * every Session. It stays warm when idle until explicitly retired. A daemon
  * that expects a Session soon (a New Session intent) holds the host and preloads the runner.
  */
 export async function startSessionHost(params: Readonly<{
@@ -59,7 +51,6 @@ export async function startSessionHost(params: Readonly<{
   readTrustedCaller: () => Promise<ProcessBirthWitness | null>;
   /** Loads the runner code a Session command runs, before the first held-for Session arrives. */
   preloadSessionRunner?: () => Promise<unknown>;
-  reportIdleExpiry?: () => void;
   process?: Pick<EventEmitter, 'on' | 'removeListener'>;
   exit?: (code: number) => void;
 }>): Promise<SessionHost> {
@@ -68,14 +59,6 @@ export async function startSessionHost(params: Readonly<{
   shareAccountUpdatesInThisProcess();
   let closing = false;
   let holds = 0;
-  let idleTimer: ReturnType<typeof setTimeout> | undefined;
-  // An ended runner can call end() in its own scope. Allocate the timer in the host's
-  // scope so it does not retain the ended Session's context for the idle period.
-  const runInHostScope = AsyncLocalStorage.snapshot();
-  const cancelIdleEnd = (): void => {
-    clearTimeout(idleTimer);
-    idleTimer = undefined;
-  };
   let runnerPreload: Promise<unknown> | null = null;
   let retireEndpoint: (() => Promise<void>) | null = null;
   const exit = params.exit ?? ((code: number) => process.exit(code));
@@ -84,32 +67,20 @@ export async function startSessionHost(params: Readonly<{
     exit,
     onTerminate: async () => {
       closing = true;
-      cancelIdleEnd();
       await retireEndpoint?.();
     },
   });
-  const retireIfIdle = (event: RunnerTerminationEvent): boolean => {
-    if (sessions.size > 0 || holds > 0 || closing) return false;
+  const isIdle = (): boolean => sessions.size === 0 && holds === 0 && !closing;
+  const stopIfIdle = (): boolean => {
+    if (!isIdle()) return false;
     closing = true;
-    cancelIdleEnd();
-    termination.requestTermination(event);
+    termination.requestTermination({ kind: 'signal', signal: 'SIGTERM' });
     return true;
-  };
-  const endWhenIdle = (): void => {
-    if (sessions.size > 0 || holds > 0 || closing || idleTimer !== undefined) return;
-    idleTimer = runInHostScope(() => setTimeout(() => {
-      if (retireIfIdle({ kind: 'exit', code: 0 })) {
-        logger.infoFile('[session-host] Idle grace expired', { idleGraceMs: SESSION_HOST_IDLE_GRACE_MS });
-        logger.flushSync();
-        params.reportIdleExpiry?.();
-      }
-    }, SESSION_HOST_IDLE_GRACE_MS));
   };
 
   const addSession = (request: SessionHostAddRequest): Promise<SessionHostCommandEnd> => {
     if (closing) throw new SessionHostClosingError('The session host is ending');
     if (sessions.has(request.trackingKey)) throw new Error('This Session is already hosted');
-    cancelIdleEnd();
     let resolveEnded!: (end: SessionHostCommandEnd) => void;
     const session = {
       scope: null as HostedSessionScope | null,
@@ -123,7 +94,6 @@ export async function startSessionHost(params: Readonly<{
       sessions.delete(request.trackingKey);
       const failureCause = session.scope?.failureCause;
       resolveEnded({ exitCode, ...(failureCause ? { failureCause } : {}) });
-      endWhenIdle();
     };
     const launch = request.launch ?? {};
     // Admission can throw while parsing policy, before the async command starts.
@@ -152,7 +122,6 @@ export async function startSessionHost(params: Readonly<{
   const readSessionLiveWork = (trackingKey: string) => sessions.get(trackingKey)?.scope?.readLiveWork?.() ?? null;
   const hold = (preloadRunner = true): (() => void) => {
     if (closing) throw new SessionHostClosingError('The session host is ending');
-    cancelIdleEnd();
     holds += 1;
     if (preloadRunner) {
       runnerPreload ??= (params.preloadSessionRunner?.() ?? Promise.resolve()).catch((error: unknown) => {
@@ -165,7 +134,6 @@ export async function startSessionHost(params: Readonly<{
       if (released) return;
       released = true;
       holds -= 1;
-      endWhenIdle();
     };
   };
   // Update: the same path as a crash, without the loss. No Session is ended (ending one would end its
@@ -174,7 +142,6 @@ export async function startSessionHost(params: Readonly<{
   const handOver = (): boolean => {
     if (closing) return false;
     closing = true;
-    cancelIdleEnd();
     void (async () => {
       await retireEndpoint?.();
       const { handOverSessionHolderClients, pauseSessionHolderDelivery } = await import('@/subprocess/supervision/sessionHolder');
@@ -193,7 +160,7 @@ export async function startSessionHost(params: Readonly<{
 
   try {
     retireEndpoint = await serveLocalSessionHost({ addSession, endSession, watchSession, readSessionLiveWork, handOver, hold,
-      stopIfIdle: () => retireIfIdle({ kind: 'signal', signal: 'SIGTERM' }),
+      isIdle, stopIfIdle,
       readTrustedCaller: params.readTrustedCaller });
   } catch (error) {
     closing = true;

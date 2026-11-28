@@ -8,7 +8,7 @@ import type { CommandHandler } from '../commandRegistry';
 export const handleSessionHostCliCommand: CommandHandler = async (context) => {
   if (context.args.length !== 1) throw new Error('session-host takes no arguments');
   const [
-    { startSessionHost, SESSION_HOST_IDLE_EXPIRED_LINE, SESSION_HOST_READY_LINE },
+    { startSessionHost, SESSION_HOST_READY_LINE },
     { runWithRunnerHomeTransport },
     { readPublishedDaemonProcessBirth },
     { selfMigrateDaemonSpawnedSessionProcessOutOfDaemonServiceCgroup },
@@ -54,7 +54,6 @@ export const handleSessionHostCliCommand: CommandHandler = async (context) => {
       },
       // The daemon that launched (or later adopts) this host publishes its process birth in its own state.
       readTrustedCaller: readPublishedDaemonProcessBirth,
-      reportIdleExpiry: () => { process.stdout.write(`${SESSION_HOST_IDLE_EXPIRED_LINE}\n`); },
       // Held for a Session about to be created (New Session intent): prepare what that Session's
       // command runs before it arrives.
       preloadSessionRunner: async () => {

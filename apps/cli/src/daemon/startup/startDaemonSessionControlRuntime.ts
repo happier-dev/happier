@@ -1484,7 +1484,8 @@ export async function startDaemonSessionControlRuntime(
     withSessionAccountContext: RequesterSessionAccountContextCustody['withSessionAccountContext'];
     materializeSessionProcessEnvironment: SessionConnectedAccountProcessEnvironmentProducer;
     resolveExecutionRunLiveBrokerAuthority: NonNullable<MachineRpcHandlerDeps['resolveExecutionRunLiveBrokerAuthority']>;
-    guardSources: Required<Pick<import('../guard/readGuardFacts').ReadGuardFactsDependencies, 'readBrowsers' | 'readServices' | 'readServiceTargets'>>;
+    guardSources: Required<Pick<import('../guard/readGuardFacts').ReadGuardFactsDependencies, 'readBrowsers' | 'readServices' | 'readServiceTargets'>>
+      & Required<Pick<import('../guard/createDaemonGuard').DaemonGuardInput, 'readIdleSessionHost'>>;
     sessionLiveWorkProducer: ReturnType<typeof createSessionLiveWorkProducer>;
     dispatchSessionFollowOccurrence: (request: import('@/agent/runtime/session/follow/sessionFollowOccurrenceDispatcher').SessionFollowOccurrenceDispatch) => Promise<import('@/agent/runtime/session/follow/sessionFollowOccurrenceDispatcher').SessionFollowReceiverRangeResult | SessionActivityChangedResult | void>;
     processOwnershipRuntime: ReturnType<typeof createProcessOwnershipRuntime>;
@@ -16059,6 +16060,7 @@ export async function startDaemonSessionControlRuntime(
     retireEndedRunnerOwnedState: () => retireEndedRunnerOwnedState(),
     requestManagedServiceRecovery: () => managedServiceDurabilityOwner?.requestRecovery(),
     guardSources: {
+      readIdleSessionHost: sessionHostPlacement.readIdleHost,
       readBrowsers: () => devicesBrowserResources()?.readResourceTargets?.() ?? [],
       readServices: (signal?: AbortSignal) => localServicesRuntime.refreshInventoryNow({ stage: 'native', signal }),
       readServiceTargets: () => pluginRuntimeController.getState().activeRegistry?.projectManagedServices.readResourceTargets() ?? [],

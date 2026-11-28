@@ -10,7 +10,7 @@ import { waitForChangeOrDeadline } from '../lifecycle/waitForChangeOrDeadline';
 import type { LiveWorkReadScopeV1 } from '../lifecycle/managedActivity';
 import { equalProcessStart } from '../processes/ownership/types';
 import type { ActivityLog } from './activityLog';
-import { guardTargetRef, planGuard, planIdleSessions, projectGuardLadderV1, type GuardCandidate, type GuardConnectionMinute, type GuardFacts, type GuardLadderPreview, type IdleSessionCandidate } from './guardPlanner';
+import { guardTargetRef, planGuard, planIdleSessions, projectGuardLadderV1, type GuardCandidate, type GuardConnectionMinute, type GuardFacts, type GuardLadderPreview, type GuardSessionHostCandidate, type IdleSessionCandidate } from './guardPlanner';
 
 /**
  * The memory rule acts only under real memory scarcity (owner ruling 2026-11-12, "only under memory pressure";
@@ -57,7 +57,7 @@ export type GuardRuntimeInput = Readonly<{
 }>;
 type Episode = { id: string; since: number; level: 'elevated' | 'critical'; failed: Set<string>; freedBytes: number;
   entries: MachineGuardActivityEntryV1[]; notified: boolean; exhausted: boolean };
-type Verification = { candidate: GuardCandidate; availableBefore: number; goneAt?: number; cooldownMs: number };
+type Verification = { candidate: GuardCandidate | GuardSessionHostCandidate; availableBefore: number; goneAt?: number; cooldownMs: number };
 type Warning = { candidate: GuardCandidate | IdleSessionCandidate; anchor: number; stopAt: number; policy: string;
   rule: 'memory_guard' | 'idle_sessions' };
 
@@ -337,7 +337,7 @@ export function createGuardRuntime(input: GuardRuntimeInput) {
               if (deadline !== undefined && memory && sample && sample.sampledAt >= deadline && sample.sampledAt > verification.goneAt!) {
                 const candidate = verification.candidate;
                 const delta = memory.availableBytes - verification.availableBefore;
-                await record({ ...entryFor(candidate, candidate.kind === 'browser' ? 'closed_browser' : candidate.kind === 'service' ? 'stopped_service' : 'stopped_session',
+                if (candidate.kind !== 'session_host') await record({ ...entryFor(candidate, candidate.kind === 'browser' ? 'closed_browser' : candidate.kind === 'service' ? 'stopped_service' : 'stopped_session',
                   delta > 0 ? 'done' : 'did_not_help'), freedBytes: Math.max(0, delta) });
                 verification = undefined;
                 if (candidate.kind === 'session') await input.onSessionStopRecorded?.(candidate);
@@ -345,7 +345,8 @@ export function createGuardRuntime(input: GuardRuntimeInput) {
                 if (pressureLow || !memoryPolicy.enabled) { await notify(false); episode = undefined; publish(undefined); }
                 changed(); continue;
               }
-              publish({ state: 'verifying', since: episode!.since, step: verification.candidate.step, expectedReturnBytes: verification.candidate.footprintBytes });
+              if (verification.candidate.kind !== 'session_host') publish({ state: 'verifying', since: episode!.since,
+                step: verification.candidate.step, expectedReturnBytes: verification.candidate.footprintBytes });
             } else if (pressureLow || !memoryPolicy.enabled) {
               await clearWarning();
               if (episode?.entries.length) await notify(false);
@@ -362,19 +363,19 @@ export function createGuardRuntime(input: GuardRuntimeInput) {
               if (!episode && sustained.sustained) episode = { id: randomUUID(), since: sustained.since!,
                 level: pressureLevel === 'critical' ? 'critical' : 'elevated',
                 failed: new Set(), freedBytes: 0, entries: [], notified: false, exhausted: false };
+              const candidate = plan.next;
               if (!episode || !sustained.sustained && !episode.exhausted) {
                 await clearWarning();
                 publish(sustained.since === null ? undefined : { state: 'sustaining', since: sustained.since });
-              } else if (episode.exhausted) {
+              } else if (episode.exhausted && (candidate?.kind !== 'session_host' || !sustained.sustained)) {
                 publish({ state: 'out_of_steps', since: episode.since });
-              } else if (!plan.candidate) {
+              } else if (!candidate) {
                 await clearWarning();
                 await record({ v: 1, id: randomUUID(), at: now(), kind: 'out_of_steps', rule: 'memory_guard', outcome: 'done',
                   episodeId: episode.id, attribution: { kind: 'unknown' }, trigger: { level: episode.level, sinceMs: episode.since } });
                 episode.exhausted = true;
                 await notify(true); publish({ state: 'out_of_steps', since: episode.since });
               } else {
-                const candidate = plan.candidate;
                 let mayStop = candidate.kind !== 'session';
                 if (candidate.kind === 'session') {
                   const anchor = anchorFor(candidate);
@@ -402,7 +403,8 @@ export function createGuardRuntime(input: GuardRuntimeInput) {
                   nextAt = nextAt === undefined ? warning.stopAt : Math.min(nextAt, warning.stopAt);
                   mayStop = now() >= warning.stopAt;
                 } else if (warning) await clearWarning();
-                publish({ state: 'acting', since: episode.since, step: candidate.step, expectedReturnBytes: candidate.footprintBytes });
+                publish(candidate.kind === 'session_host' ? undefined : { state: 'acting', since: episode.since,
+                  step: candidate.step, expectedReturnBytes: candidate.footprintBytes });
                 if (mayStop && !signal.aborted) {
                   const stoppingWarning = warning;
                   if (candidate.kind === 'session' && !await input.notice(candidate, { kind: 'stopped', at: now(), rule: 'memory_guard', idleMs: now() - candidate.settledAt }, signal)) {
@@ -413,7 +415,7 @@ export function createGuardRuntime(input: GuardRuntimeInput) {
                   const fireFacts = candidate.kind === 'session' ? undefined : observeFacts(await input.readFacts(signal));
                   const fireGuardPolicy = input.readPolicy();
                   const firePolicy = fireGuardPolicy.memoryGuard;
-                  const fireCandidate = fireFacts ? planMemory(fireFacts, firePolicy, now()).candidate : candidate;
+                  const fireCandidate = fireFacts ? planMemory(fireFacts, firePolicy, now()).next : candidate;
                   const fireSample = input.vitals.latest();
                   const fireMemory = input.vitals.state().state === 'reporting' && fireSample
                     && fireSample.sampledAt >= Math.floor(now() / 60000) * 60000 && fireSample.memory.reported ? fireSample.memory : null;
@@ -426,22 +428,31 @@ export function createGuardRuntime(input: GuardRuntimeInput) {
                     || !fireMemory || !holds(effectiveMachineMemoryPressureV1(fireMemory)) || !isGuardMemoryScarce(fireMemory)
                     || !isSustainedV1({ records: input.vitals.minutes(now() - firePolicy.sustainMs - 60000), now: now(),
                       sustainMs: firePolicy.sustainMs, holds: record => holds(record.lvl) }).sustained
-                    || !fireCandidate || guardTargetRef(fireCandidate) !== guardTargetRef(candidate)
-                    || fireCandidate.settledAt !== candidate.settledAt) { await clearWarning(); changed(); continue; }
+                    || !fireCandidate || fireCandidate.kind !== candidate.kind || guardTargetRef(fireCandidate) !== guardTargetRef(candidate)
+                    || fireCandidate.kind !== 'session_host' && candidate.kind !== 'session_host'
+                      && fireCandidate.settledAt !== candidate.settledAt) { await clearWarning(); changed(); continue; }
                   if (signal.aborted) { await clearWarning(); continue; }
                   if (candidate.kind === 'session') sessionWarnings.delete(sessionId(candidate)!);
                   warning = undefined;
                   emit();
-                  const result = await input.stop(candidate, signal).catch((error: unknown) => {
+                  const result = await (candidate.kind === 'session_host'
+                    ? candidate.stop(signal).then(stopping => stopping ? { status: 'stopped' as const }
+                      : { status: 'failed' as const, reason: 'host_not_retired' })
+                    : input.stop(candidate, signal)).catch((error: unknown) => {
                     input.onError(error);
                     return { status: 'failed' as const, reason: 'native_stop_failed' };
                   });
                   if (result.status === 'failed') {
-                    if (candidate.kind === 'session') await input.notice(candidate, { kind: 'clear' }, signal).catch(input.onError);
-                    await fail(candidate, result.reason); changed(); continue;
+                    if (candidate.kind === 'session_host') episode.failed.add(guardTargetRef(candidate));
+                    else {
+                      if (candidate.kind === 'session') await input.notice(candidate, { kind: 'clear' }, signal).catch(input.onError);
+                      await fail(candidate, result.reason);
+                    }
+                    changed(); continue;
                   }
                   verification = { candidate, availableBefore: fireMemory.availableBytes, cooldownMs: memoryPolicy.cooldownMs };
-                  publish({ state: 'verifying', since: episode.since, step: candidate.step, expectedReturnBytes: candidate.footprintBytes });
+                  if (candidate.kind !== 'session_host') publish({ state: 'verifying', since: episode.since,
+                    step: candidate.step, expectedReturnBytes: candidate.footprintBytes });
                   changed(); continue;
                 }
               }

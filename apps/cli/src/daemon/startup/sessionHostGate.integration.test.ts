@@ -485,15 +485,14 @@ it.skipIf(process.env.HAPPIER_RUN_SESSION_HOST_GATE !== '1')(
     const hostPids = [...new Set(group.map(s => s.hostPid))];
     const agentPids = group.map(s => s.agentPid).filter((pid): pid is number => pid !== undefined);
     const waitForExit = (pid: number) => waitForProcessExit(pid, { timeoutMs: 60_000 });
-    const [hostExited, agentsExited, holdersExited] = await Promise.all([
-      Promise.all(hostPids.map(waitForExit)),
+    const [agentsExited, holdersExited] = await Promise.all([
       Promise.all(agentPids.map(waitForExit)),
       Promise.all(holderPids.map(waitForExit)),
     ]);
-    return { hostExited, agentsExited, holdersExited };
+    return { hostRetained: hostPids.map(isAlive), agentsExited, holdersExited };
   };
   const expectStopped = (result: Awaited<ReturnType<typeof stopGroup>>, sessionCount: number) => {
-    expect(result.hostExited).toEqual([true]);
+    expect(result.hostRetained).toEqual([true]);
     expect(result.agentsExited).toEqual(Array.from({ length: sessionCount }, () => true));
     expect(result.holdersExited).toEqual(Array.from({ length: sessionCount }, () => true));
   };
@@ -515,7 +514,7 @@ it.skipIf(process.env.HAPPIER_RUN_SESSION_HOST_GATE !== '1')(
     await stop(before);
     const endedAt = performance.now();
     const cpuTicksAtEnd = await cpuTicks(before.hostPid);
-    await sleep(2_000);
+    await sleep(12_000);
     const idleHost = await smaps(before.hostPid);
     const idleCpuTicks = await cpuTicks(before.hostPid) - cpuTicksAtEnd;
     const launchesAtStart = await hostLaunches();
@@ -531,8 +530,17 @@ it.skipIf(process.env.HAPPIER_RUN_SESSION_HOST_GATE !== '1')(
     expect(after.hostPid).toBe(before.hostPid);
     expect(postStartLaunches).toBe(0);
     await stop(after);
-    expect(await waitForProcessExit(after.hostPid, { timeoutMs: 60_000 })).toBe(true);
-    await waitFor(async () => (await readDaemonLog()).includes('[DAEMON RUN] Session host idle grace expired') || null, 'logged idle grace expiry');
+    expect(isAlive(after.hostPid)).toBe(true);
+    if (gatePhases.size === 1) {
+      expect(daemonA.child.kill('SIGTERM')).toBe(true);
+      await daemonA.closed;
+      const hostExitedOnShutdown = await waitForProcessExit(after.hostPid, { timeoutMs: 60_000 });
+      results.hostExitedOnShutdown = hostExitedOnShutdown;
+      await save();
+      expect(hostExitedOnShutdown).toBe(true);
+      completed = true;
+      return;
+    }
   }
 
   // 1+2. N = 1, 3, 10 (2-chunk turns), then the soak at N=10.

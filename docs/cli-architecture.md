@@ -8675,12 +8675,18 @@ Account carrier for all of them. A Session's command failure or termination ends
 only that Session (`endSessionCommand` and the termination owner report the end
 through the scope instead of exiting the process); the host holds its own
 termination registration, so signals still reach every Session and the process
-ends with its last registration. After its last Session and hold end, the host
-stays available for ten seconds so a subsequent Start can reuse its loaded
-runner. An add or a hold cancels the countdown. Idle expiry releases the process
-and the daemon logs the exit. Process termination or daemon shutdown can retire
-an idle host immediately. Sessions that continue across daemon shutdown keep
-their host for reattachment.
+ends with its last registration. After the last Session and hold end, the host
+stays warm so a subsequent Start can reuse its loaded runner. A process signal
+or runtime handover can end the host. On daemon shutdown, the daemon asks the
+idle host to exit. Sessions that continue across daemon shutdown keep their host
+for reattachment.
+
+When Memory Guard is enabled, its existing sustained-scarcity planner can reclaim
+a measured idle host before acting on user resources. The daemon observes
+idleness over the peer-checked local endpoint. That same host rechecks for
+Sessions and holds when asked to stop, including an Add waiting for admission.
+Guard confirms native process exit and observes its usual cooldown before the
+next memory action.
 
 Prestart on intent: while New Session is open with one of the person's own
 Machines selected, the app holds one `daemon.sessionCreation.intent.v1` Machine
@@ -8695,10 +8701,10 @@ that work runs during think time. Each Session loads its turn lifecycle after
 attaching to Home, when runtime controls start. The host stays alive while held.
 The hold lasts while the call is open: picking another
 Machine, closing New Session, the app disconnecting, daemon shutdown (the daemon
-work signal) or the daemon process ending closes it. The host then ends by its
-ten-second grace once it has no Session and no hold. A Start arriving as the
-host closes retries admission on the daemon's single replacement host when the
-old host is known to have refused the Add before admission.
+work signal) or the daemon process ending closes it. Releasing the last hold
+makes an empty host eligible for retirement. A Start arriving as the host closes
+retries admission on the daemon's single replacement host when the old host is
+known to have refused the Add before admission.
 
 A fresh Start or CLI create that commits its Session before launch also prestarts
 the same host once headless placement is resolved. Its hold lasts through
@@ -8752,10 +8758,9 @@ longer runs is observed as ended; a broken connection is the host's death
 takes new Sessions.
 
 Startup also discovers host descriptors in the active server directory when there
-are no Session markers or no Session watch was admitted. The daemon opens and
-releases an authenticated host hold. The host starts its idle grace period if
-it has no Sessions or other holds. Current hosts can take this hold without
-preloading the runner.
+are no Session markers or no Session watch was admitted. The replacement daemon
+requests retirement over the authenticated host endpoint. The host only accepts
+if it has no Sessions or holds.
 
 For each admitted watch, re-adoption reads the Session's recorded Archive and
 explicit Stop hold in its Account context. It uses the ordinary exact-runner

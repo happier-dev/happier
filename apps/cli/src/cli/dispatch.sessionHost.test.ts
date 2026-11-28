@@ -35,6 +35,7 @@ describe('session-host CLI dispatch', () => {
       } });
       await expect(session.admitted).resolves.toBe(true);
       await expect(session.ended).resolves.toMatchObject({ exitCode: 0 });
+      process.emit('SIGTERM', 'SIGTERM');
       await expect(settled).resolves.toEqual({ ok: true });
       expect(exit).toHaveBeenCalledWith(0);
     } finally {

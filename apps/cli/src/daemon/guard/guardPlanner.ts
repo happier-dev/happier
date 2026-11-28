@@ -27,6 +27,12 @@ export type GuardTarget = TargetBase & (
 export type GuardCandidate = Readonly<{ kind: GuardTarget['kind']; rung: GuardRung; step: 1 | 2 | 3;
   root: HappierProcessRoot; target: GuardTarget; footprintBytes: number; settledAt: number;
   attribution: MachineGuardActivityEntryV1['attribution'] }>;
+/** The daemon's shared cache has its own stop admission and no user-facing rung. */
+export type GuardSessionHost = Readonly<{ pid: number; stop(signal: AbortSignal): Promise<boolean> }>;
+export type GuardSessionHostCandidate = Readonly<{
+  kind: 'session_host'; root: Pick<HappierProcessRoot, 'pid' | 'start'>;
+  footprintBytes: number; stop: GuardSessionHost['stop'];
+}>;
 export type GuardExclusionReason = SessionEligibilityReason['kind'] | 'identity_changed' | 'ownership_unknown'
   | 'not_happier' | 'footprint_unknown' | 'browser_in_use' | 'connections_unknown' | 'visitors'
   | 'unsupported_target' | 'stop_failed';
@@ -38,6 +44,7 @@ export type GuardLadderPreview = Readonly<{
     workingSessions: number; notHappiersBytes: number; leftAloneSessions: number }>;
 }>;
 export type GuardFacts = Readonly<{ ownership: GuardOwnership; inventory: LiveWorkInventoryV1; targets: readonly GuardTarget[];
+  sessionHost?: GuardSessionHost;
   /** Machine facts, not the requester's stop-eligible subset or summed process RSS. */
   memoryUsage?: Readonly<{ inUseBytes: number; notHappiersBytes: number | null }> }>;
 export type IdleSessionCandidate = Readonly<{
@@ -107,7 +114,7 @@ export function planIdleSessions(input: GuardFacts & Readonly<{ policy: MachineG
 }
 
 /** Read-only ref; any later Action re-admits its own exact target independently. */
-export function guardTargetRef(target: Pick<GuardTarget, 'root'>): string {
+export function guardTargetRef(target: Readonly<{ root: Pick<HappierProcessRoot, 'pid' | 'start'> }>): string {
   return processRef(target.root.pid, target.root.start);
 }
 export function projectGuardLadderV1(ladder: GuardLadderPreview): MachineGuardLadderV1 {
@@ -123,7 +130,7 @@ export function projectGuardLadderV1(ladder: GuardLadderPreview): MachineGuardLa
 /** One ladder supplies both the read preview and the next execution decision. */
 export function planGuard(input: GuardFacts & Readonly<{ policy: MachineGuardPolicyV1['memoryGuard']; now: number;
   failedTargets?: ReadonlySet<string> }>):
-  Readonly<{ candidate?: GuardCandidate; ladder: GuardLadderPreview }> {
+  Readonly<{ candidate?: GuardCandidate; next?: GuardCandidate | GuardSessionHostCandidate; ladder: GuardLadderPreview }> {
   const candidates: GuardCandidate[] = [];
   const excluded: Array<GuardLadderPreview['excluded'][number]> = [];
   const ownership = input.ownership;
@@ -195,7 +202,16 @@ export function planGuard(input: GuardFacts & Readonly<{ policy: MachineGuardPol
     return { rung, enabled, status: !enabled ? 'off' as const : candidate?.rung === rung ? 'next' as const : 'skip' as const,
       freesAboutBytes: enabled ? items.reduce((sum, item) => sum + item.footprintBytes, 0) : 0, candidates: items };
   });
-  return { ...(candidate ? { candidate } : {}), ladder: { steps, excluded, summary: {
+  // Reclaim a measured, idle host before any user resource. Its stop still
+  // requires admission by that same process and a fresh native identity.
+  const host = input.sessionHost;
+  const hostRow = host && input.policy.enabled ? custody.nativeByPid?.get(host.pid) : undefined;
+  const hostBytes = hostRow?.memory?.bytes;
+  const sessionHost: GuardSessionHostCandidate | undefined =
+    host && hostRow && hostBytes !== undefined && Number.isFinite(hostBytes) && hostBytes > 0
+      && !input.failedTargets?.has(guardTargetRef({ root: hostRow }))
+      ? { kind: 'session_host', root: hostRow, footprintBytes: hostBytes, stop: host.stop } : undefined;
+  return { candidate, next: sessionHost ?? candidate, ladder: { steps, excluded, summary: {
     candidatesBytes: steps.reduce((sum, step) => sum + step.freesAboutBytes, 0), inUseBytes: input.memoryUsage?.inUseBytes ?? 0, workingBytes,
     workingSessions, notHappiersBytes: input.memoryUsage?.notHappiersBytes ?? 0, leftAloneSessions,
   } } };

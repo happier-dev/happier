@@ -9,12 +9,12 @@ import type { SpawnFailureLimitsReader } from '@/processes/spawnFailure/classify
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import {
   SESSION_HOST_READY_LINE,
-  SESSION_HOST_IDLE_EXPIRED_LINE,
   addLocalSessionHostSession,
   endLocalSessionHostSession,
   handOverLocalSessionHost,
   holdLocalSessionHost,
   listLocalSessionHostPids,
+  readIdleLocalSessionHost,
   readLocalSessionHostLiveWork,
   removeExitedSessionHostDescriptor,
   stopIdleLocalSessionHost,
@@ -72,6 +72,8 @@ export type DaemonSessionHost = Readonly<{
    * its last Session.
    */
   prestart(signal: AbortSignal): Promise<void>;
+  /** Read the current host through its own admission owner for automatic memory reclaim. */
+  readIdleHost(signal: AbortSignal): Promise<Readonly<{ pid: number; stop(signal: AbortSignal): Promise<boolean> }> | undefined>;
   /** Daemon shutdown retires an idle host. Live Sessions keep their host for reattachment. */
   stopIdleHost(): Promise<void>;
   /**
@@ -137,21 +139,11 @@ function createHostedSessionHandle(host: RunningHost, trackingKey: string, sessi
  */
 function waitForHostReady(child: ChildProcess): Promise<number | null> {
   return new Promise((resolve) => {
-    let pid: number | null = null;
     const ready = new RegExp(`^${SESSION_HOST_READY_LINE} (\\d+)$`);
     if (child.stdout) {
-      // Keep draining throughout the host lifetime. The detached host reports idle expiry
-      // explicitly because process signals can also produce a normal exit code.
       createInterface({ input: child.stdout }).on('line', line => {
-        if (pid === null) {
-          const match = ready.exec(line);
-          if (match) {
-            pid = Number(match[1]);
-            resolve(pid);
-          }
-        } else if (line === SESSION_HOST_IDLE_EXPIRED_LINE) {
-          logger.infoFile('[DAEMON RUN] Session host idle grace expired', { pid });
-        }
+        const match = ready.exec(line);
+        if (match) resolve(Number(match[1]));
       });
     }
     child.once('exit', () => resolve(null));
@@ -160,7 +152,7 @@ function waitForHostReady(child: ChildProcess): Promise<number | null> {
 
 /**
  * The daemon's one session host: at most one host process runs at a time; Sessions are added to it
- * over its owner-only local endpoint. A host that ended (idle after its last Session, or crashed)
+ * over its owner-only local endpoint. A host that exited or was retired
  * is replaced by a new one on the next add.
  */
 export function createDaemonSessionHost(params: Readonly<{
@@ -252,20 +244,29 @@ export function createDaemonSessionHost(params: Readonly<{
     prestart: async (signal) => {
       if (signal.aborted) return;
       const host = await ensureHost();
-      // A host launched here is held (and released at once when the intent already ended), so a
-      // prestarted host is never left without its idle end.
-      if ('type' in host) return;
+      if ('type' in host || signal.aborted) return;
       const hold = holdLocalSessionHost({ hostPid: host.pid });
       const release = () => hold.release();
-      if (signal.aborted) release();
-      else signal.addEventListener('abort', release, { once: true });
+      signal.addEventListener('abort', release, { once: true });
       await hold.closed;
       signal.removeEventListener('abort', release);
     },
-    stopIdleHost: async () => {
-      // An idle host is already ready. Shutdown must not wait for a cold launch.
+    readIdleHost: async (signal) => {
       const host = currentHost?.host;
       if (!host?.isRunning()) return;
+      const stop = await readIdleLocalSessionHost(host.pid, signal);
+      if (!stop || currentHost?.host !== host || !host.isRunning()) return;
+      return { pid: host.pid, stop: async stopSignal => {
+        if (stopSignal.aborted || currentHost?.host !== host || !host.isRunning()) return false;
+        const stopping = await stop(stopSignal);
+        logger.infoFile('[DAEMON RUN] Guard requested idle Session host retirement', { pid: host.pid, stopping });
+        return stopping;
+      } };
+    },
+    stopIdleHost: async () => {
+      // An intent may have launched a host just before daemon shutdown canceled it.
+      const host = await currentHost?.outcome;
+      if (!host || 'type' in host || !host.isRunning()) return;
       if (await stopIdleLocalSessionHost(host.pid)) await host.exited;
     },
     addSession: async (request) => {
@@ -359,21 +360,10 @@ export function createDaemonSessionHost(params: Readonly<{
           });
         }).finally(resolveObserved);
       }
-      const checkHostIdle = async (hostPid: number): Promise<void> => {
-        // Let the host's existing last-hold release decide if it can exit. Only it knows whether
-        // a Session or another hold is still live, even if there is no usable Session marker.
-        const hold = holdLocalSessionHost({ hostPid, preloadRunner: false });
-        try {
-          if (!await hold.held) params.logDebug('[DAEMON RUN] Session host idle check not admitted', { hostPid });
-        } finally {
-          hold.release();
-        }
-        await hold.closed;
-      };
       for (const { host, current, reconciled } of adoptedHosts.values()) {
         void Promise.all(reconciled).then(async (admitted) => {
           if (!admitted.some(Boolean)) {
-            await checkHostIdle(host.pid);
+            await stopIdleLocalSessionHost(host.pid);
             return;
           }
           if (current) return;
@@ -389,7 +379,7 @@ export function createDaemonSessionHost(params: Readonly<{
       }
       // A detached host publishes its own descriptor before any Session can write its marker.
       void listLocalSessionHostPids().then(async (pids) => {
-        await Promise.all(pids.filter(pid => !adoptedHosts.has(pid)).map(checkHostIdle));
+        await Promise.all(pids.filter(pid => !adoptedHosts.has(pid) && pid !== currentHost?.host?.pid).map(stopIdleLocalSessionHost));
       }).catch((error: unknown) => {
         logger.warn('[DAEMON RUN] Session host descriptor reconciliation failed', {
           error: error instanceof Error ? error.message : String(error),
@@ -416,6 +406,7 @@ export function createSessionHostPlacement(params: Readonly<{
   /** New Session intent: prestart the host where Sessions are hosted (see `DaemonSessionHost.prestart`). */
   prestart: (signal: AbortSignal) => Promise<void>;
   adoptReattachedSessions: DaemonSessionHost['adoptReattachedSessions'];
+  readIdleHost: DaemonSessionHost['readIdleHost'];
   stopIdleHost: DaemonSessionHost['stopIdleHost'];
 }> {
   let host: DaemonSessionHost | null = null;
@@ -426,6 +417,7 @@ export function createSessionHostPlacement(params: Readonly<{
     place,
     prestart: async (signal) => { await place()?.prestart(signal); },
     adoptReattachedSessions: (input) => place()?.adoptReattachedSessions(input) ?? 0,
+    readIdleHost: async signal => await host?.readIdleHost(signal),
     stopIdleHost: async () => { await host?.stopIdleHost(); },
   };
 }

@@ -374,7 +374,7 @@ describe('session host launch', () => {
         expect(harness.hostedEnvironments).toHaveLength(1);
         harness.releaseAll();
         await expect(added.session.ended).resolves.toMatchObject({ exitCode: 0, hostLost: false });
-        await harness.hosts[0]!.host.whenEnded;
+        expect(harness.hosts[0]!.exit).not.toHaveBeenCalled();
       }
     } finally {
       intent.abort();
@@ -438,7 +438,6 @@ describe('session host launch', () => {
     // Facts only (exact shape above): no bearer or Settings read key crosses the host channel.
     await launched;
     harness.releaseAll();
-    await harness.hosts.at(-1)!.host.whenEnded;
     await issued.cleanupBootstrapFile();
   });
   it('launches the host with the daemon\'s Home and server identity, even when the daemon environment lacks them', { timeout: 120_000 }, async () => {
@@ -688,14 +687,13 @@ describe.skipIf(process.platform === 'win32')('daemon session host placement', (
       expect(harness.tracked.has(c.record.trackingKey)).toBe(false);
       expect(harness.hosts[0]!.host.watchSession(b.record.trackingKey)).not.toBeNull();
       expect(harness.hosts[0]!.exit).not.toHaveBeenCalled();
-      // The last Session may also end the host, as in Account D. Its Stop still
-      // consumes that Session's end report instead of waiting for a process kill.
+      // Stop consumes the last Session's end report while the host stays available.
       await expect(stop(b.record.happySessionId!)).resolves.toEqual({ status: 'stopped' });
       expect(tryDecryptSessionOwnerMetadataView({ credentials, accountEncryptionMode: accountMode,
         rawSession: rawSessions.get(b.record.happySessionId!)! })).toMatchObject({ lifecycleState: 'stopped',
           terminal: { mode: 'plain', controlServiceabilityV1: { retired: true } } });
       expect(harness.tracked.size).toBe(0);
-      await harness.hosts[0]!.host.whenEnded;
+      expect(harness.hosts[0]!.exit).not.toHaveBeenCalled();
     } finally {
       harness.releaseAll();
       await Promise.all([a.record.hostedSession!.observed, b.record.hostedSession!.observed, c.record.hostedSession!.observed]);
@@ -902,7 +900,7 @@ describe.skipIf(process.platform === 'win32')('daemon session host placement', (
       .toEqual([ra!.trackingKey, rb!.trackingKey, rc!.trackingKey, d.record.trackingKey].sort());
   });
 
-  it('launches no host after Start when the preceding Session ended during the grace window', { timeout: 120_000 }, async () => {
+  it('reuses the idle host for Start and retires it on daemon stop', { timeout: 120_000 }, async () => {
     const harness = await createHarness();
     const add = (trackingKey: string) => harness.sessionHost.addSession({
       trackingKey, argv: ['codex'], env: {}, cwd: testHome,
@@ -931,6 +929,49 @@ describe.skipIf(process.platform === 'win32')('daemon session host placement', (
     expect(census.hostLaunches - launchesAtStart).toBe(0);
   });
 
+  it('rechecks Guard retirement against an active New Session hold and a newly admitted Session', { timeout: 120_000 }, async () => {
+    const harness = await createHarness();
+    const intent = new AbortController();
+    const preloadsBefore = census.runnerPreloads;
+    const held = harness.sessionHost.prestart(intent.signal);
+    const signal = new AbortController().signal;
+    try {
+      await vi.waitFor(() => expect(census.runnerPreloads - preloadsBefore).toBe(1), { timeout: 60_000 });
+      expect(await harness.sessionHost.readIdleHost(signal)).toBeUndefined();
+      intent.abort();
+      await held;
+      const idle = await vi.waitFor(async () => {
+        const idle = await harness.sessionHost.readIdleHost(signal);
+        expect(idle).toBeDefined();
+        return idle!;
+      }, { timeout: 60_000 });
+
+      const added = await harness.sessionHost.addSession({ trackingKey: 'guard-protected',
+        argv: ['codex'], env: {}, cwd: testHome });
+      if (added.status !== 'added') throw new Error('Expected a running hosted Session');
+      expect(added.session.hostPid).toBe(idle.pid);
+      expect(await harness.sessionHost.readIdleHost(signal)).toBeUndefined();
+      expect(await idle.stop(signal)).toBe(false);
+      expect(harness.hosts[0]!.host.watchSession('guard-protected')).not.toBeNull();
+      expect(harness.hosts[0]!.exit).not.toHaveBeenCalled();
+
+      harness.releaseAll();
+      await added.session.ended;
+      const reclaim = await vi.waitFor(async () => {
+        const reclaim = await harness.sessionHost.readIdleHost(signal);
+        expect(reclaim).toBeDefined();
+        return reclaim!;
+      }, { timeout: 60_000 });
+      expect(await reclaim.stop(signal)).toBe(true);
+      await harness.hosts[0]!.host.whenEnded;
+      expect(harness.hosts[0]!.exit).toHaveBeenCalledExactlyOnceWith(0);
+    } finally {
+      intent.abort();
+      await held;
+      harness.releaseAll();
+    }
+  });
+
   it('prestarts ONE host on New Session intents, preloads the runner once, and the next Session joins that host', { timeout: 120_000 }, async () => {
     const launchesBefore = census.hostLaunches;
     const preloadsBefore = census.runnerPreloads;
@@ -957,10 +998,9 @@ describe.skipIf(process.platform === 'win32')('daemon session host placement', (
     await Promise.all(held);
     const host = harness.hosts.at(-1)!;
     expect(host.exit).not.toHaveBeenCalled();
-    // Its last Session ends: the host's ordinary idle end.
     harness.releaseAll();
-    await host.host.whenEnded;
-    expect(host.exit).toHaveBeenCalledWith(0);
+    await a.record.hostedSession!.observed;
+    expect(host.exit).not.toHaveBeenCalled();
   });
 
   it('ends an empty host on daemon replacement when only its host descriptor was published', { timeout: 120_000 }, async () => {
@@ -985,7 +1025,7 @@ describe.skipIf(process.platform === 'win32')('daemon session host placement', (
     expect(census.runnerPreloads).toBe(preloadsBeforeReplacement);
   });
 
-  it('lets a prestarted host end when the intent ends with no Session, and starts a new host for the next Session', { timeout: 120_000 }, async () => {
+  it('reuses the prestarted host after the intent ends without creating a Session', { timeout: 120_000 }, async () => {
     const launchesBefore = census.hostLaunches;
     const harness = await createHarness();
     const intent = new AbortController();
@@ -994,17 +1034,16 @@ describe.skipIf(process.platform === 'win32')('daemon session host placement', (
     const prestarted = harness.hosts[0]!;
     intent.abort();
     await held;
-    await prestarted.host.whenEnded;
-    expect(prestarted.exit).toHaveBeenCalledWith(0);
+    expect(prestarted.exit).not.toHaveBeenCalled();
 
     const b = await harness.spawnSession('after-abandoned-intent');
     expect(b.result).toMatchObject({ type: 'success', sessionId: 'after-abandoned-intent' });
-    expect(census.hostLaunches - launchesBefore).toBe(2);
+    expect(census.hostLaunches - launchesBefore).toBe(1);
     harness.releaseAll();
     await b.record.hostedSession!.observed;
   });
 
-  it('ends an idle prestarted host when the intent disconnects during daemon admission', { timeout: 120_000 }, async () => {
+  it('keeps the host idle after the prestart intent disconnects during daemon admission', { timeout: 120_000 }, async () => {
     let admissionStarted!: () => void;
     const started = new Promise<void>(resolve => { admissionStarted = resolve; });
     let finishAdmission!: () => void;
@@ -1025,11 +1064,12 @@ describe.skipIf(process.platform === 'win32')('daemon session host placement', (
     await serverClosed;
     expect(serverSocket.destroyed).toBe(true);
     finishAdmission();
-    await harness.hosts[0]!.host.whenEnded;
-    expect(harness.hosts[0]!.exit).toHaveBeenCalledWith(0);
+    const signal = new AbortController().signal;
+    await vi.waitFor(async () => expect(await harness.sessionHost.readIdleHost(signal)).toBeDefined(), { timeout: 60_000 });
+    expect(harness.hosts[0]!.exit).not.toHaveBeenCalled();
   });
 
-  it('ends an idle prestarted host when its daemon goes away (the hold connection breaks)', { timeout: 120_000 }, async () => {
+  it('releases the New Session hold if its connection breaks', { timeout: 120_000 }, async () => {
     const harness = await createHarness();
     const preloadsBeforeIntent = census.runnerPreloads;
     const intent = new AbortController();
@@ -1037,8 +1077,9 @@ describe.skipIf(process.platform === 'win32')('daemon session host placement', (
     // A connected socket can still be awaiting admission. Preload starts inside the accepted hold.
     await vi.waitFor(() => expect(census.runnerPreloads).toBe(preloadsBeforeIntent + 1), { timeout: 60_000 });
     for (const socket of hostSockets) socket.destroy();
-    await harness.hosts[0]!.host.whenEnded;
-    expect(harness.hosts[0]!.exit).toHaveBeenCalledWith(0);
+    const signal = new AbortController().signal;
+    await vi.waitFor(async () => expect(await harness.sessionHost.readIdleHost(signal)).toBeDefined(), { timeout: 60_000 });
+    expect(harness.hosts[0]!.exit).not.toHaveBeenCalled();
     intent.abort();
   });
 });

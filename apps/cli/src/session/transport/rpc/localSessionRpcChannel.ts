@@ -268,7 +268,7 @@ function admitLocalPacket(current: Ingress, body: unknown): Readonly<{ registere
 async function handleIngressRequest(current: Ingress, request: IncomingMessage, response: ServerResponse): Promise<void> {
   if (request.method === 'POST' && (request.url === HOST_ADD_PATH || request.url === HOST_END_PATH || request.url === HOST_WATCH_PATH
     || request.url === HOST_HANDOVER_PATH || request.url === HOST_HOLD_PATH || request.url === HOST_LIVE_WORK_PATH
-    || request.url === HOST_STOP_IF_IDLE_PATH)) {
+    || request.url === HOST_IDLE_PATH || request.url === HOST_STOP_IF_IDLE_PATH)) {
     await handleSessionHostRequest(current, request, response);
     return;
   }
@@ -654,6 +654,7 @@ export function resolveLocalSessionRpcRoute(input: Readonly<{
 
 const HOST_ADD_PATH = '/v1/session-host/add';
 const HOST_END_PATH = '/v1/session-host/end';
+const HOST_IDLE_PATH = '/v1/session-host/idle';
 const HOST_STOP_IF_IDLE_PATH = '/v1/session-host/stop-if-idle';
 /** A restarted daemon re-observes a running Session's end (the add request's body, re-attached). */
 const HOST_WATCH_PATH = '/v1/session-host/watch';
@@ -672,7 +673,6 @@ const SESSION_NOT_HOSTED = 'session_not_hosted';
 export const SESSION_HOST_HANDOVER_EXIT_CODE = 75;
 /** First stdout line of a ready session host; its daemon waits for it before adding Sessions. */
 export const SESSION_HOST_READY_LINE = 'happier-session-host-ready';
-export const SESSION_HOST_IDLE_EXPIRED_LINE = 'happier-session-host-idle-expired';
 
 type LocalSessionHostDescriptorV1 = Readonly<{
   v: typeof DESCRIPTOR_VERSION;
@@ -758,7 +758,9 @@ export type LocalSessionHostAdmission = Readonly<{
    * `SESSION_HOST_HANDOVER_EXIT_CODE`; false when the host is already ending.
    */
   handOver(): boolean;
-  /** Stop a host in its idle grace period without affecting Sessions that outlive daemon stop. */
+  /** Only the host sees every admitted Session and in-flight hold. */
+  isIdle(): boolean;
+  /** Retire only if the host still has no Session or hold. */
   stopIfIdle(): boolean;
   /**
    * Keep the host alive until the returned release is called. A New Session intent also preloads
@@ -842,6 +844,10 @@ async function handleSessionHostRequest(current: Ingress, request: IncomingMessa
     const reason = SessionLifecycleStateReasonSchema.safeParse((body as { lifecycleStateReason?: unknown } | null)?.lifecycleStateReason);
     reply(response, 200, typeof trackingKey === 'string'
       ? host.endSession(trackingKey, reason.success ? reason.data : undefined) : { status: 'not_hosted' });
+    return;
+  }
+  if (request.url === HOST_IDLE_PATH) {
+    reply(response, 200, { idle: host.isIdle() });
     return;
   }
   if (request.url === HOST_STOP_IF_IDLE_PATH) {
@@ -1049,8 +1055,7 @@ function openLocalSessionHostSession(input: Readonly<{ hostPid: number; path: st
 
 /**
  * Hold the session host `hostPid`. `held` is true once the host admitted the hold; it lasts until
- * `release()` (or this process ends) closes the connection. Pass `preloadRunner: false` for idle
- * reconciliation. `closed` settles when the hold connection is gone.
+ * `release()` (or this process ends) closes the connection. `closed` settles when the connection is gone.
  */
 export function holdLocalSessionHost(input: Readonly<{ hostPid: number; preloadRunner?: false }>): Readonly<{
   held: Promise<boolean>;
@@ -1094,6 +1099,17 @@ export async function stopIdleLocalSessionHost(hostPid: number): Promise<boolean
   return (await callLocalSessionHost(hostPid, HOST_STOP_IF_IDLE_PATH, {}))?.stopping === true;
 }
 
+/**
+ * Read idleness through the host itself and pin any later retirement to that endpoint.
+ * The stop request rechecks Sessions and holds after peer admission.
+ */
+export async function readIdleLocalSessionHost(hostPid: number, signal: AbortSignal):
+    Promise<((signal: AbortSignal) => Promise<boolean>) | undefined> {
+  const descriptor = readHostDescriptor(hostPid);
+  if (!descriptor || (await callSessionHostEndpoint(descriptor.endpoint.path, HOST_IDLE_PATH, {}, signal))?.idle !== true) return;
+  return async stopSignal => (await callSessionHostEndpoint(descriptor.endpoint.path, HOST_STOP_IF_IDLE_PATH, {}, stopSignal))?.stopping === true;
+}
+
 /** One read of a hosted Session's current live work (unparsed); null when the host has none or is unreachable. */
 export async function readLocalSessionHostLiveWork(input: Readonly<{ hostPid: number; trackingKey: string }>): Promise<unknown> {
   return (await callLocalSessionHost(input.hostPid, HOST_LIVE_WORK_PATH, { trackingKey: input.trackingKey }))?.liveWork ?? null;
@@ -1111,12 +1127,16 @@ export async function handOverLocalSessionHost(input: Readonly<{ hostPid: number
 /** One short request on the host endpoint; null when the host is unreachable or refused it. */
 async function callLocalSessionHost(hostPid: number, path: string, body: unknown): Promise<Record<string, unknown> | null> {
   const descriptor = readHostDescriptor(hostPid);
-  if (!descriptor) return null;
+  return descriptor ? await callSessionHostEndpoint(descriptor.endpoint.path, path, body) : null;
+}
+
+async function callSessionHostEndpoint(socketPath: string, path: string, body: unknown, signal?: AbortSignal): Promise<Record<string, unknown> | null> {
+  if (signal?.aborted) return null;
   const text = JSON.stringify(body);
   return await new Promise<Record<string, unknown> | null>(resolve => {
     const outgoing = httpRequest({
-      socketPath: descriptor.endpoint.path, path, method: 'POST',
-      agent: process.platform === 'win32' ? createLocalSessionRpcAgent(descriptor.endpoint.path, 'win32', false) : false,
+      socketPath, path, signal, method: 'POST',
+      agent: process.platform === 'win32' ? createLocalSessionRpcAgent(socketPath, 'win32', false) : false,
       headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(text) },
     }, incoming => {
       readBody(incoming).then(raw => {
