@@ -234,7 +234,8 @@ The native Pi bridge confirms when it invokes the stock Pi submission API. Pi
 can still transform, consume or reject the input during preparation. Happier
 projects the actual user turn from Pi's events. An error after confirmed handoff
 is visible in the terminal. When the bridge reply is lost, the original Pending
-item follows the existing uncertain-delivery path.
+item follows the existing uncertain-delivery path. The existing turn lifecycle
+publishes readiness after the Pi transcript is committed and the turn settles.
 
 The exact settlement socket event `pending-delivery-accepted-v1` also accepts
 `{ v: 2, sessionId, localId, outcome: 'handed_off' }`. The current authenticated

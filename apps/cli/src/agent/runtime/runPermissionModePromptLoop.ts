@@ -743,7 +743,7 @@ export async function runPermissionModePromptLoop(opts: {
       // that outlives command callback completion. Setup/exit paths have no runtime flush.
       if (!providerOwnsPromptTurn && (!didBeginRuntimeTurn || opts.shouldExit())) opts.setThinking(false);
       opts.keepAlive();
-      if (shouldSendReady && !opts.shouldExit()) {
+      if (shouldSendReady && !providerOwnsPromptTurn && !opts.shouldExit()) {
         opts.sendReady(readyTurnContext);
       }
     }

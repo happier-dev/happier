@@ -48,6 +48,7 @@ export function createPiAcpRuntime(params: {
    * instead of spawning the headless RPC child.
    */
   sharedTerminal?: PiSharedTerminalHost;
+  onProviderTurnCompleted?: Parameters<typeof createCatalogProviderAcpRuntime>[0]['onProviderTurnCompleted'];
   continueRecentSession?: boolean;
 }) {
   const sharedTerminal = params.sharedTerminal ?? null;
@@ -95,7 +96,7 @@ export function createPiAcpRuntime(params: {
     resolveExpectedVendorSessionIdForResume: resolveExpectedPiSessionIdForResume,
     onThinkingChange: params.onThinkingChange,
     keepAliveOwner: 'host',
-    ...(sharedTerminal ? { promptTurnOwner: 'provider' } : {}),
+    ...(sharedTerminal ? { promptTurnOwner: 'provider', onProviderTurnCompleted: params.onProviderTurnCompleted } : {}),
     getSessionOpenAbortSignal: params.getSessionOpenAbortSignal,
     memoryRecallGuidance: {
       enabled: params.memoryRecallGuidanceEnabled === true,

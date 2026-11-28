@@ -70,7 +70,7 @@ function createPiRuntime(opts: PiRunOptions, params: PiRuntimeParams, sharedTerm
     credentials: opts.credentials,
     accountSettings: opts.accountSettingsContext?.settings ?? null,
     continueRecentSession: opts.continueRecentSession,
-    ...(sharedTerminal ? { sharedTerminal } : {}),
+    ...(sharedTerminal ? { sharedTerminal, onProviderTurnCompleted: params.onProviderTurnCompleted } : {}),
   });
 }
 

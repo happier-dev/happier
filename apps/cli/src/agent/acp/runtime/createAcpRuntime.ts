@@ -483,6 +483,7 @@ export function createAcpRuntime(params: {
   /** Hosts that publish presence from onThinkingChange own both its mode and delivery. */
   keepAliveOwner?: 'host' | 'runtime';
   promptTurnOwner?: ProviderPromptTurnOwner;
+  onProviderTurnCompleted?: (result: ProviderTurnCompletionResult) => void;
   ensureBackend: () => Promise<AcpRuntimeBackend>;
   /** Provider opt-in for binding backend session open to the enclosing runner cancellation. */
   getSessionOpenAbortSignal?: () => AbortSignal | undefined;
@@ -1495,6 +1496,15 @@ export function createAcpRuntime(params: {
         clearToolCallCache();
         reportTurnMediaOverflow(turn);
         params.turnAssistantPreviewTracker?.reset();
+      }
+
+      if (
+        params.promptTurnOwner === 'provider'
+        && terminalTurn.providerTurnId
+        && !turn.turnAborted
+        && (!turn.pendingTurnOutcome || turn.pendingTurnOutcome.kind === 'completed')
+      ) {
+        params.onProviderTurnCompleted?.({ assistantText: turn.modelOutputState.turnText || null });
       }
     });
     return turn.settlement;

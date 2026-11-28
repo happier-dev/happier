@@ -158,6 +158,7 @@ export type StandardAcpProviderConfig = {
     pendingQueueDrainMaxPopPerWake?: number;
     providerInputConsumer: SessionProviderInputConsumer<unknown, unknown>;
     turnAssistantPreviewTracker: TurnAssistantPreviewTracker;
+    onProviderTurnCompleted?: (result: ProviderTurnCompletionResult) => void;
     /**
      * Ends this runner through its canonical termination path (cleanup, session close, exit
      * code). For providers whose own process owns the user's terminal and therefore defines
@@ -610,6 +611,9 @@ export async function runStandardAcpProvider(
     pendingQueueDrainMaxPopPerWake,
     providerInputConsumer: providerInputConsumer as SessionProviderInputConsumer<unknown, unknown>,
     turnAssistantPreviewTracker,
+    onProviderTurnCompleted: (turnResult) => {
+      if (!shouldExit) sendReady({ turnToken: null, startSeqExclusive: null, turnResult });
+    },
     requestRunnerTermination: (event) => terminationHandlers?.requestTermination(event),
   });
   runtime.drainPendingAfterStartOrLoad = async () => {
