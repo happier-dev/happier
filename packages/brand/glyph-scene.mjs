@@ -1,4 +1,4 @@
-import { PLANET_PALETTES, PLANET_SAMPLER, PLANET_SCENE_RENDERER, planetBreathAt, shadePlanetDot } from './planet.mjs';
+import { PLANET_BREATH_SECONDS, PLANET_PALETTES, PLANET_SAMPLER, PLANET_SCENE_RENDERER, planetBreathAt, shadePlanetDot } from './planet.mjs';
 import { orderedFade, rippleRingGeometry } from './atmosphere.mjs';
 import { createGlyphFieldSampler, glyphDotRadii } from './glyph-field.mjs';
 export { fieldDotLayer, glyphFieldDurationS, glyphDotRadii, glyphFieldPhase, glyphFieldTrailCell, glyphFieldTrailLifeS, glyphFieldRippleLifeS } from './glyph-field.mjs';
@@ -38,11 +38,17 @@ const loadingPlanetHalo = { top: 1, right: 1, bottom: 1, left: 1 };
 const loadingPlanetLight = (([x, y, z]) => { const n = Math.hypot(x, y, z); return [x / n, y / n, z / n]; })([0.3, -0.3, 1]);
 /** How long the planet takes to decode in behind the front when nothing was on screen before it. */
 export const loadingPlanetDecodeS = 0.8;
+/**
+ * The Loading planet's breath: twice the brand's calm cycle and a little deeper, so it reads as breathing within the
+ * two or three seconds most loads last. The HTML shell's CSS breath uses the same period and scale.
+ */
+export const loadingPlanetBreathS = PLANET_BREATH_SECONDS / 2;
+export const loadingPlanetBreathScale = 0.06;
 const gatheringDigits = 22;
 const gatheringPeriodS = 3.2;
 
 /**
- * The Loading planet: a whole planet that breathes on the brand's calm cycle while digits drift in from around
+ * The Loading planet: a whole planet that breathes (`loadingPlanetBreathS`, in step with the brand cycle) while digits drift in from around
  * it and gather into its limb, one after another, for as long as loading lasts. `seconds` is the surface's own
  * clock. Its first moment is the Still frame (the launch poster, reduced motion): the whole planet at rest, no
  * digit in flight. A planet that was not on screen before passes `decodeFromS`, the clock time at which it
@@ -54,8 +60,8 @@ export function createLoadingPlanetScene() {
     return (seconds, origin = loadingPlanetOrigin, digitOpacity = 1, decodeFromS) => {
         const start = decodeFromS ?? 0;
         const since = Math.max(0, seconds - start);
-        const breath = planetBreathAt(since);
-        const R = origin.R * (1 + 0.035 * breath);
+        const breath = planetBreathAt(since * PLANET_BREATH_SECONDS / loadingPlanetBreathS);
+        const R = origin.R * (1 + loadingPlanetBreathScale * breath);
         for (let index = 0; index < gatheringDigits; index++) {
             const at = index * 8;
             const seed = cellHash(index, 32);

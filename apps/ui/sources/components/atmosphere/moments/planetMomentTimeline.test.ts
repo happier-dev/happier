@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import {
-  PLANET_BREATH_SECONDS,
-  PLANET_MOMENT_TIMINGS,
-} from '@happier-dev/brand/planet';
-import { createLoadingPlanetScene, glyphFrame, loadingPlanetDecodeS, planetGlyphLayer } from '@happier-dev/brand/glyph-scene';
+import { PLANET_MOMENT_TIMINGS } from '@happier-dev/brand/planet';
+import { createLoadingPlanetScene, glyphFrame, loadingPlanetBreathS, loadingPlanetDecodeS, planetGlyphLayer } from '@happier-dev/brand/glyph-scene';
 import { horizonPlanetGeometry } from '@happier-dev/brand/planet-placement';
 import {
   loadingPlanetLayers,
@@ -61,7 +58,7 @@ describe('Loading planet timeline', () => {
       origin, null);
     const planetAt = (t: number) => layersAt(t).find(layer => layer.kind === 'planet');
     const first = planetAt(L4.GRACE);
-    const peak = planetAt(L4.GRACE + PLANET_BREATH_SECONDS / 2);
+    const peak = planetAt(L4.GRACE + loadingPlanetBreathS / 2);
     expect(first?.intensity).toBe('full');
     expect(first?.assemble).toBeDefined();
     expect(layersAt(L4.GRACE + loadingPlanetDecodeS / 2).some(layer => layer.kind === 'front')).toBe(true);

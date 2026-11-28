@@ -130,13 +130,16 @@ test('the Loading planet decodes in once, then stays whole while digits keep gat
     assert.ok(near > 20 && far > 20, `digits travel from outside into the limb (${far} far, ${near} near)`);
 });
 
-test('the Loading planet breathes on the brand cycle', async () => {
-    const { createLoadingPlanetScene } = await import('./glyph-scene.mjs');
+test('the Loading planet breathes visibly within a short load, in step with the brand cycle', async () => {
+    const { createLoadingPlanetScene, loadingPlanetBreathS } = await import('./glyph-scene.mjs');
     const { PLANET_BREATH_SECONDS } = await import('./planet.mjs');
     const scene = createLoadingPlanetScene();
     const radius = (t) => scene(t)[0].geometry.R;
-    assert.ok(radius(PLANET_BREATH_SECONDS / 2) > radius(0) * 1.03);
-    assert.equal(radius(PLANET_BREATH_SECONDS), radius(0));
+    // Most loads last two or three seconds: the planet must already have grown noticeably by then.
+    assert.ok(radius(1.2) > radius(0) * 1.025, `grown ${(radius(1.2) / radius(0) - 1) * 100}% at 1.2 s`);
+    assert.ok(radius(loadingPlanetBreathS / 2) > radius(0) * 1.05);
+    assert.ok(Math.abs(radius(loadingPlanetBreathS) - radius(0)) < 1e-9);
+    assert.equal(PLANET_BREATH_SECONDS % loadingPlanetBreathS, 0);
 });
 
 test('travellers land at the specified endpoint and fronts sample deterministically', () => {

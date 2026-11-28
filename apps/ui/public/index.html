@@ -35,23 +35,35 @@
     <style>
       html.launch-shell body { margin: 0; }
       /* The launch planet's Still frame: on #root from the first byte until the app's launch curtain has gone,
-         and inside that curtain until its live planet has painted. One image, one rect. */
-      html.launch-planet #root {
-        background: #f5f5f5 url("/launch-planet-light.png") center / 320px no-repeat;
+         and inside that curtain until its live planet has painted. One image, one rect. It breathes on the
+         Loading planet's own cycle (loadingPlanetBreathS and loadingPlanetBreathScale in the brand's glyph scene: a
+         sine over 4.8 s, 6% wider at the top), and the live planet picks up the breath's phase from this animation.
+         Reduced motion keeps it still. */
+      @keyframes launch-planet-breath {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.06); }
       }
+      html.launch-planet #root { background-color: #f5f5f5; }
+      html.launch-planet #root::before,
       .launch-planet-still {
-        position: absolute;
+        content: "";
         inset: 0;
+        pointer-events: none;
         background: url("/launch-planet-light.png") center / 320px no-repeat;
+        animation: launch-planet-breath 4.8s cubic-bezier(0.37, 0, 0.63, 1) infinite;
       }
+      html.launch-planet #root::before { position: fixed; }
+      .launch-planet-still { position: absolute; }
       .launch-planet-still[data-theme="dark"] {
         background-image: url("/launch-planet-dark.png");
       }
       @media (prefers-color-scheme: dark) {
-        html.launch-planet #root {
-          background-color: #141212;
-          background-image: url("/launch-planet-dark.png");
-        }
+        html.launch-planet #root { background-color: #141212; }
+        html.launch-planet #root::before { background-image: url("/launch-planet-dark.png"); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        html.launch-planet #root::before,
+        .launch-planet-still { animation: none; }
       }
     </style>
     <script>

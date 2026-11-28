@@ -115,6 +115,9 @@ export function travellerGlyphLayer(options: TravellerGlyphOptions): TravellerGl
 export const loadingPlanetSize: number;
 /** How long the Loading planet decodes in when nothing was on screen before it. */
 export const loadingPlanetDecodeS: number;
+/** The Loading planet's breath period and depth (shared with the HTML shell's CSS breath). */
+export const loadingPlanetBreathS: number;
+export const loadingPlanetBreathScale: number;
 /**
  * The Loading planet on its surface's clock: a whole planet breathing while digits gather into it. The first
  * moment is the Still frame (whole planet, no digit in flight); a planet that was not on screen passes
