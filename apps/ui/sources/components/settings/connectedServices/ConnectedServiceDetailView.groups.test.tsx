@@ -218,11 +218,14 @@ vi.mock('@/sync/store/hooks', async () => {
 });
 
 vi.mock('@/sync/sync', () => ({
-    sync: syncSpies,
+    sync: {
+        refreshProfile: syncSpies.refreshProfile,
+        applySettings: syncSpies.applySettings,
+    },
 }));
 
-vi.mock('@/sync/runtime/getSyncSingleton', () => ({
-    getSyncSingleton: () => syncSpies,
+vi.mock('@/sync/store/settingsWriters', () => ({
+    useApplySettings: () => syncSpies.applySettings,
 }));
 
 vi.mock('@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount', () => ({
@@ -501,7 +504,6 @@ describe('ConnectedServiceDetailView pools segment', () => {
                 connectedServicesDefaultProfileByServiceId: { 'claude-subscription': 'leeroy' },
                 connectedServicesProfileLabelByKey: { 'openai-codex/backup': 'Backup account' },
             }),
-            { source: 'ui' },
         );
         expect(authGroupApiSpies.listConnectedServiceAuthGroupsV3.mock.calls.length).toBeGreaterThan(
             listCallsBeforeDisconnect,
