@@ -73,6 +73,43 @@ it('keeps the receipt’s pending log read visible when pushed presence is onlin
   }
 });
 
+it('holds only the newest lines of the deploy log on the Environment card band (lab siaR3 Q8)', async () => {
+  const { DeploymentLogBand } = await import('./DeploymentStepLogs');
+  const serverId = await homes.addHome({ name: 'Band logs', serverUrl: 'https://deploy-band-logs.test',
+    accountId: 'alice', serverIdentityId: `srv_${'f'.repeat(32)}`, currentAccount: true });
+  const account = await captureLazyActionAccountContext(serverId);
+  const machine = createMachineFixture({ id: 'band-machine', installationId: 'band-installation',
+    active: true, activeAt: Date.now(), storageMode: 'plain' });
+  const receipt = createDeploymentReceiptDetailV1();
+  receipt.content.machines = [machine.id];
+  receipt.content.steps = [];
+  const reference = { kind: 'build' as const, environmentId: receipt.deployment.environmentId, deploymentId: receipt.deployment.id,
+    targetLinkId: receipt.deployment.targetLinkId, machineId: machine.id, installationId: 'band-installation' };
+  const facts = projectDeploymentReceiptFactsV1(receipt);
+  const text = ['line one', 'line two', 'line three', 'line four', 'line five'].join('\n');
+  const readLogs = vi.fn<NonNullable<React.ComponentProps<typeof DeploymentLogBand>['readLogs']>>(async input => ({
+    ...input, ok: true, kind: 'build', logs: { kind: 'page', page: {
+      sourceRevision: 'page-1', text, truncated: false, nextCursor: null,
+    } } }));
+  let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+  try {
+    await publishMachineInventoryForTest(account.accountLifetime.scope, [machine]);
+    screen = await renderScreen(<DeploymentLogBand testID="band" serverId={serverId} steps={[]} running={false}
+      facts={{ ...facts, placement: 'machine', logs: [{ scope: 'operation', reference, excerpt: null }] }}
+      readLogs={readLogs} lines={3} active />);
+    await vi.waitFor(() => expect(screen!.findByTestId('band.log.lines')).not.toBeNull());
+    // The band's gutter numbers say which lines it holds: the newest three, nothing older.
+    const numbers = new Set(screen.findByTestId('band.log.lines')!.findAll(node => typeof node.props?.children === 'string')
+      .map(node => node.props.children as string));
+    expect([...numbers].sort()).toEqual(['3', '4', '5']);
+    expect(readLogs).toHaveBeenCalledTimes(1);
+  } finally {
+    await screen?.unmount();
+    account.dispose();
+    await homes.reset();
+  }
+});
+
 describe('Deployment step logs on a platform receipt (TYPES-ODEPLOY TS18047)', () => {
   it.each([false, true])('keeps the mounted receipt readable when its Machine-less platform log arrives and disappears (single log: %s)', async single => {
     const receipt: DeploymentReceiptDetailV1 = createDeploymentReceiptDetailV1();

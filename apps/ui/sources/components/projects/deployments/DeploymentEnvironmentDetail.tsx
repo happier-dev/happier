@@ -7,7 +7,7 @@ import { selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments
 import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
 import { isSameDeploymentName } from './DeploymentEnvironmentCollection';
 import { useProjectSource } from '@/components/projects/sources/useProjectSources';
-import { View } from 'react-native';
+import { View, type StyleProp, type ViewStyle } from 'react-native';
 import { REVEAL_DELAY_MS, useSettingReveal } from '@/components/settings/shell/SettingRow';
 import { buildServiceCheckHref, DEPLOYMENT_DATABASE_CATALOG_FILTER, ENVIRONMENT_AUTOMATIONS_DESTINATION } from './deploymentNavigation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -131,7 +131,7 @@ import { DeploymentDomainsPanel, type DeploymentDomainEditing } from './Deployme
 import { privateServiceExportReachLabel } from './DeploymentPrivateServiceExports';
 import { projectDeploymentConnections, type DeploymentConnection } from './deploymentConnections';
 import { DeploymentPermissionsPanel } from './DeploymentPermissionsPanel';
-import { DeploymentServingReceipt } from './DeploymentServingReceipt';
+import { DeploymentServingReceipt, type DeploymentCardRun } from './DeploymentServingReceipt';
 import { DeploymentStepStrip } from './DeploymentStepStrip';
 import { DeploymentActivityTimeline } from './DeploymentActivityTimeline';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
@@ -192,6 +192,7 @@ import type { MachineServiceRowV1 } from '@happier-dev/protocol';
 import { DeploymentAdminLogin } from './DeploymentAdminLogin';
 import type { EnvironmentCompanionId } from '@/components/appShell/rightSidebar/detailNavigationItems';
 import { EnvironmentLogsCompanion } from './EnvironmentLogsCompanion';
+import { DeploymentReceiptLogBand } from './DeploymentStepLogs';
 import type { DeploymentReadLogs } from './useDeploymentStepLog';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { randomUUID } from '@/platform/randomUUID';
@@ -207,6 +208,9 @@ import { pinProjectService } from '@/sync/ops/actions/projectWorkspaceActions';
 type EnvironmentTab = DeploymentEnvironmentTabV1;
 const noEnvironmentName = () => null;
 const RECENT_COUNT = 5;
+/** The newest log lines the deploy card's band holds (lab siaR3 Q8). */
+const RUN_LOG_LINES = 6;
+const NO_RUN_STEPS: readonly DeploymentStepV1[] = [];
 /** The Overview's Deploy opens no receipt by itself; its banner's Open receipt does (R17-D7). */
 const STAY_ON_OVERVIEW = () => {};
 const OVERVIEW: DeploymentEnvironmentDestinationV1 = Object.freeze({
@@ -1023,6 +1027,48 @@ export const DeploymentEnvironmentDetail = React.memo(
           run: () => domainActions.verifyDomain({ environmentId, domainId: liveDomain.id,
             expectedRevision: detail.environment.revision, expectedDomainRevision: liveDomain.revision }) } : null} />
     );
+    // The deploy the card carries (lab siaR3 Q8, owner 11-28): what the attention owner calls running or the latest
+    // failure. Its title, cause and ways forward are the ones History and the failure banner said (R15-D6, R16-D2).
+    const cardRun = ((): DeploymentCardRun | null => {
+      if (attention?.kind !== 'deploying' && attention?.kind !== 'latestFailed') return null;
+      const runId = attention.deploymentId;
+      const failure = latest?.failure ?? null;
+      // Running, the commit it deploys; failed, the cause in words (History's lead for it).
+      const lead = attention.kind === 'deploying' ? latest?.title ?? null
+        : latest ? deploymentHistoryLead(latest, failure)?.text ?? null : null;
+      const openRun = { label: t('projects.deployments.overviewStatus.openReceipt'), testID: 'project-deployments.environment.run.receipt',
+        onPress: () => props.onOpenReceipt(runId) };
+      const running = attention.kind === 'deploying';
+      const band = (placement: StyleProp<ViewStyle>) => (
+        <DeploymentReceiptLogBand testID="project-deployments.environment.run.log" serverId={props.serverId}
+          controller={props.controller} environmentId={detail.environment.id} deploymentId={runId} demand={props.demand}
+          running={running} readLogs={props.readLogs ?? null} lines={RUN_LOG_LINES} style={placement} />
+      );
+      if (running) {
+        return {
+          kind: 'running', band, lead, steps: latest?.steps ?? NO_RUN_STEPS, startedAtMs: latest?.startedAtMs ?? null,
+          // What runs, to which version ("Rolling back to 5a2b720", "Deploying d3cccd4"): History's own title for it.
+          title: latest?.source ? deploymentReceiptTitle(latest, deploymentRevisionLabel(latest.source))
+            : t('projects.deployments.overviewStatus.deployingTitle'),
+          action: openRun,
+          secondaryAction: deployWhenFinished ? { label: t('projects.deployments.overviewStatus.deployWhenFinished'),
+            testID: 'project-deployments.environment.run.deployWhenFinished', onPress: deployWhenFinished } : null,
+        };
+      }
+      // The cause's own fix when the receipt names one, else the receipt.
+      const cause = failure ? readDeploymentRefusalRecovery(failure.code, failure) : null;
+      const fix = cause && banner.openRecovery && cause.nextAction.destination !== 'logs'
+        && cause.nextAction.destination !== 'deploy' ? cause.nextAction : null;
+      return {
+        kind: 'failed', band, lead, steps: latest?.steps ?? NO_RUN_STEPS, startedAtMs: null,
+        title: latest?.operation === 'rollback' ? t('projects.deployments.rollbackFailedTitle')
+          : latest?.operation === 'deploy' ? t('projects.deployments.deployFailedTitle')
+            : t('projects.deployments.overviewStatus.latestFailedTitle'),
+        action: fix ? { label: fix.label, testID: 'project-deployments.environment.run.fix', onPress: () => banner.openRecovery?.(fix.destination,
+          fix.openProject ? { openProject: fix.openProject } : { deploymentId: runId, statefulService: fix.statefulService }) } : openRun,
+        secondaryAction: fix ? openRun : null,
+      };
+    })();
     const attentionNotice = (() => {
       switch (attention?.kind) {
         case undefined:
@@ -1107,45 +1153,10 @@ export const DeploymentEnvironmentDetail = React.memo(
             />
           );
         }
-        case 'latestFailed': {
-          // One failure, one banner (R15-D6): right after the press and after a reload it reads the same, with the
-          // cause's own fix when the receipt names one, else the receipt.
-          const failedId = attention.deploymentId;
-          const failure = latest?.failure ?? null;
-          const cause = failure ? readDeploymentRefusalRecovery(failure.code, failure) : null;
-          const fix = cause && banner.openRecovery && cause.nextAction.destination !== 'logs'
-            && cause.nextAction.destination !== 'deploy' ? cause.nextAction : null;
-          return (
-            <AttentionBanner
-              testID="project-deployments.environment.attention.latestFailed"
-              tone="danger"
-              title={latest?.operation === 'rollback' ? t('projects.deployments.rollbackFailedTitle')
-                : latest?.operation === 'deploy' ? t('projects.deployments.deployFailedTitle')
-                  : t('projects.deployments.overviewStatus.latestFailedTitle')}
-              description={latest ? deploymentHistoryLead(latest, failure)?.text : undefined}
-              action={fix ? { label: fix.label, onPress: () => banner.openRecovery?.(fix.destination,
-                fix.openProject ? { openProject: fix.openProject } : { deploymentId: failedId, statefulService: fix.statefulService }) }
-                : { label: t('projects.deployments.overviewStatus.openReceipt'), onPress: () => props.onOpenReceipt(failedId) }}
-            />
-          );
-        }
-        case 'deploying': {
-          const runningId = attention.deploymentId;
-          // What runs, to which version ("Rolling back to 5a2b720", "Deploying d3cccd4"): History's own title for it.
-          return (
-            <AttentionBanner
-              testID="project-deployments.environment.attention.deploying"
-              tone="neutral"
-              title={latest?.source ? deploymentReceiptTitle(latest, deploymentRevisionLabel(latest.source))
-                : t('projects.deployments.overviewStatus.deployingTitle')}
-              description={deployWhenFinished ? t('projects.deployments.overviewStatus.deployingBody') : undefined}
-              action={{ label: t('projects.deployments.overviewStatus.openReceipt'), onPress: () => props.onOpenReceipt(runningId) }}
-              {...(deployWhenFinished ? { secondaryAction: {
-                label: t('projects.deployments.overviewStatus.deployWhenFinished'), onPress: deployWhenFinished,
-              } } : {})}
-            />
-          );
-        }
+        // The deploy card carries a running or failed latest deploy itself (lab siaR3 Q8): one place, no banner.
+        case 'latestFailed':
+        case 'deploying':
+          return null;
         case 'unhealthy': {
           const { fact: health, cause, causeTitle } = deploymentEnvironmentHealthPresentation(detail);
           const failingChecks = cause?.kind === 'savedCheck' ? cause.checks : [];
@@ -1318,7 +1329,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                   While the serving receipt reads, the same card holds its place with its cells pending, and what the
                   Environment read already knows (health, rollout) holds the facts strip's, so nothing is inserted or
                   moves when the receipt answers (PAGE-ACCEPT-176 R12-D3, R18-D7). */}
-              {activeReceipt || (activeId && active.snapshot.status !== 'unavailable') ? (
+              {activeReceipt || cardRun || (activeId && active.snapshot.status !== 'unavailable') ? (
                 <>
                   <ItemGroup testID="project-deployments.environment.serving">
                     <DeploymentServingReceipt receipt={activeReceipt ?? null}
@@ -1331,6 +1342,8 @@ export const DeploymentEnvironmentDetail = React.memo(
                       } : null}
                       byYou={activeReceipt ? deploymentActorIsViewer(activeReceipt.facts.actor, props.accountId) : false}
                       phone={props.phone}
+                      run={cardRun}
+                      platformTitle={platformRef ? platform?.title ?? null : null}
                       onOpenReceipt={openServingReceipt} />
                   </ItemGroup>
                   {/* The headline facts stay plain cells on the page under the card (dEnvOv KEEP item 3), not a second card. */}

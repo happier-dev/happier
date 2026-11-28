@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { machineServiceLogReadFailureReason } from './machineServicesPresentation';
 import { Platform, View } from 'react-native';
+import Reanimated, { FadeIn, withTiming } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { LogLine } from '@happier-dev/plugin-ui';
 import { HAPPIER_PAGE_METRICS, type FindTextRange } from '@happier-dev/plugin-ui/presentation';
@@ -19,6 +20,9 @@ import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessL
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { reanimatedMotionTokens } from '@/components/ui/motion/reanimatedMotionTokens';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useFindSurfaceRegistration } from '@/keyboard/KeyboardShortcutProvider';
 import { isFindSurfaceTarget } from '@/keyboard/findSurfaceTarget';
 import { t } from '@/text';
@@ -338,6 +342,24 @@ export function NativeLogLines(
     revealedLine: number | null;
     /** Absent where the log never grows past its first read (a finished command): it only scrolls. */
     navigation?: NativeLogNavigation | null;
+    /**
+     * A live band of the newest lines only (the Environment's deploy card, lab siaR3 Q8): that many lines, no scroll,
+     * the oldest one quieter, the newest rising into place as it arrives. The whole log stays one press away.
+     */
+    tail?: number;
+  }>,
+) {
+  if (props.tail !== undefined) return <NativeLogTail testID={props.testID} lines={props.lines} count={props.tail} />;
+  return <NativeLogScroller {...props} />;
+}
+
+function NativeLogScroller(
+  props: Readonly<{
+    testID: string;
+    lines: readonly ForgeCiLogLineV1[];
+    getLineRanges: (lineId: string) => readonly FindTextRange[];
+    revealedLine: number | null;
+    navigation?: NativeLogNavigation | null;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -396,6 +418,43 @@ export function NativeLogLines(
 }
 
 const logLineKey = (line: ForgeCiLogLineV1) => line.id;
+const NO_RANGES: readonly FindTextRange[] = [];
+
+/** The newest `count` lines, drawn as the scroller draws them; a line that arrives after the first paint rises 4 px. */
+function NativeLogTail(props: Readonly<{ testID: string; lines: readonly ForgeCiLogLineV1[]; count: number }>) {
+  const reducedMotion = useReducedMotionPreference();
+  const shown = props.lines.slice(-props.count);
+  const digits = String(props.lines[props.lines.length - 1]?.number ?? 1).length;
+  // Lines present at the first paint simply show; only later arrivals move.
+  const firstIds = React.useRef<ReadonlySet<string> | null>(null);
+  if (firstIds.current === null) firstIds.current = new Set(shown.map(logLineKey));
+  return (
+    <CorePluginUiPresentationScope>
+    <View testID={props.testID} style={styles.tail}>
+      {shown.map((line, index) => (
+        <Reanimated.View key={line.id} style={index === 0 && shown.length === props.count ? styles.tailOldest : null}
+          entering={firstIds.current!.has(line.id) ? undefined : reducedMotion
+            ? FadeIn.duration(motionTokens.inPlaceMorph.reducedCrossFadeMs) : logLineRise}>
+          <LogLine style={styles.tailLine} gutter={{ value: String(line.number), minChars: digits }}
+            message={{ tokens: line.tokens, plainText: line.plainText, ranges: NO_RANGES }} />
+        </Reanimated.View>
+      ))}
+    </View>
+    </CorePluginUiPresentationScope>
+  );
+}
+
+/** The newest line rises 4 px as it fades in (lab siaR3 `r3-log`), on the owner's fast duration and standard curve. */
+function logLineRise() {
+  'worklet';
+  return {
+    initialValues: { opacity: 0, transform: [{ translateY: 4 }] },
+    animations: {
+      opacity: withTiming(1, { duration: motionTokens.durationMs.fast, easing: reanimatedMotionTokens.easing.standard }),
+      transform: [{ translateY: withTiming(0, { duration: motionTokens.durationMs.fast, easing: reanimatedMotionTokens.easing.standard }) }],
+    },
+  };
+}
 
 /** One row per admitted line; an unchanged line keeps its row through a followed page. */
 const NativeLogLine = React.memo(function NativeLogLine(
@@ -509,6 +568,16 @@ const styles = StyleSheet.create((theme) => ({
   },
   line: {
     paddingHorizontal: theme.space.s12,
+  },
+  tail: {
+    minWidth: 0,
+  },
+  tailLine: {
+    paddingHorizontal: 0,
+  },
+  // The band's top fades into the card: the oldest line it holds is quieter than the rest.
+  tailOldest: {
+    opacity: 0.55,
   },
   revealed: {
     backgroundColor: theme.colors.surface.selected,

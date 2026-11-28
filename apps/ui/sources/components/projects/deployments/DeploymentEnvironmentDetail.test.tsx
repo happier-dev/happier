@@ -2575,7 +2575,9 @@ describe('Project deployments page', () => {
         deployingWithoutAnObservation: '—',
       }[phase];
       expect(healthFact?.findAll(node => node.props.children === healthWord).length).toBeGreaterThan(0);
-      expect(screen.findByTestId('project-deployments.environment.attention.deploying') !== null).toBe(inProgress);
+      // A running deploy is the deploy card's own state (lab siaR3 Q8), never a banner beside it.
+      expect(screen.findByTestId('project-deployments.environment.run') !== null).toBe(inProgress);
+      expect(screen.findByTestId('project-deployments.environment.attention.deploying')).toBeNull();
       expect(screen.findByTestId('session-list-attention-indicator-deployment-earlier-attempt-running_unverified')).toBeNull();
       const recentRowIds = screen.findAll(node => typeof node.props.testID === 'string'
         && node.props.testID.startsWith('project-deployments.receipt.row.') && typeof node.props.onPress === 'function')
@@ -2777,7 +2779,10 @@ describe('Project deployments page', () => {
         const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
           demand={shown} accountId="account-owner" serverId={scope.serverId} phone={false} deploy={null} review={noReview}
           onOpenReceipt={() => {}} />);
-        await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.environment.attention.latestFailed')).not.toBeNull());
+        // The card stays on the failure (lab siaR3 q8c): its title and the receipt in place, no address, no banner.
+        await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.environment.run')).not.toBeNull());
+        expect(screen.findByTestId('project-deployments.environment.attention.latestFailed')).toBeNull();
+        expect(screen.findByTestId('project-deployments.environment.run.receipt')).not.toBeNull();
         expect(await openButton(screen)).toBeUndefined();
       } finally { controller.retire(); }
     });
@@ -3940,7 +3945,9 @@ describe('Deployment receipt step logs', () => {
         environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={scope.serverId}
         phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} readLogs={readLogs} />);
       await waitForContent(screen, 'project-deployments.environment.menu');
-      expect(readLogs).not.toHaveBeenCalled();
+      // The deploy card's band (lab siaR3 Q8) reads the running step's newest lines on the Overview itself.
+      await waitForContent(screen, 'project-deployments.environment.run.log.log.lines');
+      expect(readLogs.mock.calls.map(([input]) => input.ref)).toEqual(['build']);
       await screen.pressByTestIdAsync('project-deployments.environment.menu');
       await waitForContent(screen, 'project-deployments.environment.menu.logs');
       await screen.pressByTestIdAsync('project-deployments.environment.menu.logs');
@@ -3950,6 +3957,27 @@ describe('Deployment receipt step logs', () => {
       expect(screen.findByTestId('environment-logs.empty')).toBeNull();
       expect(screen.getTextContent()).toContain('current deploy output');
       expect(readLogs.mock.calls[0]?.[0]).toMatchObject({ deploymentId: receipt.deployment.id, ref: 'build', tail: true });
+    } finally { await act(async () => { controller.retire(); }); }
+  });
+
+  it('reads no log on an Overview whose latest deploy settled: the card folds its log into the receipt line', async () => {
+    const running = withStepLogs('running');
+    const receipt = createDeploymentReceiptDetailV1({ ...running,
+      deployment: createDeploymentReceiptHeaderV1({ ...running.deployment, state: 'succeeded', settledAtMs: 2_000 }),
+      content: { ...running.content, steps: running.content.steps.map(step => ({ ...step, state: 'succeeded' as const })) },
+    });
+    const base = environmentDetailForHome();
+    const detail = { ...base, targetLinks: base.targetLinks.map(row => ({ ...row,
+      targetLink: { ...row.targetLink, activeDeploymentId: receipt.deployment.id } })) };
+    const { controller } = controllerFor({ detail, receipt, history: [receipt] });
+    const readLogs = vi.fn<DeploymentReadLogs>(async input => logsRead(input, 'settled output'));
+    try {
+      const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller}
+        environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={scope.serverId}
+        phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} readLogs={readLogs} />);
+      await waitForContent(screen, 'project-deployments.environment.serving.built');
+      expect(screen.findByTestId('project-deployments.environment.run')).toBeNull();
+      expect(readLogs).not.toHaveBeenCalled();
     } finally { await act(async () => { controller.retire(); }); }
   });
 
@@ -4198,10 +4226,11 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
     const opened: string[] = [];
     try {
       const screen = await render(controller, detail, id => { opened.push(id); });
-      await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.environment.attention.latestFailed')).not.toBeNull());
+      await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.environment.run')).not.toBeNull());
+      expect(screen.findByTestId('project-deployments.environment.attention.latestFailed')).toBeNull();
       expect(screen.findByTestId('project-deployments.environment.attention.unhealthy')).toBeNull();
       expect(screen.findByTestId('project-deployments.environment.serving.notice.running_unverified')).toBeNull();
-      await screen.pressByTestIdAsync('project-deployments.environment.attention.latestFailed.action');
+      await screen.pressByTestIdAsync('project-deployments.environment.run.receipt');
       expect(opened).toEqual(['latest-failed']);
     } finally { controller.retire(); }
   });
@@ -4230,14 +4259,16 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
       const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
         demand={shown} accountId="account-owner" serverId={scope.serverId} phone={false} deploy={vi.fn()}
         review={noReview} onOpenReceipt={openReceipt} />);
-      const banner = 'project-deployments.environment.attention.deploying';
-      await waitForContent(screen, banner);
-      const text = screen.findByTestId(banner)!.findAll(node => typeof node.props?.children === 'string')
+      // The deploy card carries the running deploy (lab siaR3 Q8): History's title for it, its ways forward in place.
+      const card = 'project-deployments.environment.run';
+      await waitForContent(screen, card);
+      expect(screen.findByTestId('project-deployments.environment.attention.deploying')).toBeNull();
+      const text = screen.findByTestId(`${card}.title`)!.findAll(node => typeof node.props?.children === 'string')
         .map(node => node.props.children as string).join(' ');
       expect(text).toMatch(new RegExp(`${title} [0-9a-f]{7}`));
       expect(text).not.toContain('A deploy is running');
-      expect(screen.findByTestId(`${banner}.secondaryAction`) !== null).toBe(offersQueued);
-      await screen.pressByTestIdAsync(`${banner}.action`);
+      expect(screen.findByTestId(`${card}.deployWhenFinished`) !== null).toBe(offersQueued);
+      await screen.pressByTestIdAsync(`${card}.receipt`);
       expect(openReceipt).toHaveBeenCalledWith(running.deployment.id);
     } finally { controller.retire(); }
   });

@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { machineServiceLogReadFailureReason } from '@/components/machines/services/machineServicesPresentation';
-import { Platform, View } from 'react-native';
+import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { DeploymentReceiptFactsV1 } from '@happier-dev/deployments';
+import type { DeploymentReadControllerV1, DeploymentReadDemandV1, DeploymentReceiptFactsV1 } from '@happier-dev/deployments';
 import type { DeploymentStepV1 } from '@happier-dev/deployments/contracts/v1';
 
 import { formatElapsedDuration } from '@/components/machines/durationWords';
@@ -26,6 +26,7 @@ import {
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { Typography } from '@/constants/Typography';
 import { useFindSurfaceRegistration } from '@/keyboard/KeyboardShortcutProvider';
 import { isFindSurfaceTarget } from '@/keyboard/findSurfaceTarget';
@@ -39,6 +40,7 @@ import {
   type DeploymentLogReference,
   type DeploymentReadLogs,
 } from './useDeploymentStepLog';
+import { useReceiptRead } from './useDeploymentReads';
 
 type Row = Readonly<{ id: string; label: string; step: DeploymentStepV1 | null; log: DeploymentLogReference | null }>;
 type Filter = 'all' | 'failed';
@@ -50,6 +52,128 @@ const ADMISSION_CODES = new Set([
 /** What "Failed only" keeps: the steps the receipt recorded as failed or left unresolved. */
 const isFailedStep = (step: DeploymentStepV1) =>
   step.state === 'failed' || step.state === 'outcome_unknown';
+
+/** A receipt's step rows with the log each opens, then the operation logs no step recorded (the whole deploy log). */
+function deploymentStepLogRows(
+  steps: readonly DeploymentStepV1[],
+  facts: DeploymentReceiptFactsV1,
+  machineId: string | undefined,
+  machineNames: Readonly<Record<string, string>>,
+): readonly Row[] {
+  const recorded: Row[] = steps.map((step) => ({
+    id: step.id,
+    label: step.label,
+    step,
+    log:
+      facts.steps.find(
+        (candidate) =>
+          candidate.id === step.id && candidate.machineId === machineId,
+      )?.stageLogs[0]?.reference ?? null,
+  }));
+  return [...recorded, ...facts.logs.filter(({ reference }) =>
+    (machineId === undefined || reference.machineId === machineId) &&
+    // A step without its own stage log has no reference to match; a platform log carries no Machine.
+    !recorded.some(({ log }) => log !== null && log.machineId === reference.machineId && log.installationId === reference.installationId),
+  ).map(({ reference }) => ({ id: `build-log.${reference.machineId}.${reference.installationId}`,
+    // Beside steps it is the whole deploy log; with no steps, sibling logs differ only by their Machine.
+    label: recorded.length > 0 || facts.placement === 'platform' ? t('projects.deployments.deployLog')
+      : reference.machineId ? machineNames[reference.machineId] ?? t('projects.deployments.aMachine')
+        : t('projects.deployments.deployLog'),
+    step: null, log: reference }))];
+}
+
+/** The log a receipt opens by itself: the running step's while it runs, the failed step's after, else a stepless log. */
+function automaticStepLogRow(rows: readonly Row[], running: boolean, stepless: boolean): Row | undefined {
+  return rows.find(
+    (row) =>
+      row.log &&
+      (row.step ? (running ? row.step.state === 'running' : isFailedStep(row.step)) : stepless),
+  );
+}
+
+const NO_MACHINE_NAMES: Readonly<Record<string, string>> = {};
+
+/**
+ * The live log band on the Environment's deploy card (lab siaR3 Q8 `r3-log`): the newest lines of the log the receipt
+ * opens by itself (the running step's, following while it grows; the failed step's after), on the inset band, full
+ * bleed. When no step recorded its own log, the whole deploy log stands in. Its states (reading, refused, offline,
+ * empty) are the step log's own; the whole log with Find, copy and download is the receipt's, one press away.
+ */
+export function DeploymentLogBand(
+  props: Readonly<{
+    testID: string;
+    serverId: string;
+    steps: readonly DeploymentStepV1[];
+    facts: DeploymentReceiptFactsV1;
+    running: boolean;
+    readLogs: DeploymentReadLogs | null;
+    /** The newest lines it holds. */
+    lines: number;
+    /** The card is presented (mounted, visible, focused): only then does a running log follow. */
+    active: boolean;
+    /** Where the band sits in its card (full bleed), applied only when there is a log to show. */
+    style?: StyleProp<ViewStyle>;
+  }>,
+) {
+  const { facts, steps } = props;
+  const { binding: lifetime } = useServerCredentialAccountScopeBinding(props.serverId);
+  const rows = React.useMemo(() => deploymentStepLogRows(steps, facts, undefined, NO_MACHINE_NAMES), [facts, steps]);
+  const open = automaticStepLogRow(rows, props.running, steps.length === 0)
+    ?? rows.find((row) => row.step === null && row.log) ?? null;
+  const view = React.useMemo(() => createNativeLogView(), [open?.id]);
+  const logs = useDeploymentStepLog({
+    serverId: props.serverId,
+    lifetime,
+    reference: open?.log ?? null,
+    readLogs: props.readLogs,
+    followable: props.running && open !== null && (open.step === null || open.step.state === 'running'),
+    active: props.active && open !== null,
+    fileName: `deploy-${open?.log?.deploymentId ?? ''}-${open?.id ?? 'step'}.log`,
+    view,
+    surfaceId: `deployment-log-band:${open?.log?.deploymentId ?? ''}:${open?.id ?? ''}`,
+    containsFocus: alwaysFalse,
+    isInputFocused: alwaysFalse,
+  });
+  if (!open || !props.readLogs) return null;
+  return (
+    <View testID={props.testID} style={[styles.band, props.style]}>
+      <StepLogBody testID={props.testID} logs={logs} machineName={null} offlineLogMachine={null} tail={props.lines} />
+    </View>
+  );
+}
+
+const alwaysFalse = () => false;
+
+/**
+ * The band for a deploy the Environment card carries: that deploy's own receipt lease (the one its receipt page and
+ * the Logs companion read), mounted only while the card shows it, so an idle Overview reads nothing more.
+ */
+export function DeploymentReceiptLogBand(
+  props: Readonly<{
+    testID: string;
+    serverId: string;
+    controller: DeploymentReadControllerV1;
+    environmentId: string;
+    deploymentId: string;
+    demand: DeploymentReadDemandV1;
+    running: boolean;
+    readLogs: DeploymentReadLogs | null;
+    lines: number;
+    style?: StyleProp<ViewStyle>;
+  }>,
+) {
+  const value = useReceiptRead(props.controller, props.environmentId, props.deploymentId, props.demand).snapshot.value;
+  if (!value?.content) return null;
+  const { content } = value;
+  return (
+    <DeploymentLogBand testID={props.testID} serverId={props.serverId} facts={value.facts}
+      steps={content.steps.length > 0 ? content.steps : (content.machineResults[0]?.steps ?? NO_STEPS)}
+      running={props.running} readLogs={props.readLogs} lines={props.lines}
+      active={props.demand.mounted && props.demand.visible && props.demand.focused} style={props.style} />
+  );
+}
+
+const NO_STEPS: readonly DeploymentStepV1[] = [];
 
 /**
  * A receipt's steps with their own logs (lab d3 `live|failed`): each step that recorded a stage-log ref opens into
@@ -85,31 +209,8 @@ export function DeploymentStepLogs(
   const stepless = steps.length === 0;
   // The follow Resource binds to this Home's current Account, as every native log read does.
   const { binding: lifetime } = useServerCredentialAccountScopeBinding(props.serverId);
-  const rows = React.useMemo(
-    (): readonly Row[] => {
-      const recorded: Row[] = steps.map((step) => ({
-        id: step.id,
-        label: step.label,
-        step,
-        log:
-          facts.steps.find(
-            (candidate) =>
-              candidate.id === step.id && candidate.machineId === machineId,
-          )?.stageLogs[0]?.reference ?? null,
-      }));
-      return [...recorded, ...facts.logs.filter(({ reference }) =>
-        (machineId === undefined || reference.machineId === machineId) &&
-        // A step without its own stage log has no reference to match; a platform log carries no Machine.
-        !recorded.some(({ log }) => log !== null && log.machineId === reference.machineId && log.installationId === reference.installationId),
-      ).map(({ reference }) => ({ id: `build-log.${reference.machineId}.${reference.installationId}`,
-        // Beside steps it is the whole deploy log; with no steps, sibling logs differ only by their Machine.
-        label: recorded.length > 0 || facts.placement === 'platform' ? t('projects.deployments.deployLog')
-          : reference.machineId ? machineNames[reference.machineId] ?? t('projects.deployments.aMachine')
-            : t('projects.deployments.deployLog'),
-        step: null, log: reference }))];
-    },
-    [facts.steps, facts.logs, facts.placement, machineId, steps, machineNames],
-  );
+  const rows = React.useMemo(() => deploymentStepLogRows(steps, facts, machineId, machineNames),
+    [facts, machineId, steps, machineNames]);
   const hasFailed = rows.some((row) => row.step && isFailedStep(row.step));
   const [filter, setFilter] = React.useState<Filter>('all');
   // Undefined until the person picks: the open log then follows the receipt (the running or failed step).
@@ -117,11 +218,7 @@ export function DeploymentStepLogs(
     undefined,
   );
   // With no steps recorded, the first log is the page's content and opens on arrival.
-  const automatic = rows.find(
-    (row) =>
-      row.log &&
-      (row.step ? (props.running ? row.step.state === 'running' : isFailedStep(row.step)) : stepless),
-  );
+  const automatic = automaticStepLogRow(rows, props.running, stepless);
   const openId = chosen === undefined ? (automatic?.id ?? null) : chosen;
   const open = rows.find((row) => row.id === openId && row.log) ?? null;
   const machineName = facts.placement === 'machine' ? props.machineName : null;
@@ -346,6 +443,8 @@ function StepLogBody(
     logs: ReturnType<typeof useDeploymentStepLog>;
     machineName: string | null;
     offlineLogMachine: string | null;
+    /** The deploy card's band: only the newest lines, no scroll. */
+    tail?: number;
   }>,
 ) {
   const { logs, machineName } = props;
@@ -431,11 +530,12 @@ function StepLogBody(
         />
       );
     }
-    return <View style={styles.body}>{state}</View>;
+    return <View style={props.tail !== undefined ? styles.bandBody : styles.body}>{state}</View>;
   }
-  const truncated = projection?.kind === 'index' && projection.truncated;
+  // The card's band only ever holds the newest lines: saying earlier ones are missing would be noise there.
+  const truncated = props.tail === undefined && projection?.kind === 'index' && projection.truncated;
   return (
-    <View style={styles.body} testID={id}>
+    <View style={props.tail !== undefined ? styles.bandBody : styles.body} testID={id}>
       {projection?.kind === 'sourceChanged' ? (
         <SourceChanged testID={id} onReadAgain={logs.readAgain} />
       ) : logs.stale ? (
@@ -475,6 +575,7 @@ function StepLogBody(
           getLineRanges={viewer.getLineRanges}
           revealedLine={viewer.viewState?.revealedLine ?? null}
           navigation={logs.navigation}
+          {...(props.tail !== undefined ? { tail: props.tail } : {})}
         />
       )}
     </View>
@@ -525,4 +626,7 @@ const styles = StyleSheet.create((theme) => ({
   note: { ...Typography.variant('meta'), color: theme.colors.text.secondary },
   // Without a disclosure row above it, the log keeps the same inset on every edge.
   lone: { paddingTop: theme.space.s12 },
+  // The card's floor (lab siaR3 `r3-log`): the inset surface edge to edge under the strip.
+  band: { backgroundColor: theme.colors.surface.inset },
+  bandBody: { gap: theme.space.s8, paddingHorizontal: PAGE_LIST_METRICS.cardPaddingPx, paddingVertical: theme.space.s12 },
 }));

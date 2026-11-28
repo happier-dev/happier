@@ -624,6 +624,11 @@ function transportFor(
         items: receipts.map((receipt, index) => ({
           ...receipt.deployment,
           title: RECEIPT_TITLES[index],
+          // What the server projects from each receipt's opened contents: its steps and the version it deployed.
+          steps: receipt.content.steps,
+          ...(receipt.content.sourceIntent?.kind === 'repository'
+            ? { source: { kind: 'repository' as const, sha: receipt.content.sourceIntent.sha } } : {}),
+          ...(receipt.content.failure ? { failure: receipt.content.failure } : {}),
         })).filter(receipt => !query.attemptsOnly || receipt.state !== 'skipped'),
         nextCursor: null,
       },
