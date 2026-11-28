@@ -15423,6 +15423,11 @@ never an empty setup or permission to run changed commands.
 Current `projects.inspect` exposes `effectiveDefinition` separately from the raw
 repository `definition` and its file basis. Execution/placement consumers use the
 effective declaration; repository editing still uses the original file basis.
+The `applications` read reports root Dockerfile and Compose presence, optional
+`.env.example` presence, and a health path when the inspected Compose declarations
+identify one literal local HTTP path. Prepare displays unknown when the inspection
+cannot establish a fact. The Action returns presence and path facts only. It
+does not return example values or execute a health check.
 Explicit `reviewSharedSetup` demands add the typed `sharedSetupChange` comparison.
 `projects.setup.set` is the acknowledged organization-CAS writer for shared
 selection and personal overrides. Source-selected `artifact.get` adds the exact

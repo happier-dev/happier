@@ -16,6 +16,7 @@ import { ProjectDeploymentsView } from '@/components/projects/deployments/Projec
 import { createTelemetryCaptureFixtureInvoke, TelemetryCaptureFixtureProvider } from '@/dev/testkit/fixtures/telemetryCaptureFixtures';
 import { showDeploymentDispositionSheet, type DeploymentDispositionSheetInput } from '@/components/projects/deployments/DeploymentDispositionSheet';
 import { deploymentSheetStyles, showDeploymentSheet } from '@/components/projects/deployments/deploymentSheet';
+import { DeploymentPreparationRecognized } from '@/components/projects/deployments/DeploymentPreparationRecognized';
 import { ActionInputFields } from '@/components/sessions/actions/ActionInputFields';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -913,6 +914,17 @@ export function DeploymentsSpecimen(
   const telemetryInvoke = React.useMemo(() => props.telemetry
     ? createTelemetryCaptureFixtureInvoke(props.telemetry === 'offline' || props.telemetry === 'waiting' ? props.telemetry : 'populated')
     : null, [props.telemetry]);
+  if (props.state === 'prepare-recognized' || props.state === 'prepare-unknown') {
+    const known = props.state === 'prepare-recognized';
+    return <ListPresentationProvider value="page" pageInsets="contained">
+      <DeploymentPreparationRecognized read={{ status: 'ready', facts: {
+        applications: [{ file: 'package.json', framework: known ? 'next' : null,
+          runtime: known ? { name: 'node', version: '22' } : null, port: known ? 3000 : null, build: null, start: null }],
+        rootFiles: { dockerfile: known ? 'present' : 'unknown', compose: known ? 'present' : 'unknown' },
+        ...(known ? { healthPath: '/healthz', environmentExample: 'absent' as const } : {}), partial: !known,
+      } }} />
+    </ListPresentationProvider>;
+  }
   const view = (
     <ProjectDeploymentsView
       controller={controller}

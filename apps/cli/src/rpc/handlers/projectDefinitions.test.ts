@@ -50,11 +50,17 @@ it('returns recognized repository facts through the registered inspection Action
   const h = await setup({ resolveTool }, () => { throw new Error('Passive preparation must not inspect setup'); });
   await writeFile(join(h.root, 'package.json'), JSON.stringify({ dependencies: { next: '15' }, engines: { node: '>=20' },
     scripts: { build: 'next build', start: 'PRIVATE=never-publish next start -p 4000' } }));
+  await writeFile(join(h.root, '.env.example'), 'TOKEN=never-publish');
+  await writeFile(join(h.root, 'compose.yaml'), JSON.stringify({ services: {
+    web: { healthcheck: { test: ['CMD', 'curl', 'http://localhost:4000/healthz'] } },
+  } }));
   const output = ProjectDefinitionInspectOutputSchema.parse(await h.handlers.get('daemon.projects.inspect.v1')!({
     workspace: h.workspace, read: { kind: 'applications' },
   }));
   expect(output.detection.applications).toMatchObject([{ framework: 'next', runtime: { name: 'node', version: '>=20' },
     build: { target: 'build' }, start: { target: 'start' }, port: 4000 }]);
+  expect(output.detection).toMatchObject({ rootFiles: { dockerfile: 'absent', compose: 'present' },
+    environmentExample: 'present', healthPath: '/healthz' });
   expect(JSON.stringify(output)).not.toContain('never-publish');
   expect(resolveTool).not.toHaveBeenCalled();
   expect(output.importCandidates).toEqual([]);

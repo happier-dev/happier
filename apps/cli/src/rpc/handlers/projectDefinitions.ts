@@ -179,7 +179,7 @@ export function createProjectDefinitionAction(params: Readonly<{
     const request = PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS['projects.inspect'].parse(input);
     const needsDiscovery = !['editor', 'export', 'detail', 'setup', 'placement', 'execution'].includes(request.read?.kind ?? 'scripts');
     const [definition, detection] = await phase('definition_files', () => Promise.all([readProjectManifest({ root }),
-      needsDiscovery ? inspectProjectDefinitions(root) : Promise.resolve<ProjectDefinitionDetectionV1>({
+      needsDiscovery ? inspectProjectDefinitions(root, { preparationFacts: request.read?.kind === 'applications' }) : Promise.resolve<ProjectDefinitionDetectionV1>({
         entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [],
       })]));
     context.signal?.throwIfAborted();

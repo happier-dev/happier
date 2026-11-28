@@ -48,6 +48,8 @@ export function selectProjectDefinitionRead(definition: ProjectManifestInspectio
         coverage: detection.coverage, diagnostics: detection.diagnostics,
         ...(read.kind === 'applications' && detection.applications ? { applications: detection.applications } : {}),
         ...(read.kind === 'applications' && detection.rootFiles ? { rootFiles: detection.rootFiles } : {}),
+        ...(read.kind === 'applications' && detection.environmentExample ? { environmentExample: detection.environmentExample } : {}),
+        ...(read.kind === 'applications' && detection.healthPath ? { healthPath: detection.healthPath } : {}),
         ...(read.kind === 'applications' && detection.applications && detection.rootFiles && detection.observedAtMs !== undefined
             ? { observedAtMs: detection.observedAtMs } : {}),
         ...(fullDetection && detection.tools ? { tools: detection.tools } : {}) };

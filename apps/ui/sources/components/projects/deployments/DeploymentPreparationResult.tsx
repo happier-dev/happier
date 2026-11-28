@@ -16,10 +16,12 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { DeploymentPreparationOperations } from './DeploymentPreparationOperations';
+import { DeploymentPreparationRecognized, type RecognizedRepositoryRead } from './DeploymentPreparationRecognized';
 import { useDeploymentPreparationRead } from './useDeploymentPreparationRead';
 
 /** Returned SessionRef is enough for this mounted continuation. Reload discovery belongs to Session metadata. */
-export function DeploymentPreparationResult(props: Readonly<{ session: SessionAddress; lifetime: ServerAccountScopeLifetime }>) {
+export function DeploymentPreparationResult(props: Readonly<{ session: SessionAddress; lifetime: ServerAccountScopeLifetime;
+    recognized?: RecognizedRepositoryRead | null }>) {
     const router = useRouter();
     const read = useDeploymentPreparationRead(props.lifetime, props.session);
     const work = projectSessionWorkDisplayV1(read.workState);
@@ -41,6 +43,7 @@ export function DeploymentPreparationResult(props: Readonly<{ session: SessionAd
             activity={thinking ? 'working' : 'idle'} testID="project-deployments.prepare.result.plan" /> : null}
         {cause ? <SurfaceStateCard testID="project-deployments.prepare.result.publication-failed" size="line" kind="error"
             title={t('toolView.actionOutcome.failed')} reason={cause} /> : null}
+        <DeploymentPreparationRecognized read={props.recognized ?? null} />
         <SessionScmPullRequestSurface session={props.session} fallback={null} />
         <SurfaceStateCard testID="project-deployments.prepare.result.unverified" size="line" kind="unavailable"
             title={t('projects.deployments.preparation.unverified')}

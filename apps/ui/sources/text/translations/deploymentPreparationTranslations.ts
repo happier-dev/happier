@@ -7,12 +7,14 @@ type PreparationCopy = Readonly<{
   askAgentNeedsRepository: string; addRepository: string;
   needsSetupLead: string; adds: string;
   recognized: string; recognizedNone: string; recognizedPartial: string; listensOn: (p: Readonly<{ port: number }>) => string;
+  framework: string; runtime: string; listeningPort: string; healthPath: string; filePresent: string; fileAbsent: string;
   addsDockerfile: string; addsCompose: string; addsHealth: string; addsHealthDetail: string;
   addsVariables: string; addsVariablesDetail: string; askAgent: string; askAgentBody: string;
 }>;
 
 export const deploymentPreparationTranslations: Record<SupportedLanguage, PreparationCopy> = {
   en: {
+    framework: "Framework", runtime: "Runtime", listeningPort: "Listening port", healthPath: "Health path", filePresent: "Found", fileAbsent: "Absent",
     resultTitle: "Preparation session",
     operationsTitle: "Session operations",
     unverified: "Unverified",
@@ -40,6 +42,7 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     noWorkspace: 'Open this Project on a Machine first, then choose its checkout here.',
   },
   ru: {
+    framework: "Фреймворк", runtime: "Среда выполнения", listeningPort: "Порт", healthPath: "Путь проверки состояния", filePresent: "Найден", fileAbsent: "Отсутствует",
     resultTitle: "Сессия подготовки",
     operationsTitle: "Операции сессии",
     unverified: "Не проверено",
@@ -67,6 +70,7 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     noWorkspace: 'Сначала откройте этот проект на машине, затем выберите здесь его рабочую копию.',
   },
   pl: {
+    framework: "Framework", runtime: "Środowisko uruchomieniowe", listeningPort: "Port nasłuchiwania", healthPath: "Ścieżka kontroli stanu", filePresent: "Znaleziono", fileAbsent: "Brak",
     resultTitle: "Sesja przygotowania",
     operationsTitle: "Operacje sesji",
     unverified: "Niezweryfikowane",
@@ -94,6 +98,7 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     noWorkspace: 'Najpierw otwórz ten projekt na maszynie, a potem wybierz tutaj jego kopię roboczą.',
   },
   es: {
+    framework: "Framework", runtime: "Entorno de ejecución", listeningPort: "Puerto de escucha", healthPath: "Ruta de comprobación de estado", filePresent: "Encontrado", fileAbsent: "Ausente",
     resultTitle: "Sesión de preparación",
     operationsTitle: "Operaciones de la sesión",
     unverified: "Sin verificar",
@@ -121,6 +126,7 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     noWorkspace: 'Primero abre este proyecto en una máquina y luego elige aquí su copia de trabajo.',
   },
   fr: {
+    framework: "Framework", runtime: "Environnement d’exécution", listeningPort: "Port d’écoute", healthPath: "Chemin de contrôle de santé", filePresent: "Trouvé", fileAbsent: "Absent",
     resultTitle: "Session de préparation",
     operationsTitle: "Opérations de la session",
     unverified: "Non vérifié",
@@ -148,6 +154,7 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     noWorkspace: 'Ouvrez d’abord ce projet sur une machine, puis choisissez sa copie de travail ici.',
   },
   it: {
+    framework: "Framework", runtime: "Ambiente di esecuzione", listeningPort: "Porta di ascolto", healthPath: "Percorso di controllo dello stato", filePresent: "Trovato", fileAbsent: "Assente",
     resultTitle: "Sessione di preparazione",
     operationsTitle: "Operazioni della sessione",
     unverified: "Non verificato",
@@ -175,6 +182,7 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     noWorkspace: 'Prima apri questo progetto su una macchina, poi scegli qui la sua copia di lavoro.',
   },
   pt: {
+    framework: "Framework", runtime: "Ambiente de execução", listeningPort: "Porta de escuta", healthPath: "Caminho da verificação de integridade", filePresent: "Encontrado", fileAbsent: "Ausente",
     resultTitle: "Sessão de preparação",
     operationsTitle: "Operações da sessão",
     unverified: "Não verificado",
@@ -202,6 +210,7 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     noWorkspace: 'Primeiro abra este projeto em uma máquina e depois escolha sua cópia de trabalho aqui.',
   },
   ca: {
+    framework: "Entorn de treball", runtime: "Entorn d’execució", listeningPort: "Port d’escolta", healthPath: "Camí de comprovació d’estat", filePresent: "Trobat", fileAbsent: "Absent",
     resultTitle: "Sessió de preparació",
     operationsTitle: "Operacions de la sessió",
     unverified: "Sense verificar",
@@ -229,6 +238,7 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     noWorkspace: 'Primer obre aquest projecte en una màquina i després tria aquí la seva còpia de treball.',
   },
   de: {
+    framework: "Framework", runtime: "Laufzeit", listeningPort: "Lauschport", healthPath: "Pfad der Zustandsprüfung", filePresent: "Gefunden", fileAbsent: "Fehlt",
     resultTitle: "Vorbereitungssitzung",
     operationsTitle: "Vorgänge der Sitzung",
     unverified: "Nicht verifiziert",
@@ -256,6 +266,7 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     noWorkspace: 'Öffne dieses Projekt zuerst auf einer Maschine und wähle dann hier seine Arbeitskopie.',
   },
   'zh-Hans': {
+    framework: "框架", runtime: "运行时", listeningPort: "监听端口", healthPath: "健康检查路径", filePresent: "已找到", fileAbsent: "不存在",
     resultTitle: "准备会话",
     operationsTitle: "会话操作",
     unverified: "未验证",
@@ -282,6 +293,7 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     workspace: '代理的工作位置', tool: '现有工具', paths: '配置文件路径', noWorkspace: '请先在一台机器上打开此项目，然后在这里选择工作副本。',
   },
   'zh-Hant': {
+    framework: "框架", runtime: "執行環境", listeningPort: "監聽連接埠", healthPath: "健康檢查路徑", filePresent: "已找到", fileAbsent: "不存在",
     resultTitle: "準備工作階段",
     operationsTitle: "工作階段操作",
     unverified: "未驗證",
@@ -308,6 +320,7 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     workspace: '代理的工作位置', tool: '現有工具', paths: '設定檔路徑', noWorkspace: '請先在一台機器上開啟此專案，再在這裡選擇工作副本。',
   },
   ja: {
+    framework: "フレームワーク", runtime: "ランタイム", listeningPort: "待受ポート", healthPath: "ヘルスチェックのパス", filePresent: "検出済み", fileAbsent: "なし",
     resultTitle: "準備セッション",
     operationsTitle: "セッションの操作",
     unverified: "未検証",

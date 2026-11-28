@@ -35,16 +35,39 @@ afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root,
 
 describe('inspectProjectDefinitions', () => {
     it('reports only observed root container files, distinguishing absence from a refused file', async () => {
-        const root = await fixture({ Dockerfile: 'FROM scratch', 'nested/compose.yaml': 'services: {}' });
-        const detected = await inspectProjectDefinitions(root);
+        const root = await fixture({ Dockerfile: 'FROM scratch', '.env.example': 'TOKEN=example-value',
+            'nested/compose.yaml': 'services: {}' });
+        const detected = await inspectProjectDefinitions(root, { preparationFacts: true });
         expect(detected.observedAtMs).toEqual(expect.any(Number));
         expect(detected).toMatchObject({ rootFiles: { dockerfile: 'present', compose: 'absent' } });
         expect(await inspectProjectDefinitionFiles(root, [{ file: 'compose.yaml' }])).toMatchObject({ rootFiles: { dockerfile: 'unknown', compose: 'unknown' } });
         const read = selectProjectDefinitionRead({ basis: { kind: 'absent' }, document: null }, detected, { kind: 'applications' });
-        expect(ProjectDefinitionDetectionV1Schema.parse(read.detection)).toMatchObject({ rootFiles: { dockerfile: 'present', compose: 'absent' } });
+        const applicationFacts = ProjectDefinitionDetectionV1Schema.parse(read.detection);
+        expect(applicationFacts).toMatchObject({ rootFiles: { dockerfile: 'present', compose: 'absent' }, environmentExample: 'present' });
+        expect(JSON.stringify(applicationFacts)).not.toContain('example-value');
         const outside = await fixture({ 'compose.yaml': 'services: {}' });
         await symlink(join(outside, 'compose.yaml'), join(root, 'compose.yaml'));
         expect(await inspectProjectDefinitions(root)).toMatchObject({ rootFiles: { dockerfile: 'present', compose: 'unknown' }, coverage: 'partial' });
+    });
+    it('reports only a literal local HTTP health path from a recognized Compose declaration', async () => {
+        const root = await fixture({ 'compose.yaml': JSON.stringify({ services: {
+            api: { healthcheck: { test: ['CMD', 'curl', '-f', 'http://localhost:3000/healthz'] } },
+            worker: { healthcheck: { test: ['CMD-SHELL', 'curl http://localhost:$PORT/dynamic'] } },
+            private: { healthcheck: { test: ['CMD', 'curl', 'http://example.test/secret'] } },
+            outputOnly: { healthcheck: { test: ['CMD', 'curl', '--output', 'http://localhost/not-a-request'] } },
+        } }) });
+        const read = selectProjectDefinitionRead({ basis: { kind: 'absent' }, document: null },
+            await inspectProjectDefinitions(root, { preparationFacts: true }), { kind: 'applications' });
+        const facts = ProjectDefinitionDetectionV1Schema.parse(read.detection);
+        expect(facts).toMatchObject({ environmentExample: 'absent', healthPath: '/healthz' });
+        expect(JSON.stringify(facts)).not.toContain('example.test');
+        await writeFile(join(root, 'compose.yaml'), JSON.stringify({ services: {
+            api: { healthcheck: { test: ['CMD', 'curl', 'http://localhost/one'] } },
+            worker: { healthcheck: { test: ['CMD', 'curl', 'http://localhost/two'] } },
+        } }));
+        const ambiguous = selectProjectDefinitionRead({ basis: { kind: 'absent' }, document: null },
+            await inspectProjectDefinitions(root, { preparationFacts: true }), { kind: 'applications' });
+        expect(ProjectDefinitionDetectionV1Schema.parse(ambiguous.detection).healthPath).toBeUndefined();
     });
     it('carries recognized app declarations without resolving commands, returning script rows or guessing ports', async () => {
         const root = await fixture({ 'package.json': JSON.stringify({ dependencies: { next: '15', react: '19' },

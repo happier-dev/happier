@@ -85,6 +85,8 @@ export type ProjectDefinitionsActionResultById = {
                 port: null | number;
             }[];
             rootFiles?: undefined | ActionDtoShape_6caf43cf185b0df2;
+            environmentExample?: 'absent' | 'present' | 'unknown' | undefined;
+            healthPath?: string | undefined;
             observedAtMs?: number | undefined;
         };
         importCandidates: {

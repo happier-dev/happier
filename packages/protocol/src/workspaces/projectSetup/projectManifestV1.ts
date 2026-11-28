@@ -146,6 +146,8 @@ export const ProjectDefinitionDetectionV1Schema = z.strictObject({
   tools: z.optional(z.array(ProjectToolRequirementV1Schema)),
   applications: z.optional(z.array(ProjectDetectedApplicationV1Schema)),
   rootFiles: z.optional(ProjectRootContainerFilesV1Schema),
+  environmentExample: z.optional(ProjectRootContainerFilesV1Schema.shape.dockerfile),
+  healthPath: z.optional(nonempty),
   observedAtMs: z.optional(z.number().check(z.int(), z.nonnegative())),
 });
 export type ProjectDefinitionDetectionV1 = z.infer<typeof ProjectDefinitionDetectionV1Schema>;

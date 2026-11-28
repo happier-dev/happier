@@ -130,6 +130,7 @@ describe('deployment preparation entry', () => {
         execution: { ok: true, result: {
           definition: { basis: { kind: 'present', hash: 'a'.repeat(64) }, document: readProjectManifestDocument('{ "version": 1 }\n') },
           detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'partial', diagnostics: [],
+            rootFiles: { dockerfile: 'present', compose: 'present' }, environmentExample: 'present', healthPath: '/healthz',
             applications: [{ file: 'package.json', framework: 'Next.js', runtime: { name: 'Node.js', version: '22' },
               build: null, start: null, port: 3000 }] },
           importCandidates: [] } } }) };
@@ -145,6 +146,10 @@ describe('deployment preparation entry', () => {
       const text = screen.getTextContent();
       expect(text).toContain('Next.js');
       expect(text).toContain(t('projects.deployments.preparation.listensOn', { port: 3000 }));
+      expect(text).toContain('/healthz');
+      expect(screen.findByTestId('project-deployments.prepare.recognized.dockerfile')).not.toBeNull();
+      expect(screen.findByTestId('project-deployments.prepare.recognized.compose')).not.toBeNull();
+      expect(screen.findByTestId('project-deployments.prepare.recognized.environment-example')).not.toBeNull();
       // A partial read says so instead of reading as everything there is.
       expect(text).toContain(t('projects.deployments.preparation.recognizedPartial'));
       // The checkout the agent works in is the one read, once.

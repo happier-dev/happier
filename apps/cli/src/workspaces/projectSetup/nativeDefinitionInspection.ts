@@ -1,9 +1,11 @@
 import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { dirname, join, relative } from 'node:path';
 import type { ProjectDefinitionDetectionV1, ProjectToolchainSelectionV1, ProjectNativeRefV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
+import { isLiteralLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 import { collectNativePackageDirectories, isNativeDefinitionRecord, parseNativePackage } from './nativePackageScripts';
 import { readProjectDefinitionFile, type ProjectDefinitionFileRead } from './nativeDefinitionFiles';
 import { parseNativeComposeSource } from './nativeComposeSource';
+import { inspectProjectEnvironmentImport } from './projectDotenv';
 
 
 export const NATIVE_PROJECT_DEFINITION_FILES = [
@@ -19,20 +21,29 @@ function literalName(name: string): boolean { return name.length > 0 && !/[\n\r\
 
 export async function inspectProjectDefinitions(root: string, observation?: Readonly<{
     /** Package discovery from this same operation; contained-file reads stay fresh below. */
-    packageDirectories: readonly string[];
+    packageDirectories?: readonly string[];
+    preparationFacts?: boolean;
 }>): Promise<ProjectDefinitionDetectionV1> {
     const files = new Set<string>(NATIVE_PROJECT_DEFINITION_FILES);
     for (const cwd of observation?.packageDirectories ?? await collectNativePackageDirectories(root)) files.add(relative(root, join(cwd, 'package.json')).replaceAll('\\', '/'));
     for (const entry of await currentWorkspaceSource().readdir(join(root, '.devcontainer')).catch(() => [])) {
         if (entry.isDirectory()) files.add(`.devcontainer/${entry.name}/devcontainer.json`);
     }
-    return inspectProjectDefinitionFiles(root, [...files].map(file => ({ file })));
+    const preparationFacts = observation?.preparationFacts === true;
+    const [detection, example] = await Promise.all([
+        inspectProjectDefinitionFiles(root, [...files].map(file => ({ file })), preparationFacts),
+        preparationFacts ? inspectProjectEnvironmentImport(root) : undefined,
+    ]);
+    if (example) detection.environmentExample = example.kind === 'environment' ? 'present'
+        : example.kind === 'absent' ? 'absent' : 'unknown';
+    return detection;
 }
 
 /** Selected references and discovery use the same parsers, including custom filenames. */
-export async function inspectProjectDefinitionFiles(root: string, files: readonly Readonly<{ file: string; format?: NativeTool | 'nix_flake' | 'devcontainer' }>[]): Promise<ProjectDefinitionDetectionV1> {
+export async function inspectProjectDefinitionFiles(root: string, files: readonly Readonly<{ file: string; format?: NativeTool | 'nix_flake' | 'devcontainer' }>[],
+    preparationFacts = false): Promise<ProjectDefinitionDetectionV1> {
     const definitions = await Promise.all(files.map(async definition => ({ ...definition, read: await readProjectDefinitionFile(root, definition.file) })));
-    return inspectDefinitionReads(root, definitions);
+    return inspectDefinitionReads(root, definitions, preparationFacts);
 }
 
 /** Facts must come from the contained native-file boundary, never plugin-supplied paths or bytes. */
@@ -40,8 +51,10 @@ export async function inspectProjectDefinitionFacts(root: string, files: readonl
     return inspectDefinitionReads(root, files.map(definition => ({ ...definition, read: { kind: 'read', content: definition.content } })));
 }
 
-async function inspectDefinitionReads(root: string, files: readonly Readonly<{ file: string; format?: NativeTool | 'nix_flake' | 'devcontainer'; read: ProjectDefinitionFileRead }>[]): Promise<ProjectDefinitionDetectionV1> {
+async function inspectDefinitionReads(root: string, files: readonly Readonly<{ file: string; format?: NativeTool | 'nix_flake' | 'devcontainer'; read: ProjectDefinitionFileRead }>[],
+    preparationFacts = false): Promise<ProjectDefinitionDetectionV1> {
     const detection: ProjectDefinitionDetectionV1 = { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [], applications: [] };
+    const healthPaths = preparationFacts ? new Set<string>() : null;
     const presence = (names: readonly string[]) => {
         const reads = names.map(name => files.find(file => file.file === name)?.read.kind);
         return reads.some(kind => kind === 'read') ? 'present' as const
@@ -124,6 +137,12 @@ async function inspectDefinitionReads(root: string, files: readonly Readonly<{ f
                 } else {
                     named(file, 'compose', value.services, 'service');
                     if (value.include !== undefined || (isNativeDefinitionRecord(value.services) && Object.values(value.services).some((service) => isNativeDefinitionRecord(service) && service.extends !== undefined))) diagnostic(file, 'unresolved_include');
+                    if (healthPaths && isNativeDefinitionRecord(value.services)) {
+                        for (const service of Object.values(value.services)) {
+                            const path = readDeclaredComposeHealthPath(service);
+                            if (path) healthPaths.add(path);
+                        }
+                    }
                 }
             } else if (format === 'Procfile') {
                 for (const line of content.split(/\r?\n/)) {
@@ -159,8 +178,22 @@ async function inspectDefinitionReads(root: string, files: readonly Readonly<{ f
             }
         } catch { diagnostic(file, 'invalid_definition'); }
     }
+    if (healthPaths?.size === 1) detection.healthPath = [...healthPaths][0];
     detection.observedAtMs = Date.now();
     return detection;
+}
+
+/** An exec-form local curl check names a path directly. Shell forms and interpolated arguments stay unknown. */
+function readDeclaredComposeHealthPath(service: unknown): string | null {
+    if (!isNativeDefinitionRecord(service) || !isNativeDefinitionRecord(service.healthcheck) || service.healthcheck.disable === true) return null;
+    const test = service.healthcheck.test;
+    if (!Array.isArray(test) || test[0] !== 'CMD' || test[1] !== 'curl') return null;
+    const options: readonly unknown[] = test.slice(2, -1);
+    if (!options.every((option) => typeof option === 'string' && /^(?:-[fsS]+|--(?:fail(?:-with-body)?|silent|show-error))$/u.test(option))) return null;
+    const target: unknown = test.at(-1);
+    if (typeof target !== 'string' || !/^https?:\/\/[\w.:[\]-]+\/[\w/-]*$/u.test(target)) return null;
+    const url = URL.parse(target);
+    return url && isLiteralLoopbackHostname(url.hostname) ? url.pathname : null;
 }
 
 /** Lex only enough Nix for literal dotted script attributes; string/comment bodies are never declarations. */

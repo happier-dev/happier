@@ -4,7 +4,6 @@ import { useUnistyles } from 'react-native-unistyles';
 import { DeploymentPrepareInputV1Schema, type DeploymentPrepareResultV1 } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
 import { readProjectSourceRepositoryIdentityV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import type { ProjectDetectedApplicationV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { projectActionExecuteFailure, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { Button } from '@happier-dev/plugin-ui/components';
@@ -38,6 +37,7 @@ import { useProjectSource } from '../sources/useProjectSources';
 import { createDeploymentActions } from './deploymentActions';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { DeploymentPreparationResult } from './DeploymentPreparationResult';
+import { DeploymentPreparationRecognized, type RecognizedRepositoryRead } from './DeploymentPreparationRecognized';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { readDeploymentPreparationFacts } from './deploymentPreflightWarnings';
@@ -67,14 +67,9 @@ function PreparationProposal() {
     </ItemGroup>;
 }
 
-type RecognizedRead =
-    | Readonly<{ status: 'loading' }>
-    | Readonly<{ status: 'failed'; code: string }>
-    | Readonly<{ status: 'ready'; applications: readonly ProjectDetectedApplicationV1[]; partial: boolean }>;
-
 /** Lab f1prep: what the checkout's own files declare (projects.inspect), read once per chosen checkout. Never a guess. */
 function useRecognizedApplications(lifetime: ServerAccountScopeLifetime, workspace: WorkspaceRefV1 | null, enabled: boolean) {
-    const [read, setRead] = React.useState<(RecognizedRead & Readonly<{ workspaceId: string }>) | null>(null);
+    const [read, setRead] = React.useState<(RecognizedRepositoryRead & Readonly<{ workspaceId: string }>) | null>(null);
     const [retry, setRetry] = React.useState(0);
     const workspaceId = enabled ? workspace?.id ?? null : null;
     React.useEffect(() => {
@@ -87,34 +82,14 @@ function useRecognizedApplications(lifetime: ServerAccountScopeLifetime, workspa
                 if (cancellation.signal.aborted) return;
                 setRead(!result.ok ? { status: 'failed', code: result.errorCode, workspaceId }
                     : result.repository.status === 'notInspected' ? { status: 'failed', code: 'unavailable', workspaceId }
-                    : { status: 'ready', workspaceId, applications: result.repository.status === 'observed' ? result.repository.applications : [],
-                        partial: result.repository.coverage === 'partial' });
+                    : { status: 'ready', workspaceId, facts: { applications: result.repository.applications,
+                        partial: result.repository.coverage === 'partial', rootFiles: result.repository.rootFiles,
+                        environmentExample: result.repository.environmentExample, healthPath: result.repository.healthPath } });
             })
             .catch((error: unknown) => { if (!cancellation.signal.aborted) setRead({ status: 'failed', code: failureCode(error), workspaceId }); });
         return () => cancellation.abort();
     }, [lifetime, workspace, workspaceId, retry]);
     return { read: read?.workspaceId === workspaceId ? read : null, retry: () => setRetry(value => value + 1) };
-}
-
-function PreparationRecognized(props: Readonly<{ read: RecognizedRead | null; onRetry: () => void }>) {
-    const { theme } = useUnistyles();
-    const { read } = props;
-    if (!read) return null;
-    return <ItemGroup testID="project-deployments.prepare.recognized" title={t('projects.deployments.preparation.recognized')}
-        description={read.status === 'ready' && read.partial ? t('projects.deployments.preparation.recognizedPartial') : undefined}>
-        {read.status === 'loading' ? <SurfaceStateCard size="line" kind="loading" title={t('common.loading')} />
-            : read.status === 'failed' ? <SurfaceStateCard testID="project-deployments.prepare.recognized.failed" size="line" kind="error"
-                title={t('projects.deployments.unavailableTitle')} reason={deploymentActionRefusalRemedy(read.code)} diagnosticCode={read.code}
-                action={{ label: t('common.retry'), onPress: props.onRetry }} />
-            : read.applications.length === 0 ? <Item testID="project-deployments.prepare.recognized.none" mode="info"
-                title={t('projects.deployments.preparation.recognizedNone')} subtitleLines={0} showChevron={false} />
-            : read.applications.map(app => <Item key={app.file} testID={`project-deployments.prepare.recognized.${app.file}`}
-                title={app.framework ?? app.file}
-                subtitle={[app.runtime ? `${app.runtime.name} ${app.runtime.version}` : null, app.framework ? app.file : null]
-                    .filter(Boolean).join(' · ') || undefined}
-                detail={app.port === null ? undefined : t('projects.deployments.preparation.listensOn', { port: app.port })}
-                showChevron={false} icon={<Icon name="package" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />} />)}
-    </ItemGroup>;
 }
 
 /** Prepare and Import share the registered Action; neither depends on an investigation record. */
@@ -127,18 +102,18 @@ export function DeploymentPreparationEntry(props: DeploymentPreparationContext &
     emphasis?: 'primary' | 'secondary' | 'plain';
 }>) {
     const [handoff, setHandoff] = React.useState<(DeploymentPreparationContext & Readonly<{
-        mode: PreparationMode; session: SessionAddress;
+        mode: PreparationMode; session: SessionAddress; recognized: RecognizedRepositoryRead | null;
     }>) | null>(null);
     // A returned Session belongs to the captured Entry, including while its modal
     // settles after the person has opened another Source or Account.
-    const session = handoff && handoff.lifetime === props.lifetime
+    const currentHandoff = handoff && handoff.lifetime === props.lifetime
         && handoff.projectSourceId === props.projectSourceId && handoff.mode === props.mode
         && handoff.environmentId === props.environmentId && props.lifetime.isCurrent()
-        ? handoff.session : null;
+        ? handoff : null;
     const title = t(`projects.deployments.preparation.${props.mode}`);
     const { emphasis, ...context } = props;
     const open = () => showDeploymentSheet({ component: DeploymentPreparationSheet,
-        props: { ...context, onSessionAvailable: session => setHandoff({ ...context, session }) },
+        props: { ...context, onSessionAvailable: (session, recognized) => setHandoff({ ...context, session, recognized }) },
         title, testID: `project-deployments.${props.mode}.dialog`, closeOnBackdrop: false });
     return <>
         {emphasis ? (
@@ -146,7 +121,8 @@ export function DeploymentPreparationEntry(props: DeploymentPreparationContext &
                 <Button testID={`project-deployments.${props.mode}.open`} title={title} variant={emphasis} size="small" onPress={open} />
             </CorePluginUiPresentationScope>
         ) : <SectionActionButton testID={`project-deployments.${props.mode}.open`} title={title} icon="sparkle" onPress={open} />}
-        {session ? <DeploymentPreparationResult session={session} lifetime={props.lifetime} /> : null}
+        {currentHandoff ? <DeploymentPreparationResult session={currentHandoff.session} lifetime={props.lifetime}
+            recognized={currentHandoff.recognized} /> : null}
     </>;
 }
 
@@ -156,7 +132,7 @@ function failureCode(error: unknown): string {
 
 /** Opened only on the person's gesture: Source and Account rows retain their existing readers. */
 function DeploymentPreparationSheet(props: DeploymentPreparationContext & Readonly<{ mode: PreparationMode;
-    onSessionAvailable(session: SessionAddress): void }> & CustomModalInjectedProps) {
+    onSessionAvailable(session: SessionAddress, recognized: RecognizedRepositoryRead | null): void }> & CustomModalInjectedProps) {
     const { lifetime, projectSourceId } = props;
     const sourceRead = useProjectSource(lifetime, projectSourceId);
     const source = sourceRead.source?.source ?? null;
@@ -202,8 +178,9 @@ function DeploymentPreparationSheet(props: DeploymentPreparationContext & Readon
     const router = useRouter();
     const navigateToProjectOpen = useNavigateToProjectOpen();
     const title = t(`projects.deployments.preparation.${props.mode}`);
+    const readAtHandoff = recognized.read?.status === 'ready' ? recognized.read : null;
     const openSession = (session: NonNullable<NonNullable<typeof partial>['sessionRef']>) => {
-        props.onSessionAvailable(session); props.onClose(); router.push(buildScopedSessionRouteHref(session));
+        props.onSessionAvailable(session, readAtHandoff); props.onClose(); router.push(buildScopedSessionRouteHref(session));
     };
     const confirm = async () => {
         if (!chosen || !source || !repository || busy) return;
@@ -235,7 +212,7 @@ function DeploymentPreparationSheet(props: DeploymentPreparationContext & Readon
             const result = await createDeploymentActions(lifetime, projectSourceId).prepare(input, chosen.machineId);
             if (result.kind === 'handedOff') openSession(result.sessionRef);
             else if (result.kind === 'partial') {
-                if (result.sessionRef) props.onSessionAvailable(result.sessionRef);
+                if (result.sessionRef) props.onSessionAvailable(result.sessionRef, readAtHandoff);
                 setPartial(result); setRefused({ ok: false, errorCode: result.reason, error: result.reason });
             }
             else setRefused({ ok: false, errorCode: result.reason, error: result.reason });
@@ -281,7 +258,7 @@ function DeploymentPreparationSheet(props: DeploymentPreparationContext & Readon
                         title: workspace.label ?? workspace.rootPath, subtitle: workspace.rootPath, checked: chosen?.id === workspace.id }))}
                     selectedId={chosen?.id ?? null} onSelect={id => { setChosenId(id); setMenuOpen(false); setRefused(null); setPartial(null); }}
                     itemTrigger={{ title: t('projects.deployments.preparation.workspace'), showSelectedSubtitle: true }} /></ItemGroup>}
-            {props.mode === 'prepare' ? <PreparationRecognized read={recognized.read} onRetry={recognized.retry} /> : null}
+            {props.mode === 'prepare' ? <DeploymentPreparationRecognized read={recognized.read} onRetry={recognized.retry} /> : null}
             {props.mode === 'prepare' && repository ? <PreparationProposal /> : null}
             {props.mode === 'import' ? <ItemGroup header="none">
                 <Item title={t('projects.deployments.preparation.tool')} accessoryLayout="stacked" rightElement={

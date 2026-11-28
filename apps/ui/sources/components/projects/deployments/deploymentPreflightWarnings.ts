@@ -29,6 +29,7 @@ export async function readDeploymentPreparationFacts(lifetime: ServerAccountScop
     return { ok: true as const, configurePreflight, repository: {
         status: detection.applications === undefined ? 'notReported' as const : 'observed' as const,
         applications: detection.applications ?? [], coverage: detection.coverage, diagnostics: detection.diagnostics,
+        rootFiles: detection.rootFiles, environmentExample: detection.environmentExample, healthPath: detection.healthPath,
     } };
 }
 
