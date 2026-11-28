@@ -196,7 +196,6 @@ function useConnectedServiceQuotaAccountModel() {
         connectedAccountsV4: profile.connectedAccountsV4,
         connectedServicesV2: profile.connectedServicesV2,
     }), ['connectedAccountsV4', 'connectedServicesV2']);
-    const labelsByKey = useConnectedMetadataCatalog(undefined, selectConnectedMetadataLabels);
     const connectedServicesRegistrySnapshot = useProjectedConnectedServicesRegistry();
     const localizePluginText = useProjectedPluginLocalizedTextResolver();
     const serverFeatures = useServerFeaturesRuntimeSnapshot({
@@ -254,6 +253,9 @@ function useConnectedServiceQuotaAccountModel() {
         ...profile.connectedAccountsV4.map(account => ({ ref: account.ref })),
         ...quotaProfileInputs.filter(entry => !('ref' in entry)),
     ]), [profile.connectedAccountsV4, quotaProfileInputs]);
+    const labelsByKey = useConnectedMetadataCatalog(undefined, selectConnectedMetadataLabels, {
+        enabled: identityProfiles.length > 0,
+    });
 
     const accountRows = React.useMemo(() => {
         return identityProfiles.flatMap((entry) => {

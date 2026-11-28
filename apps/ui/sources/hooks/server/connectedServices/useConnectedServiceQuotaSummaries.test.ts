@@ -67,6 +67,39 @@ describe('useConnectedServiceQuotaSummaries', () => {
         boundary.plainRead.mockImplementation(async () => plainQuotaResponse(snapshot));
     }
 
+    it('loads Connected Metadata only when the Account has a connected identity to label', async () => {
+        advertiseQualifiedAccounts();
+        const metadataReads = () => boundary.requests
+            .filter(({ method, path }) => method === 'GET' && path.startsWith('/v1/account/entity-rows/connected-metadata/'))
+            .map(({ path }) => path)
+            .sort();
+        const { useConnectedServiceQuotaSummaries } = await import('./useConnectedServiceQuotaSummaries');
+        const hook = await renderHook(() => useConnectedServiceQuotaSummaries({ fetchPolicy: 'cache_only' }), {
+            wrapper: Wrapper, flushOptions: { cycles: 30 },
+        });
+
+        expect(hook.getCurrent().accountIdentities).toEqual([]);
+        expect(metadataReads()).toEqual([]);
+
+        await act(async () => setProfile({ connectedServicesV2: [], connectedAccountsV4: [{
+            ref: { service: { pluginId: 'acme.connected.accounts', localId: 'gateway' }, accountId: 'work' },
+            status: 'needs_reauth',
+            authenticationModeId: 'oauth',
+            revisionSemantics: 'revisioned',
+            credentialRevision: 'revision-1',
+            configurationReady: true,
+            configurationRevision: null,
+            scopes: [],
+        }] }));
+        await flushHookEffects();
+
+        expect(hook.getCurrent().accountIdentities).toHaveLength(1);
+        expect(metadataReads()).toEqual([
+            '/v1/account/entity-rows/connected-metadata/acknowledgements',
+            '/v1/account/entity-rows/connected-metadata/presentation',
+        ]);
+    });
+
     it('summarizes a novel qualified V4 account without falling through a scalar V2 service id', async () => {
         const ref = {
             service: {

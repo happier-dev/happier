@@ -81,16 +81,19 @@ export function useUsagePlans(slice: UsageQueryResultSlice, refresh: UsageWidget
   const scope = useActiveServerAccountScope();
   const groups = storage(state => areServerAccountScopesEqual(state.profileScope, scope)
     ? state.profile.connectedAccountGroupsV4 : NO_GROUPS);
-  const labelsByKey = useConnectedMetadataCatalog(undefined, selectConnectedMetadataLabels);
-  const projection = React.useMemo(() => ({ ...baseProjection, pools: baseProjection.pools.filter(pool => groups.some(group =>
+  const admittedPools = React.useMemo(() => baseProjection.pools.filter(pool => groups.some(group =>
     group.ref.groupId === pool.groupId && group.ref.service.pluginId === pool.service.pluginId
-      && group.ref.service.localId === pool.service.localId)).map(pool => ({
+      && group.ref.service.localId === pool.service.localId)), [baseProjection.pools, groups]);
+  const labelsByKey = useConnectedMetadataCatalog(undefined, selectConnectedMetadataLabels, {
+    enabled: admittedPools.length > 0,
+  });
+  const projection = React.useMemo(() => ({ ...baseProjection, pools: admittedPools.map(pool => ({
     ...pool,
     name: presentQualifiedConnectedAccountTarget({ target: { kind: 'group', service: pool.service, groupId: pool.groupId },
       groups, accounts: [], labelsByKey,
       serviceTitle: resolveQualifiedConnectedServiceRegistryDisplayName(registry, pool.service, t, localizePluginText),
     }).primaryLabel,
-  })) }), [baseProjection, groups, labelsByKey, registry, localizePluginText]);
+  })) }), [baseProjection, admittedPools, groups, labelsByKey, registry, localizePluginText]);
   const serviceEntryOf = React.useCallback((account: UsagePlanAccount) =>
     resolveQualifiedConnectedServiceRegistryEntry(registry, account.service), [registry]);
   const { present } = useConnectedAccountIdentityPrivacy();

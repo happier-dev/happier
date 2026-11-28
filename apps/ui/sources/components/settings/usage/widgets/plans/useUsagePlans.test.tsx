@@ -40,6 +40,53 @@ import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccou
 let home: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
 afterEach(async () => { standardCleanup(); clearMachineRequestReachabilityForTest(); retireActiveServerAccountScopeLifetime(); await home?.dispose(); home = undefined; });
 
+it('reads Connected Metadata only once there is an admitted pool to name on Home Capacity', async () => {
+  const profile = AccountProfileSchema.parse({ id: 'cold-capacity' });
+  const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+  const pool = { service, groupId: 'studio' };
+  home = await serveAccountHomes({ homes: [{ key: 'plans', serverUrl: 'https://cold-capacity.test', accountId: profile.id, profile }],
+    route: request => {
+      if (request.path === CONNECTED_PRESENTATION_ROWS_ROUTE_V1) return Response.json({ status: 'present', revision: 1,
+        content: { t: 'plain', v: { v: 1, entries: [{ v: 1, subject: { kind: 'group', ...pool }, label: 'Named pool' }] } } });
+      if (request.path === CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1) return Response.json({ status: 'present', revision: 1,
+        content: { t: 'plain', v: { v: 1, entries: [] } } });
+      return undefined;
+    } });
+  const server = home.homes.plans!;
+  publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+  const scope = { serverId: server.id, accountId: profile.id };
+  storage.setState({ profileScope: scope, settingsScope: scope, profile });
+  const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+  const query = normalizeUsageQuery({});
+  let slice = resolveUsagePageAggregation({ queries: [query], sources: [] }, bundledUsageModelPriceCatalog).results[0]!;
+  const metadataReads = () => home!.requests.filter(request => request.method === 'GET'
+    && [CONNECTED_PRESENTATION_ROWS_ROUTE_V1, CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1].some(path => path === request.path))
+    .map(request => request.path).sort();
+  const refresh = async () => {};
+  const hook = await renderHook(() => useUsagePlans(slice, refresh), {
+    wrapper: ({ children }) => React.createElement(InjectedAuthProvider, { credentials, children }),
+    flushOptions: { cycles: 30 },
+  });
+  try {
+    expect(hook.getCurrent().projection.pools).toEqual([]);
+    expect(metadataReads()).toEqual([]);
+
+    slice = resolveUsagePageAggregation({ queries: [query], sources: [], pools: [{ query, value: [
+      { group: pool, memberAccountIds: [], activeAccountId: null, selection: { status: 'pending' } },
+    ] }] }, bundledUsageModelPriceCatalog).results[0]!;
+    await hook.rerender();
+    expect(hook.getCurrent().projection.pools).toEqual([]);
+    expect(metadataReads()).toEqual([]);
+
+    const group = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref: pool, displayName: 'Studio',
+      incarnation: 'studio:1', policy: { strategy: 'priority' }, generation: 1, runtimeStateRevision: 1,
+      state: {}, members: [], activeConnectedAccountId: null, createdAt: 1, updatedAt: 1 });
+    await act(async () => storage.getState().applyProfile({ ...profile, connectedAccountGroupsV4: [group] }));
+    await expect.poll(() => hook.getCurrent().projection.pools[0]?.name).toBe('Named pool');
+    expect(metadataReads()).toEqual([CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1, CONNECTED_PRESENTATION_ROWS_ROUTE_V1]);
+  } finally { await hook.unmount(); }
+});
+
 it('does no Plans render work for quota-cache publications when its displayed slice and account identities stay put', async () => {
   const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
   const { resolveAuthCredentialsScopeKey } = await import('@/auth/storage/resolveAuthCredentialsScopeKey');
