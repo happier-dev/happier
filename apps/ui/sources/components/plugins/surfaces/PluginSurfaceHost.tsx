@@ -2479,14 +2479,15 @@ function PluginSurfaceHostMount(props: Readonly<(
         const binding = projectedMountBinding?.kind === 'destination' ? projectedMountBinding.destinationBinding : null;
         if (!hasEmbeddedRendererMount && (binding?.container === 'rightSidebarTab' || binding?.container === 'appPage')) {
             const context = resolvePluginSidebarResourceContext({ binding, sessionId: props.sessionId ?? undefined, target,
-                mountInstanceKey: mountedInstanceKey, launchInput: ordinaryLaunchInput });
+                mountInstanceKey: mountedInstanceKey ?? appPageResourceKey, launchInput: ordinaryLaunchInput });
             return context ? Object.freeze({ ...context,
                 ...(reviewContext ? { review: reviewContext } : {}) }) : undefined;
         }
         return Object.freeze({ kind: 'surface' as const, mountInstanceKey: mountedInstanceKey ?? mountedSurfaceId,
             launchInput: ordinaryLaunchInput ?? null, target,
             ...(reviewContext ? { review: reviewContext } : {}) });
-    }, [hasEmbeddedRendererMount, mountedInstanceKey, mountedSurfaceId, ordinaryLaunchInput, projectedMountBinding, resolvedSurfaceTarget, reviewContext, props.sessionId]);
+    }, [appPageResourceKey, hasEmbeddedRendererMount, mountedInstanceKey, mountedSurfaceId, ordinaryLaunchInput,
+        projectedMountBinding, resolvedSurfaceTarget, reviewContext, props.sessionId]);
     const surfaceTargetAuthorityKey = resolvedSurfaceTarget.resolved
         ? getPluginSurfaceTargetAuthorityKey(resolvedSurfaceTarget.target)
         : null;
