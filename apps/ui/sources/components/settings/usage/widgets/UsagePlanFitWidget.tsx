@@ -31,7 +31,6 @@ import {
   UsagePlanAccountStates,
   isUsagePlanAccountDrawn,
   isUsagePlanAccountFirstReading,
-  isUsagePlanAccountSettledUnread,
   UsagePlanSectionHead,
   UsagePlansNothingRead,
   usePlanText,
@@ -87,7 +86,6 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
   // Never-read accounts are one quiet line, not rows (R1), and a first read in flight is said by the state line under
   // the rows; a missing price shared by every row is said once (R9).
   const drawn = projection.accounts.filter(isUsagePlanAccountDrawn);
-  const unreadCount = projection.accounts.filter(isUsagePlanAccountSettledUnread).length;
   const noPriceOnce = drawn.length > 1 && drawn.every((account) => readPlanKeyFact(account, insightsOf(account), nowMs) === null);
   // Rows with no ended window yet say so once under the list, not on every row (sweep 1110 item 19).
   const noneEndedOnce = drawn.filter((account) => account.read?.current
@@ -105,7 +103,6 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
   // A gap more readings cure is one quiet promise; attribution says what it needs. (No price anywhere collapses the
   // widget to its one line below, so it is never a caveat here.)
   const caveats = [noneEndedOnce ? t('usage.board.plans.fitNoneEndedOnce') : null,
-    unreadCount > 0 ? t('usage.board.plans.capacityNotRead', { count: unreadCount }) : null,
     planFitGaps.attribution ? t('usage.board.plans.attributionNote') : null,
     planFitGaps.history ? t('usage.board.plans.moreDetailLater') : null].filter((line): line is string => line !== null);
   const planRows = (
@@ -153,14 +150,14 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
         </UsagePlanDisclosure>
         {recordedWeek}
         <UsagePlanAccountStates accounts={projection.accounts} nameOf={nameOf} slice={props.slice}
-          onRetry={props.model.refresh} testID={`${props.testID}.state`} />
+          onRetry={props.model.refresh} testID={`${props.testID}.state`} promise={t('usage.board.plans.planFitNoneConnected')} />
         {paceTargetLink}
       </View>
     );
   }
   return (
     <View style={styles.body} testID={`${props.testID}.planFit`}>
-      {planRows}
+      {drawn.length > 0 ? planRows : null}
       {/* The list's caveats are one quiet line: the first, with the rest one press away, never a run-on line plus
           a sentence (USAGE-ACCEPT #7). */}
       {caveats.length > 0 ? (
@@ -171,7 +168,8 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
       ) : null}
       {recordedWeek}
       <UsagePlanAccountStates accounts={projection.accounts} nameOf={nameOf} slice={props.slice}
-        onRetry={props.model.refresh} testID={`${props.testID}.state`} replacesContent={drawn.length === 0} />
+        onRetry={props.model.refresh} testID={`${props.testID}.state`} replacesContent={drawn.length === 0}
+        promise={t('usage.board.plans.planFitNoneConnected')} />
       {paceTargetLink}
     </View>
   );

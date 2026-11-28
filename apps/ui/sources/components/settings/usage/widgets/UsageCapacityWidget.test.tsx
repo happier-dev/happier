@@ -980,6 +980,9 @@ it('says Limits beside other widgets as the account the next session uses: its f
   expect(creditBacked?.props.accessibilityLabel).toContain('0%');
   expect(creditBacked?.props.accessibilityLabel).not.toContain(t('usage.board.plans.cellUsedUp'));
   expect(screen.findHostByTestId('capacity.cell.spare')?.props.accessibilityLabel).toContain(t('usage.board.plans.cellUsedUp'));
+  // A used-up account the pool works around is not a failure: its quota draws in ink, never rose (USAGE-DESIGN-PASS-57 #12).
+  const { MeterBar } = await import('@/components/ui/lists/MeterBar');
+  expect(screen.findAllByType(MeterBar).map(bar => bar.props.tone)).not.toContain('danger');
 });
 
 it('names the only account in the Limits headline beside other widgets, where no cell names it (owner 11-11)', async () => {

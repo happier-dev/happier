@@ -1082,7 +1082,8 @@ export function describeUsagePageNewerServerSources(slices: readonly Pick<UsageQ
 export function readUsagePageFailure(slices: readonly Pick<UsageQueryResultSlice, 'sources' | 'howYouWork'>[]) {
   const failures = readUsagePageFailures(slices);
   const scopeRefusal = readUsageScopeRefusal(failures);
-  const retryable = failures.filter(canRetryUsageCoverageFailure);
+  const eligible = failures.filter(canRetryUsageCoverageFailure);
+  const retryable = eligible.filter(source => !isUsageQuotaOwnershipUnproven(source));
   const ownershipUnproven = failures.some(isUsageQuotaOwnershipUnproven);
   // A settled Work answer with Sessions that failed retryably is partly read: said as what arrived, never as an outage
   // (r226 #61), and the page's one Retry rereads it (ruling 11-25 00:15Z: the header is the one recovery surface).
@@ -1101,9 +1102,7 @@ export function readUsagePageFailure(slices: readonly Pick<UsageQueryResultSlice
     ...(ownershipUnproven ? [t('connectedServices.errors.quotaOwnershipUnproven', {})] : []),
   ].join(' · ');
   const quotaTimes = retryable.flatMap(source => usagePageReadFamily(source.source) === 'quota' && source.asOfMs !== undefined ? [source.asOfMs] : []);
-  // An ownership refusal is retried by an explicit reread (the owner's same-material recovery), so the notice offers the
-  // page's one Retry for it too (acceptance 11-22 #20).
-  return { scopeRefusal, reason, quiet, retryable: retryable.length > 0 || ownershipUnproven || workPartlyRead, retainedQuotaAsOfMs: quotaTimes.length ? Math.min(...quotaTimes) : null };
+  return { scopeRefusal, reason, quiet, retryable: eligible.length > 0 || workPartlyRead, retainedQuotaAsOfMs: quotaTimes.length ? Math.min(...quotaTimes) : null };
 }
 
 /**
@@ -1125,7 +1124,8 @@ function readUsagePageWitnessedNames(slices: readonly Pick<UsageQueryResultSlice
 /** Said alone only when no page read failed; otherwise the failed fact carries it. */
 export function describeUsagePagePartialSources(slices: readonly Pick<UsageQueryResultSlice, 'sources' | 'howYouWork'>[]): string | null {
   const names = readUsagePageWitnessedNames(slices);
-  if (!names.length || readUsagePageFailures(slices).some(canRetryUsageCoverageFailure) || readUsagePageWorkRetryable(slices)) return null;
+  if (!names.length || readUsagePageFailures(slices).some(source => !isUsageQuotaOwnershipUnproven(source)
+    && canRetryUsageCoverageFailure(source)) || readUsagePageWorkRetryable(slices)) return null;
   return t('usage.board.page.coverageWitnessed', { sources: names.join(', ') });
 }
 

@@ -3312,7 +3312,7 @@ describe('usage query captured Resource adapter', () => {
 
       record = snapshot(45, now);
       ownershipProven = true;
-      const recovered = await readUiUsageQueryBatch(captured, input, undefined, refused);
+      const recovered = await readUiUsageQueryBatch(captured, input, undefined, refused, { retryQuotaFailuresOnly: true });
       expect(recovered.results[0]?.sources.find(state => state.source === sourceKey)).toMatchObject({ status: 'available' });
       expect(recovered.results[0]?.quota?.[0]?.current?.meters[0]?.usedPct).toBe(45);
     } finally {

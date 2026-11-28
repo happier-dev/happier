@@ -77,16 +77,18 @@ export function readPendingPlanAccountCount(accounts: readonly UsagePlanAccount[
 export function readPlanAccountsStatement(
   accounts: readonly UsagePlanAccount[],
   nameOf: (account: UsagePlanAccount) => UsagePlanAccountName,
-): Readonly<{ kind: PlanAccountReadKind; reason: string; asOf: number | null; accounts: number; canRetry: boolean;
+): Readonly<{ kind: PlanAccountReadKind; reason: string; asOf: number | null; accounts: number; unreadCount: number; canRetry: boolean;
   /** The accounts whose ownership is unconfirmed, and the statement's other causes without them. */
   ownershipNames: readonly string[]; otherReason: string }> | null {
   const ownershipNames: string[] = [];
+  let unreadCount = 0;
   const affected: { account: UsagePlanAccount; kind: PlanAccountReadKind }[] = [];
   for (const account of accounts) {
     if (isOwnershipUnproven(account)) {
       ownershipNames.push(nameOf(account).title);
       continue;
     }
+    if (isUsagePlanAccountSettledUnread(account)) unreadCount++;
     const kind = planAccountReadKind(account);
     if (kind) affected.push({ account, kind });
   }
@@ -118,8 +120,9 @@ export function readPlanAccountsStatement(
     reason: reasons.join(' · '),
     asOf: times.length ? Math.min(...times) : null,
     accounts: affected.length + ownershipNames.length,
+    unreadCount,
     canRetry: ownershipNames.length > 0 || kind === 'failed'
-      ? affected.some(({ account }) => canRetryUsageCoverageFailure(account.state))
+      ? accounts.some(({ state }) => canRetryUsageCoverageFailure(state))
       : kind === 'partial',
     ownershipNames,
     otherReason: otherReasons.join(' · '),
@@ -185,13 +188,19 @@ export function UsagePlanAccountStates(props: Readonly<{
    * away. Every other body says it in one short line, so a sheet never repeats a list of names (acceptance 11-22 #31).
    */
   leadsAccountStates?: boolean;
+  /**
+   * A body derived from the allowances (Projections, Resets, Plan fit): when the sheet's header and Limits already say
+   * why nothing can be drawn, it says only what it will show, as {@link UsagePlansNothingRead} does (USAGE-DESIGN-PASS-57 #2).
+   */
+  promise?: string;
 }>) {
   const pageHasDetail = useUsageWidgetPageHasCoverageDetail();
   const text = usePlanText();
   const statement = readPlanAccountsStatement(props.accounts, props.nameOf);
   const mode = statement ? planAccountStatesMode(statement.kind, pageHasDetail, props.replacesContent === true,
     props.accounts.map(account => account.state)) : 'hidden';
-  const retry = useUsageRetryCommand(props.onRetry, mode === 'line' && statement?.canRetry === true);
+  const leadsReason = mode === 'reason' && props.leadsAccountStates === true;
+  const retry = useUsageRetryCommand(props.onRetry, (mode === 'line' || leadsReason) && statement?.canRetry === true);
   if (statement?.kind === 'pending' && props.pendingInHeadline) {
     // Holds the room the settled coverage line takes. The Usage page names coverage once in its header and
     // draws no such line when settled, so it holds none (else the body would shrink by the line at settle).
@@ -201,7 +210,11 @@ export function UsagePlanAccountStates(props: Readonly<{
     return <UsageCoverageLine slice={props.slice} sources={['quota']} onRetry={props.onRetry} testID={`${props.testID}.coverage`} />;
   }
   if (mode === 'reading') return <UsageBodyReading testID={`${props.testID}.loading`} />;
-  if (mode === 'hidden') return null;
+  if (mode === 'hidden') return props.replacesContent && props.promise && statement.unreadCount === props.accounts.length
+    ? <UsagePlanPromiseLine testID={`${props.testID}.promise`} promise={props.promise} /> : null;
+  // One cause, said once: Limits keeps it; a derived body says only its promise.
+  if (mode === 'reason' && !props.leadsAccountStates)
+    return props.promise ? <UsagePlanPromiseLine testID={`${props.testID}.promise`} promise={props.promise} /> : null;
   const held = statement.ownershipNames.length;
   const reason = held === 0 ? statement.reason : [props.leadsAccountStates
     ? t('connectedServices.errors.quotaOwnershipUnproven', { accounts: t('connectedServices.purposeTargets.poolAccounts', { count: held }) })
@@ -211,9 +224,17 @@ export function UsagePlanAccountStates(props: Readonly<{
       <Text style={[styles.identityQualifier, text.detail]}>{statement.ownershipNames.join(', ')}</Text>
     </UsagePlanDisclosure>
   ) : null;
+  const unread = !pageHasDetail && props.promise && statement.unreadCount > 0
+    ? t('usage.board.plans.capacityNotRead', { count: statement.unreadCount }) : null;
+  const lineReason = unread && statement.kind === 'partial' && statement.unreadCount === statement.accounts
+    ? unread : [reason, unread].filter(Boolean).join(' · ');
   const pending = statement.kind === 'pending';
-  const line = mode === 'reason' ? <UsageBodyInsufficient testID={`${props.testID}.reason`} title={reason} />
-    : <SurfaceFreshnessLine testID={props.testID} asOf={statement.asOf} reason={reason} busy={pending}
+  // A denial or failed read keeps its text and glyph (DESIGN "failures and denials keep their text and glyph"), with the
+  // Retry the statement exposes; never the empty state's scene (USAGE-DESIGN-PASS-57 #3).
+  const line = mode === 'reason' ? <SurfaceStateCard testID={`${props.testID}.reason`} kind="unavailable" layout="inline"
+      size="line" replacesContent title={reason}
+      {...(statement.canRetry ? { action: { label: t('common.retry'), onPress: retry } } : {})} />
+    : <SurfaceFreshnessLine testID={props.testID} asOf={statement.asOf} reason={lineReason} busy={pending}
       tone={statement.kind === 'failed' ? 'warning' : 'neutral'}
       {...(statement.canRetry ? { action: { label: t('common.retry'), onPress: retry } } : {})} />;
   return names ? <View style={styles.heldBack}>{line}{names}</View> : line;
@@ -468,21 +489,20 @@ export function UsagePlansNothingRead(
   // sign-in under its scene (58d AF1). The widgets derived from it say only what they will show, in one quiet line:
   // the scene belongs to the cause, so a page with Limits never draws a second empty scene beside it.
   if (props.replacesContent !== false && !gaps.some((gap) => gap.status === 'error')) {
+    if (!props.ownsCause) return <UsagePlanPromiseLine testID={props.testID} promise={props.promise} />;
     return (
       <SurfaceStateCard
         testID={props.testID}
         kind="empty"
         replacesContent
-        {...(props.ownsCause ? { scene: 'connectAccount' as const } : { layout: 'inline' as const, size: 'line' as const })}
-        title={props.ownsCause ? t('usage.board.plans.capacitySignInTitle') : props.promise}
-        {...(props.ownsCause ? {
-          reason: props.promise,
-          action: {
-            label: t('usage.board.plans.capacitySignIn'),
-            testID: `${props.testID}.signIn`,
-            onPress: () => { void commands.invoke('signIn'); },
-          },
-        } : {})}
+        scene="connectAccount"
+        title={t('usage.board.plans.capacitySignInTitle')}
+        reason={props.promise}
+        action={{
+          label: t('usage.board.plans.capacitySignIn'),
+          testID: `${props.testID}.signIn`,
+          onPress: () => { void commands.invoke('signIn'); },
+        }}
       />
     );
   }
@@ -506,6 +526,14 @@ export function UsagePlansNothingRead(
       {coverage}
     </View>
   );
+}
+
+/**
+ * What a body derived from the allowances will show, in one quiet line, when the cause is said by Capacity (Limits) and
+ * the sheet's header: the scene and the reason belong to the cause, so a sheet never repeats either (Plans ×4).
+ */
+export function UsagePlanPromiseLine(props: Readonly<{ testID: string; promise: string }>) {
+  return <SurfaceStateCard testID={props.testID} kind="empty" layout="inline" size="line" replacesContent title={props.promise} />;
 }
 
 /** One quiet legend line, said once under the meters it explains. */

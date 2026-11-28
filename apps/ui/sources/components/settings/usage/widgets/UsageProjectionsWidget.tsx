@@ -317,15 +317,7 @@ function ProjectionsBody(props: UsageBodyProps & Readonly<{
     .map(window => ({ account, window, name: nameOf(account) })));
   const rows = windows.filter(row => row.window.remainingFraction !== null);
   const unreported = windows.filter(row => row.window.remainingFraction === null);
-  const unreadCount = accounts.filter(isUsagePlanAccountSettledUnread).length;
-  const onlyUnread = unreadCount === accounts.length;
-  const unreadState = unreadCount > 0 ? (
-    <UsageBodyInsufficient
-      testID={`${props.testID}.unread`}
-      title={t('usage.board.plans.capacityNotRead', { count: unreadCount })}
-      replacesContent={onlyUnread}
-    />
-  ) : null;
+  const onlyUnread = accounts.every(isUsagePlanAccountSettledUnread);
   const focusName = focus ? nameOf(focus.account) : null;
   const focusTitle = focus && focusName ? `${focusName.title} · ${focus.window.label}` : '';
   const pace = focus?.window.pace ?? null;
@@ -420,9 +412,9 @@ function ProjectionsBody(props: UsageBodyProps & Readonly<{
         {depletingNote}
         {/* The legend explains pace marks; without any pace it explains nothing. */}
         {live.some(row => row.window.pace) ? <UsagePlanLegend testID={`${props.testID}.legend`} parts={[t('usage.board.plans.legendEvenPace'), t('usage.board.plans.legendHatched')]} /> : null}
-        {unreadState}
         <UsagePlanAccountStates accounts={accounts} nameOf={nameOf} slice={props.slice} onRetry={props.model.refresh}
           replacesContent={!rows.length && !unreported.length && !depletingNote}
+          promise={t('usage.board.plans.projectionsNoneConnected')}
           testID={`${props.testID}.state`} />
       </View>
     );
@@ -590,9 +582,9 @@ function ProjectionsBody(props: UsageBodyProps & Readonly<{
           ]}
         />
       )}
-      {unreadState}
       <UsagePlanAccountStates accounts={accounts} nameOf={nameOf} slice={props.slice}
-        onRetry={props.model.refresh} testID={`${props.testID}.state`} />
+        onRetry={props.model.refresh} testID={`${props.testID}.state`} replacesContent={onlyUnread}
+        promise={t('usage.board.plans.projectionsNoneConnected')} />
     </View>
   );
 }

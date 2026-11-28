@@ -1228,10 +1228,9 @@ it.each([
 });
 
 it.each([
-  ['unread', 1, false],
-  ['observed', 0, true],
-  ['mixed', 2, true],
-] as const)('Projections names the unread-account count in a %s list alongside any observed windows', async (_state, count, observed) => {
+  { state: 'unread', count: 1, observed: false },
+  { state: 'mixed', count: 2, observed: true },
+])('Projections and Plan fit report $state accounts where each card owns its read state', async ({ count, observed }) => {
   const now = Date.now();
   const reads = Array.from({ length: count }, (_, index) => quotaRead(
     `unread-${index}`, 0, [], {}, { state: 'not_loaded' },
@@ -1242,25 +1241,31 @@ it.each([
   const { UsageWidgetBatchProvider } = await import('../usageWidgetBatch');
   const { readUsageWidgetQueryOverrides } = await import('../../usageWidgetPageContext');
   const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
-  const screen = await renderPlanAccessibility(
-    <UsageWidgetBatchProvider clauses={readUsageWidgetQueryOverrides(query)} enabled={false}>
-      <WidgetPresentationProvider value={{ size: 'medium',
-        footprint: { columns: 2, columnSpan: 1, rowSpan: 2, width: 'half', height: 'regular' }, geometry: { width: 470, height: 260 } }}>
-        <UsageProjectionsWidget {...bodyProps(reads)} id="usage_projections" testID="proj" />
-      </WidgetPresentationProvider>
-    </UsageWidgetBatchProvider>,
+  const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
+  const props = bodyProps(reads);
+  const widgets = (
+    <WidgetPresentationProvider value={{ size: 'medium',
+      footprint: { columns: 2, columnSpan: 1, rowSpan: 2, width: 'half', height: 'regular' }, geometry: { width: 470, height: 260 } }}>
+      <UsageProjectionsWidget {...props} id="usage_projections" testID="proj" />
+      <UsagePlanFitWidget {...props} id="usage_plan_fit" testID="fit" />
+    </WidgetPresentationProvider>
   );
-  const body = screen.findHostByTestId('proj.projections');
-  expect(body).toBeTruthy();
-  const accessible = spokenPlanText(body!).join(' ');
-  expect(screen.findHostByTestId('proj.window.work.weekly') !== null).toBe(observed);
-  if (observed) expect(accessible).toContain('70% left');
-  if (count) {
-    const message = t('usage.board.plans.capacityNotRead', { count });
-    expect(screen.getTextContent()).toContain(message);
-    expect(accessible.split(message)).toHaveLength(2);
-  } else {
-    expect(accessible).not.toContain(t('usage.board.plans.capacityNotRead', { count: 1 }));
+  for (const onUsagePage of [false, true]) {
+    const screen = await renderPlanAccessibility(onUsagePage
+      ? <UsageWidgetBatchProvider clauses={readUsageWidgetQueryOverrides(query)} enabled={false}>{widgets}</UsageWidgetBatchProvider>
+      : widgets);
+    expect(screen.findHostByTestId('proj.window.work.weekly') !== null).toBe(observed);
+    expect(screen.findHostByTestId('fit.plan.work') !== null).toBe(observed);
+    if (observed) expect(spokenPlanText(screen.findHostByTestId('proj.projections')!).join(' ')).toContain('70% left');
+    for (const [bodyId, promise] of [
+      ['proj.projections', t('usage.board.plans.projectionsNoneConnected')],
+      ['fit.planFit', t('usage.board.plans.planFitNoneConnected')],
+    ] as const) {
+      const copy = spokenPlanText(screen.findHostByTestId(bodyId)!).join(' ');
+      const unread = t('usage.board.plans.capacityNotRead', { count });
+      expect.soft(copy.includes(unread), `${bodyId} unread count on ${onUsagePage ? 'Usage' : 'a standalone card'}`).toBe(!onUsagePage);
+      expect.soft(copy.includes(promise), `${bodyId} promise on ${onUsagePage ? 'Usage' : 'a standalone card'}`).toBe(onUsagePage && !observed);
+    }
   }
 });
 
@@ -1804,6 +1809,61 @@ it('shows the known retry from the selector for a wholly used-up pool and keeps 
   expect(screen.findHostByTestId('cap.tightest')?.props.accessibilityLabel).toContain('0%');
 });
 
+it('gives each Limits pool its own exhausted tone and distinguishes low and healthy quota', async () => {
+  const now = Date.now();
+  const weekly = (usedPct: number): Meter => ({
+    meterId: 'weekly', label: 'Weekly', usedPct, resetAtMs: now + DAY, windowDurationMs: 7 * DAY,
+  });
+  const spentPool = (groupId: string, spent: string, spare: string) => {
+    const group = { service, groupId };
+    const memberAccountIds = [spent, spare];
+    const selection: ConnectedServicePoolSelectionV1 = {
+      selected: null, reason: 'no_eligible_members',
+      nextQuotaRetry: { profileId: spent, retryAtMs: now + DAY },
+      excluded: memberAccountIds.map(profileId => ({ profileId, reason: 'quota_exhausted', retryAtMs: now + DAY })),
+      decisionTrace: { activeProfileId: null, reason: 'no_eligible_members', strategy: 'expiry_first',
+        selectionBasis: 'no_eligible_members', sticky: false, orderedEligibleCandidates: [],
+        candidates: memberAccountIds.map(profileId => ({
+          profileId, decision: 'excluded', exclusionReason: 'quota_exhausted', quotaEvidence: { status: 'fresh', exhausted: true },
+        })),
+      },
+    };
+    return { group, memberAccountIds, activeAccountId: null,
+      selection: { status: 'available' as const, machineId: 'witnessed-selector', value: { group, observedAtMs: now, selection } } };
+  };
+  const routed = spentPool('routed', 'skipped', 'low');
+  const low = { profileId: 'low', priority: 0, createdAtMs: 1, enabled: true, leastLimitedScore: 5, preferenceDeadlineMs: now + DAY };
+  const routedSelection: ConnectedServicePoolSelectionV1 = {
+    selected: low, reason: 'selected', excluded: routed.selection.value.selection.excluded.slice(0, 1),
+    decisionTrace: { ...routed.selection.value.selection.decisionTrace, reason: 'selected', selectionBasis: 'preference',
+      orderedEligibleCandidates: [low], candidates: [routed.selection.value.selection.decisionTrace.candidates[0]!,
+        { profileId: 'low', decision: 'selected', quotaEvidence: { status: 'fresh', exhausted: false, remainingPercent: 5 } }],
+    },
+  };
+  const props = bodyProps([
+    ...['spent-a', 'spent-b', 'skipped', 'waiting'].map(id => quotaRead(id, now, [weekly(100)])),
+    quotaRead('low', now, [weekly(95)]),
+    quotaRead('healthy', now, [weekly(20)]),
+    quotaRead('unread', 0, [], {}, { state: 'not_loaded' }),
+  ], [{ query, value: [
+    spentPool('spent', 'spent-a', 'spent-b'),
+    { ...routed, selection: { ...routed.selection, value: { ...routed.selection.value, selection: routedSelection } } },
+    spentPool('unknown', 'waiting', 'unread'),
+  ] }]);
+  const { UsageCapacityWidget } = await import('../UsageCapacityWidget');
+  const { HappierProgress } = await import('@happier-dev/plugin-ui/presentation');
+  const { lightTheme } = await import('@/theme');
+  const screen = await renderScreen(wrap(<UsageCapacityWidget {...props} id="usage_capacity" testID="cap" />));
+  for (const [id, tone] of [
+    ['spent-a', 'warning'], ['spent-b', 'warning'], ['skipped', 'neutral'], ['low', 'warning'],
+    ['healthy', 'neutral'], ['waiting', 'neutral'],
+  ] as const) {
+    const cell = screen.findHostByTestId(`cap.cell.${id}`);
+    expect.soft(cell?.findAllByType(HappierProgress).map(bar => bar.props.fillColor), id).toEqual([lightTheme.colors.state[tone].foreground]);
+  }
+  expect(screen.findHostByTestId('cap.cell.unread')).toBeNull();
+});
+
 it('states one unreadable-order cause once under every pool that shares it (H30)', async () => {
   const now = Date.now();
   const weekly: Meter = { meterId: 'weekly', label: 'Weekly', usedPct: 20, resetAtMs: now + 2 * DAY, windowDurationMs: 7 * DAY };
@@ -1893,7 +1953,7 @@ it.each([
   expect.soft(screen.findByTestId('cap.state.heldBack')).toBeTruthy();
   expect.soft(lineOf('fit.state')?.props.reason).toContain(t('usage.board.plans.heldBackOwnership'));
   expect.soft(lineOf('fit.state')?.props.reason).not.toMatch(/Vercel/);
-  for (const id of ['cap.state', 'fit.state']) expect.soft(lineOf(id)?.props.action).toBeUndefined();
+  for (const id of ['cap.state', 'fit.state']) expect.soft(lineOf(id)?.props.action?.label).toBe(t('common.retry'));
   expect.soft(screen.findByTestId('cap.none')).toBeFalsy();
   expect.soft(screen.findByTestId('fit.none')).toBeFalsy();
   expect.soft(screen.findByTestId(`cap.cell.${accountId}`)).toBeFalsy();
@@ -1913,6 +1973,41 @@ it.each([
     expect(screen.findByTestId('fit.reading')).toBeTruthy();
     expect(screen.findHostByTestId('fit.state')).toBeNull();
   }
+});
+
+it('on the Usage page, Limits keeps the ownership refusal as a failure line with its own state and Plan fit says its promise (USAGE-DESIGN-PASS-57 fixes 2, 3)', async () => {
+  const { createCanonicalJsonSigningInput } = await import('@happier-dev/protocol/crypto/canonicalJson');
+  const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+  const { UsageWidgetBatchProvider } = await import('../usageWidgetBatch');
+  const { readUsageWidgetQueryOverrides } = await import('../../usageWidgetPageContext');
+  const source = { bindingKind: 'account', ref: { service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }, accountId: 'team-work' } };
+  const refusal = { source: `quota:${createCanonicalJsonSigningInput(source)}`, status: 'error' as const, errorCode: 'ownership_unproven' };
+  const slice = resolveUsagePageAggregation({ queries: [query], nowMs: Date.now(), quota: { status: 'error', sources: [refusal] } },
+    bundledUsageModelPriceCatalog).results[0]!;
+  const refresh = vi.fn<UsageWidgetBodyModel['refresh']>(async () => {});
+  const model = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null, freshness: 'fresh', updatingPreviousPeriod: false,
+    refreshing: false, refresh } satisfies UsageWidgetBodyModel;
+  const { UsageCapacityWidget } = await import('../UsageCapacityWidget');
+  const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
+  const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
+  const body = { model, slice, query, serverId: mountedHome!.homes.mounted!.id };
+  const screen = await renderScreen(wrap(<UsageWidgetBatchProvider clauses={readUsageWidgetQueryOverrides(query)} enabled={false}>
+    <UsageCapacityWidget {...body} id="usage_capacity" testID="cap" />
+    <UsageProjectionsWidget {...body} id="usage_projections" testID="proj" />
+    <UsagePlanFitWidget {...body} id="usage_plan_fit" testID="fit" />
+  </UsageWidgetBatchProvider>));
+  const cards = screen.findAllByType(SurfaceStateCard);
+  // A denial keeps its text and glyph: never the empty state's scene.
+  const reason = cards.find(node => node.props.testID === 'cap.state.reason');
+  expect(reason?.props.kind).toBe('unavailable');
+  expect(reason?.props.size).toBe('line');
+  expect(reason?.props.title).toMatch(/ownership/i);
+  await screen.pressByTestIdAsync('cap.state.reason-action');
+  expect(refresh.mock.calls.map(call => call[1])).toEqual([{ failedOnly: true }]);
+  expect(cards.filter(node => node.props.kind === 'empty' && node.props.size !== 'line')).toHaveLength(0);
+  // Said once: the derived widget says only what it will show.
+  expect(screen.getTextContent()).not.toContain(t('usage.board.plans.heldBackOwnership'));
+  expect(screen.getTextContent()).toContain(t('usage.board.plans.planFitNoneConnected'));
 });
 
 it('says "nothing connected" once: Capacity owns the cause, the widgets derived from it say what they will show (Plans ×4)', async () => {

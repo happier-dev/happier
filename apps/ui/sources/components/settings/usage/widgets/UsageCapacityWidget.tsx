@@ -8,7 +8,7 @@ import { useWidgetFrameBodyCaption, useWidgetFrameBodyMeta } from '@/components/
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { useUsageOpenView } from '../usageDrill';
 import { useUsageWidgetPageHasCoverageDetail } from './usageWidgetBatch';
-import { MeterBar } from '@/components/ui/lists/MeterBar';
+import { MeterBar, type MeterTone } from '@/components/ui/lists/MeterBar';
 import { Text } from '@/components/ui/text/Text';
 import { visuallyHiddenStyle } from '@/components/ui/accessibility/visuallyHiddenStyle';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -50,7 +50,10 @@ import {
   usePlanText,
   UsagePlanDisclosure,
 } from './plans/UsagePlanParts';
-import { readUsagePoolAccount, readUsagePoolMembers, readUsagePoolNextQuotaRetry, UsagePoolQueue, UsagePoolSteps } from './plans/UsagePoolOrder';
+import {
+  readUsagePoolAccount, readUsagePoolExhaustion, readUsagePoolMembers, UsagePoolQueue, UsagePoolSteps,
+  type UsagePoolExhaustion,
+} from './plans/UsagePoolOrder';
 import { formatMoment } from '@/utils/datetime/formatMoment';
 import { formatConnectedServiceQuotaAllowance } from '@/sync/domains/connectedServices/accountUsage/formatProviderUsageAmount';
 
@@ -85,6 +88,7 @@ const POOLED_SIZES: ReadonlySet<string> = new Set(['small', 'medium', 'tall', 'w
 type Cell = Readonly<{
   account: UsagePlanAccount;
   quotaExhausted: boolean;
+  quotaBlocked: boolean;
   rank: number | null;
   selected: boolean;
   excluded: string | null;
@@ -93,6 +97,13 @@ type Run = Readonly<{ pool: UsagePlanPool | null; cells: readonly Cell[]; /** Ac
 
 /** A run of two or more members, or the accounts outside every pool, is a group worth an outline. */
 const isGroupRun = (run: Run) => (run.pool !== null && run.cells.length > 1) || run.outside === true;
+
+/** Limits marks low quota and a blocked pool in amber. Healthy quota and a spent allowance with another route stay in ink. */
+function capacityTone(window: UsagePlanWindow | null, quotaBlocked: boolean): MeterTone {
+  if (!window || window.tone === 'success') return 'neutral';
+  if (window.tone !== 'danger') return window.tone;
+  return window.remainingFraction !== 0 || quotaBlocked ? 'warning' : 'neutral';
+}
 
 /**
  * Whether a run is drawn in its own outline. A pool of one reads as its account does, until another run on the widget
@@ -118,6 +129,7 @@ function buildRuns(
   accounts: readonly UsagePlanAccount[],
   pools: readonly UsagePlanPool[],
   selections: ReadonlyMap<string, UsagePoolSelectionState> | null,
+  poolExhaustion: ReadonlyMap<string, UsagePoolExhaustion>,
   nowMs: number,
 ): Run[] {
   const byKey = new Map(accounts.map((account) => [account.key, account]));
@@ -128,36 +140,42 @@ function buildRuns(
     if (memberships.length === 0) {
       runs.push({
         pool: null,
-        cells: [{ account, quotaExhausted: account.quotaExhausted, rank: null, selected: false, excluded: null }],
+        cells: [{ account, quotaExhausted: account.quotaExhausted, quotaBlocked: account.quotaExhausted,
+          rank: null, selected: false, excluded: null }],
       });
       continue;
     }
     for (const pool of memberships) {
       if (emitted.has(pool.key)) continue;
       const selection = selections?.get(pool.key);
+      const poolBlocked = poolExhaustion.has(pool.key);
       // A member that is not drawn (never read) is said once in the collapsed line, not as a segment.
       const members = pool.accountKeys.flatMap((key) => byKey.get(key) ?? []);
       if (members.length === 0) continue;
-      const unreadCell = (member: UsagePlanAccount): Cell => ({
+      const plainCell = (member: UsagePlanAccount): Cell => ({
         account: member,
         quotaExhausted: member.quotaExhausted,
+        quotaBlocked: member.quotaExhausted && poolBlocked,
         rank: null,
         selected: false,
         excluded: null,
       });
-      let cells = members.map(unreadCell);
+      let cells = members.map(plainCell);
       if (
         selection &&
         typeof selection === 'object' &&
         !('status' in selection)
       ) {
         const ordered = readUsagePoolMembers(pool, members, selection.selection, selection.activeAccountRef);
-        cells = ordered.flatMap(member => member.account ? [{ account: member.account,
-          quotaExhausted: member.quotaExhausted ?? member.account.quotaExhausted, rank: member.rank,
-          selected: member.selected, excluded: member.exclusion
-            ? planExclusionText(member.exclusion.reason, member.exclusion.retryAtMs ?? null, nowMs) : null }] : []);
+        cells = ordered.flatMap(member => {
+          if (!member.account) return [];
+          const quotaExhausted = member.quotaExhausted ?? member.account.quotaExhausted;
+          return [{ account: member.account, quotaExhausted, quotaBlocked: quotaExhausted && poolBlocked,
+            rank: member.rank, selected: member.selected, excluded: member.exclusion
+              ? planExclusionText(member.exclusion.reason, member.exclusion.retryAtMs ?? null, nowMs) : null }];
+        });
         const traced = new Set(ordered.map(member => member.accountId));
-        cells.push(...members.filter(member => !traced.has(member.accountId)).map(unreadCell));
+        cells.push(...members.filter(member => !traced.has(member.accountId)).map(plainCell));
       }
       emitted.add(pool.key);
       runs.push({ pool, cells });
@@ -185,14 +203,11 @@ function readNextLimitsAccount(
 
 function readNextLimitsQuotaRetry(
   pools: readonly UsagePlanPool[],
-  selections: ReadonlyMap<string, UsagePoolSelectionState>,
+  poolExhaustion: ReadonlyMap<string, UsagePoolExhaustion>,
   accounts: readonly UsagePlanAccount[],
-  nowMs: number,
 ): Readonly<{ account: UsagePlanAccount; retryAtMs: number }> | null {
   for (const pool of pools) {
-    const state = selections.get(pool.key);
-    if (!state || typeof state === 'string' || 'status' in state) continue;
-    const retry = readUsagePoolNextQuotaRetry(pool, accounts, state.selection, nowMs);
+    const retry = poolExhaustion.get(pool.key)?.nextQuotaRetry;
     if (!retry) continue;
     const account = readUsagePoolAccount(pool, accounts, retry.profileId);
     if (account) return { account, retryAtMs: retry.retryAtMs };
@@ -227,9 +242,16 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
   // still in flight is said by the reading line.
   const drawn = React.useMemo(() => projection.accounts.filter(isUsagePlanAccountDrawn), [projection.accounts]);
   const unreadNames = projection.accounts.filter(isUsagePlanAccountSettledUnread).map(account => nameOf(account).title);
-  const { runs, exhaustedByAccount } = React.useMemo(
+  const { runs, exhaustedByAccount, poolExhaustion } = React.useMemo(
     () => {
-      const built = buildRuns(drawn, projection.pools, selections, nowMs);
+      const poolExhaustion = new Map<string, UsagePoolExhaustion>();
+      for (const pool of selectionPools) {
+        const state = selections?.get(pool.key);
+        if (!state || typeof state === 'string' || 'status' in state) continue;
+        const exhaustion = readUsagePoolExhaustion(pool, projection.accounts, state.selection, nowMs);
+        if (exhaustion) poolExhaustion.set(pool.key, exhaustion);
+      }
+      const built = buildRuns(drawn, projection.pools, selections, poolExhaustion, nowMs);
       const exhaustedByAccount = new Map<string, boolean>();
       for (const { cells } of built) {
         for (const cell of cells) {
@@ -238,9 +260,9 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
           exhaustedByAccount.set(key, (exhaustedByAccount.get(key) ?? true) && cell.quotaExhausted);
         }
       }
-      return { runs: pooled ? built : joinRunsOutsidePools(built), exhaustedByAccount };
+      return { runs: pooled ? built : joinRunsOutsidePools(built), exhaustedByAccount, poolExhaustion };
     },
-    [drawn, projection.pools, selections, nowMs, pooled],
+    [drawn, projection.accounts, projection.pools, selectionPools, selections, nowMs, pooled],
   );
   // Every window's latest reading, for the one witnessed-reset moment (lab `kitmotion` reset).
   const resetWindows = React.useMemo(
@@ -261,7 +283,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
   // so the tightest standing in never turns into the next account after arrival (acceptance 11-13 #2).
   const deciding = selections !== null && next === null && [...selections.values()].some(state => state === 'loading');
   const spentRetry = selections !== null && next === null && !deciding
-    ? readNextLimitsQuotaRetry(selectionPools, selections, projection.accounts, nowMs)
+    ? readNextLimitsQuotaRetry(selectionPools, poolExhaustion, projection.accounts)
     : null;
   // Beside other widgets the headline account is one figure and one meter and the rest one line: the next account
   // always, the tightest standing in when the pooled bar has no room for a label per segment. Listing them instead
@@ -295,6 +317,10 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
   // One cause is said once: when every drawn account's reading is old, "last read" joins the headline's line (the
   // oldest reading) instead of repeating under each segment or cell (acceptance 11-18 #15).
   const everyStale = drawn.length > 1 && drawn.every((account) => account.stale && account.observedAtMs !== null);
+  // The compact meter has no pool label. A tightest account that belongs to several pools marks a block only
+  // when each of its routes is blocked. A selector-chosen next account can still run.
+  const tightestBlocked = compact && tightest !== null && next === null && runs.every(run =>
+    run.cells.every(cell => cell.account.key !== tightest.account.key || cell.quotaBlocked));
   // The read time is said once: by the read-state line under the body when that line shows (Home: "As of 3:09 AM ·
   // Retry"), else in the headline (acceptance 11-22 #24). The line's own owner decides whether it shows.
   const pageHasDetail = useUsageWidgetPageHasCoverageDetail();
@@ -442,7 +468,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
       ) : null}
       {compact ? (
         tightest !== null && spentRetry === null ? <View style={styles.nextMeter} testID={`${props.testID}.nextMeter`}>
-          <MeterBar height={8} tone={tightest.window.tone !== 'success' ? tightest.window.tone : 'neutral'}
+          <MeterBar height={8} tone={capacityTone(tightest.window, tightestBlocked)}
             fillFraction={tightest.window.remainingFraction ?? 0} {...(tightest.account.stale ? { fillOpacity: 0.45 } : {})} />
         </View> : null
       ) : pooled && runs.length > 0 ? (
@@ -574,7 +600,7 @@ function CapacityPooledBar(props: Readonly<{
               const window = cell.account.headline;
               return (
                 <View key={cell.account.key} style={styles.pooledSegment}>
-                  <MeterBar height={8} tone={window && window.tone !== 'success' ? window.tone : 'neutral'}
+                  <MeterBar height={8} tone={capacityTone(window, cell.quotaBlocked)}
                     fillFraction={window?.remainingFraction ?? 0} {...(cell.account.stale ? { fillOpacity: 0.45 } : {})} />
                 </View>
               );
@@ -632,6 +658,7 @@ function CapacityCell(
   const { cell, nowMs } = props;
   const text = usePlanText();
   const window = cell.account.headline;
+  const tone = capacityTone(window, cell.quotaBlocked);
   // Amount-only observations still have a figure even when there is no comparable window.
   const amountWindows = cell.account.windows.flatMap((entry) => {
     const amount = formatConnectedServiceQuotaAllowance(entry.reportedAmount);
@@ -656,7 +683,7 @@ function CapacityCell(
           time: formatMoment(cell.account.observedAtMs, nowMs),
         })
       : null;
-  // Red belongs to "used up" alone: a stale read of a used-up plan stays the quiet "last read" note.
+  // An older reading keeps its freshness note and the last observed amount.
   const usedUpDetail = cell.excluded === null && staleDetail === null && cell.quotaExhausted && countdown
     ? `${t('usage.board.plans.cellUsedUp')} · ${countdown}`
     : null;
@@ -680,11 +707,7 @@ function CapacityCell(
         styles.cellValue,
         text.title,
         remaining === null ? styles.cellValueUnknown : null,
-        window?.tone === 'warning'
-          ? styles.warning
-          : window?.tone === 'danger'
-            ? styles.danger
-            : null,
+        tone === 'warning' ? styles.warning : null,
       ]}
       numberOfLines={1}
     >
@@ -701,7 +724,7 @@ function CapacityCell(
         styles.cellDetail,
         text.detail,
         props.pooled ? null : { minHeight: text.detail.lineHeight },
-        usedUpDetail !== null ? styles.danger : null,
+        usedUpDetail !== null && tone === 'warning' ? styles.warning : null,
       ]}
       // A narrow segment wraps its note ("last read 07:31") rather than cutting the time off.
       numberOfLines={2}
@@ -738,7 +761,7 @@ function CapacityCell(
       {/* The bar leads (lab `ucap`): side by side the cells read as one all-accounts bar. An unknown window draws an empty track; no width is invented for it. */}
       {props.pooled ? null : <MeterBar
         height={8}
-        tone={window && window.tone !== 'success' ? window.tone : 'neutral'}
+        tone={tone}
         fillFraction={remaining ?? 0}
         {...(cell.account.stale ? { fillOpacity: 0.45 } : {})}
       />}
@@ -853,5 +876,4 @@ const styles = StyleSheet.create((theme) => ({
   pooledSegment: { flex: 1, minWidth: 0 },
   pooledLabels: { flexDirection: 'row', gap: theme.space.s4 },
   warning: { color: theme.colors.state.warning.textForeground },
-  danger: { color: theme.colors.state.danger.textForeground },
 }));

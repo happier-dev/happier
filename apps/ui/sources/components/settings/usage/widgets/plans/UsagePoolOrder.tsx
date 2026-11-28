@@ -108,21 +108,32 @@ export function readUsagePoolMembers(
   });
 }
 
-/**
- * When the pool's first account comes back, which also says every member is used up. A retained deadline only
- * describes an upcoming retry while it is in the future, and only when every member the page lists has a reading:
- * an account that was not read is unknown, never used up (acceptance 11-22 #31).
- */
+type PoolQuotaRead = readonly Pick<UsagePlanAccount, 'key' | 'accountId' | 'observedAtMs'>[];
+
+export type UsagePoolExhaustion = Readonly<{ nextQuotaRetry: Selection['nextQuotaRetry'] }>;
+
+/** An unread member leaves pool capacity unknown. A selector can prove exhaustion even without a known return. */
+export function readUsagePoolExhaustion(
+  pool: Pick<UsagePlanPool, 'accountKeys'>,
+  accounts: PoolQuotaRead,
+  selection: Selection,
+  nowMs: number,
+): UsagePoolExhaustion | null {
+  const members = accounts.filter(account => pool.accountKeys.includes(account.key));
+  if (!members.length || members.length !== pool.accountKeys.length || members.some(account => account.observedAtMs === null)) return null;
+  const retry = selection.nextQuotaRetry;
+  if (!retry && (selection.selected || !members.every(account => selection.excluded.some(exclusion =>
+    exclusion.profileId === account.accountId && exclusion.reason === 'quota_exhausted')))) return null;
+  return { nextQuotaRetry: retry && retry.retryAtMs > nowMs ? retry : undefined };
+}
+
 export function readUsagePoolNextQuotaRetry(
   pool: Pick<UsagePlanPool, 'accountKeys'>,
-  accounts: readonly Pick<UsagePlanAccount, 'key' | 'observedAtMs'>[],
+  accounts: PoolQuotaRead,
   selection: Selection,
   nowMs: number,
 ): Selection['nextQuotaRetry'] {
-  const retry = selection.nextQuotaRetry;
-  const members = accounts.filter((account) => pool.accountKeys.includes(account.key));
-  if (members.length === 0 || members.some((account) => account.observedAtMs === null)) return undefined;
-  return retry && retry.retryAtMs > nowMs ? retry : undefined;
+  return selection.nextQuotaRetry ? readUsagePoolExhaustion(pool, accounts, selection, nowMs)?.nextQuotaRetry : undefined;
 }
 
 const BASIS_KEYS = {

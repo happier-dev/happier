@@ -242,7 +242,8 @@ export function UsageResetPlannerWidget(props: UsageBodyProps) {
         />
       ) : null}
       <UsagePlanAccountStates accounts={projection.accounts} nameOf={nameOf} slice={props.slice}
-        onRetry={props.model.refresh} testID={`${props.testID}.state`} replacesContent={projection.events.length === 0} />
+        onRetry={props.model.refresh} testID={`${props.testID}.state`} replacesContent={projection.events.length === 0}
+        promise={t('usage.board.plans.resetsNoneConnected')} />
     </View>
   );
 }

@@ -95,7 +95,7 @@ import { UsageCoachSuppressionInvalidResponse } from '@happier-dev/protocol/usag
 import { createUiCoachSuppressionPort } from './usageCoachSuppressions';
 import type { UsageHistoryReadState } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { UsageHistoryEntry, readUsageHistoryFailure } from './usageHistoryReadState';
-import { canRetryUsageCoverageFailure, isUsageQuotaOwnershipUnproven } from './usageReadFailure';
+import { canRetryUsageCoverageFailure, usagePageReadFamily } from './usageReadFailure';
 import type { UsageCoachSuppressionStateV1 } from '@happier-dev/protocol/usage/coach/coachActions';
 import { openUsageCompactInput, persistUsageCompactInput } from './usageCompactInput';
 
@@ -1685,8 +1685,7 @@ export async function readUiUsageQueryBatch(
     ]) : undefined);
     const skippedAccounting = new Set<string>();
     const quotaFailures = readOptions?.retryQuotaFailuresOnly ? previous?.results.flatMap(slice => slice.sources.filter(source =>
-        (source.source === 'quota' || source.source.startsWith('quota:'))
-        && (canRetryUsageCoverageFailure(source) || isUsageQuotaOwnershipUnproven(source)))) ?? [] : undefined;
+        usagePageReadFamily(source.source) === 'quota' && canRetryUsageCoverageFailure(source))) ?? [] : undefined;
     // An aggregate failure without qualified causes needs the existing quota
     // acquisition. Otherwise recover just the qualified providers that failed.
     const recoveryQuotaSources = quotaFailures && !quotaFailures.some(source => source.source === 'quota'

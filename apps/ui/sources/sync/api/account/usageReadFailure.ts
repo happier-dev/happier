@@ -35,7 +35,9 @@ export function usageScopeRefusalCode(state: CoverageStatus) {
 }
 
 export function canRetryUsageCoverageFailure(state: UsageQuerySourceState): boolean {
-    if (needsNewerServer(state) || isUsageQuotaOwnershipUnproven(state)) return false;
+    if (needsNewerServer(state)) return false;
+    // An explicit reread can reestablish quota ownership using the same credential material.
+    if (isUsageQuotaOwnershipUnproven(state)) return true;
     if (state.source === 'work' && (state.status === 'partial' || state.unreadSessions !== undefined)) {
         const settled = state.status === 'partial' || state.status === 'error' || state.status === 'stale';
         return settled && hasRetryableUnreadWork(state);
