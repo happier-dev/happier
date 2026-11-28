@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stubUndiciFetch } from '@/testkit/http/stubUndiciFetch';
+import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { WorkflowAcceptedAuthorizationV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
@@ -9,6 +10,7 @@ import { DATABASE_STATEMENT_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/actio
 import { ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { readBundledPluginAvailabilityHttpFixture } from '@/plugins/testkit/bundledPluginAvailabilityHttpFixture';
+import { createPluginActionCallerMaterializationFixture } from '@/plugins/runtime/invocation/services/actionCaller.testkit';
 import { configuration } from '@/configuration';
 import { writeDaemonState } from '@/persistence';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
@@ -16,6 +18,10 @@ import { buildWorkflowActionContext } from '@/daemon/workflows/workflowActionCon
 import { createCliActionDeps } from './createCliActionDeps';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
+import { DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createMachineInstallationIdentityFixture } from '../../../../../packages/tests/src/testkit/machineIdentity';
 
 beforeEach(() => {
@@ -107,6 +113,93 @@ describe('deployment read placement from a CLI on another Machine', () => {
             });
             expect(await executor.execute('deployments.environments.get', { serverId, environmentId: environment.id },
                 { surface: 'cli', authority: 'present_user' })).toMatchObject({ ok: true, result: detail });
+        });
+    });
+
+    it('opens only live selected plugin Links under the admitted Environment reader Account', async () => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-deployment-link-coordinates-' }, async () => {
+            const serverId = configuration.activeServerId;
+            const home = 'https://home.test';
+            const pluginId = 'happier.deploy.railway';
+            const { materialization } = createPluginActionCallerMaterializationFixture(pluginId);
+            const tokenFor = (accountId: string) =>
+                `header.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 0,
+                    provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+            const ownerToken = tokenFor('owner');
+            const environment = createDeploymentEnvironmentHeaderV1({ id: 'env', serverId });
+            const link = createDeploymentTargetLinkHeaderV1({ id: 'railway-link', environmentId: environment.id,
+                contentArtifactId: 'railway-link-content', state: 'provisioned', targetKind: 'railway', machines: [], members: [],
+                source: { kind: 'plugin', contribution: { pluginId, localId: 'runtime' } } });
+            const oldLink = { ...link, id: 'detached-link', contentArtifactId: 'detached-link-content', state: 'detached' };
+            const otherPlugin = { ...link, id: 'other-plugin', contentArtifactId: 'other-plugin-content',
+                source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.vercel', localId: 'runtime' } } };
+            const providerIdentity = { providerAccountId: 'railway-account', providerResourceId: 'railway-project',
+                providerEnvironment: 'railway-environment' };
+            const artifact = { id: link.contentArtifactId, ownerAccountId: 'owner', access: 'owner', publicAudience: 'none',
+                encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+                header: encodePlainArtifactStoredContent({ kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: 'Railway service' }),
+                body: encodePlainArtifactStoredContent({ body: JSON.stringify({ providerIdentity }) }),
+                headerVersion: link.contentHeaderVersion, bodyVersion: link.contentBodyVersion, seq: 1, createdAt: 1, updatedAt: 1 };
+            const opened: string[] = [];
+            vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
+                const path = new URL(String(url)).pathname;
+                if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+                if (path === '/v1/account/encryption/currentness')
+                    return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+                if (path.startsWith('/v1/artifacts/')) opened.push(path);
+                if (path === `/v1/artifacts/${artifact.id}` && options?.headers?.Authorization === `Bearer ${ownerToken}`)
+                    return { status: 200, data: artifact };
+                return { status: 404, data: { error: 'artifact_not_found' } };
+            });
+            vi.spyOn(axios, 'request').mockImplementation(async request => {
+                const url = new URL(String(request.url));
+                expect(url.searchParams.has('linkCoordinatesForPlugin')).toBe(false);
+                if (url.pathname === '/v1/deployments/environments/env' && request.method === 'GET'
+                    && request.headers?.Authorization === `Bearer ${ownerToken}`) {
+                    const requestedHomeId = url.searchParams.get('serverId');
+                    if (!requestedHomeId) throw new Error('Expected the admitted Home id');
+                    return { status: 200, data: { ok: true, environment: { ...environment, serverId: requestedHomeId },
+                        targetLinks: [link, oldLink, otherPlugin] } };
+                }
+                const accountDenied = request.headers?.Authorization !== `Bearer ${ownerToken}`;
+                return accountDenied ? { status: 403, data: { ok: false, error: 'deployment_access_denied' } }
+                    : { status: 404, data: { ok: false, error: 'deployment_unavailable' } };
+            });
+            const invoke = (token: string, environmentId: string, selectPlugin?: string, includeCaller = true) =>
+                createCliActionExecutorFromCredentials({
+                    credentials: { token, encryption: null, credentialProvenance: 'stored_session' },
+                    externalActionClient: true, serverId, serverIdentityId: 'srv_home', serverApiUrl: home,
+                    pluginActionExecutionOwner: 'current_process',
+                    actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) },
+                }).execute('deployments.environments.get', { serverId, environmentId,
+                    ...(selectPlugin ? { linkCoordinatesForPlugin: selectPlugin } : {}) }, selectPlugin
+                    ? { surface: 'plugin', authority: 'account_automation', ...(includeCaller ? { actionCaller: {
+                        kind: 'plugin', pluginId, contributionLocalId: 'environment-delete-preview', materialization,
+                    } } : {}) } : { surface: 'cli', authority: 'present_user' });
+
+            const ordinary = await invoke(ownerToken, environment.id);
+            expect(ordinary).toMatchObject({ ok: true, result: { ok: true } });
+            expect(ordinary).not.toHaveProperty('result.targetLinkCoordinates');
+            expect(opened).toEqual([]);
+            const result = await invoke(ownerToken, environment.id, pluginId);
+            if (!result.ok) throw new Error(JSON.stringify(result));
+            expect(result).toMatchObject({ ok: true, result: { ok: true,
+                targetLinkCoordinates: [{ targetLinkId: link.id, providerIdentity }] } });
+            expect(DeploymentEnvironmentGetResultV1Schema.parse(result.result)).toMatchObject({
+                targetLinkCoordinates: [{ targetLinkId: link.id, providerIdentity }],
+            });
+            expect(opened).toEqual([`/v1/artifacts/${artifact.id}`]);
+
+            const otherAccount = await invoke(tokenFor('other-account'), environment.id, pluginId);
+            const otherEnvironment = await invoke(ownerToken, 'outside-admission', pluginId);
+            const missingCaller = await invoke(ownerToken, environment.id, pluginId, false);
+            expect(otherAccount).toMatchObject({ ok: false, errorCode: 'deployment_access_denied' });
+            expect(otherEnvironment).toMatchObject({ ok: false, errorCode: 'deployment_unavailable' });
+            expect(missingCaller).toMatchObject({ ok: false, errorCode: 'plugin_action_caller_required' });
+            for (const denial of [otherAccount, otherEnvironment, missingCaller]) {
+                expect(denial).not.toHaveProperty('result.targetLinkCoordinates');
+            }
+            expect(opened).toEqual([`/v1/artifacts/${artifact.id}`]);
         });
     });
 

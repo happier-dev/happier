@@ -757,6 +757,13 @@ declares its closed `nativeSelectorSchema`. Protocol composes that schema into
 the target's role inputs and checks those declarations at manifest admission.
 The Link and receipts keep a separate `providerIdentity` tuple for comparison.
 
+An Account Action can request `linkCoordinatesForPlugin` on
+`deployments.environments.get`. The Action host opens the Link revisions from
+the admitted Environment read and returns `targetLinkCoordinates` with each
+live Link ID and its `providerIdentity` for that Plugin. A selected Link with
+unavailable coordinates returns a read failure. The response keeps Link bodies,
+native selectors, and credential principals private.
+
 If a Railway-assigned address remains pending without a hostname, the existing
 Domain Verify action accepts the exact hostname the person found on the linked
 service. Railway checks the project's service and environment for that

@@ -1086,7 +1086,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         readEnvironment: targetHostReaders.readEnvironment });
     const dataRoleBindings = createOwnServerDataRoleBindingsForHost({ ...targetHost, open, sendChild,
         assertCurrent: assertHttpAuthority, ensureServiceObservations: host.ensureServiceObservations });
-    const storageDeps = createCliDeploymentActionDeps({ serverHttpBaseUrl: host.serverHttpBaseUrl,
+    const storageDeps = createCliDeploymentActionDeps({ serverHttpBaseUrl: host.serverHttpBaseUrl, openLinkArtifact: open,
         admitAccount: async (serverId, context) => {
             if (serverId !== host.serverId) return failure('server_scope_mismatch');
             await assertHttpAuthority(context); return null;

@@ -6,7 +6,10 @@ import { readDeploymentReceiptFailureCodeV1 } from '@happier-dev/protocol/deploy
 import { deploymentAuthorizationFailure, readDeploymentAuthorizationFailure } from './deploymentAuthorizationFailure';
 import { projectUnsignedHomeAuthorizationHttpFailure, SignedHomeAuthorizationHttpError } from '@/api/client/homeAuthorizationHttpFailure';
 import { deploymentOutputValidationFailure } from './outputValidation';
-import { projectDeploymentException } from './deploymentFailure';
+import { projectDeploymentException, refuseDeploymentArtifactRead } from './deploymentFailure';
+import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { readDeploymentTargetLinkArtifactV1 } from '@happier-dev/protocol/deployments/deploymentTargetLinkContentV1';
+import type { DeploymentArtifactDocumentV1 } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { projectConfirmedActionHttpRefusal } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import axios from '@/api/client/credentialAxios';
@@ -20,7 +23,7 @@ import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/d
 import { hasDeploymentEnvironmentContentPatchV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentContentPatchV1';
 import type { ActionOperationDomainRefV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import type { DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { DeploymentBindingsSetInputV1, DeploymentBindingsPreparedInputV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import type { DeploymentBindingsSetStorageInputV1 } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
 import type { MachineSecretGrantV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
@@ -126,6 +129,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
   resolveRequestHeaders(context: ActionExecutorContext, actionId: string,
     request: Readonly<{ method: string; path: string; body?: unknown }>): Readonly<Record<string, string>> | null
       | Promise<Readonly<Record<string, string>> | null>;
+  openLinkArtifact?(artifactId: string, context: ActionExecutorContext): Promise<DeploymentArtifactDocumentV1 | null>;
   dispatchReceipt(request: DeploymentReceiptDispatchV1): Promise<DeploymentReceiptResultV1 | ActionExecuteFailure>;
   admitTeardown?(input: DeploymentTeardownInputV1, context: ActionExecutorContext,
     onSubject?: ObserveTeardownSubject): Promise<ActionExecuteFailure | null>;
@@ -342,7 +346,12 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         ?? (input.serverId === context.serverIdentityId ? input.serverId
           : await resolveServerProfileHomeIdentityId(input.serverId));
       const targetedInput = homeId ? { ...input, serverId: homeId } : input;
-      const transportInput = actionId === 'deployments.environments.create' ? (() => {
+      const linkDemand = actionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 && 'environmentId' in targetedInput
+        && 'linkCoordinatesForPlugin' in targetedInput && targetedInput.linkCoordinatesForPlugin !== undefined
+        ? targetedInput : undefined;
+      const transportInput = linkDemand
+        ? (({ linkCoordinatesForPlugin: _privateDemand, ...metadataInput }) => metadataInput)(linkDemand)
+        : actionId === 'deployments.environments.create' ? (() => {
         const { copyFrom, copyPlan: _privatePlan, ...prepared } = DeploymentEnvironmentCreateInputV1Schema.parse(targetedInput);
         return { ...prepared, ...(copyFrom ? { copyFrom: {
           environmentId: copyFrom.environmentId, expectedRevision: copyFrom.expectedRevision,
@@ -430,6 +439,26 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         context.signal?.throwIfAborted();
         const changed = await params.admitAccount(input.serverId, context);
         if (changed) return changed;
+      }
+      if (linkDemand) {
+        const detail = DeploymentEnvironmentGetResultV1Schema.parse(parsed.data);
+        if (!detail.ok) return detail;
+        const liveLinks = detail.environment.deletedAtMs === undefined ? detail.targetLinks.filter(link =>
+          link.source.kind === 'plugin' && link.source.contribution.pluginId === linkDemand.linkCoordinatesForPlugin
+          && link.state !== 'detached' && link.detachedAtMs === undefined && link.deletedAtMs === undefined) : [];
+        const open = params.openLinkArtifact;
+        if (!open) return failure('client_required');
+        const targetLinkCoordinates = await Promise.all(liveLinks.map(async link => {
+          const opened = readDeploymentTargetLinkArtifactV1(link, await open(link.contentArtifactId, context));
+          if (!opened.ok) return refuseDeploymentArtifactRead(opened);
+          const { providerIdentity } = opened.content;
+          if (!providerIdentity) return refuseDeploymentArtifactRead({ ok: false, error: 'deployment_content_unavailable' });
+          return { targetLinkId: link.id, providerIdentity };
+        }));
+        context.signal?.throwIfAborted();
+        const changed = await params.admitAccount(input.serverId, context);
+        if (changed) return changed;
+        return { ...detail, targetLinkCoordinates };
       }
       if (actionId === 'deployments.cancel' && 'ok' in parsed.data && parsed.data.ok
         && response.headers[DEPLOYMENT_STOP_ACCEPTED_HEADER_V1] === '1') observers?.onStopAccepted?.();

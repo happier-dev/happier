@@ -841,6 +841,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
   }) : undefined;
   const deploymentStorageDeps = createCliDeploymentActionDeps({
     serverHttpBaseUrl: todoHomeBaseUrl, admitAccount: admitAccountStorage,
+    openLinkArtifact: (artifactId, context) => openDeploymentArtifact(artifactId, context),
     ...(homeAccountId && params.credentials ? { localAccount: { accountId: homeAccountId, token: params.credentials.token } } : {}),
     resolveRequestHeaders: resolveAccountStorageHeaders,
     prepareEnvironment: async request => {
@@ -904,13 +905,14 @@ export function createCliActionDeps(params: CliActionDepsParams,
   };
   const readOpenedDeploymentEnvironment = async (environmentId: string, context: ActionExecutorContext,
     backupPolicy?: import('@happier-dev/protocol/deployments/deploymentBackupActionsV1').DeploymentBackupPolicyV1,
-    serverId = projectHomeId) => {
+    serverId = projectHomeId, linkCoordinatesForPlugin?: string) => {
     const { readDeploymentEnvironmentForHost } = await import('@/deployments/readEnvironmentForHost');
     await assertDeploymentReadCurrent(context);
     return readDeploymentEnvironmentForHost({ environmentId, context, ...(backupPolicy ? { backupPolicy } : {}) }, {
       readMetadata: async request => {
         const loaded = await deploymentStorage('deployments.environments.get', {
           serverId, environmentId: request.environmentId,
+          ...(linkCoordinatesForPlugin === undefined ? {} : { linkCoordinatesForPlugin }),
         }, request.context);
         const parsed = DeploymentEnvironmentGetResultV1Schema.safeParse(loaded);
         if (!parsed.success || !parsed.data.ok) {
@@ -1456,9 +1458,12 @@ export function createCliActionDeps(params: CliActionDepsParams,
     deploymentAction: withDeploymentEnvironmentRecipientDeliveryV1(async (actionId, input, context, hostChild) => {
       if (actionId === 'deployments.environments.get' && 'backupPolicy' in input && input.backupPolicy) {
         try {
-          const opened = await readOpenedDeploymentEnvironment(input.environmentId, context, input.backupPolicy, input.serverId);
+          const opened = await readOpenedDeploymentEnvironment(input.environmentId, context, input.backupPolicy,
+            input.serverId, 'linkCoordinatesForPlugin' in input && typeof input.linkCoordinatesForPlugin === 'string'
+              ? input.linkCoordinatesForPlugin : undefined);
           return DeploymentEnvironmentGetResultV1Schema.parse({ ok: true, environment: opened.environment,
-            targetLinks: opened.targetLinks, backupTarget: opened.backupTarget, backupPolicy: opened.backupPolicy });
+            targetLinks: opened.targetLinks, backupTarget: opened.backupTarget, backupPolicy: opened.backupPolicy,
+            ...(opened.targetLinkCoordinates === undefined ? {} : { targetLinkCoordinates: opened.targetLinkCoordinates }) });
         } catch (error) {
           return projectDeploymentFailure(error instanceof Error && 'code' in error && typeof error.code === 'string'
             ? error.code : 'deployment_content_unavailable', error);

@@ -71,6 +71,7 @@ import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { MachineInstallationProofV1Schema } from '../machines/identity/installationKeySchemas.js';
 import { MachineAvailabilityDiagnosticV1Schema } from '../machines/machineAccessV1.js';
 import { QualifiedConnectedAccountRefSchema } from '../connect/qualifiedConnectedAccountPersistence.js';
+import { PluginIdSchema } from '../plugins/pluginId.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { withStrictJsonInput } from '../json/strictJsonValue.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
@@ -96,7 +97,7 @@ import { DeploymentPreviewPullRequestIdV1Schema as deploymentPreviewPullRequestI
   DeploymentPreviewReferenceV1Schema } from './deploymentPreviewReferenceV1.js';
 
 
-import { DeploymentTargetCredentialPrincipalV1Schema, DeploymentTargetLinkProviderContentV1Schema, DeploymentTargetCreateInputV1Schema, DeploymentTargetProductionBranchOutcomeV1Schema } from '../plugins/contributions/deploymentTargetRolesV1.js';
+import { DeploymentTargetCredentialPrincipalV1Schema, DeploymentTargetLinkProviderContentV1Schema, DeploymentTargetCreateInputV1Schema, DeploymentTargetProductionBranchOutcomeV1Schema, DeploymentTargetProviderIdentityV1Schema } from '../plugins/contributions/deploymentTargetRolesV1.js';
 import { DeploymentBindingSavedSecretRevisionsV1Schema, DeploymentEnvironmentSecretScopeV1Schema } from './deploymentBindingPatchV1.js';
 export { DeploymentBindingsPatchInputV1Schema, type DeploymentBindingsPatchInputV1,
   DeploymentEnvironmentSecretScopeV1Schema, type DeploymentEnvironmentSecretScopeV1 } from './deploymentBindingPatchV1.js';
@@ -541,6 +542,8 @@ const deploymentEnvironmentReadAddress = {
 };
 export const DeploymentEnvironmentGetInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...deploymentEnvironmentReadAddress, includeRetainedTargetLinkCleanup: z.optional(z.literal(true)),
+  /** Account-host-only demand for the selected plugin's live Links in this Environment. */
+  linkCoordinatesForPlugin: z.optional(asProtocolZod(PluginIdSchema)),
   backupPolicy: z.optional(DeploymentBackupPolicyV1Schema),
 }));
 /** Host-private authority projection; no content availability or native-effect authority is implied. */
@@ -598,6 +601,10 @@ export const DeploymentEnvironmentGetResultV1Schema = lazyZodSchema(() => z.unio
     runtimeReinstall: z.optional(DeploymentRuntimeReinstallV1Schema),
     controller: z.optional(DeploymentControllerAvailabilityV1Schema),
     targetLinks: z.array(DeploymentTargetLinkHeaderV1Schema), pendingDeploy: z.optional(DeploymentPendingDeployV1Schema),
+    /** Opened by the Account host after the exact Environment read. */
+    targetLinkCoordinates: z.optional(z.array(z.strictObject({
+      targetLinkId: DeploymentIdentifierV1Schema, providerIdentity: DeploymentTargetProviderIdentityV1Schema,
+    }))),
     retainedTargetLinkCleanupCompleteIds: z.optional(z.array(DeploymentIdentifierV1Schema)),
     pendingAdmission: z.optional(DeploymentPendingAdmissionV1Schema) }), DeploymentActionFailureV1Schema,
 ]));

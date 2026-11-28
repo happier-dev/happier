@@ -5838,6 +5838,7 @@ export type DeploymentsActionInputById = {
         environmentId: string;
         serverId: string;
         includeRetainedTargetLinkCleanup?: true | undefined;
+        linkCoordinatesForPlugin?: string | undefined;
         backupPolicy?: undefined | {
             occurrenceId: string;
             config: unknown;
@@ -15434,6 +15435,14 @@ export type DeploymentsActionResultById = {
                 };
             };
         };
+        targetLinkCoordinates?: undefined | {
+            targetLinkId: string;
+            providerIdentity: {
+                providerAccountId: string;
+                providerResourceId: string;
+                providerEnvironment: string;
+            };
+        }[];
         retainedTargetLinkCleanupCompleteIds?: string[] | undefined;
         pendingAdmission?: undefined | {
             requesterAccountId: string;

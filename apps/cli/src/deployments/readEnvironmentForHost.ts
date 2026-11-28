@@ -37,5 +37,6 @@ export async function readDeploymentEnvironmentForHost(
         } : {}),
         ...(detail.savedSecretRevisions === undefined ? {} : { savedSecretRevisions: detail.savedSecretRevisions }),
         ...(detail.secretScope === undefined ? {} : { secretScope: detail.secretScope }),
+        ...(detail.targetLinkCoordinates === undefined ? {} : { targetLinkCoordinates: detail.targetLinkCoordinates }),
         ...(detail.controller ? { controller: detail.controller } : {}) };
 }
