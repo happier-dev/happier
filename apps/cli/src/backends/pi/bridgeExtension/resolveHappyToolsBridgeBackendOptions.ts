@@ -38,8 +38,8 @@ function resolveActionsSettings(settings: Record<string, unknown> | null | undef
 }
 
 /**
- * Resolve the tools-bridge backend options for a Pi session, materializing the
- * extension asset when Happier controls the Pi agent dir.
+ * Resolve the session bridge and its optional Happier tools. The session bridge
+ * also observes Pi input and lifecycle events, including when tools are disabled.
  *
  * Returns `null` when `agentDir` is absent (native Pi sessions without a
  * Happier-managed agent dir): those sessions keep the shell-bridge prompt delivery and
@@ -58,7 +58,7 @@ export async function resolveHappyToolsBridgeBackendOptions(params: Readonly<{
    */
   materializeExtension?: () => Promise<string>;
 }>): Promise<HappyToolsBridgeBackendOptions | null> {
-  if (!params.agentDir || !isSessionHappierToolsEnabled(params.sessionMetadata)) return null;
+  if (!params.agentDir) return null;
 
   const sessionRenameMode = resolveCodingPromptSessionTitleUpdatesModeV1(params.settings ?? null);
   const defaultSessionMachineId = params.memoryRecallGuidanceEnabled === true
@@ -85,14 +85,15 @@ export async function resolveHappyToolsBridgeBackendOptions(params: Readonly<{
   const requiredDirectActionIds = defaultSessionMachineId
     ? MEMORY_RECALL_GUIDANCE_REQUIRED_ACTION_IDS
     : [];
-  const resolvedTools = resolveSessionAgentToolPresentation({
-    actionsSettings,
-    isActionEnabled,
-    defaultSessionId: params.sessionId,
-    defaultSessionMachineId,
-    requiredDirectActionIds,
-  });
-  const directTools = resolvedTools;
+  const directTools = isSessionHappierToolsEnabled(params.sessionMetadata)
+    ? resolveSessionAgentToolPresentation({
+        actionsSettings,
+        isActionEnabled,
+        defaultSessionId: params.sessionId,
+        defaultSessionMachineId,
+        requiredDirectActionIds,
+      })
+    : [];
   const directToolNames = new Set(directTools.map((tool) => tool.name));
   const memoryGuidanceEnabled = params.memoryRecallGuidanceEnabled === true
     && directToolNames.has('memory_search')
