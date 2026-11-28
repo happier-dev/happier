@@ -1198,6 +1198,30 @@ async function acquire(root, floorKiB, t, extra = {}) {
   } };
 }
 
+test('records admission queue wait by class at the broker grant', async (t) => {
+  const { root } = await fixture(t);
+  const enqueuedAt = Date.now() - 100;
+  const client = await acquire(root, 1, t, { arrivedAt: enqueuedAt });
+  const { admitted } = await client.admit();
+  const path = join(root, 'dev-target-command-load-native', 'provenance.jsonl');
+  const deadline = Date.now() + 1000;
+  let rows = '';
+  while (!rows.trim() && Date.now() < deadline) {
+    rows = await readFile(path, 'utf8').catch(error => {
+      if (error.code === 'ENOENT') return '';
+      throw error;
+    });
+    if (!rows.trim()) await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.ok(rows.trim(), 'broker grant must emit an execution provenance record');
+  const record = JSON.parse(rows.trim());
+  assert.equal(record.executionId, admitted.slotId);
+  assert.equal(record.className, 'validation');
+  assert.equal(record.enqueuedAt, enqueuedAt);
+  assert.equal(record.admittedAt, admitted.admittedAt);
+  assert.equal(record.waitMs, admitted.admittedAt - enqueuedAt);
+});
+
 async function observedCpuRequests(root, workerCounts, history = {}) {
   const className = 'validation';
   const requests = new Map();

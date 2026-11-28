@@ -3,10 +3,10 @@ import { spawn } from 'node:child_process';
 import { appendFileSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, unlinkSync, watch, writeFileSync } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
 import { dirname, isAbsolute, join, posix, relative } from 'node:path';
-import { availableParallelism } from 'node:os';
+import { availableParallelism, hostname } from 'node:os';
 import { COLD_ADMISSION_CPU_CORES, FOCUSED_TEST_ADMISSION_CLASSES, HEAVYWEIGHT_COMMAND_RESOURCES, SOURCE_RELOAD_ADMISSION_CLASS, SOURCE_WEB_EXPORT_ADMISSION_CLASS, SOURCE_WEB_EXPORT_MEMORY, resolveSourceWebExportMemoryFloorKiB, resolveColdAdmissionCpuCost, usesElasticAdmissionWorkers, isTypeScriptCompilationClass } from '../dev_targets/command_resources.mjs';
 import { createInterface } from 'node:readline';
-import { DURATION_WINDOW, nearestRankP99 } from '../dev_targets/execution_provenance.mjs';
+import { appendExecutionProvenance, DURATION_WINDOW, nearestRankP99 } from '../dev_targets/execution_provenance.mjs';
 import { pathToFileURL } from 'node:url';
 import { admitWorkerDiskBudget } from '../dev_targets/worker_disk_budget.mjs';
 import { readLinuxWorkerProcesses } from './service_memory.mjs';
@@ -1408,6 +1408,12 @@ export function createAdmissionBroker({ root,
           removeWaiting(item);
           send(socket, { kind: 'admitted', slotId: item.slot.slotId, admittedAt: item.slot.admittedAt,
             floorKiB: item.slot.floorKiB, cpuCores: item.slot.cpuCores, workers: item.slot.workers });
+          const { admittedAt, slotId } = item.slot;
+          void appendExecutionProvenance(root, {
+            phase: 'admitted', executionId: slotId, timestamp: admittedAt, target: hostname(),
+            commandClass: item.className, className: item.className,
+            enqueuedAt: item.arrivedAt, admittedAt, waitMs: Math.max(0, admittedAt - item.arrivedAt),
+          }).catch(recordFailure);
           refreshWatchers();
         } catch { refuse(item, 'HSTACK_SLOT_UNAVAILABLE'); await releaseDecision(); }
         return;

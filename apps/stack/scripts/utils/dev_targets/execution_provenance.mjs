@@ -234,6 +234,10 @@ function normalizeRecord(record) {
   };
   if (normalized.phase === 'admitted') {
     normalized.syncStatus = String(record.syncStatus ?? 'unknown');
+    if (typeof record.className === 'string') normalized.className = record.className;
+    for (const key of ['enqueuedAt', 'admittedAt', 'waitMs']) {
+      if (Number.isFinite(record[key])) normalized[key] = record[key];
+    }
     normalized.syncSuccessfulCycles = finiteNumber(record.syncSuccessfulCycles, 0);
     for (const key of [
       'normalizedLoad', 'activeReservations', 'activeClassReservations', 'effectiveScore', 'capacity', 'runQueue',
