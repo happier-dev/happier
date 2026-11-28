@@ -38,6 +38,7 @@ export function createAgentSelectionActionChip(params: Readonly<{
     const iconScale = getAgentPickerIconScale(params.agentId);
     return (
         <AgentInputRailChip
+            shortcutCommandId="session.model.choose"
             ref={params.anchorRef}
             key="agent"
             testID={testID}

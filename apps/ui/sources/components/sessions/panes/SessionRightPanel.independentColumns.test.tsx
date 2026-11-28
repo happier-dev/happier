@@ -27,6 +27,35 @@ const { RightSidebarPaneHeader } = await import('@/components/appShell/rightSide
 const { RightSidebarActionsContext } = await import('@/components/appShell/rightSidebar/rightSidebarActions');
 const { Modal } = await import('@/modal');
 
+const { KeyboardShortcutProvider, useKeyboardCommand } = await import('@/keyboard/KeyboardShortcutProvider');
+
+it('opens Session pages and companions from keyboard commands through the existing column admission', async () => {
+    vi.stubGlobal('window', new EventTarget());
+    storage.getState().applyLocalSettings({ paneArrangement: 'editor', uiMultiPanePanelsEnabled: true }, { persist: false });
+    const scopeId = createSessionPaneScopeId('s1', runtime.serverId);
+    let command: ReturnType<typeof useKeyboardCommand>;
+    function Commands() { command = useKeyboardCommand(); return null; }
+    const wrap = (content: React.ReactElement) => <SessionRightSidebarProvider sessionId="s1" scopeId={scopeId}>
+        <Commands />{content}
+    </SessionRightSidebarProvider>;
+    const screen = await renderScreen(<KeyboardShortcutProvider handlers={{}}><runtime.Wrapper>
+        <AppPaneScopeHost scopeId={scopeId} arrangement="honour" main={<div>Chat</div>} wrapScopeContent={wrap} />
+    </runtime.Wrapper></KeyboardShortcutProvider>);
+    try {
+        await act(async () => { expect(command('session.panel.navigation.open')).toBe(true); });
+        await expect.poll(() => runtime.pane.scopeState?.mainTabId).toBe('navigation');
+        await act(async () => { expect(command('session.panel.files.open')).toBe(true); });
+        await expect.poll(() => runtime.pane.scopeState?.right.activeTabId).toBe('files');
+        expect(runtime.pane.scopeState?.mainTabId).toBe('navigation');
+        await act(async () => {
+            storage.getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+                actions: { 'shell.column.set': { enabled: false } } }) });
+            command('session.panel.agents.open');
+        });
+        expect(runtime.pane.scopeState?.right.activeTabId).toBe('files');
+    } finally { await screen.unmount(); vi.unstubAllGlobals(); }
+});
+
 it.each(['page', 'page-chat', 'header', 'screen-header', 'presentation', 'published-main', 'published-side', 'back', 'close'] as const)(
     'admits the mounted %s control before changing its Session column', async control => {
         storage.getState().applyLocalSettings({ paneArrangement: 'editor', uiMultiPanePanelsEnabled: true }, { persist: false });

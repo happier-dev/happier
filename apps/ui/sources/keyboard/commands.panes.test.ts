@@ -3,6 +3,18 @@ import { createKeyboardShortcutDispatcher } from './runtime';
 import type { NormalizedKeyboardEvent } from './types';
 
 describe('pane keyboard commands', () => {
+  it.each(['session.panel.git.open', 'session.panel.review.open', 'session.panel.files.open',
+    'session.panel.navigation.open', 'session.panel.agents.open', 'sessionList.source.toggle'] as const)(
+    'dispatches an explicitly assigned binding for %s', id => {
+      let opened = false;
+      const dispatch = createKeyboardShortcutDispatcher({ enabled: true, platform: 'macos', surface: 'web',
+        singleKeyShortcutsEnabled: false, disabledCommandIds: [], overrides: { [id]: [{ binding: 'Mod+Shift+9' }] },
+        handlers: { [id]: () => { opened = true; } }, getContext: () => ({ isEditableTarget: false, isComposing: false }) });
+      expect(dispatch({ key: '9', code: 'Digit9', metaKey: true, ctrlKey: false, altKey: false, shiftKey: true,
+        repeat: false, isComposing: false })).toBe(true);
+      expect(opened).toBe(true);
+    },
+  );
   it('cycles regions with a function key even when single-character shortcuts are disabled', () => {
     let runs = 0;
     const dispatch = createKeyboardShortcutDispatcher({ enabled: true, platform: 'macos', surface: 'native', singleKeyShortcutsEnabled: false,

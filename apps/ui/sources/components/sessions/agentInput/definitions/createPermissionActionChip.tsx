@@ -23,6 +23,7 @@ export function createPermissionActionChip(params: Readonly<{
     const testID = 'agent-input-permission-chip';
     return (
         <AgentInputRailChip
+            shortcutCommandId="permission.open"
             ref={params.anchorRef}
             key="permission"
             testID={testID}

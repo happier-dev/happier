@@ -890,7 +890,6 @@ export function BrowserShell(props: Readonly<{
         <BrowserToolbar
             testID={testID}
             model={toolbar}
-            shortcutLabels={browserShortcutLabels}
             controlSize={controlMetrics.size}
             iconSize={controlMetrics.iconSize}
             spread={phone}

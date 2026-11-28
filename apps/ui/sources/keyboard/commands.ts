@@ -2,11 +2,22 @@ import type { KeyboardCommand, KeyboardCommandId, KeyboardCommandSettingsTitleKe
 import { DERIVED_KEYBOARD_COMMAND_METADATA } from '@happier-dev/protocol/actions/settings/keyboardCommandMetadata';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 
+/** Session panel commands share their destination and title across Settings, palette and tab controls. */
+export const sessionPanelKeyboardCommands = [
+    { id: 'session.panel.git.open', tabId: 'git', settingsTitleKey: 'session.rightPanel.tabs.git' },
+    { id: 'session.panel.review.open', tabId: 'review', settingsTitleKey: 'files.toolbar.review' },
+    { id: 'session.panel.files.open', tabId: 'files', settingsTitleKey: 'common.files' },
+    { id: 'session.panel.navigation.open', tabId: 'navigation', settingsTitleKey: 'session.transcriptNavigation.title' },
+    { id: 'session.panel.agents.open', tabId: 'agents', settingsTitleKey: 'sessionWork.title' },
+] as const satisfies readonly (Pick<KeyboardCommand, 'id' | 'settingsTitleKey'> & { tabId: string })[];
+
 export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
     ...DERIVED_KEYBOARD_COMMAND_METADATA.map((command): KeyboardCommand => ({
         id: command.id, settingsTitleKey: command.titleKey, nativeConsumable: true,
         ...('title' in command ? { settingsTitle: command.title } : {}),
     })),
+    ...sessionPanelKeyboardCommands.map(({ id, settingsTitleKey }): KeyboardCommand => ({ id, settingsTitleKey })),
+    { id: 'sessionList.source.toggle', settingsTitleKey: 'settingsKeyboard.commands.sessionListSourceToggle' },
     {
         id: 'sessionList.filter.open',
         settingsTitleKey: 'settingsKeyboard.commands.sessionListFilterOpen',
@@ -318,15 +329,33 @@ export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
         settingsTitleKey: 'settingsKeyboard.commands.commandPaletteOpen',
         // Cmd/Ctrl+K everywhere: browsers let a page take it (only their search-field focus yields). Alt+K stays on the web.
         defaultBindings: [
-            { binding: 'Mod+K', nativeConsumable: true },
-            { binding: 'Alt+K', platforms: ['web'] },
+            { binding: 'Mod+K', nativeConsumable: true, allowInEditable: true },
+            { binding: 'Alt+K', platforms: ['web'], allowInEditable: false },
         ],
-        when: (context) => !context.isEditableTarget,
     },
     {
         id: 'mode.cycle',
         settingsTitleKey: 'settingsKeyboard.commands.modeCycle',
-        defaultBinding: { binding: 'Alt+Shift+M', allowInEditable: true },
+        when: context => context.isComposerTarget === true,
+        defaultBindings: [
+            { binding: 'Shift+Tab', allowInEditable: true, nativeConsumable: true, conflictScope: 'composer' },
+            { binding: 'Alt+Shift+M', allowInEditable: true, nativeConsumable: true, conflictScope: 'composer' },
+        ],
+    },
+    {
+        id: 'session.model.choose',
+        settingsTitleKey: 'settingsKeyboard.commands.sessionModelChoose',
+        defaultBinding: { binding: 'Mod+Alt+/', allowInEditable: true, nativeConsumable: true, conflictScope: 'composer' },
+    },
+    {
+        id: 'permission.open',
+        settingsTitleKey: 'settingsKeyboard.commands.permissionOpen',
+        defaultBinding: { binding: 'Mod+Alt+A', allowInEditable: true, nativeConsumable: true, conflictScope: 'composer' },
+    },
+    {
+        id: 'composer.attachFile',
+        settingsTitleKey: 'settingsKeyboard.commands.composerAttachFile',
+        defaultBinding: { binding: 'Mod+Shift+U', allowInEditable: true, nativeConsumable: true, conflictScope: 'composer' },
     },
     {
         id: 'search.textInFiles',

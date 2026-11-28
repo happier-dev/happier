@@ -2,6 +2,9 @@ import * as React from 'react';
 import { HappierComposerChip, type HappierComposerChipProps } from '@happier-dev/plugin-ui/presentation';
 
 import { NATIVE_ACTION_CHIP_GAP_Y } from '../components/agentInputChromeStyles';
+import type { KeyboardCommandId } from '@/keyboard/types';
+import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
+import { withShortcut } from '@/keyboard/withShortcut';
 
 type ChipRailHitReach = NonNullable<HappierComposerChipProps['hitReach']>;
 
@@ -33,13 +36,18 @@ export function useAgentInputChipRowReach(): HappierComposerChipProps['hitReach'
 }
 
 /** The composer's rail chip: the shared chip shell with the reach its row declares. */
+type AgentInputRailChipProps = HappierComposerChipProps & Readonly<{ shortcutCommandId?: KeyboardCommandId }>;
+
 export const AgentInputRailChip: React.ForwardRefExoticComponent<
-    React.PropsWithoutRef<HappierComposerChipProps> & React.RefAttributes<unknown>
-> = React.forwardRef<unknown, HappierComposerChipProps>(
-    function AgentInputRailChip(props, ref) {
+    React.PropsWithoutRef<AgentInputRailChipProps> & React.RefAttributes<unknown>
+> = React.forwardRef<unknown, AgentInputRailChipProps>(
+    function AgentInputRailChip({ shortcutCommandId, ...props }, ref) {
         const rowReach = useAgentInputChipRowReach();
+        const shortcut = useKeyboardShortcutLabel(shortcutCommandId);
         // A chip's own bounds narrow its row's: a side it declares wins, the others keep the row's reach.
         const hitReach = typeof props.hitReach === 'object' && typeof rowReach === 'object' ? { ...rowReach, ...props.hitReach } : props.hitReach ?? rowReach;
-        return <HappierComposerChip ref={ref} {...props} hitReach={hitReach} />;
+        const webAttributes = shortcut ? { ...props.webAttributes,
+            title: withShortcut(props.webAttributes?.title ?? props.accessibilityLabel ?? '', shortcut) } : props.webAttributes;
+        return <HappierComposerChip ref={ref} {...props} webAttributes={webAttributes} hitReach={hitReach} />;
     },
 );

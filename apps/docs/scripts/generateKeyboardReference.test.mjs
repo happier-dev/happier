@@ -6,8 +6,9 @@ import test from 'node:test';
 
 import { readKeyboardCommands, renderKeyboardReferenceMarkdown } from './generateKeyboardReference.mjs';
 
-test('projects mapped space ordinals and their OS/host scopes from the real registry', async () => {
+test('projects composer commands and mapped platform bindings from the real registry', async () => {
   const commands = await readKeyboardCommands();
+  assert.equal(commands.has('session.model.choose'), true);
   assert.equal(commands.has('sessionList.space.select1'), true);
   assert.deepEqual(commands.get('sessionList.space.select9'), [
     { key: 'Ctrl+9', scope: 'macOS' },

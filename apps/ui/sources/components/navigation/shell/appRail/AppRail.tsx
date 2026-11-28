@@ -23,7 +23,6 @@ import { resolveNavigationOverflow, resolveNavigationPlacements, type Navigation
 import { describeUpdatesEntry, UpdatesPopoverButton } from '@/components/updates/UpdatesPopoverButton';
 import { useSharedInboxSummary } from '@/hooks/inbox/useInboxSummary';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { t, type TranslationKeyNoParams } from '@/text';
@@ -261,8 +260,6 @@ const AppRailItem = React.memo(function AppRailItem(props: Readonly<{
 }>) {
     const styles = stylesheet;
     const { entry } = props;
-    const shortcut = useKeyboardShortcutLabel(entry.kind === 'builtin' ? entry.shortcut : undefined);
-    const tooltip = shortcut ? `${entry.title}  ${shortcut}` : entry.title;
     const unavailable = entry.availability !== 'available';
     const column = resolveAppRailEntryColumn(entry);
     // A plugin destination's static badge ("Beta") has no room for text on the rail: it marks the icon.
@@ -285,7 +282,8 @@ const AppRailItem = React.memo(function AppRailItem(props: Readonly<{
             // Where resting on the icon peeks its column, the column says what it is.
             // Quieted while it peeks, never removed: removing it changes the button's tree, so the button remounted
             // (and dropped focus) each time the open destination moved.
-            tooltip={tooltip}
+            tooltip={entry.title}
+            shortcutCommandId={entry.kind === 'builtin' ? entry.shortcut : undefined}
             tooltipHidden={peeks}
             tooltipPlacement="right"
             selected={props.active}

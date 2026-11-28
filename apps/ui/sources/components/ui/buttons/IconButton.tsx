@@ -21,6 +21,9 @@ import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { ChromeGlyphEmphasisContext } from '@/components/ui/icons/chromeGlyphInk';
 import { resolveIconButtonGlyphSize } from '@/components/ui/icons/iconButtonGlyphSize';
 import { visuallyHiddenStyle } from '@/components/ui/accessibility/visuallyHiddenStyle';
+import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
+import type { KeyboardCommandId } from '@/keyboard/types';
+import { withShortcut } from '@/keyboard/withShortcut';
 
 import { useActionTooltip, WebActionTooltip } from './ActionTooltip';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
@@ -123,6 +126,7 @@ export function IconButton(props: Readonly<{
     accessibilityHint?: string;
     /** Short helper shown on hover/focus (desktop pointer/keyboard users). */
     tooltip?: string;
+    shortcutCommandId?: KeyboardCommandId;
     tooltipContent?: React.ReactNode;
     tooltipPlacement?: 'top' | 'bottom' | 'left' | 'right';
     /**
@@ -204,6 +208,7 @@ export function IconButton(props: Readonly<{
     /** The pointer's secondary click on the web, for the same secondary invocation as a long press. */
     onContextMenu?: HappierPressableProps['onContextMenu'];
 }> & IconButtonGlyph): React.ReactElement {
+    const shortcut = useKeyboardShortcutLabel(props.shortcutCommandId);
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const paintColor = useHappierMaterialColorResolver();
@@ -276,7 +281,7 @@ export function IconButton(props: Readonly<{
 
     const tooltipContent = props.disabled === true && props.disabledReason
         ? props.disabledReason
-        : props.tooltip;
+        : props.tooltip ? withShortcut(props.tooltip, shortcut) : props.tooltip;
     const richTooltipContent = props.disabled === true && props.disabledReason ? undefined : props.tooltipContent;
     const hasTooltip = richTooltipContent != null || (tooltipContent != null && tooltipContent.length > 0);
     const { isVisible: isTooltipVisible, onPressIn: suppressTooltip, onHoverOut: resetTooltip } = useActionTooltip(props.expanded, props.tooltipHidden);

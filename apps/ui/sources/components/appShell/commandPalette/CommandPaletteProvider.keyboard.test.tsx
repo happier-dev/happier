@@ -38,14 +38,14 @@ vi.mock('@/auth/context/AuthContext', () => ({
 
 vi.mock('@/sync/domains/state/storage', async () => {
     const { settingsDefaults } = await import('@/sync/domains/settings/settings');
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    const readSnapshot = () => ({
+    const { createStorageModuleStub, createStableStorageReader } = await import('@/dev/testkit/mocks/storage');
+    const readSnapshot = createStableStorageReader(() => ({
         sessions: {},
         settings: {
             ...settingsDefaults,
             ...testState.settings,
         },
-    });
+    }));
     const storage = Object.assign(
         ((selector?: (value: ReturnType<typeof readSnapshot>) => unknown) => {
             const snapshot = readSnapshot();
@@ -61,10 +61,6 @@ vi.mock('@/sync/domains/state/storage', async () => {
     );
     return createStorageModuleStub({ storage });
 });
-
-vi.mock('zustand/react/shallow', () => ({
-    useShallow: <T,>(selector: T) => selector,
-}));
 
 vi.mock('@/hooks/session/useNavigateToSession', () => ({
     useNavigateToSession: () => vi.fn(),

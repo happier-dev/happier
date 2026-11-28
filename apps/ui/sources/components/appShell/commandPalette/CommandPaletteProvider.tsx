@@ -1,5 +1,8 @@
 import { CommandPalettePluginActionProjectionDemand, useCommandPalettePluginActionPresentation } from './useCommandPalettePluginActionPresentation';
+import { KeyboardCommandPaletteBridge } from './KeyboardCommandPaletteBridge';
+import { sessionPanelKeyboardCommands } from '@/keyboard/commands';
 import { buildSessionCommands, setSessionCommandPalettePresented, type SessionCommandDemand } from './sessionCommands';
+import type { KeyboardCommandControls } from './buildCommandPaletteCommands';
 export { useCommandPalettePluginActionPresentation, type CommandPalettePluginActionPresentation } from './useCommandPalettePluginActionPresentation';
 import { useOpenExecutionRunLauncherDraft } from '@/components/sessions/runs/launcher/useOpenExecutionRunLauncherDraft';
 import React, { useCallback, useMemo } from 'react';
@@ -138,6 +141,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
         }
     }, [universalSearchRouteActive]);
     const [paletteOpen, setPaletteOpen] = React.useState(false);
+    const keyboardCommandsRef = React.useRef<KeyboardCommandControls | null>(null);
     const pluginActionPresentation = useCommandPalettePluginActionPresentation(commandContextSessionId, paletteOpen || universalSearchRouteActive);
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const voiceEnabled = useFeatureEnabled('voice');
@@ -166,6 +170,12 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
     );
     const labelHandlers = useMemo<KeyboardShortcutHandlers>(
         () => ({
+            ...Object.fromEntries(sessionPanelKeyboardCommands.map(command => [command.id, () => undefined])),
+            'sessionList.source.toggle': () => undefined,
+            'permission.open': () => undefined,
+            'composer.attachFile': () => undefined,
+            'mode.cycle': () => undefined,
+            'permission.cycle': () => undefined,
             ...Object.fromEntries(derivedKeyboardCommands.map(command => [command.id, () => undefined])),
             'shell.column.toggle': () => undefined,
             'panes.main.toggle': () => undefined,
@@ -322,6 +332,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                 ?? (requestedActiveSessionId === commandContextSessionId ? commandContextServerId : null),
             features: { executionRunsEnabled, voiceEnabled, petsCompanionEnabled, workflowsEnabled },
             shortcutLabels,
+            ...(keyboardCommandsRef.current ? { keyboardCommands: keyboardCommandsRef.current } : {}),
             sessionCommands: exactSessionContext ? buildSessionCommands({ reader: currentUiContextReader, shortcutLabels,
                 execute: (actionId, input) => actionExecutor.execute(actionId, input, { surface: 'ui' }) }) : [],
             petControls,
@@ -626,6 +637,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                 handlers={keyboardHandlers}
                 enabledWhenDisabledCommandIds={keyboardEnabledWhenDisabledCommandIds}
             >
+                <KeyboardCommandPaletteBridge target={keyboardCommandsRef} />
                 <NextPendingNavigationHost />
                 {!commandContextSessionId && (paletteOpen || universalSearchRouteActive)
                     ? <CommandPalettePluginActionProjectionDemand /> : null}

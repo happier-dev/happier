@@ -3,6 +3,7 @@ import { useSessionProjectScmStatus, useSetting } from '@/sync/domains/state/sto
 import { GitActionRailTooltip } from '@/components/ui/navigation/tabBadge/GitActionRailTooltip';
 import { GitActionRailBadge } from '@/components/ui/navigation/tabBadge/GitActionRailBadge';
 import type { RailBadgeSignalRenderer } from '@/components/navigation/shell/appRail/AppRailBadge';
+import type { KeyboardCommandId } from '@/keyboard/types';
 
 // Keep SCM updates local to the badge, as in the mobile cockpit's canonical badge model.
 export const SessionGitActionRailBadge = React.memo((props: Readonly<{ sessionId: string; serverId?: string | null; renderSignal?: RailBadgeSignalRenderer }>) => {
@@ -12,6 +13,6 @@ export const SessionGitActionRailBadge = React.memo((props: Readonly<{ sessionId
 });
 
 // The tooltip mounts on hover/focus and reads the same scoped cached summary.
-export function SessionGitActionRailTooltip(props: Readonly<{ sessionId: string; serverId?: string | null }>) {
-    return <GitActionRailTooltip scmStatus={useSessionProjectScmStatus(props.sessionId, props.serverId)} />;
+export function SessionGitActionRailTooltip(props: Readonly<{ sessionId: string; serverId?: string | null; shortcutCommandId?: KeyboardCommandId }>) {
+    return <GitActionRailTooltip scmStatus={useSessionProjectScmStatus(props.sessionId, props.serverId)} shortcutCommandId={props.shortcutCommandId} />;
 }

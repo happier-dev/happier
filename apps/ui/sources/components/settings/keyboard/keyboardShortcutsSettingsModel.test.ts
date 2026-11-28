@@ -150,7 +150,7 @@ describe('keyboardShortcutsSettingsModel', () => {
         expect(model.commandRows.find((row) => row.commandId === 'commandPalette.open')?.defaultLabel).toBe('Cmd+K');
         expect(model.commandRows.find((row) => row.commandId === 'session.new')?.defaultLabel).toBe('Option+N');
         expect(model.commandRows.find((row) => row.commandId === 'session.mru.next')?.defaultLabel).toBe('Option+PageDown');
-        expect(model.commandRows.find((row) => row.commandId === 'mode.cycle')?.defaultLabel).toBe('Option+Shift+M');
+        expect(model.commandRows.find((row) => row.commandId === 'mode.cycle')?.defaultLabel).toBe('Shift+Tab');
         expect(model.commandRows.find((row) => row.commandId === 'composer.abortConfirm')?.defaultLabel).toBe('Cmd+.');
         expect(model.commandRows.find((row) => row.commandId === 'workspace.tab.new')?.defaultLabel).toBe('Cmd+T');
         expect(model.commandRows.find((row) => row.commandId === 'workspace.tab.close')?.defaultLabel).toBe('Cmd+W');

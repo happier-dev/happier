@@ -37,8 +37,6 @@ import { hapticsLight } from '@/components/ui/theme/haptics';
 import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { ESCAPE_LAYER_PRIORITIES, EscapeLayerProvider, useEscapeLayer } from '@/keyboard/escape';
-import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
-import { withShortcut } from '@/keyboard/withShortcut';
 import { Modal, type CustomModalInjectedProps } from '@/modal';
 import { t } from '@/text';
 import { useDeviceType, usePresentationWindowDimensions } from '@/utils/platform/responsive';
@@ -847,7 +845,6 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
     setReverted(next === 'reverted');
   }, [stageAnnotation]);
   const capsuleLayout = useStageCapsuleLayout();
-  const annotateShortcut = useKeyboardShortcutLabel('media.annotate');
   // Every picture: Done lands in place where the picture is editable, as a copy in a draft elsewhere (P2 U4).
   const pictureAnnotatable = isPicture(item) && currentPreview !== null && phase === 'open'
     && (!activeFrame || currentPreview.uri === activeFrame.frame.uri);
@@ -1240,7 +1237,7 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
               ) : null}
               {annotatable && !phone ? (
                 <StageAnnotateEntry
-                  tooltip={withShortcut(t('files.annotate.annotate'), annotateShortcut)}
+                  tooltip={t('files.annotate.annotate')}
                   onPress={enterAnnotate}
                   busy={readingFrame}
                 />

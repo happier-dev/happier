@@ -10,8 +10,16 @@ import { blurActiveElementOnWeb } from '@/utils/platform/deferOnWeb';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import type { ScreenCaptureAttachmentAction } from './screenCaptureAttachmentActions';
 import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE, AGENT_INPUT_MENU_ICON_SIZE_PX } from '../definitions/agentInputChipIconMetrics';
+import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
+import { withShortcut } from '@/keyboard/withShortcut';
 
 const WEB_PICKER_DOUBLE_OPEN_COOLDOWN_MS = 500;
+
+function AttachmentChipButton(props: React.ComponentProps<typeof Pressable>) {
+    const shortcut = useKeyboardShortcutLabel('composer.attachFile');
+    return <Pressable {...props} {...(Platform.OS === 'web' && shortcut
+        ? { title: withShortcut(props.accessibilityLabel ?? '', shortcut) } : {})} />;
+}
 
 const SCREEN_CAPTURE_LABELS = {
     'capture-screen': 'screenCapture.attach.capture',
@@ -122,6 +130,13 @@ export function createAttachmentActionChip(params: Readonly<{
 
     return {
         key: 'attachments-add',
+        keyboardShortcutHandlers: {
+            'composer.attachFile': () => {
+                if (disabled) return 'pass';
+                runPickerOpenWithWebCooldown(params.onPickFile);
+                return 'handled';
+            },
+        },
         controlId: 'attachments',
         placement: { id: 'attachments', title: t('common.attach'), icon: 'paperclip', defaultPlacement: 'overflow' },
         labelPolicy: 'auto-hide',
@@ -163,7 +178,7 @@ export function createAttachmentActionChip(params: Readonly<{
             }),
         }),
         render: (ctx: AgentInputExtraActionChipRenderContext) => (
-            <Pressable
+            <AttachmentChipButton
                 ref={ctx.chipAnchorRef}
                 testID="agent-input-attachments-chip"
                 accessibilityLabel={t('common.attach')}
@@ -186,7 +201,7 @@ export function createAttachmentActionChip(params: Readonly<{
                         {params.disabledReason ? <Text variant="meta" style={{ color: ctx.iconColor }}>{params.disabledReason}</Text> : null}
                     </View>
                 </View>
-            </Pressable>
+            </AttachmentChipButton>
         ),
     };
 }

@@ -93,47 +93,6 @@ export function isComposerTypeToFocusKey(
     return Array.from(event.key).length === 1 && event.key.trim() !== '';
 }
 
-export function shouldRunComposerModeCycleShortcut(
-    event: ComposerKeyEvent,
-    input: ComposerShortcutSettings & Readonly<{
-        platformOS?: string;
-        webPlatform?: string;
-    }>,
-): boolean {
-    let handled = false;
-    const dispatcher = createKeyboardShortcutDispatcher({
-        enabled: input.keyboardShortcutsV2Enabled,
-        platform: resolveComposerKeyboardPlatform({
-            platformOS: event.platformOS ?? input.platformOS,
-            webPlatform: event.webPlatform ?? input.webPlatform,
-        }),
-        surface: Platform.OS === 'web' ? 'web' : 'native',
-        singleKeyShortcutsEnabled: input.keyboardSingleKeyShortcutsEnabled,
-        disabledCommandIds: input.keyboardShortcutDisabledCommandIdsV1,
-        overrides: input.keyboardShortcutOverridesV1,
-        handlers: {
-            'mode.cycle': () => {
-                handled = true;
-            },
-        },
-        getContext: () => ({
-            isEditableTarget: true,
-            isComposing: event.isComposing === true,
-        }),
-    });
-    dispatcher({
-        key: event.key,
-        code: event.code ?? '',
-        altKey: event.altKey === true,
-        ctrlKey: event.ctrlKey === true,
-        metaKey: event.metaKey === true,
-        shiftKey: event.shiftKey === true,
-        repeat: event.repeat === true,
-        isComposing: event.isComposing === true,
-    });
-    return handled;
-}
-
 export function resolveComposerSendShortcutAction(
     event: ComposerKeyEvent,
     input: ComposerShortcutSettings & Readonly<{

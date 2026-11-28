@@ -14,8 +14,8 @@ export const KeyboardShortcutLabelsContext = React.createContext<KeyboardShortcu
  * the control that does the same thing), or undefined when nothing runs it.
  */
 export function useKeyboardShortcutLabel(commandId: KeyboardCommandId | undefined): string | undefined {
-    const labels = React.useContext(KeyboardShortcutLabelsContext);
-    return commandId === undefined ? undefined : labels[commandId];
+    if (commandId === undefined) return undefined;
+    return React.use(KeyboardShortcutLabelsContext)[commandId];
 }
 
 /** Mac modifier glyphs, written without separators ("⇧⌘2"). */

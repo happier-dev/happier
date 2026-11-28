@@ -15,6 +15,7 @@ import type { SessionComposerModelFavorite } from '@/components/sessions/present
 import { formatReasoningEffortTierLabel } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import type { AskHappierContext } from '@/sync/domains/pending/pendingSetupIntent.shared';
 import type { KeyboardCommandId } from '@/keyboard';
+import { defaultKeyboardCommands, sessionPanelKeyboardCommands } from '@/keyboard/commands';
 import {
   isCompactAppDestinationVisible,
   isCompactAppDestinationInvokable,
@@ -115,6 +116,12 @@ export type FileViewCommandControls = Readonly<{
   toggleBlame: () => void;
 }>;
 
+/** Invokes the mounted keyboard owner, including commands with no assigned binding. */
+export type KeyboardCommandControls = Readonly<{
+  isAvailable(commandId: KeyboardCommandId): boolean;
+  execute(commandId: KeyboardCommandId): boolean;
+}>;
+
 type BuildCommandPaletteCommandsBaseParams = Readonly<{
   sessionsById: Record<string, any>;
   isDev: boolean;
@@ -129,6 +136,7 @@ type BuildCommandPaletteCommandsBaseParams = Readonly<{
   }>;
   shortcutLabels?: Partial<Record<KeyboardCommandId, string>>;
   sessionCommands?: readonly Command[];
+  keyboardCommands?: KeyboardCommandControls;
   petControls?: PetCommandControls;
   paneControls?: PaneCommandControls;
   fileViewControls?: FileViewCommandControls;
@@ -251,9 +259,9 @@ export function buildCommandPaletteCommands(
     },
   ];
 
-  // Lab palette "Choose a model…": opens the Session's own model picker; no default key binding.
+  // Opens the Session's own model picker from both the palette and its keyboard command.
   if (params.sessionModelPicker) cmds.push({
-    id: 'session.model.choose', emptyQuerySuggested: true,
+    id: 'session.model.choose', emptyQuerySuggested: true, shortcut: params.shortcutLabels?.['session.model.choose'],
     title: t('commandPalette.commands.chooseModelTitle'), subtitle: t('commandPalette.commands.chooseModelSubtitle'),
     icon: 'sparkle', category: t('commandPalette.commands.actionsCategory'), action: params.sessionModelPicker.open,
   });
@@ -284,6 +292,17 @@ export function buildCommandPaletteCommands(
     title: t('common.newWindow'), icon: 'squares-four',
     category: t('commandPalette.commands.actionsCategory'), action: nav.openNewWindow,
   });
+
+  for (const id of [
+    ...sessionPanelKeyboardCommands.map(command => command.id),
+    'sessionList.source.toggle', 'permission.open', 'composer.attachFile', 'mode.cycle', 'permission.cycle',
+  ] as const) {
+    if (!params.keyboardCommands?.isAvailable(id)) continue;
+    const command = defaultKeyboardCommands.find(command => command.id === id);
+    if (!command?.settingsTitleKey) continue;
+    cmds.push({ id, title: t(command.settingsTitleKey), category: t('commandPalette.commands.actionsCategory'),
+      shortcut: params.shortcutLabels?.[id], action: () => { params.keyboardCommands?.execute(id); } });
+  }
 
   for (const [column, id, titleKey] of [
     ['navigation', 'shell.column.toggle', 'settingsKeyboard.commands.shellColumnToggle'],

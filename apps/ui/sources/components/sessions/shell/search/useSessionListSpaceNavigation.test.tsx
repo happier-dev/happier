@@ -1,8 +1,9 @@
 import { act } from 'react-test-renderer';
+import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 
-import { renderHook, standardCleanup } from '@/dev/testkit';
+import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
@@ -28,6 +29,33 @@ afterEach(() => {
 });
 
 describe('Session space navigation', () => {
+    it('switches the mounted Session list source without changing other filters or Account settings', async () => {
+        vi.stubGlobal('window', new EventTarget());
+        const account = await createSecretSettingsTestHarness({ settings: settingsParse({}) });
+        const { useSessionListViewFilterController } = await import('./useSessionListViewFilterController');
+        const { useSessionListSourceShortcut } = await import('./useSessionListSourceShortcut');
+        const { KeyboardShortcutProvider, useKeyboardCommand } = await import('@/keyboard/KeyboardShortcutProvider');
+        let current!: ReturnType<typeof useSessionListViewFilterController>;
+        let execute!: ReturnType<typeof useKeyboardCommand>;
+        function Probe({ active }: { active: boolean }) {
+            current = useSessionListViewFilterController();
+            useSessionListSourceShortcut(current, active);
+            execute = useKeyboardCommand();
+            return null;
+        }
+        const content = (active: boolean) => <KeyboardShortcutProvider handlers={{}}><Probe active={active} /></KeyboardShortcutProvider>;
+        const screen = await renderScreen(content(true));
+        try {
+            await act(async () => current.setSearchQuery('retain this search'));
+            await act(async () => { expect(execute('sessionList.source.toggle')).toBe(true); });
+            expect(current.displayFilters).toMatchObject({ source: 'direct', searchQuery: 'retain this search' });
+            await act(async () => { execute('sessionList.source.toggle'); });
+            expect(current.displayFilters).toMatchObject({ source: 'persisted', searchQuery: 'retain this search' });
+            expect(account.settingsWrites).toEqual([]);
+            await screen.update(content(false));
+            expect(execute('sessionList.source.toggle')).toBe(false);
+        } finally { await screen.unmount(); await account.dispose(); vi.unstubAllGlobals(); }
+    });
     it('selects synchronously without settings Action admission or an Account-settings read', async () => {
         const account = await createSecretSettingsTestHarness({ settings: settingsParse({}) });
         const { useSessionListViewFilterController } = await import('./useSessionListViewFilterController');

@@ -66,7 +66,7 @@ const labelByCode: Readonly<Record<string, string>> = {
     Period: '.',
     BracketLeft: '[',
     BracketRight: ']',
-    Slash: 'Slash',
+    Slash: '/',
     Backquote: '`',
     Backslash: '\\',
 };

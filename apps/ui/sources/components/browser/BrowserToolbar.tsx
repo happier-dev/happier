@@ -7,8 +7,6 @@ import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import type { BrowserToolbarModel } from '@/sync/domains/browser/shell';
 import { t } from '@/text';
 
-import type { BrowserKeyboardShortcutLabels } from './useBrowserKeyboardShortcuts';
-import { withShortcut } from '@/keyboard/withShortcut';
 
 const stylesheet = StyleSheet.create(() => ({
     root: {
@@ -25,7 +23,6 @@ const stylesheet = StyleSheet.create(() => ({
 
 export function BrowserToolbar(props: Readonly<{
     model: BrowserToolbarModel;
-    shortcutLabels?: BrowserKeyboardShortcutLabels;
     onBack: () => void;
     onForward: () => void;
     onReload: () => void;
@@ -42,7 +39,6 @@ export function BrowserToolbar(props: Readonly<{
     const iconSize = props.iconSize ?? ICON_SIZE.sm;
     // Packed controls split a 2 px gap; a spread bar has the free space between them.
     const targetGapPx = props.spread ? undefined : 2;
-    const shortcutLabels = props.shortcutLabels;
     const loading = props.model.isLoading;
     const testIDPrefix = props.testID ?? 'browser-toolbar';
     // AMD-8: a page that keeps its history to itself shows these controls unavailable, with the reason
@@ -64,7 +60,8 @@ export function BrowserToolbar(props: Readonly<{
                         testID={`${testIDPrefix}-back`}
                         iconName="caret-left"
                         accessibilityLabel={t('browserShell.toolbar.back')}
-                        tooltip={withShortcut(t('browserShell.toolbar.back'), shortcutLabels?.['browser.back'])}
+                        tooltip={t('browserShell.toolbar.back')}
+                        shortcutCommandId="browser.back"
                         variant="plain"
                         iconSize={iconSize}
                         size={controlSize}
@@ -77,7 +74,8 @@ export function BrowserToolbar(props: Readonly<{
                         testID={`${testIDPrefix}-forward`}
                         iconName="caret-right"
                         accessibilityLabel={t('browserShell.toolbar.forward')}
-                        tooltip={withShortcut(t('browserShell.toolbar.forward'), shortcutLabels?.['browser.forward'])}
+                        tooltip={t('browserShell.toolbar.forward')}
+                        shortcutCommandId="browser.forward"
                         variant="plain"
                         iconSize={iconSize}
                         size={controlSize}
@@ -95,7 +93,8 @@ export function BrowserToolbar(props: Readonly<{
                     accessibilityLabel={loading ? t('browserShell.toolbar.stop') : t('browserShell.toolbar.reload')}
                     tooltip={loading
                         ? t('browserShell.toolbar.stop')
-                        : withShortcut(t('browserShell.toolbar.reload'), shortcutLabels?.['browser.reload'])}
+                        : t('browserShell.toolbar.reload')}
+                    shortcutCommandId={loading ? undefined : 'browser.reload'}
                     variant="plain"
                     iconSize={iconSize}
                     size={controlSize}

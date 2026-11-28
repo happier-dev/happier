@@ -45,12 +45,16 @@ type NativeKeyboardBridgeModule = typeof nativeKeyboardBridge & Readonly<{
 
 type KeyboardShortcutRegistrationContextValue = Readonly<{
     labels: Pick<StoreApi<KeyboardShortcutLabels>, 'subscribe' | 'getState'>;
-    registerHandlers: (handlers: KeyboardShortcutHandlers, nativeInput?: NativeKeyboardInputRegistration) => () => void;
+    registerHandlers: (handlers: KeyboardShortcutHandlers, nativeInput?: NativeKeyboardInputRegistration, context?: KeyboardShortcutHandlerContext) => () => void;
     executeCommand: (commandId: KeyboardCommandId) => boolean;
+    isCommandAvailable: (commandId: KeyboardCommandId) => boolean;
     submitFindInput: () => boolean;
     find: FindSurfaceRegistry;
     refreshFindAvailability: () => void;
 }>;
+
+/** Native keyboard events identify an editable view; its mounted composer supplies focus ownership. */
+type KeyboardShortcutHandlerContext = Readonly<{ isComposerTarget?: boolean }>;
 
 type NativeKeyboardInputRegistration = Readonly<{
     bindings: readonly string[];
@@ -139,11 +143,13 @@ export function useKeyboardShortcutHandlers(
      * focus change re-registers without rendering the host. Absent means always.
      */
     active?: Readonly<{ get: () => boolean; subscribe: (listener: () => void) => () => void }>,
+    context?: KeyboardShortcutHandlerContext,
 ): boolean {
     const registration = React.useContext(KeyboardShortcutRegistrationContext);
     const latestHandlersRef = React.useRef(handlers);
     latestHandlersRef.current = handlers;
     const handlerKeySignature = buildHandlerKeySignature(handlers);
+    const isComposerTarget = context?.isComposerTarget;
     const registeredHandlers = React.useMemo<KeyboardShortcutHandlers>(() => {
         if (!handlerKeySignature) return {};
         const next: KeyboardShortcutHandlers = {};
@@ -158,9 +164,10 @@ export function useKeyboardShortcutHandlers(
     React.useEffect(() => {
         if (!registration) return;
         if (!handlerKeySignature) return;
-        if (!active) return registration.registerHandlers(registeredHandlers);
-        return followSignal(active, (isActive) => isActive ? registration.registerHandlers(registeredHandlers) : undefined);
-    }, [active, handlerKeySignature, registeredHandlers, registration]);
+        const handlerContext = isComposerTarget === undefined ? undefined : { isComposerTarget };
+        if (!active) return registration.registerHandlers(registeredHandlers, undefined, handlerContext);
+        return followSignal(active, (isActive) => isActive ? registration.registerHandlers(registeredHandlers, undefined, handlerContext) : undefined);
+    }, [active, handlerKeySignature, registeredHandlers, registration, isComposerTarget]);
 
     return registration != null;
 }
@@ -270,15 +277,15 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
     }, [find]);
     React.useEffect(() => registerFindActionRuntime(find), [find]);
     const nextScopedHandlerIdRef = React.useRef(1);
-    const [scopedHandlerEntries, setScopedHandlerEntries] = React.useState<ReadonlyMap<number, Readonly<{ handlers: KeyboardShortcutHandlers; nativeInput?: NativeKeyboardInputRegistration }>>>(
+    const [scopedHandlerEntries, setScopedHandlerEntries] = React.useState<ReadonlyMap<number, Readonly<{ handlers: KeyboardShortcutHandlers; nativeInput?: NativeKeyboardInputRegistration; context?: KeyboardShortcutHandlerContext }>>>(
         () => new Map(),
     );
-    const registerHandlers = React.useCallback((handlers: KeyboardShortcutHandlers, nativeInput?: NativeKeyboardInputRegistration) => {
+    const registerHandlers = React.useCallback((handlers: KeyboardShortcutHandlers, nativeInput?: NativeKeyboardInputRegistration, context?: KeyboardShortcutHandlerContext) => {
         const id = nextScopedHandlerIdRef.current;
         nextScopedHandlerIdRef.current += 1;
         setScopedHandlerEntries((current) => {
             const next = new Map(current);
-            next.set(id, { handlers, nativeInput });
+            next.set(id, { handlers, nativeInput, context });
             return next;
         });
         return () => {
@@ -301,6 +308,7 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
         .flatMap((entry) => entry.nativeInput ? [entry.nativeInput] : []).reverse(), [scopedHandlerEntries]);
     const nativeInputsRef = React.useRef(nativeInputs);
     nativeInputsRef.current = nativeInputs;
+    const composerInputFocused = [...scopedHandlerEntries.values()].some(entry => entry.context?.isComposerTarget === true);
     const propHandlers = props.handlers;
     const platform = React.useMemo(resolveKeyboardPlatform, []);
     const surface: KeyboardSurface = Platform.OS === 'web' ? 'web' : 'native';
@@ -326,6 +334,8 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
     const overrides = keyboardShortcutOverridesV1 ?? NO_SHORTCUT_OVERRIDES;
     const defaultLabelContext = React.useMemo(() => ({
         isEditableTarget: false,
+        // Hints describe the registered composer's command; event dispatch checks actual focus.
+        isComposerTarget: true,
         isComposing: false,
     }), []);
     // Web always advertises Find; focus changes only its command-time destination.
@@ -409,6 +419,7 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
         handlers,
         getContext: () => ({
             isEditableTarget: false,
+            isComposerTarget: composerInputFocused,
             isComposing: false,
             findInputFocused: find.resolve()?.isInputFocused() === true,
         }),
@@ -423,6 +434,7 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
         singleKeyShortcutsEnabled,
         surface,
         webHost,
+        composerInputFocused,
     ]);
     const dispatcherOptionsRef = React.useRef(dispatcherOptions);
     dispatcherOptionsRef.current = dispatcherOptions;
@@ -433,6 +445,8 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
         if (!handler) return false;
         return handler() !== 'pass';
     }, []);
+    const isCommandAvailable = React.useCallback((commandId: KeyboardCommandId): boolean =>
+        dispatcherOptionsRef.current.handlers[commandId] !== undefined, []);
     const submitFindInput = React.useCallback((): boolean => {
         const currentOptions = dispatcherOptionsRef.current;
         const { 'find.next': next, 'find.previous': previous } = currentOptions.handlers;
@@ -468,8 +482,8 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
         return { find: channel('find'), editor: channel('editor'), browser: channel('browser') };
     }, [dispatcherOptions, find, findAvailability.open, findAvailability.inputFocused]);
     const registrationContextValue = React.useMemo<KeyboardShortcutRegistrationContextValue>(
-        () => ({ labels, registerHandlers, executeCommand, submitFindInput, find, refreshFindAvailability }),
-        [labels, registerHandlers, executeCommand, submitFindInput, find, refreshFindAvailability],
+        () => ({ labels, registerHandlers, executeCommand, isCommandAvailable, submitFindInput, find, refreshFindAvailability }),
+        [labels, registerHandlers, executeCommand, isCommandAvailable, submitFindInput, find, refreshFindAvailability],
     );
     const nativeHardwareKeyboardRegistration = React.useMemo(() => {
         const hasAvailableHandler = hasAnyAvailableKeyboardHandler(dispatcherOptions) || nativeInputs.length > 0;
@@ -606,6 +620,7 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
                     // that are unsafe in editors. Missing values from an older bridge
                     // fail closed until native focus ownership is known.
                     isEditableTarget: nativeEvent.isEditableTarget !== false,
+                    isComposerTarget: currentOptions.getContext().isComposerTarget === true && nativeEvent.isEditableTarget !== false,
                     isComposing: event.isComposing,
                 }),
             });

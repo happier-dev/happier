@@ -303,7 +303,6 @@ import {
     resolveComposerSendShortcutAction,
     buildComposerAfterSendShortcutLabel,
     buildComposerSendShortcutLabels,
-    shouldRunComposerModeCycleShortcut,
 } from '@/keyboard/composer';
 import { useKeyboardShortcutHandlers, type KeyboardShortcutHandlers } from '@/keyboard';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -3161,13 +3160,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         retainKeyboardLift: props.retainKeyboardLift,
         onSelectionOverlayDismiss,
     });
-    useAgentInputExternalPickerRequest({
-        requestKey: props.openModelPickerRequestKey,
-        open: React.useCallback(() => {
-            if (!hasAgentPickerOptions) return;
-            openSelectionOverlay('agent', 'chip');
-        }, [hasAgentPickerOptions, openSelectionOverlay]),
-    });
+    const openModelPicker = React.useCallback(() => {
+        if (!hasAgentPickerOptions) return;
+        openSelectionOverlay('agent', 'chip');
+    }, [hasAgentPickerOptions, openSelectionOverlay]);
+    useAgentInputExternalPickerRequest({ requestKey: props.openModelPickerRequestKey, open: openModelPicker });
     // A picker opened from a + menu row is that row's submenu: the + menu stays presented, with the picker
     // beside its row, or pushed inside the menu's sheet on a phone (the shared Popover decides which).
     const actionMenuRowAnchorRef = React.useRef<View | null>(null);
@@ -3255,6 +3252,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         resolvedAgentLabel,
         handlePermissionPress,
         handleModePress,
+        handleModeCycle,
         handleProfilePress,
         handleEnvVarsPress,
         handleAgentPress,
@@ -3268,6 +3266,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         onPermissionModeChange: props.onPermissionModeChange,
         onPermissionClick: props.onPermissionClick,
         sessionModeChipInteraction,
+        sessionModeSelectedId: sessionModeChipControl?.selectedId,
+        onSessionModeChange: props.onAcpSessionModeChange,
         profilePopover: props.profilePopover,
         onProfileClick: props.onProfileClick,
         envVarsPopover: props.envVarsPopover,
@@ -3791,9 +3791,26 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (promptLibraryAvailable && isInputFocused && dictationEditable && !controlsOnly && surfacePresented) {
             handlers['composer.prompts.open'] = openPromptPicker;
         }
+        if (dictationEditable && !controlsOnly && surfacePresented) {
+            if (sessionModeChipInteraction?.kind === 'picker' && props.onAcpSessionModeChange) {
+                handlers['mode.cycle'] = handleModeCycle;
+            }
+            if (showPermissionChip) handlers['permission.open'] = handlePermissionPress;
+            if (props.onPermissionModeChange && permissionModeOrder.length > 1) {
+                handlers['permission.cycle'] = () => {
+                    const next = permissionModeOrder[(permissionModeOrder.indexOf(effectivePermissionPolicy.effectiveMode) + 1) % permissionModeOrder.length];
+                    props.onPermissionModeChange?.(next);
+                    hapticsLight();
+                };
+            }
+            if (hasAgentPickerOptions) handlers['session.model.choose'] = openModelPicker;
+            for (const chip of extraActionChips) Object.assign(handlers, chip.keyboardShortcutHandlers);
+        }
         return handlers;
-    }, [canStopFromComposer, handleComposerAbortShortcut, handleComposerFocusShortcut, isInputFocused, dictationEditable, controlsOnly, surfacePresented, openPromptPicker, promptLibraryAvailable]);
-    useKeyboardShortcutHandlers(keyboardShortcutHandlers);
+    }, [canStopFromComposer, handleComposerAbortShortcut, handleComposerFocusShortcut, isInputFocused, dictationEditable, controlsOnly, surfacePresented, openPromptPicker, promptLibraryAvailable,
+        sessionModeChipInteraction, props.onAcpSessionModeChange, handleModeCycle, showPermissionChip, handlePermissionPress,
+        props.onPermissionModeChange, permissionModeOrder, effectivePermissionPolicy.effectiveMode, hasAgentPickerOptions, openModelPicker, extraActionChips]);
+    useKeyboardShortcutHandlers(keyboardShortcutHandlers, undefined, { isComposerTarget: isInputFocused });
 
     // Identity-stable handlers: these feed the action-menu and control-row memos, which an inline
     // arrow would invalidate on every keystroke render.
@@ -4091,30 +4108,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             if (dictationEditable && props.messageHistory !== 'none' && isCollapsedSelection && (event.key === 'ArrowUp' || event.key === 'ArrowDown')
                 && stepMessageHistory(event.key === 'ArrowUp' ? 'up' : 'down', historyInputState)) {
                 return true;
-            }
-        }
-        if (Platform.OS === 'web' && submitEnabled) {
-            // Handle Shift+Tab for permission mode switching
-            if (
-                event.key === 'Tab'
-                && event.shiftKey
-                && props.onPermissionModeChange
-                && shouldRunComposerModeCycleShortcut(event, {
-                    keyboardShortcutsV2Enabled,
-                    keyboardSingleKeyShortcutsEnabled,
-                    keyboardShortcutOverridesV1,
-                    keyboardShortcutDisabledCommandIdsV1,
-                    platformOS: Platform.OS,
-                })
-            ) {
-                const modeOrder = permissionModeOrder;
-                if (!modeOrder || modeOrder.length === 0) return false;
-                const current = effectivePermissionPolicy.effectiveMode;
-                const currentIndex = modeOrder.indexOf(current);
-                const nextIndex = (currentIndex + 1) % modeOrder.length;
-                props.onPermissionModeChange(modeOrder[nextIndex]);
-                hapticsLight();
-                return true; // Key was handled, prevent default tab behavior
             }
         }
         return false; // Key was not handled

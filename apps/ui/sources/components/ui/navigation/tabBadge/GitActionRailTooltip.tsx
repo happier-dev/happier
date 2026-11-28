@@ -5,6 +5,9 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { ScmStatus } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
+import type { KeyboardCommandId } from '@/keyboard/types';
+import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
+import { withShortcut } from '@/keyboard/withShortcut';
 import { formatExactCount, formatScmDiffBadge } from './tabBadgeModel';
 
 const styles = StyleSheet.create((theme) => ({
@@ -17,13 +20,18 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 /** Cached summary only; mounted by the tooltip when hovered or keyboard-focused. */
-export function GitActionRailTooltip({ scmStatus }: Readonly<{ scmStatus: ScmStatus | null | undefined }>) {
+export function GitActionRailTooltip({ scmStatus, shortcutCommandId }: Readonly<{
+    scmStatus: ScmStatus | null | undefined;
+    shortcutCommandId?: KeyboardCommandId;
+}>) {
     const diff = formatScmDiffBadge(scmStatus);
+    const shortcut = useKeyboardShortcutLabel(shortcutCommandId);
+    const label = scmStatus
+        ? `${t('settingsAppearance.tabBarBadges.gitChangedFiles')}: ${formatExactCount(diff?.changedFileCount ?? 0)}`
+        : t('session.rightPanel.tabs.git');
     return (
         <View style={styles.content}>
-            <Text style={styles.label}>{scmStatus
-                ? `${t('settingsAppearance.tabBarBadges.gitChangedFiles')}: ${formatExactCount(diff?.changedFileCount ?? 0)}`
-                : t('session.rightPanel.tabs.git')}</Text>
+            <Text style={styles.label}>{withShortcut(label, shortcut)}</Text>
             {diff && scmStatus?.isComplete !== false && (diff.added > 0 || diff.removed > 0) ? (
                 <View style={styles.lines}>
                     <Text style={[styles.label, styles.added]}>{`+${diff.added}`}</Text>

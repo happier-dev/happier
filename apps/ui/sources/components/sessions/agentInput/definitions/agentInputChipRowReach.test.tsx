@@ -16,6 +16,7 @@ vi.mock('react-native-unistyles', async () => {
 
 import { AgentInputChipRowReach, resolveAgentInputChipRailHitReach } from './agentInputChipRowReach';
 import { createPermissionActionChip } from './createPermissionActionChip';
+import { KeyboardShortcutLabelsContext } from '@/keyboard/shortcutLabels';
 
 const CHIP_HEIGHT = 32;
 
@@ -32,6 +33,12 @@ function permissionChip() {
 }
 
 describe('AgentInputChipRowReach', () => {
+    it('uses the effective command binding in the existing chip title', async () => {
+        const screen = await renderScreen(<KeyboardShortcutLabelsContext.Provider value={{ 'permission.open': 'Cmd+J' }}>
+            {permissionChip()}
+        </KeyboardShortcutLabelsContext.Provider>);
+        expect(screen.findByTestId('agent-input-permission-chip')?.props.title).toBe('Permissions (Cmd+J)');
+    });
     // A wrapping rail's chips are 6 px apart in a line and 1 px apart between lines and rails: each chip takes
     // half of every gap, so neighbours on any side meet instead of overlapping by the target's full reach.
     it('limits a chip to the reach its rail declares, and leaves a chip outside any rail its full reach', async () => {

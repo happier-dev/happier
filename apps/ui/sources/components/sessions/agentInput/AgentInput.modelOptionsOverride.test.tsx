@@ -244,8 +244,45 @@ vi.mock('./components/AgentInputActionMenuPopoverContent', () => ({
 }));
 
 const { AgentInput } = await import('./AgentInput');
+const { KeyboardShortcutProvider, useKeyboardCommand } = await import('@/keyboard/KeyboardShortcutProvider');
+
+function KeyboardCommandProbe({ onReady }: { onReady: (execute: ReturnType<typeof useKeyboardCommand>) => void }) {
+    const execute = useKeyboardCommand();
+    React.useEffect(() => { onReady(execute); }, [execute, onReady]);
+    return null;
+}
 
 describe('AgentInput (modelOptionsOverride)', () => {
+    it('runs registered composer mode and picker commands through the mounted control owners', async () => {
+        const { createAttachmentActionChip } = await import('./sessionActions/createAttachmentActionChip');
+        let execute: ReturnType<typeof useKeyboardCommand> = () => false;
+        const onSessionModeChange = vi.fn();
+        const onPermissionModeChange = vi.fn();
+        const onPickFile = vi.fn();
+        const screen = await renderScreen(<KeyboardShortcutProvider>
+            <KeyboardCommandProbe onReady={command => { execute = command; }} />
+            <AgentInput value="draft" placeholder="placeholder" onChangeText={() => {}} onSend={() => {}}
+                autocompleteKinds={[]} autocompleteSuggestions={async () => []}
+                agentType="codex" permissionMode="default" onPermissionModeChange={onPermissionModeChange}
+                modelMode="default" onModelModeChange={() => {}}
+                extraActionChips={[createAttachmentActionChip({ onPickFile, onPickImage: () => {} })]}
+                modelOptionsOverride={[{ value: 'default', label: 'Default' }]}
+                acpSessionModeOptionsOverride={[{ id: 'build', name: 'Build' }, { id: 'plan', name: 'Plan' }]}
+                acpSessionModeSelectedIdOverride="build" onAcpSessionModeChange={onSessionModeChange} />
+        </KeyboardShortcutProvider>);
+        const field = screen.tree.root.findAll(node => node.props.testID === 'new-session-composer-input' && typeof node.props.onFocus === 'function')[0];
+        expect(field).toBeDefined();
+        await act(async () => { field.props.onFocus(); });
+        await act(async () => { expect(execute('mode.cycle')).toBe(true); });
+        expect(onSessionModeChange).toHaveBeenCalledWith('plan');
+        expect(onPermissionModeChange).not.toHaveBeenCalled();
+        await act(async () => { expect(execute('permission.cycle')).toBe(true); });
+        expect(onPermissionModeChange).toHaveBeenCalled();
+        await act(async () => { expect(execute('composer.attachFile')).toBe(true); });
+        expect(onPickFile).toHaveBeenCalledOnce();
+        await act(async () => { expect(execute('session.model.choose')).toBe(true); });
+        expect(lastOptionPickerOverlayProps).not.toBeNull();
+    });
     beforeEach(() => {
         modalPromptMock.mockReset();
         modalShowMock.mockReset();

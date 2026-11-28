@@ -16,9 +16,7 @@ import { Text } from '@/components/ui/text/Text';
 import { hapticsSelection } from '@/components/ui/theme/haptics';
 import { WordCrossFade } from '@/components/ui/motion/WordCrossFade';
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
-import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
 import type { KeyboardCommandId } from '@/keyboard/types';
-import { withShortcut } from '@/keyboard/withShortcut';
 import { t } from '@/text';
 import { isEmptyEdit } from '@happier-dev/protocol/sessions/media/imageMarksV1';
 
@@ -271,7 +269,6 @@ function ToolButton(
   props: Readonly<{ annotator: ImageAnnotator; entry: PaletteTool; phone?: boolean; visible?: boolean }>,
 ) {
   const { annotator, entry } = props;
-  const shortcut = useKeyboardShortcutLabel(entry.command);
   const active = useImageAnnotatorState(
     annotator,
     (state) => state.tool === entry.tool,
@@ -296,7 +293,8 @@ function ToolButton(
       checked={active}
       selected={active}
       accessibilityLabel={label}
-      tooltip={props.phone ? undefined : withShortcut(label, shortcut)}
+      tooltip={props.phone ? undefined : label}
+      shortcutCommandId={entry.command}
       tooltipPlacement="bottom"
       onPress={selectTool}
       testID={`annotator-tool-${entry.tool}`}
@@ -400,8 +398,6 @@ function ColorSwatchButton(props: Readonly<{ annotator: ImageAnnotator }>) {
 /** Undo and Redo. A phone host stands them in its top capsule beside Done (MIS §3.7). */
 export function AnnotatorHistoryButtons(props: Readonly<{ annotator: ImageAnnotator }>) {
   const { annotator } = props;
-  const undoShortcut = useKeyboardShortcutLabel('annotation.undo');
-  const redoShortcut = useKeyboardShortcutLabel('annotation.redo');
   const canUndo = useImageAnnotatorState(
     annotator,
     (state) => state.history.undo.length > 0,
@@ -416,7 +412,8 @@ export function AnnotatorHistoryButtons(props: Readonly<{ annotator: ImageAnnota
         variant="plain"
         iconName="arrow-arc-left"
         accessibilityLabel={t('files.annotate.undo')}
-        tooltip={withShortcut(t('files.annotate.undo'), undoShortcut)}
+        tooltip={t('files.annotate.undo')}
+        shortcutCommandId="annotation.undo"
         tooltipPlacement="bottom"
         disabled={!canUndo}
         disabledReason={canUndo ? undefined : t('files.annotate.nothingToUndo')}
@@ -427,7 +424,8 @@ export function AnnotatorHistoryButtons(props: Readonly<{ annotator: ImageAnnota
         variant="plain"
         iconName="arrow-arc-right"
         accessibilityLabel={t('files.annotate.redo')}
-        tooltip={withShortcut(t('files.annotate.redo'), redoShortcut)}
+        tooltip={t('files.annotate.redo')}
+        shortcutCommandId="annotation.redo"
         tooltipPlacement="bottom"
         disabled={!canRedo}
         disabledReason={canRedo ? undefined : t('files.annotate.nothingToRedo')}

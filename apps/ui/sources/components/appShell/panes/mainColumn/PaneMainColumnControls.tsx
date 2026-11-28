@@ -13,7 +13,6 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
-import { withShortcut } from '@/keyboard/withShortcut';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useHeaderHeight } from '@/utils/platform/responsive';
@@ -56,7 +55,6 @@ export const PaneMainHideButton = React.memo(function PaneMainHideButton(
   const { theme } = useUnistyles();
   const main = usePaneMainColumn();
   const layout = useOptionalAppPaneScopeLayout();
-  const shortcut = useKeyboardShortcutLabel('panes.main.toggle');
   const region = usePaneRegion();
   const hideClaims = React.useContext(PaneMainHideClaimsContext);
   const [owner] = React.useState(() => ({}));
@@ -76,7 +74,8 @@ export const PaneMainHideButton = React.memo(function PaneMainHideButton(
       size={props.size}
       interactiveTargetGapPx={props.interactiveTargetGapPx}
       accessibilityLabel={main.labels.hideLabel}
-      tooltip={withShortcut(main.labels.hideLabel, shortcut)}
+      tooltip={main.labels.hideLabel}
+      shortcutCommandId="panes.main.toggle"
       tooltipPlacement="bottom"
       icon={
         <SidebarCollapseIcon

@@ -26,7 +26,6 @@ import { useResolvedDesktopWindowControls } from '../desktopChrome/useResolvedDe
 import { SidebarCollapseIcon, SidebarExpandIcon } from '../SidebarIcons';
 import { APP_RAIL_WIDTH_PX, APP_SHELL_TITLE_STRIP_CONTROLS_START_PX, APP_SHELL_TITLE_STRIP_HEIGHT_PX } from './appRailMetrics';
 import { usePaneArrangement, usePaneArrangementAvailable } from '@/components/appShell/panes/arrangement/usePaneArrangement';
-import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
 import { AppShellThemeToggle } from './AppShellThemeToggle';
 import type { CompactAppDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { WorkspaceTitleBar } from '@/components/appShell/workspace/titleBar/WorkspaceTitleBar';
@@ -159,6 +158,7 @@ export const AppShellTitleStrip = React.memo(function AppShellTitleStrip(props: 
                         interactiveTargetGapPx={TITLE_STRIP_CONTROL_GAP_PX}
                         accessibilityLabel={toggleLabel}
                         tooltip={toggleLabel}
+                        shortcutCommandId="shell.column.toggle"
                         tooltipPlacement="bottom"
                         icon={<ChromeGlyph size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX}>{ink => <View style={ink.style}>
                             {props.columnVisible
@@ -207,7 +207,6 @@ export const AppShellTitleStrip = React.memo(function AppShellTitleStrip(props: 
 const PaneArrangementToggle = React.memo(function PaneArrangementToggle() {
     const available = usePaneArrangementAvailable();
     const { arrangement, toggle } = usePaneArrangement();
-    const shortcut = useKeyboardShortcutLabel('panes.arrangement.toggle');
     if (!available) return null;
     const editorFirst = arrangement === 'editor';
     const label = editorFirst ? t('settingsAppearance.paneArrangementSession') : t('settingsAppearance.paneArrangementEditor');
@@ -220,7 +219,8 @@ const PaneArrangementToggle = React.memo(function PaneArrangementToggle() {
             accessibilityLabel={t('settingsAppearance.paneArrangementEditor')}
             checked={editorFirst}
             selected={editorFirst}
-            tooltip={shortcut ? `${label} · ${shortcut}` : label}
+            tooltip={label}
+            shortcutCommandId="panes.arrangement.toggle"
             tooltipPlacement="bottom"
             icon={<ChromeGlyph name="square-split-horizontal" size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX} />}
             onPress={toggle}

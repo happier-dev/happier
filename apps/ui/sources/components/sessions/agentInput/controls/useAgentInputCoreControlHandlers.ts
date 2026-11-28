@@ -38,6 +38,8 @@ export function useAgentInputCoreControlHandlers(params: Readonly<{
     onPermissionModeChange?: (mode: PermissionMode) => void;
     onPermissionClick?: () => void;
     sessionModeChipInteraction?: ChipOptionInteraction<string> | null;
+    sessionModeSelectedId?: string | null;
+    onSessionModeChange?: (modeId: string) => void;
     profilePopover?: AgentInputContentPopoverConfig;
     onProfileClick?: () => void;
     envVarsPopover?: AgentInputContentPopoverConfig;
@@ -60,6 +62,7 @@ export function useAgentInputCoreControlHandlers(params: Readonly<{
     resolvedAgentLabel: string;
     handlePermissionPress: () => void;
     handleModePress: () => void;
+    handleModeCycle: () => boolean;
     handleProfilePress: () => void;
     handleEnvVarsPress: () => void;
     handleAgentPress: () => void;
@@ -94,6 +97,16 @@ export function useAgentInputCoreControlHandlers(params: Readonly<{
             params.toggleSelectionOverlay('sessionMode', 'chip');
         }
     }, [params.sessionModeChipInteraction, params.toggleSelectionOverlay]);
+
+    const handleModeCycle = React.useCallback(() => {
+        if (params.sessionModeChipInteraction?.kind !== 'picker' || !params.onSessionModeChange) return false;
+        const options = params.sessionModeChipInteraction.selectableOptionIds;
+        const next = options[(options.indexOf(params.sessionModeSelectedId ?? '') + 1) % options.length];
+        if (next === undefined) return false;
+        params.onSessionModeChange(next);
+        hapticsLight();
+        return true;
+    }, [params.sessionModeChipInteraction, params.sessionModeSelectedId, params.onSessionModeChange]);
 
     const handleProfilePress = React.useCallback(() => {
         hapticsLight();
@@ -162,6 +175,7 @@ export function useAgentInputCoreControlHandlers(params: Readonly<{
         resolvedAgentLabel,
         handlePermissionPress,
         handleModePress,
+        handleModeCycle,
         handleProfilePress,
         handleEnvVarsPress,
         handleAgentPress,

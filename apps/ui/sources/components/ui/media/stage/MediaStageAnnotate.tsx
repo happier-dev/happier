@@ -85,7 +85,7 @@ export function StageAnnotateEntry(props: Readonly<{ tooltip: string; onPress: (
   const { theme } = useUnistyles();
   return (
     <>
-      <Tooltip label={props.tooltip} focusable={false}>
+      <Tooltip label={props.tooltip} shortcutCommandId="media.annotate" focusable={false}>
         <HappierPressable
           accessibilityRole="button"
           accessibilityLabel={t('files.annotate.annotate')}

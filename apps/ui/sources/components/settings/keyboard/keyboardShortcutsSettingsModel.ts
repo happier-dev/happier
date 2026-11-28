@@ -44,6 +44,7 @@ export const KEYBOARD_SHORTCUT_COMMAND_GROUP_ORDER: readonly KeyboardShortcutCom
 
 /** Commands are grouped by their id's area; anything new and unrecognised lands under General. */
 export function resolveKeyboardShortcutCommandGroupId(commandId: KeyboardCommandId): KeyboardShortcutCommandGroupId {
+    if (commandId === 'session.model.choose') return 'composer';
     if (commandId.startsWith('session.action:')) return 'sessions';
     if (commandId.startsWith('annotation.') || commandId === 'media.annotate') return 'annotate';
     if (commandId.startsWith('review.') || commandId === 'editor.selection.ask' || commandId === 'files.track.toggle' || commandId === 'file.blame.toggle') return 'review';

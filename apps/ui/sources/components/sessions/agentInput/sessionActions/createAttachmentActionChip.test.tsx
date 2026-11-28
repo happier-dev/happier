@@ -24,6 +24,16 @@ function assertSingleCollapsedAction(
 }
 
 describe('createAttachmentActionChip', () => {
+    it('opens the existing file picker from its keyboard command and respects disabled attachments', async () => {
+        const { createAttachmentActionChip } = await import('./createAttachmentActionChip');
+        const onPickFile = vi.fn();
+        const chip = createAttachmentActionChip({ onPickFile, onPickImage: () => {} });
+        chip.keyboardShortcutHandlers?.['composer.attachFile']?.();
+        expect(onPickFile).toHaveBeenCalledOnce();
+        const disabled = createAttachmentActionChip({ onPickFile, onPickImage: () => {}, disabled: true });
+        disabled.keyboardShortcutHandlers?.['composer.attachFile']?.();
+        expect(onPickFile).toHaveBeenCalledOnce();
+    });
     it('adds the desktop capture entries to the root list, each running the action it was given', async () => {
         const { createAttachmentActionChip } = await import('./createAttachmentActionChip');
         const run = vi.fn();

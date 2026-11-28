@@ -37,6 +37,8 @@ export type KeyboardCommandId =
     | 'annotation.cropApply'
     | `annotation.nudge${'Left' | 'Right' | 'Up' | 'Down'}${'' | 'Large'}`
     | 'shell.column.toggle'
+    | `session.panel.${'git' | 'review' | 'files' | 'navigation' | 'agents'}.open`
+    | 'sessionList.source.toggle'
     | 'panes.main.toggle'
     | 'panes.side.toggle'
     | 'panes.arrangement.toggle'
@@ -77,6 +79,9 @@ export type KeyboardCommandId =
     | 'find.previous'
     | 'mode.cycle'
     | 'permission.cycle'
+    | 'permission.open'
+    | 'session.model.choose'
+    | 'composer.attachFile'
     | 'shortcutsHelp.open'
     | 'inbox.item.next'
     | 'inbox.item.previous'
@@ -157,6 +162,12 @@ export type KeyboardCommandSettingsTitleKey = SessionKeyboardCommandTitleKey | '
     | 'screenCapture.window.chooseSession'
     | `settingsKeyboard.commands.annotation${'Select' | 'Arrow' | 'Rectangle' | 'Text' | 'Blur' | 'Undo' | 'Redo' | 'Ellipse' | 'Freehand' | 'Highlighter' | 'Step' | 'Element' | 'Crop' | 'Delete' | 'Duplicate' | 'NextMark' | 'PreviousMark' | 'Nudge'}`
     | 'settingsKeyboard.commands.shellColumnToggle'
+    | 'session.rightPanel.tabs.git'
+    | 'files.toolbar.review'
+    | 'common.files'
+    | 'session.transcriptNavigation.title'
+    | 'sessionWork.title'
+    | 'settingsKeyboard.commands.sessionListSourceToggle'
     | 'settingsKeyboard.commands.panesMainToggle'
     | 'settingsKeyboard.commands.panesSideToggle'
     | 'settingsKeyboard.commands.panesArrangementToggle'
@@ -203,6 +214,9 @@ export type KeyboardCommandSettingsTitleKey = SessionKeyboardCommandTitleKey | '
     | 'settingsKeyboard.commands.findPrevious'
     | 'settingsKeyboard.commands.modeCycle'
     | 'settingsKeyboard.commands.permissionCycle'
+    | 'settingsKeyboard.commands.permissionOpen'
+    | 'settingsKeyboard.commands.sessionModelChoose'
+    | 'settingsKeyboard.commands.composerAttachFile'
     | 'settingsKeyboard.commands.shortcutsHelpOpen'
     | 'settingsKeyboard.commands.sessionNew'
     | 'settingsKeyboard.commands.sessionPendingNext'
@@ -255,6 +269,7 @@ export type KeyboardCommandSettingsTitleKey = SessionKeyboardCommandTitleKey | '
 
 export type KeyboardContext = Readonly<{
     isEditableTarget: boolean;
+    isComposerTarget?: boolean;
     isInteractiveTarget?: boolean;
     isComposing: boolean;
     findInputFocused?: boolean;

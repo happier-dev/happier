@@ -13,6 +13,7 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ICON_SIZE, Icon, type IconName } from '@/components/ui/icons/Icon';
 import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
 import { t } from '@/text';
+import type { KeyboardCommandId } from '@/keyboard/types';
 import { Modal } from '@/modal';
 import { Text } from '@/components/ui/text/Text';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -43,6 +44,7 @@ export type RightSidebarRailAction = Readonly<{
     renderBadgeSignal?: (renderSignal: RailBadgeSignalRenderer) => React.ReactNode;
     pluginCount?: PluginRightSidebarCountDescriptor;
     tooltipContent?: React.ReactNode;
+    shortcutCommandId?: KeyboardCommandId;
     /** A short trailing fact on its overflow row (the machine Computer opens), before any count. */
     detail?: string;
     /**
@@ -152,6 +154,7 @@ function RailActionButtonView(props: RailButtonProps & Readonly<{ count: number 
         : actionBadge(action, `${prefix}:${action.id}:badge`);
     // The app rail's item and selection (owner, 2026-11-11): the translucent square behind the open action's glyph.
     return <IconButton testID={`${prefix}:${action.id}`} accessibilityLabel={label} tooltip={action.disabledReason ?? label}
+        shortcutCommandId={action.shortcutCommandId}
         tooltipContent={action.tooltipContent} tooltipPlacement={props.tooltipPlacement} selected={action.active}
         disabled={action.disabled} onPress={action.onPress} onLongPress={props.customize}
         variant="plain" size={props.size} interactiveTargetVerticalGapPx={ACTION_GAP} icon={<View pointerEvents="none">

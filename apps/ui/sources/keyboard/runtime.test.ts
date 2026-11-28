@@ -33,6 +33,41 @@ function keyEvent(event: Partial<NormalizedKeyboardEvent>): NormalizedKeyboardEv
 }
 
 describe('createKeyboardShortcutDispatcher', () => {
+    it('dispatches both composer mode defaults and picker shortcuts while typing', () => {
+        const mode = vi.fn();
+        const model = vi.fn();
+        const permission = vi.fn();
+        const attach = vi.fn();
+        const dispatcher = createKeyboardShortcutDispatcher({
+            enabled: true, platform: 'macos', surface: 'web', singleKeyShortcutsEnabled: false,
+            disabledCommandIds: [], overrides: {},
+            handlers: { 'mode.cycle': mode, 'session.model.choose': model, 'permission.open': permission, 'composer.attachFile': attach },
+            getContext: () => ({ isEditableTarget: true, isComposerTarget: true, isComposing: false }),
+        });
+        expect(dispatcher(keyEvent({ key: 'Tab', code: 'Tab', shiftKey: true }))).toBe(true);
+        expect(dispatcher(keyEvent({ key: 'M', code: 'KeyM', altKey: true, shiftKey: true }))).toBe(true);
+        expect(mode).toHaveBeenCalledTimes(2);
+        expect(dispatcher(keyEvent({ key: '÷', code: 'Slash', metaKey: true, altKey: true }))).toBe(true);
+        expect(dispatcher(keyEvent({ key: 'a', code: 'KeyA', metaKey: true, altKey: true }))).toBe(true);
+        expect(dispatcher(keyEvent({ key: 'U', code: 'KeyU', metaKey: true, shiftKey: true }))).toBe(true);
+        expect(model).toHaveBeenCalledOnce(); expect(permission).toHaveBeenCalledOnce(); expect(attach).toHaveBeenCalledOnce();
+    });
+    it('leaves Shift+Tab navigation alone outside the composer', () => {
+        const dom = new JSDOM('<div data-testid="session-composer-input"><textarea></textarea></div><input>');
+        let target: EventTarget | null = dom.window.document.querySelector('input');
+        const mode = vi.fn();
+        const dispatcher = createKeyboardShortcutDispatcher({
+            enabled: true, platform: 'macos', surface: 'web', singleKeyShortcutsEnabled: true,
+            disabledCommandIds: [], overrides: {}, handlers: { 'mode.cycle': mode },
+            getContext: () => readKeyboardContextFromEventTarget(target),
+        });
+        expect(dispatcher(keyEvent({ key: 'Tab', code: 'Tab', shiftKey: true }))).toBe(false);
+        expect(mode).not.toHaveBeenCalled();
+        target = dom.window.document.querySelector('textarea');
+        expect(dispatcher(keyEvent({ key: 'Tab', code: 'Tab', shiftKey: true }))).toBe(true);
+        expect(mode).toHaveBeenCalledOnce();
+        dom.window.close();
+    });
     it('consumes configured qualified plugin and catalog Action shortcuts on native hardware', () => {
         for (const commandId of ['action:review.start', 'action:acme.tools/actions/run'] as const) {
             expect(resolveNativeHardwareKeyboardConsumableEventSignatures({ enabled: true, platform: 'ios', surface: 'native',
@@ -338,6 +373,27 @@ describe('createKeyboardShortcutDispatcher', () => {
         expect(open).toHaveBeenCalledTimes(2);
     });
 
+    it.each([
+        ['macos', { metaKey: true }],
+        ['windows', { ctrlKey: true }],
+        ['linux', { ctrlKey: true }],
+    ] as const)('opens the palette while typing on %s, including overrides, without consuming Alt+K', (platform, modifier) => {
+        const open = vi.fn();
+        const options = {
+            enabled: true, platform, surface: 'web' as const, webHost: 'browser' as const,
+            singleKeyShortcutsEnabled: true, disabledCommandIds: [],
+            handlers: { 'commandPalette.open': open },
+            getContext: () => ({ ...context, isEditableTarget: true }),
+        };
+        const dispatcher = createKeyboardShortcutDispatcher({ ...options, overrides: {} });
+        expect(dispatcher(keyEvent({ key: 'k', code: 'KeyK', ...modifier }))).toBe(true);
+        expect(dispatcher(keyEvent({ key: 'k', code: 'KeyK', altKey: true }))).toBe(false);
+        const overridden = createKeyboardShortcutDispatcher({
+            ...options, overrides: { 'commandPalette.open': [{ binding: 'Mod+J' }] },
+        });
+        expect(overridden(keyEvent({ key: 'j', code: 'KeyJ', ...modifier }))).toBe(true);
+    });
+
     it('does not dispatch registry commands when the kill switch is disabled', () => {
         const open = vi.fn();
         const dispatcher = createKeyboardShortcutDispatcher({
@@ -626,7 +682,7 @@ describe('createKeyboardShortcutDispatcher', () => {
         expect(sendImmediate).toHaveBeenCalledTimes(1);
     });
 
-    it('derives native consumable signatures only from active Enter and Escape handlers', () => {
+    it('derives native consumable signatures from active editable-safe commands', () => {
         const signatures = resolveNativeHardwareKeyboardConsumableEventSignatures({
             enabled: true,
             platform: 'ios',
@@ -647,6 +703,7 @@ describe('createKeyboardShortcutDispatcher', () => {
 
         expect(signatures).toEqual([
             'Enter|shift=false|ctrl=false|meta=true|alt=false',
+            'k|shift=false|ctrl=false|meta=true|alt=false',
         ]);
     });
 

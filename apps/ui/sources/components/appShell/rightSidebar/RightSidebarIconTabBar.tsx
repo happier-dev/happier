@@ -7,6 +7,7 @@ import { getRightSidebarTabLabel } from './rightSidebarTabRegistry';
 import type { RightSidebarTabDefinition } from './rightSidebarTabRegistry';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { sessionPanelKeyboardCommands } from '@/keyboard/commands';
 
 /** The drawn tab square; the platform touch floor grows only its press frame. */
 const RIGHT_SIDEBAR_TAB_SIZE_PX = 32;
@@ -66,6 +67,7 @@ export function RightSidebarIconTabBar<TTabId extends string>(props: Readonly<{
                         accessibilityRole="tab"
                         accessibilityLabel={label}
                         tooltip={label}
+                        shortcutCommandId={sessionPanelKeyboardCommands.find(command => command.tabId === tab.id)?.id}
                         disabled={disabled}
                         tabIndex={index === focusIndex ? 0 : -1}
                         controlRef={(control) => {

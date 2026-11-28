@@ -87,6 +87,46 @@ vi.mock('expo-modules-core', async (importOriginal) => ({
 }));
 
 describe('KeyboardShortcutProvider', () => {
+    it('admits native mode keys only for composer focus while preserving explicit palette execution', async () => {
+        testState.platformOS = 'ios';
+        const modes: string[] = [];
+        let execute: ReturnType<typeof useKeyboardCommand> = () => false;
+        function Composer({ focused }: { focused: boolean }) {
+            useKeyboardShortcutHandlers({ 'mode.cycle': () => { modes.push('plan'); } }, undefined, { isComposerTarget: focused });
+            execute = useKeyboardCommand();
+            return <Child />;
+        }
+        const content = (focused: boolean) => <KeyboardShortcutProvider handlers={{}}><Composer focused={focused} /></KeyboardShortcutProvider>;
+        const screen = await renderScreen(content(true));
+        const key = { key: 'Tab', code: 'Tab', modifiers: { shift: true, ctrl: false, meta: false, alt: false },
+            repeat: false, target: 'reactNativeTextInput', isEditableTarget: true };
+        await act(async () => { emitNativeKeyboardEvent(key); });
+        expect(modes).toEqual(['plan']);
+        await screen.update(content(false));
+        await act(async () => { emitNativeKeyboardEvent(key); });
+        expect(modes).toEqual(['plan']);
+        await act(async () => { expect(execute('mode.cycle')).toBe(true); });
+        expect(modes).toEqual(['plan', 'plan']);
+    });
+    it('exposes availability and invocation from the same mounted command registrations', async () => {
+        let snapshot: KeyboardShortcutContextSnapshot;
+        let opened = 0;
+        function Probe({ active }: { active: boolean }) {
+            useKeyboardShortcutHandlers(active ? { 'session.panel.files.open': () => { opened += 1; } } : {});
+            snapshot = useKeyboardShortcutContextSnapshot();
+            return null;
+        }
+        const content = (active: boolean) => <KeyboardShortcutProvider handlers={{}}><Probe active={active} /></KeyboardShortcutProvider>;
+        const screen = await renderScreen(content(true));
+        try {
+            expect(snapshot!.registration?.isCommandAvailable('session.panel.files.open')).toBe(true);
+            expect(snapshot!.registration?.executeCommand('session.panel.files.open')).toBe(true);
+            expect(opened).toBe(1);
+            await screen.update(content(false));
+            expect(snapshot!.registration?.isCommandAvailable('session.panel.files.open')).toBe(false);
+            expect(snapshot!.registration?.executeCommand('session.panel.files.open')).toBe(false);
+        } finally { await screen.unmount(); }
+    });
     it('keeps browser hints aligned with disabled, rebound and unavailable commands', async () => {
         testState.platformOS = 'web';
         vi.stubGlobal('navigator', { platform: 'Win32' });
@@ -976,7 +1016,7 @@ describe('KeyboardShortcutProvider', () => {
         ]));
     });
 
-    it('does not dispatch a native shortcut that is disallowed in the focused editable target', async () => {
+    it('opens the native palette from an editable target, including an older event without target metadata', async () => {
         testState.platformOS = 'ios';
         const openCommandPalette = vi.fn();
 
@@ -1005,7 +1045,7 @@ describe('KeyboardShortcutProvider', () => {
             });
         });
 
-        expect(openCommandPalette).not.toHaveBeenCalled();
+        expect(openCommandPalette).toHaveBeenCalledTimes(2);
     });
 
     it('configures native consumable signatures from active registry bindings before subscribing', async () => {

@@ -36,6 +36,7 @@ const codeByDisplayKey: Readonly<Record<string, string>> = {
     '[': 'BracketLeft',
     ']': 'BracketRight',
     Slash: 'Slash',
+    '/': 'Slash',
     '?': 'Slash',
     '`': 'Backquote',
     '\\': 'Backslash',

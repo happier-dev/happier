@@ -308,6 +308,7 @@ function readBuiltinDestinationRows(): readonly BuiltinDestinationRow[] {
     },
     {
         id: SEARCH_DESTINATION_ID, titleKey: 'tools.names.search', icon: 'magnifying-glass',
+        shortcut: 'commandPalette.open',
         placement: { kind: 'rail', region: 'app' }, band: 'work', activation: 'overlay', routePath: UNIVERSAL_SEARCH_ROUTE,
         available: (availability) => availability.search === true,
     },

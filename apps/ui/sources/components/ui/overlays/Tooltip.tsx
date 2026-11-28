@@ -2,6 +2,9 @@ import * as React from 'react';
 import { Platform, Pressable, type StyleProp, type View, type ViewStyle } from 'react-native';
 
 import { DeferredAnchoredTooltip } from './DeferredAnchoredTooltip';
+import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
+import type { KeyboardCommandId } from '@/keyboard/types';
+import { withShortcut } from '@/keyboard/withShortcut';
 
 /**
  * Focusable help text, with no action unless the text itself is the control. A pointer shows it on hover and a
@@ -10,6 +13,7 @@ import { DeferredAnchoredTooltip } from './DeferredAnchoredTooltip';
 export function Tooltip(props: Readonly<{
     /** Empty: the host stays but shows no help text. */
     label: string;
+    shortcutCommandId?: KeyboardCommandId;
     /** What assistive tech reads when the help text alone would drop the visible text it explains. */
     accessibilityLabel?: string;
     children: React.ReactNode;
@@ -20,6 +24,8 @@ export function Tooltip(props: Readonly<{
     /** Off when this wraps a control: that control is the tab stop, and its focus still shows the tooltip. */
     focusable?: boolean;
 }>) {
+    const shortcut = useKeyboardShortcutLabel(props.shortcutCommandId);
+    const label = props.label === '' ? '' : withShortcut(props.label, shortcut);
     const anchorRef = React.useRef<View | null>(null);
     const [hovered, setHovered] = React.useState(false);
     const [focused, setFocused] = React.useState(false);
@@ -32,7 +38,7 @@ export function Tooltip(props: Readonly<{
             accessibilityRole={props.onPress ? 'button' : 'text'}
             onPress={props.onPress}
             focusable={props.focusable}
-            accessibilityLabel={props.accessibilityLabel ?? (props.label === '' ? undefined : props.label)}
+            accessibilityLabel={props.accessibilityLabel ?? (label === '' ? undefined : label)}
             onHoverIn={() => setHovered(true)}
             onHoverOut={() => setHovered(false)}
             onFocus={() => setFocused(true)}
@@ -43,10 +49,10 @@ export function Tooltip(props: Readonly<{
         >
             {props.children}
             {Platform.OS === 'web' && props.label !== '' && (hovered || focused) ? (
-                <DeferredAnchoredTooltip activationKey={`${hovered}:${focused}`} anchorRef={anchorRef} label={props.label} testID={props.testID ? `${props.testID}-tooltip` : undefined} />
+                <DeferredAnchoredTooltip activationKey={`${hovered}:${focused}`} anchorRef={anchorRef} label={label} testID={props.testID ? `${props.testID}-tooltip` : undefined} />
             ) : null}
             {touchReadout && held ? (
-                <DeferredAnchoredTooltip activationKey="held" anchorRef={anchorRef} label={props.label} placement="top" testID={props.testID ? `${props.testID}-tooltip` : undefined} />
+                <DeferredAnchoredTooltip activationKey="held" anchorRef={anchorRef} label={label} placement="top" testID={props.testID ? `${props.testID}-tooltip` : undefined} />
             ) : null}
         </Pressable>
     );

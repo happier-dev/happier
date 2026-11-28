@@ -13,6 +13,10 @@ import { parseSessionPaneScopeId } from './sessionPaneScopeId';
 import { useSessionCollaborationDestinationEntryAdmitted } from '@/hooks/session/useSessionCollaborationAvailability';
 import { normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import * as React from 'react';
+import { sessionPanelKeyboardCommands } from '@/keyboard/commands';
+import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider';
+import type { KeyboardShortcutHandlers } from '@/keyboard/runtime';
+import { useDestinationFocusSignal } from '@/components/appShell/workspace/destinationInstanceContext';
 import { Platform, View } from 'react-native';
 
 import { PopoverScope } from '@/components/ui/popover';
@@ -536,6 +540,12 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps & SessionRigh
             { kind: 'shell.column', column: target, read: () => navigation.readColumn(target) });
     }, [executeNavigation, navigation.readColumn, placementContext, rightPanelTabs]);
     const backToTranscript = React.useCallback(() => selectTab('chat', 'main'), [selectTab]);
+    const destinationFocus = useDestinationFocusSignal();
+    useKeyboardShortcutHandlers(React.useMemo<KeyboardShortcutHandlers>(() => Object.fromEntries(
+        sessionPanelKeyboardCommands
+            .filter(command => rightPanelTabs.some(tab => tab.id === command.tabId && !tab.disabledReason))
+            .map(command => [command.id, () => { void selectTab(command.tabId); }]),
+    ), [rightPanelTabs, selectTab]), destinationFocus);
     const closeRight = React.useCallback(() => {
         void executeNavigation('shell.column.set', { column: 'side', visible: false },
             { kind: 'shell.column', column: 'side', read: () => navigation.readColumn('side') });
@@ -1057,6 +1067,7 @@ export const SessionActionRail = React.memo(() => {
         const active = Boolean(model.scopeState?.right.isOpen && !rightPaneHiddenByDetails && model.activeTab === tab.id);
         actions.push({
             id: tab.id,
+            shortcutCommandId: sessionPanelKeyboardCommands.find(command => command.tabId === tab.id)?.id,
             label: tab.id === 'agents' ? workLabel : badgeCount && badgeCount > 0
                 ? t('projects.scripts.tabRunning', { count: String(badgeCount) })
                 : tab.id === 'collaboration' && collaborationMentioned
@@ -1092,7 +1103,7 @@ export const SessionActionRail = React.memo(() => {
                 : tab.id === 'collaboration' && model.collaborationAddress ? renderSignal => <SessionCollaborationRailBadge target={model.collaborationAddress!} renderSignal={renderSignal} />
                     : tab.id === 'services' ? renderSignal => <SessionServicesRailBadge sessionId={model.sessionId} serverId={model.countServerId ?? ''} machineId={model.countMachineId} enabled={false} renderSignal={renderSignal} />
                         : tab.id === 'board' ? renderSignal => <SessionBoardRailBadge sessionId={model.sessionId} serverId={model.countServerId} enabled={model.boardCountEnabled} renderSignal={renderSignal} /> : undefined,
-            tooltipContent: tab.id === 'git' ? <SessionGitActionRailTooltip sessionId={model.sessionId} serverId={model.pluginRuntime.serverId} /> : undefined,
+            tooltipContent: tab.id === 'git' ? <SessionGitActionRailTooltip sessionId={model.sessionId} serverId={model.pluginRuntime.serverId} shortcutCommandId="session.panel.git.open" /> : undefined,
             onPress: () => {
                 if (tab.id === 'browser') {
                     openEmbeddedToolInDockLocation({ pane: model.pane, tool: 'browser' });

@@ -108,6 +108,7 @@ import {
 import { useSessionContentDemand } from '@/sync/domains/session/useSessionContentDemand';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider';
+import { useSessionListSourceShortcut } from './search/useSessionListSourceShortcut';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import type { TranslationKey } from '@/text';
@@ -1473,6 +1474,7 @@ export function useSessionListViewStateFromPaneState(
         visibleCursorOccurrenceKeyRef.current = target.occurrenceKey ?? target.sessionKey;
         navigateToSessionTarget(target);
     }, [activeSessionKey, navigateToSessionTarget, surfaceOwnership.interactive, visibleSessionNavigationEntries]);
+    useSessionListSourceShortcut(filterController, surfaceOwnership.interactive);
     useKeyboardShortcutHandlers(React.useMemo(() => (
         surfaceOwnership.interactive
             ? {

@@ -17,6 +17,21 @@ import { useAgentInputSelectionOverlayController } from '../selection/useAgentIn
 import { useAgentInputCoreControlHandlers } from './useAgentInputCoreControlHandlers';
 
 describe('useAgentInputCoreControlHandlers', () => {
+    it('cycles the session mode choices independently from permission choices', async () => {
+        const onSessionModeChange = vi.fn();
+        const hook = await renderHook(() => useAgentInputCoreControlHandlers({
+            hasAgentPickerOptions: false,
+            sessionModeChipInteraction: { kind: 'picker', selectableOptionIds: ['build', 'plan'] },
+            sessionModeSelectedId: 'build',
+            onSessionModeChange,
+            setShowActionMenu: () => {},
+            closeSelectionOverlay: () => {},
+            toggleSelectionOverlay: () => {},
+        }));
+        await act(async () => { hook.getCurrent().handleModeCycle(); });
+        expect(onSessionModeChange).toHaveBeenCalledWith('plan');
+        await hook.unmount();
+    });
     it('keeps agent selection available when only a resolved agent label is present', async () => {
         const hook = await renderHook(() => {
             const controller = useAgentInputSelectionOverlayController({

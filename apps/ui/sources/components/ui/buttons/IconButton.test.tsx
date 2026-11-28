@@ -3,6 +3,8 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { KeyboardShortcutLabelsContext } from '@/keyboard/shortcutLabels';
+import { Tooltip } from '../overlays/Tooltip';
 
 const { IconButton } = await import('./IconButton');
 
@@ -372,6 +374,31 @@ describe('IconButton', () => {
             screen.findByTestId('icon-btn')?.props.onHoverOut?.();
         });
         expect(screen.findByTestId('icon-btn-tooltip')).toBeNull();
+    });
+
+    it('resolves both tooltip controls from the current binding and preserves unbound and disabled copy', async () => {
+        const content = (
+            <>
+                <IconButton testID="bound-action" iconName="copy" accessibilityLabel="Search" tooltip="Search"
+                    shortcutCommandId="commandPalette.open" onPress={() => {}} />
+                <IconButton testID="disabled-action" iconName="copy" accessibilityLabel="Search" tooltip="Search"
+                    shortcutCommandId="commandPalette.open" disabled disabledReason="Unavailable" onPress={() => {}} />
+                <Tooltip testID="bound-help" label="Search" shortcutCommandId="commandPalette.open"><React.Fragment /></Tooltip>
+                <Tooltip testID="unbound-help" label="Help" shortcutCommandId="mode.cycle"><React.Fragment /></Tooltip>
+            </>
+        );
+        const screen = await renderScreen(
+            <KeyboardShortcutLabelsContext.Provider value={{ 'commandPalette.open': 'Ctrl+J' }}>
+                {content}
+            </KeyboardShortcutLabelsContext.Provider>,
+        );
+        expect(screen.findByTestId('bound-help')?.props.accessibilityLabel).toBe('Search (Ctrl+J)');
+        expect(screen.findByTestId('unbound-help')?.props.accessibilityLabel).toBe('Help');
+        await act(async () => { screen.findByTestId('bound-action')?.props.onHoverIn?.(); });
+        expect(screen.getTextContent()).toContain('Search (Ctrl+J)');
+        await act(async () => { screen.findByTestId('disabled-action')?.props.onHoverIn?.(); });
+        expect(screen.getTextContent()).toContain('Unavailable');
+        expect(screen.getTextContent()).not.toContain('Unavailable (Ctrl+J)');
     });
 
     it('prefers the disabled reason over the tooltip while disabled', async () => {

@@ -21,6 +21,7 @@ export function createSessionModeActionChip(params: Readonly<{
     const testID = 'agent-input-session-mode-chip';
     return (
         <AgentInputRailChip
+            shortcutCommandId="mode.cycle"
             ref={params.anchorRef}
             testID={testID}
             key="mode"

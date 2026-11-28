@@ -30,6 +30,13 @@ function keyEvent(event: Partial<NormalizedKeyboardEvent>): NormalizedKeyboardEv
 }
 
 describe('keyboard bindings', () => {
+    it('matches the physical model-picker slash chord while displaying the slash character', () => {
+        const rule = parseKeybindingRule({ binding: 'Mod+Alt+/', allowInEditable: true });
+        expect(matchKeybindingRule(rule, keyEvent({ key: '÷', code: 'Slash', metaKey: true, altKey: true }), {
+            platform: 'macos', context: { isEditableTarget: true, isComposing: false },
+        })).toBe(true);
+        expect(formatKeybindingLabel(rule, 'macos')).toBe('Cmd+Option+/');
+    });
     it('ignores repeated shortcut capture events while keeping Tab bindable', () => {
         expect(formatKeybindingCaptureEvent({ key: 'h', code: 'KeyH', metaKey: true, repeat: true }, 'macos')).toBeNull();
         expect(formatKeybindingCaptureEvent({ nativeEvent: { key: 'h', ctrlKey: true, repeat: true } }, 'windows')).toBeNull();
@@ -136,7 +143,7 @@ describe('keyboard bindings', () => {
         ['Backquote', '`'],
         ['Enter', 'Enter'],
         ['ArrowDown', 'ArrowDown'],
-        ['Slash', 'Slash'],
+        ['Slash', '/'],
     ])('uses the same display label for the named %s key and its physical code', (key, label) => {
         expect(formatKeybindingLabel({ binding: `Alt+${key}` }, 'linux')).toBe(`Alt+${label}`);
         expect(formatKeybindingLabel({ binding: `Alt+${key}`, code: key, alt: true }, 'linux')).toBe(`Alt+${label}`);

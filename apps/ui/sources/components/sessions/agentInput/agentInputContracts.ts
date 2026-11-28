@@ -258,6 +258,8 @@ export function hasAgentInputCollapsedOptionsPopoverContent(
 
 export type AgentInputExtraActionChip = Readonly<{
     key: string;
+    /** Commands reuse this control's operation while its composer is presented and editable. */
+    keyboardShortcutHandlers?: import('@/keyboard/runtime').KeyboardShortcutHandlers;
     /** Publish this chip's existing popover through the mounted current-context command owner. */
     currentUiContextCommandScope?: string;
     /** The owning form's missing requirement, presented at the control that can satisfy it. */

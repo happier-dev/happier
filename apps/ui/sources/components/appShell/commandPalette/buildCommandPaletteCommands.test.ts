@@ -61,6 +61,25 @@ function commandTitles(cmds: readonly Command[]): string[] {
   return cmds.map((c) => c.title);
 }
 
+it('lists mounted keyboard commands with their personal binding and invokes their live owner', async () => {
+    const selected: string[] = [];
+    const commands = buildCommandPaletteCommands({
+        sessionsById: {}, isDev: false, activeSessionId: 'session-a',
+        features: { executionRunsEnabled: false, voiceEnabled: false },
+        shortcutLabels: { 'session.panel.files.open': 'Ctrl+Shift+F' },
+        keyboardCommands: { isAvailable: id => id === 'session.panel.files.open' || id === 'sessionList.source.toggle',
+            execute: id => { selected.push(id); return true; } },
+        nav: { push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
+        actions: { execute: async () => ({ ok: true }) }, alert: () => {},
+    });
+    const files = commands.find(command => command.id === 'session.panel.files.open');
+    expect(files?.shortcut).toBe('Ctrl+Shift+F');
+    await files!.action();
+    await commands.find(command => command.id === 'sessionList.source.toggle')!.action();
+    expect(selected).toEqual(['session.panel.files.open', 'sessionList.source.toggle']);
+    expect(commands.some(command => command.id === 'session.panel.git.open')).toBe(false);
+});
+
 it('offers New Window only when the mounted desktop window owner supplies it', async () => {
     const openNewWindow = vi.fn();
     const build = (available: boolean) => buildCommandPaletteCommands({
