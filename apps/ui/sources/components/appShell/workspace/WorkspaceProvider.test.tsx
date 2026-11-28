@@ -1787,9 +1787,25 @@ describe('consumed workspace navigation owner', () => {
         if (guard.prepareGuard) expect(guard.prepareGuard).toHaveBeenCalledOnce();
     });
 
-    it('uses the published approval subject with live status, retains it, and isolates strip title renders', async () => {
+    it.each(['ios', 'web'])('uses the published approval subject with live status, retains it, and isolates strip title renders (%s)', async platform => {
+        boundary.platform = platform;
         boundary.pathname = '/inbox/approvals/subject-request';
         boundary.params = { id: 'subject-request', serverId: 'home-a' };
+        const location = { pathname: boundary.pathname, search: '?serverId=home-a', hash: '' };
+        const browser = () => {
+            const history = { state: null as unknown,
+                replaceState(data: unknown, _unused: string, href?: string | URL | null) {
+                    this.state = data;
+                    if (href == null) return;
+                    const next = new URL(String(href), 'https://happier.test');
+                    location.pathname = next.pathname; location.search = next.search; location.hash = next.hash;
+                },
+                pushState(data: unknown, unused: string, href?: string | URL | null) { this.replaceState(data, unused, href); },
+                go() {},
+            };
+            installBrowserBoundary({ location, history, sessionStorage: { getItem: () => 'main' } });
+        };
+        if (platform === 'web') browser();
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
             externalSessions: false, inbox: true, workflows: false, friends: false,
         } });
@@ -1820,8 +1836,7 @@ describe('consumed workspace navigation owner', () => {
         function Page() {
             const [title, setTitle] = React.useState<string>();
             publishPage = setTitle;
-            useDestinationPageTitle(title);
-            return <Stack.Screen options={{ title: 'Approval' }} />;
+            return <><Stack.Screen options={{ title: 'Approval' }} />{title === undefined ? null : <PageHeader title={title} alwaysShowTitle />}</>;
         }
         const scene = () => <WorkspaceProvider enabled catalog={catalog}>{navigation => {
             const group = navigation.state.groups[navigation.state.focusedGroupId];
@@ -1880,7 +1895,13 @@ describe('consumed workspace navigation owner', () => {
         storage.setState({ artifacts: {} });
         boundary.pathname = '/inbox';
         boundary.params = {};
+        if (platform === 'web') {
+            location.pathname = '/inbox'; location.search = ''; location.hash = '';
+            browser();
+            boundary.dataReady = false;
+        }
         const cold = await renderScreen(scene());
+        if (platform === 'web') await act(async () => { boundary.dataReady = true; });
         const coldNav = cold.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
         expect(parseWorkspaceLayout(workspaceLayoutsState.readStrict(key))?.fallbackTitlesByTabId[tabId]).toBe(pageTitle);
         expect(coldNav.state.groups[coldNav.state.focusedGroupId].activeTabId).not.toBe(tabId);
