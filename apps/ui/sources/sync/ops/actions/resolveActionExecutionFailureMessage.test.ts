@@ -14,6 +14,33 @@ import { presentActionExecutionFailure, resolveActionExecutionErrorMessage, reso
 import { resolveSessionSpawnNewResultFailureMessage } from './sessionSpawnFailurePresentation';
 
 describe('Action failure presentation', () => {
+    it('presents a distinct recovery message for each code-only database setup refusal', () => {
+        const codes = [
+            'read_role_invalid', 'target_mismatch', 'database_connection_unavailable',
+            'database_read_role_binding_failed', 'database_read_role_database_unavailable',
+            'database_read_role_mandatory_roles', 'database_read_role_not_read_only',
+            'database_read_role_plan_changed', 'database_read_role_setup_failed',
+            'database_read_role_setup_incomplete', 'database_read_role_tls_hostname_required',
+            'database_cancelled', 'database_outcome_unknown',
+        ];
+        const fallback = 'Unmapped failure';
+        const reasons = codes.map(errorCode => {
+            const failure = presentActionExecutionFailure({ ok: false, errorCode, error: errorCode }, fallback);
+            expect(failure.technicalDetails).toContainEqual(expect.objectContaining({ key: 'code', value: errorCode }));
+            expect(failure.reason).not.toBe(errorCode);
+            return failure.reason;
+        });
+        expect(reasons).not.toContain(fallback);
+        expect(new Set(reasons).size).toBe(codes.length);
+    });
+
+    it('asks the person to check the database when a connection error leaves the outcome unknown', () => {
+        expect(presentActionExecutionFailure({
+            ok: false, errorCode: 'database_outcome_unknown',
+            failureCause: { phase: 'database_apply', errorClass: 'Error', errorCode: 'database_connection_unavailable', httpStatus: null },
+        }).reason).toBe(t('plugins.database.failure.database_outcome_unknown'));
+    });
+
     it.each([
         ['database_editing_off', 'plugins.database.access.editingOff'],
         ['database_not_an_editor', 'plugins.database.access.notEditor'],

@@ -11,10 +11,11 @@ import {
   defineUiSurface,
   useHappierPageChrome,
   usePluginTranslation,
+  SurfaceState,
   useSurfaceContext,
 } from '@happier-dev/plugin-ui';
 import { AutomationsSection } from '@happier-dev/plugin-ui/components';
-import { usePluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui/hostApi';
+import { useHostDatabaseWorkbench, usePluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui/hostApi';
 import {
   WorkbenchProvider,
   useDatabaseTargets,
@@ -31,6 +32,7 @@ import { StagedBar, StagedReview } from './StagedChanges.js';
 import { OverviewFacts } from './OverviewFacts.js';
 import { ReadAccessSetup } from './ReadAccessSetup.js';
 import { CatalogueReadFailure } from './CatalogueReadFailure.js';
+import { renderWorkbenchWriteSetup } from './writeSetup.js';
 import { TableDirectory } from './TableDirectory.js';
 import { WorkbenchRail } from './WorkbenchRail.js';
 import {
@@ -130,12 +132,23 @@ function LinkedWorkbenchPage({ context, target, display, place, root }: Readonly
   root: boolean;
 }>) {
   const linked = useLinkedWorkbench(context, target, display);
+  const host = useHostDatabaseWorkbench();
+  const t = usePluginTranslation();
   if (linked.status === 'loading') return <LoadingState layout="line" rows={1} />;
-  if (linked.status === 'unavailable' && target.kind === 'managed_deployment'
-    && isPluginError(linked.error) && linked.error.code === 'read_role_setup_required') {
-    return <ReadAccessSetup target={target} display={display} onConfigured={linked.retry} />;
+  if (linked.status === 'unavailable') {
+    if (isPluginError(linked.error) && linked.error.code === 'read_role_setup_required') {
+      if (target.kind === 'managed_deployment') {
+        return <ReadAccessSetup target={target} display={display} onConfigured={linked.retry} />;
+      }
+      if (target.kind === 'deployment_service') {
+        const setup = renderWorkbenchWriteSetup(host, target, linked.error.code, linked.retry);
+        if (setup != null) return <SurfaceState kind="unavailable" icon="database" size="page"
+          title={t('plugins.database.readSetup.title', 'Set up read-only access')}
+          note={display?.label || target.database} body={<Stack align="center">{setup}</Stack>} />;
+      }
+    }
+    return <CatalogueReadFailure error={linked.error} refresh={linked.retry} />;
   }
-  if (linked.status === 'unavailable') return <CatalogueReadFailure error={linked.error} refresh={linked.retry} />;
   // Reading through the Account relay without a held connection changes nothing the person can act on, so the page
   // says nothing about it.
   return <MountedWorkbenchPage context={context} place={place} root={root}

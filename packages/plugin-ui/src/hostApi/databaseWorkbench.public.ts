@@ -59,10 +59,11 @@ export type HostDatabaseWorkbench = Readonly<{
     onEditingAllowed?(): void;
   }>): ReactNode;
   renderProductionBackup?(target: DeploymentDatabaseTarget): ReactNode;
+  /** The host's Environment binding setup, including the native read role. */
   renderWriteSetup?(input: Readonly<{
     target: DeploymentDatabaseTarget;
-    code: 'write_role_setup_required' | 'write_connection_setup_required';
-    /** The setup settled: the refusal no longer stands, so Apply is the way forward again. */
+    code: 'read_role_setup_required' | 'write_role_setup_required' | 'write_connection_setup_required';
+    /** The binding settled successfully and the operation can be attempted again. */
     onConfigured(): void;
   }>): ReactNode;
 }>;

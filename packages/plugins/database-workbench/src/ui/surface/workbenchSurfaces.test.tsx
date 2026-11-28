@@ -337,6 +337,52 @@ async function settle(rounds = 10) {
 }
 
 describe('Database workbench surfaces', () => {
+  it('retries a refused own-server read after the host finishes setting up the read login', async () => {
+    const target = { kind: 'deployment_service', environment: { serverId: 'home', environmentId: 'env', projectSourceId: 'source' },
+      deploymentId: 'deployment', targetLinkId: 'link', serviceId: 'postgres', database: 'billing_dev' } as const;
+    const connected = { ...descriptor, target };
+    const resources = connectionResourceHandlers(connected);
+    let configured = false;
+    let finishSetup: (() => void) | undefined;
+    const watchResource = vi.fn(async () => {
+      if (!configured) throw new PluginError({ code: 'read_role_setup_required' });
+      return await resources.watchResource();
+    });
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'own-server-read-setup', mountNonce: 'own-server-read-setup' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: context => <PluginUiHostPresentationScope
+        environment={projectHappierUiEnvironment(context.surface)}
+        presentationHost={{
+          renderCodeBlock: () => null, renderIcon: () => null, renderMarkdown: () => null, renderPopover: () => null,
+          databaseWorkbench: {
+          activityResource: () => { throw new Error('Unexpected Activity demand'); },
+          lastLook: () => { throw new Error('Unexpected Activity counters'); },
+          renderWriteSetup: input => {
+            expect(input).toMatchObject({ target, code: 'read_role_setup_required' });
+            return <Button title="Set up read-only login" onPress={() => {
+              finishSetup = () => { configured = true; input.onConfigured(); };
+            }} />;
+          },
+        } }}>
+        {renderPage(context)}
+      </PluginUiHostPresentationScope>,
+      subPath: encodeWorkbenchRootSubPath(target),
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: {
+        pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { ...resources, watchResource, executeAction: daemonAnswers([connected]) },
+    });
+    try {
+      await fixture.press(await fixture.findByRole('button', { name: 'Set up read-only login' }));
+      expect(watchResource).toHaveBeenCalledTimes(1);
+      expect(finishSetup).toBeDefined();
+      await act(async () => { finishSetup?.(); });
+      await fixture.findByRole('button', { name: 'invoices' });
+      expect(await fixture.queryByText('Set up read-only login')).toBeUndefined();
+    } finally { await fixture.dispose(); }
+  });
+
   it.each(['rail', 'directory'])('reaches later catalogue pages from the %s', async (surface) => {
     const base = daemonAnswers([descriptor]);
     const reads: (string | undefined)[] = [];

@@ -1661,6 +1661,19 @@ export type BundledPluginTranslationKey =
     | 'plugins.database.connect.pending'
     | 'plugins.database.connect.test'
     | 'plugins.database.connection.unverifiedServer'
+    | 'plugins.database.failure.database_cancelled'
+    | 'plugins.database.failure.database_connection_unavailable'
+    | 'plugins.database.failure.database_outcome_unknown'
+    | 'plugins.database.failure.database_read_role_binding_failed'
+    | 'plugins.database.failure.database_read_role_database_unavailable'
+    | 'plugins.database.failure.database_read_role_mandatory_roles'
+    | 'plugins.database.failure.database_read_role_not_read_only'
+    | 'plugins.database.failure.database_read_role_plan_changed'
+    | 'plugins.database.failure.database_read_role_setup_failed'
+    | 'plugins.database.failure.database_read_role_setup_incomplete'
+    | 'plugins.database.failure.database_read_role_tls_hostname_required'
+    | 'plugins.database.failure.read_role_invalid'
+    | 'plugins.database.failure.target_mismatch'
     | 'plugins.database.insights.activity'
     | 'plugins.database.insights.askInvestigation'
     | 'plugins.database.insights.briefUnavailable'
@@ -1696,6 +1709,11 @@ export type BundledPluginTranslationKey =
     | 'plugins.database.readSetup.create'
     | 'plugins.database.readSetup.description'
     | 'plugins.database.readSetup.editingOff'
+    | 'plugins.database.readSetup.nativeBody'
+    | 'plugins.database.readSetup.nativeCreate'
+    | 'plugins.database.readSetup.nativeManager'
+    | 'plugins.database.readSetup.nativeReader'
+    | 'plugins.database.readSetup.nativeUnavailable'
     | 'plugins.database.readSetup.pending'
     | 'plugins.database.readSetup.recovery'
     | 'plugins.database.readSetup.review'
@@ -6415,6 +6433,19 @@ export const BUNDLED_PLUGIN_TRANSLATION_KEYS: readonly BundledPluginTranslationK
   "plugins.database.connect.pending",
   "plugins.database.connect.test",
   "plugins.database.connection.unverifiedServer",
+  "plugins.database.failure.database_cancelled",
+  "plugins.database.failure.database_connection_unavailable",
+  "plugins.database.failure.database_outcome_unknown",
+  "plugins.database.failure.database_read_role_binding_failed",
+  "plugins.database.failure.database_read_role_database_unavailable",
+  "plugins.database.failure.database_read_role_mandatory_roles",
+  "plugins.database.failure.database_read_role_not_read_only",
+  "plugins.database.failure.database_read_role_plan_changed",
+  "plugins.database.failure.database_read_role_setup_failed",
+  "plugins.database.failure.database_read_role_setup_incomplete",
+  "plugins.database.failure.database_read_role_tls_hostname_required",
+  "plugins.database.failure.read_role_invalid",
+  "plugins.database.failure.target_mismatch",
   "plugins.database.insights.activity",
   "plugins.database.insights.adviceAfter",
   "plugins.database.insights.adviceBefore",
@@ -6465,6 +6496,11 @@ export const BUNDLED_PLUGIN_TRANSLATION_KEYS: readonly BundledPluginTranslationK
   "plugins.database.readSetup.create",
   "plugins.database.readSetup.description",
   "plugins.database.readSetup.editingOff",
+  "plugins.database.readSetup.nativeBody",
+  "plugins.database.readSetup.nativeCreate",
+  "plugins.database.readSetup.nativeManager",
+  "plugins.database.readSetup.nativeReader",
+  "plugins.database.readSetup.nativeUnavailable",
   "plugins.database.readSetup.pending",
   "plugins.database.readSetup.recovery",
   "plugins.database.readSetup.review",

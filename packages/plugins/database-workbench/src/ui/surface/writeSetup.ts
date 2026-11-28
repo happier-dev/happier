@@ -6,8 +6,8 @@ type WriteSetup = Parameters<
 >[0];
 
 /**
- * A refusal that needs the Environment's write connection or role leads to the host's write setup, the one place it is
- * done. Null for every other refusal (and on hosts without that setup), so the caller keeps its own refusal line.
+ * The host owns Environment binding setup for both native roles and the managed write connection.
+ * Managed read setup stays with the provider's read-access Actions.
  */
 export function renderWorkbenchWriteSetup(
   host: HostDatabaseWorkbench | null,
@@ -16,7 +16,8 @@ export function renderWorkbenchWriteSetup(
   onConfigured: () => void,
 ): ReactNode {
   return target &&
-    (code === 'write_role_setup_required' ||
+    ((code === 'read_role_setup_required' && target.kind === 'deployment_service') ||
+      code === 'write_role_setup_required' ||
       code === 'write_connection_setup_required')
     ? (host?.renderWriteSetup?.({ target, code, onConfigured }) ?? null)
     : null;

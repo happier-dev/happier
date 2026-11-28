@@ -186,9 +186,13 @@ it.each(['single link', 'multiple links', 'retired mount'] as const)('sets up a 
   } finally { context.dispose(); }
 });
 
-it('creates and binds an own-server writer from staged review', async () => {
+it.each([
+  { code: 'write_role_setup_required', role: 'write', testId: 'database-workbench.write-setup.save', homeIdentity: '9' },
+  { code: 'read_role_setup_required', role: 'readOnlyPassword', testId: 'database-workbench.read-setup.save', homeIdentity: 'f' },
+] as const)('creates and binds an own-server $role login from Workbench setup', async ({ code, role, testId, homeIdentity }) => {
   let boundary: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>> | null = null;
   const writes: unknown[] = [];
+  const onConfigured = vi.fn();
   const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
   const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployments/testing/v1');
   const { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
@@ -198,7 +202,7 @@ it('creates and binds an own-server writer from staged review', async () => {
   const { createPluginUiPrivatePresentationHost } = await import('@/components/plugins/surfaces/pluginUiPrivatePresentationHost');
   const { formatSharedSavedSecretRefV1 } = await import('@happier-dev/protocol/account/settings/savedSecretReferenceV1');
   home = await createSecretSettingsTestHarness({ mode: 'plain', settings: authoringSettings, token: authoringToken,
-    serverIdentityId: `srv_${'9'.repeat(32)}`,
+    serverIdentityId: `srv_${homeIdentity.repeat(32)}`,
     handleRequest: async (path, init) => path.startsWith('/v1/deployments/environments/')
       ? Response.json({ ok: true, environment, targetLinks: [targetLink] })
       : boundary?.handle(new URL(path, context.endpointUrl), init) ?? null });
@@ -222,24 +226,24 @@ it('creates and binds an own-server writer from staged review', async () => {
     const presentationHost = createPluginUiPrivatePresentationHost(undefined, { automations: {
       accountLifetime: context.accountLifetime, target: { kind: 'app' }, isCurrent: () => true,
     } });
-    const setup = presentationHost.databaseWorkbench?.renderWriteSetup?.({ code: 'write_role_setup_required', target: {
+    const setup = presentationHost.databaseWorkbench?.renderWriteSetup?.({ code, target: {
       kind: 'deployment_service', environment: { serverId: environment.serverId,
         environmentId: environment.id, projectSourceId: environment.projectSourceId },
       targetLinkId: targetLink.id, deploymentId: 'deployment', serviceId: 'database', database: 'shop',
-    }, onConfigured: () => {} });
+    }, onConfigured });
     const screen = await renderScreen(<PluginUiHostPresentationScope
       environment={projectHappierUiEnvironment(createSurfaceContextFixture())} presentationHost={presentationHost}>
       {setup}
     </PluginUiHostPresentationScope>);
-    const save = 'database-workbench.write-setup.save';
-    await vi.waitFor(() => expect(screen.findByTestId(save)?.props.disabled).toBe(false));
+    await vi.waitFor(() => expect(screen.findByTestId(testId)?.props.disabled).toBe(false));
     expect(home.creations).toHaveLength(0);
     expect(writes).toHaveLength(0);
-    await screen.pressByTestIdAsync(save);
-    await vi.waitFor(() => expect(writes).toHaveLength(1));
+    expect(onConfigured).not.toHaveBeenCalled();
+    await screen.pressByTestIdAsync(testId);
+    await vi.waitFor(() => expect(onConfigured).toHaveBeenCalledTimes(1));
     expect(home.creations).toHaveLength(1);
     expect(writes).toEqual([{ environmentId: environment.id, expectedRevision: environment.revision,
-      set: [{ purpose: 'dataRole', service: 'database', role: 'write',
+      set: [{ purpose: 'dataRole', service: 'database', role,
         source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(home.creations[0]!.resourceId), resourceRevision: 1 } }], remove: [] }]);
   } finally { context.dispose(); }
 });

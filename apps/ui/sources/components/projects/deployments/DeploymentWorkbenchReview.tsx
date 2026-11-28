@@ -95,7 +95,8 @@ export function DeploymentWorkbenchWriteSetup({ target, code, onConfigured, scop
         if (bindingReviewed.current) setConfigured(true);
     });
     const manager = detail?.environment.capabilities.role === 'manager';
-    const ownServer = code === 'write_role_setup_required';
+    const readOnly = code === 'read_role_setup_required';
+    const ownServer = code !== 'write_connection_setup_required';
     const catalog = useSavedSecretCatalog({ scope: manager && ownServer ? lifetime?.scope ?? null : null, includeMaterial: false });
     const [selection, setSelection] = React.useState<SecretSource | null>(null);
     const change = useDeploymentChangePress({ ...review, request(id) {
@@ -137,7 +138,8 @@ export function DeploymentWorkbenchWriteSetup({ target, code, onConfigured, scop
         await change.press(async () => {
             let binding = source;
             if (target.kind === 'deployment_service' && ownServer && !binding) {
-                const ref = await catalog.personalMutations.create({ name: `${detail.content.name} · ${target.serviceId} · ${t(`${setupCopy}.writer`)}`,
+                const login = readOnly ? t('plugins.database.readSetup.nativeReader') : t(`${setupCopy}.writer`);
+                const ref = await catalog.personalMutations.create({ name: `${detail.content.name} · ${target.serviceId} · ${login}`,
                     value: randomUUID() }, { signal, onApprovalPending: registration => {
                     bindingReviewed.current = false;
                     review.request(registration);
@@ -150,24 +152,28 @@ export function DeploymentWorkbenchWriteSetup({ target, code, onConfigured, scop
             if (!current()) return { ok: false, error: 'action_account_scope_changed' };
             if (!binding) return { ok: false, error: 'saved_secret_creation_unconfirmed' };
             const set: Binding = target.kind === 'deployment_service'
-                ? { purpose: 'dataRole', service: target.serviceId, role: 'write', source: binding }
+                ? { purpose: 'dataRole', service: target.serviceId, role: readOnly ? 'readOnlyPassword' : 'write', source: binding }
                 : { purpose: 'dataRole', targetLinkId: target.targetLinkId, role: 'write', source: binding };
             return await actions.setBindings({ environmentId: environment.id, expectedRevision: environment.revision, set: [set], remove: [] });
         });
     }
-    if (configured) return <Text tone="secondary" value={t(`${setupCopy}.ready`)} />;
+    if (configured) return readOnly ? null : <Text tone="secondary" value={t(`${setupCopy}.ready`)} />;
     if (!detail) return record.snapshot.status === 'unavailable' ? <ErrorState layout="line" kind="unavailable"
-        title={t(`${setupCopy}.unavailable`)} details={record.snapshot.failure?.code} onRetry={record.refresh} retryLabel={t('common.retry')} />
+        title={readOnly ? t('plugins.database.readSetup.nativeUnavailable') : t(`${setupCopy}.unavailable`)}
+        details={record.snapshot.failure?.code} onRetry={record.refresh} retryLabel={t('common.retry')} />
         : <Text tone="secondary" value={t('common.loading')} />;
-    if (!manager) return <Text tone="secondary" value={t(`${setupCopy}.manager`)} />;
+    if (!manager) return <Text tone="secondary" value={readOnly
+        ? t('plugins.database.readSetup.nativeManager') : t(`${setupCopy}.manager`)} />;
     // The setup is the Review's way forward while it stands: its next step is the filled control.
     const choosing = !ownServer && !source;
     return <Stack gap="small">
-        <Text value={t(`${setupCopy}.${ownServer ? 'ownBody' : source ? 'managedSelected' : 'managedBody'}`)} />
+        <Text value={readOnly ? t('plugins.database.readSetup.nativeBody')
+            : t(`${setupCopy}.${ownServer ? 'ownBody' : source ? 'managedSelected' : 'managedBody'}`)} />
         {!ownServer ? <Row><Button title={source ? t(`${setupCopy}.changeSecret`) : t(`${setupCopy}.chooseSecret`)}
             testID="database-workbench.write-setup.secret" variant={choosing ? 'primary' : 'secondary'} disabled={busy} onPress={choose} /></Row> : null}
-        <Row><Button title={ownServer ? t(`${setupCopy}.createRole`) : t(`${setupCopy}.bindConnection`)} variant={choosing ? 'secondary' : 'primary'}
-            testID="database-workbench.write-setup.save"
+        <Row><Button title={readOnly ? t('plugins.database.readSetup.nativeCreate')
+            : t(`${setupCopy}.${ownServer ? 'createRole' : 'bindConnection'}`)} variant={choosing ? 'secondary' : 'primary'}
+            testID={readOnly ? 'database-workbench.read-setup.save' : 'database-workbench.write-setup.save'}
             disabled={busy || !actions || !lifetime || (ownServer ? !source && !catalog.personalMutationsAvailable : !source)}
             onPress={save} /></Row>
         {review.pendingId && !change.banner.pending ? <Row><Button title={t('approvals.review')} onPress={review.open} /></Row> : null}

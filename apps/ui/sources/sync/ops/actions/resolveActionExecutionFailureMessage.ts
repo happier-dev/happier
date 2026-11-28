@@ -190,6 +190,7 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
         ? { kind: 'administered', administratorNames: [] }
         : { kind: 'off' });
     if (code === RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE) return t('errors.networkError');
+    if (code === 'database_outcome_unknown') return t('plugins.database.failure.database_outcome_unknown');
     const transient = readTransientFailure(record, options);
     if (transient) return !options?.safeToRetry && transient.effectMayHaveApplied ? t('toolView.pending.unknownDescription') : transient.message;
     // An unconfirmed effect keeps its recovery even when its transport cause is known.
@@ -315,6 +316,21 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     if (managedRefusal) return managedRefusal;
     if (code === 'database_editing_off') return t('plugins.database.access.editingOff');
     if (code === 'database_not_an_editor') return t('plugins.database.access.notEditor');
+    switch (code) {
+        case 'read_role_invalid':
+        case 'target_mismatch':
+        case 'database_connection_unavailable':
+        case 'database_read_role_binding_failed':
+        case 'database_read_role_database_unavailable':
+        case 'database_read_role_mandatory_roles':
+        case 'database_read_role_not_read_only':
+        case 'database_read_role_plan_changed':
+        case 'database_read_role_setup_failed':
+        case 'database_read_role_setup_incomplete':
+        case 'database_read_role_tls_hostname_required':
+        case 'database_cancelled':
+            return t(`plugins.database.failure.${code}`);
+    }
     const deploymentRefusal = code === 'template_domain_required' ? readDeploymentRefusalRecoveryV1(code, record.details) : null;
     if (deploymentRefusal) return deploymentRefusal.remedy;
     // The Home refused the target Machine as offline (its admission's typed availability diagnostic, carried as the

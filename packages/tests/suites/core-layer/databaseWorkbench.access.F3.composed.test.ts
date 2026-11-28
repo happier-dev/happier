@@ -367,25 +367,6 @@ it('TS.P3.F3: an editor applies through the bounded write role; editing off, mis
       service: 'database',
       role: 'write',
     };
-    await bind([
-      {
-        purpose: 'dataRole',
-        service: 'database',
-        role: 'readOnlyPassword',
-        source: await password('F3 read'),
-      },
-      { ...writeRole, source: await password('F3 write') },
-    ]);
-    expect(
-      (
-        await admin(
-          "SELECT rolsuper::text || rolcreaterole::text FROM pg_roles WHERE rolname = 'happier_rw'",
-        )
-      ).stdout.trim(),
-    ).toBe('falsefalse');
-    step('bindings set (write role bootstrapped)');
-    await update({ dataEditorMode: 'managers', dataAgentAccess: 'read' });
-
     const target = {
       kind: 'deployment_service' as const,
       environment: { ...address, projectSourceId: initial.projectSourceId },
@@ -407,6 +388,27 @@ it('TS.P3.F3: an editor applies through the bounded write role; editing off, mis
         },
         onMachine('action.invoke'),
       );
+    const read = { operation: 'statement.run', mode: 'read', target,
+      statement: { sql: 'SELECT current_user', parameters: [] } };
+    expect(await invoke(DATABASE_STATEMENT_RUN_ACTION_ID_V1, read))
+      .toMatchObject({ ok: false, errorCode: 'read_role_setup_required' });
+    await bind([{ purpose: 'dataRole', service: 'database', role: 'readOnlyPassword', source: await password('F3 read') }]);
+    const retry = await invoke(DATABASE_STATEMENT_RUN_ACTION_ID_V1, read);
+    if (!retry.ok) throw new Error(`F3 own-server read retry refused (${retry.errorCode})`);
+    expect(DatabaseOperationResultV1Schema.parse(retry.result)).toMatchObject({ ok: true, results: [
+      { rows: [{ cells: [{ type: 'text', value: 'happier_ro' }] }] },
+    ] });
+    step('own-server read refused, bootstrapped through bindings.set, and retried as happier_ro');
+    await bind([{ ...writeRole, source: await password('F3 write') }]);
+    expect(
+      (
+        await admin(
+          "SELECT rolsuper::text || rolcreaterole::text FROM pg_roles WHERE rolname = 'happier_rw'",
+        )
+      ).stdout.trim(),
+    ).toBe('falsefalse');
+    step('bindings set (write role bootstrapped)');
+    await update({ dataEditorMode: 'managers', dataAgentAccess: 'read' });
     // P4 F9 shares the existing native deployment and bounded reader binding.
     const stats = DatabaseStatsOperationInputV1Schema.parse({ operation: 'stats.read', target,
       request: { kind: 'stats.read', group: 'tables', selection: { relation: { schema: 'public', name: 'dbw_f3' } } } });

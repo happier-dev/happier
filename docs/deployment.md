@@ -1361,6 +1361,9 @@ PostgreSQL 14 installations whose PUBLIC schema grants CREATE require an owner
 to configure schema privileges before setup; bootstrap does not change shared
 PUBLIC privileges. Ordinary queries consume the admitted sealed read-role
 credential and retain the read-only transaction on every fresh native session.
+When the read binding is missing, Workbench offers Environment managers
+**Set up read-only login** through that reviewed Action and retries the read
+after the binding settles.
 
 Own Server PostgreSQL and MySQL edits use the separate `happier_rw` binding. If it is
 missing, Apply returns `write_role_setup_required` and the Workbench offers
