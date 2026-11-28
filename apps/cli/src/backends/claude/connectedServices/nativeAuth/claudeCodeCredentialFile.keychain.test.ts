@@ -131,6 +131,43 @@ describe('claudeCodeCredentialFile macOS keychain source', () => {
     });
   });
 
+  it('reads a gateway sign-in that the macOS keychain item holds instead of a claude.ai login', async () => {
+    Object.defineProperty(process, 'platform', { ...ORIGINAL_PLATFORM_DESCRIPTOR, value: 'darwin' });
+    const pin = 'a'.repeat(64);
+    mockSecuritySpawn((args) => {
+      if (args.includes('-w')) {
+        return { status: 0, stdout: JSON.stringify({
+          enterpriseGateway: {
+            url: 'https://gateway.example.com',
+            jwt: 'gateway-access-placeholder',
+            expiresAt: KEYCHAIN_EXPIRES_AT_MS,
+            idpRefreshToken: 'gateway-refresh-placeholder',
+            tokenEndpoint: 'https://gateway.example.com/oauth/token',
+          },
+          gatewayTrust: { 'gateway.example.com': pin },
+        }) };
+      }
+      return { status: 0, stdout: keychainMetadata() };
+    });
+
+    const {
+      readClaudeCodeNativeCredential,
+      readClaudeCodeNativeCatalogSignIn,
+    } = await import('./claudeCodeCredentialFile');
+    const { homeDir, claudeConfigDir } = await globalClaudeConfigDir('happier-claude-keychain-gateway-');
+
+    await expect(readClaudeCodeNativeCatalogSignIn({ claudeConfigDir, homeDir })).resolves.toEqual({
+      kind: 'gateway',
+      login: {
+        url: 'https://gateway.example.com',
+        accessToken: 'gateway-access-placeholder',
+        expiresAt: KEYCHAIN_EXPIRES_AT_MS,
+        tlsCertificateSha256: pin,
+      },
+    });
+    await expect(readClaudeCodeNativeCredential({ claudeConfigDir, homeDir })).resolves.toBeNull();
+  });
+
   it('ignores an invalid macOS keychain credential and falls back to the credential file', async () => {
     Object.defineProperty(process, 'platform', { ...ORIGINAL_PLATFORM_DESCRIPTOR, value: 'darwin' });
     mockSecuritySpawn((args) => {

@@ -57,6 +57,50 @@ describe('createClaudePromptSubmitVerificationPolicy', () => {
     })).toBe(false);
   });
 
+  it.each(['1.1.5 は配布済み', '21.2 installed', '1. check the build'])(
+    'stages a prompt that starts with digits and a dot in the rule-boxed composer: %s',
+    (prompt) => {
+      const policy = createClaudePromptSubmitVerificationPolicy();
+      const rule = '────────────────────';
+
+      expect(policy.isPromptStagedBeforeSubmit({
+        promptText: prompt,
+        screenText: ['❯ earlier prompt', '', '⏺ Done.', '', rule, `❯ ${prompt}`, rule, '  ? for shortcuts'].join('\n'),
+      })).toBe(true);
+    },
+  );
+
+  it.each([
+    ['plain', '────────── Build check ──────────', '────────────────────────────────'],
+    ['labelled', '────────── Build check ─', '────────── ↓ 4 more ────────────'],
+  ])('submits a numbered draft in a named composer with a %s closing rule', async (_label, top, bottom) => {
+    const policy = createClaudePromptSubmitVerificationPolicy();
+    const promptText = '1. check the build\n2. review the output';
+    let screenText = [top, '❯ 1. check the build', '  2. review the output', bottom].join('\n');
+    const result = await runTerminalPromptSubmission({
+      promptText,
+      verifyStagedBeforeSubmit: async () => policy.isPromptStagedBeforeSubmit({ promptText, screenText }),
+      submitEnter: async () => {
+        screenText = ['❯ 1. check the build', '  2. review the output', '', top, '❯', bottom].join('\n');
+        return 'success';
+      },
+      verifyAfterSubmit: async () => policy.isPromptStillPendingAfterSubmit({ promptText, screenText }),
+      postSubmitSettleMs: 0,
+      remainingTimeoutMs: () => 0,
+    });
+
+    expect(result).toMatchObject({ success: true });
+  });
+
+  it('does not stage input on a numbered chooser immediately below a divider', () => {
+    const policy = createClaudePromptSubmitVerificationPolicy();
+
+    expect(policy.isPromptStagedBeforeSubmit({
+      promptText: '1. Yes, reset it\n2. No, go back',
+      screenText: ['Reset cache?', '────────────────────', '❯ 1. Yes, reset it', '  2. No, go back'].join('\n'),
+    })).toBe(false);
+  });
+
   it('detects a single-line prompt that remains visually wrapped in the composer after submit', () => {
     const policy = createClaudePromptSubmitVerificationPolicy();
     const prompt = [

@@ -25,6 +25,7 @@ import { CLAUDE_SUBSCRIPTION_OAUTH_SCOPE } from './descriptors/connectedAccountD
 import {
   ConnectedServiceSpawnCredentialRefreshError,
   ConnectedServiceSpawnMaterializationError,
+  admitConnectedServiceAuthForSpawn,
   persistMaterializationFailureCredentialHealthForSpawn,
   resolveConnectedServiceAuthForSpawn,
 } from './resolveConnectedServiceAuthForSpawn';
@@ -245,6 +246,43 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
     expect(credential?.claudeAiOauth).not.toHaveProperty('refreshToken');
+  });
+
+  it('refuses an admitted OAuth credential that expires before materialization', async () => {
+    const now = 1_000_000;
+    let clock = now;
+    const expiresAt = now + 1;
+    const record = buildConnectedServiceCredentialRecord({
+      now, serviceId: 'claude-subscription', profileId: 'work', kind: 'oauth', expiresAt,
+      oauth: { accessToken: 'access', refreshToken: 'refresh', idToken: null,
+        scope: CLAUDE_SUBSCRIPTION_OAUTH_SCOPE, tokenType: 'Bearer', providerAccountId: 'acct', providerEmail: null },
+    });
+    const encryption = { type: 'legacy', secret: new Uint8Array(32).fill(7) } as const;
+    const credentials = { token: 'happy-token', encryption } satisfies Credentials;
+    const ciphertext = sealAccountScopedBlobCiphertext({
+      kind: 'connected_service_credential', material: encryption, payload: record, randomBytes,
+    });
+    const api = {
+      getConnectedServiceCredentialSealed: async () => ({
+        sealed: { format: 'account_scoped_v1', ciphertext },
+        metadata: { kind: 'oauth', providerEmail: null, providerAccountId: 'acct', expiresAt },
+      }),
+    } as unknown as ApiClient;
+    const input = {
+      agentId: 'claude' as const, credentials, api, nowMs: () => clock,
+      connectedServicesBindingsRaw: { v: 1, bindingsByServiceId: {
+        'claude-subscription': { source: 'connected', profileId: 'work' },
+      } },
+    };
+    const admittedAuth = await admitConnectedServiceAuthForSpawn(input);
+    if (!admittedAuth) throw new Error('Expected a resolved credential');
+    clock = expiresAt;
+    await expect(resolveConnectedServiceAuthForSpawn({
+      ...input, admittedAuth, materializationKey: 'session-1',
+      activeServerDir: await mkdtemp(join(tmpdir(), 'happier-connected-services-server-test-')),
+      baseDir: await mkdtemp(join(tmpdir(), 'happier-connected-services-test-')),
+      processEnv: await createIsolatedClaudeSourceEnv(),
+    })).rejects.toMatchObject({ kind: 'reconnect_required' });
   });
 
   it('fails before spawning when materialized Claude native OAuth is expired and cannot be refreshed', async () => {

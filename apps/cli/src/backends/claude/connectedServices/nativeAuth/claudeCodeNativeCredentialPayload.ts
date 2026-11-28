@@ -76,6 +76,56 @@ export function readClaudeCodeNativeCredentialPayload(
   };
 }
 
+/**
+ * Claude Code's saved sign-in to an enterprise gateway (`/login` with `forceLoginMethod: gateway`),
+ * stored in the same secure storage as `claudeAiOauth`.
+ *
+ * `gatewayTrust` maps the gateway hostname to the SHA-256 fingerprint of the TLS certificate
+ * Claude Code pinned at sign-in. Happier requires that pin for its own HTTPS catalog requests.
+ */
+export type ClaudeCodeGatewayLogin = Readonly<{
+  url: string;
+  accessToken: string;
+  expiresAt: number | null;
+  tlsCertificateSha256: string;
+}>;
+
+const SHA256_HEX = /^[0-9a-f]{64}$/u;
+
+function readClaudeCodeGatewayLogin(root: Record<string, unknown>, value: unknown): ClaudeCodeGatewayLogin | null {
+  const gateway = readObject(value);
+  const url = readString(gateway?.url)?.trim() ?? null;
+  const accessToken = readString(gateway?.jwt)?.trim() ?? null;
+  if (!gateway || !url || !accessToken) return null;
+  let hostname: string;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return null;
+    hostname = parsed.hostname.replace(/^\[|\]$/gu, '');
+  } catch {
+    return null;
+  }
+  const tlsCertificateSha256 = readString(readObject(root.gatewayTrust)?.[hostname])?.trim().toLowerCase() ?? null;
+  if (!tlsCertificateSha256 || !SHA256_HEX.test(tlsCertificateSha256)) return null;
+  return { url, accessToken, expiresAt: readNumber(gateway.expiresAt), tlsCertificateSha256 };
+}
+
+export type ClaudeCodeCatalogSignIn =
+  | Readonly<{ kind: 'gateway'; login: ClaudeCodeGatewayLogin | null }>
+  | Readonly<{ kind: 'subscription'; accessToken: string }>;
+
+export function readClaudeCodeCatalogSignIn(value: unknown): ClaudeCodeCatalogSignIn | null {
+  const root = readObject(value);
+  if (!root) return null;
+  // Claude Code ignores earlier Claude.ai sign-ins while signed in to a gateway.
+  // An unusable gateway sign-in also cannot authorize discovery under that earlier account.
+  if (root.enterpriseGateway != null) {
+    return { kind: 'gateway', login: readClaudeCodeGatewayLogin(root, root.enterpriseGateway) };
+  }
+  const subscription = readClaudeCodeNativeCredentialPayload(root);
+  return subscription ? { kind: 'subscription', accessToken: subscription.claudeAiOauth.accessToken.trim() } : null;
+}
+
 function canonicalizeJsonValue(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(canonicalizeJsonValue);

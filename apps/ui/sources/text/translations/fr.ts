@@ -5556,6 +5556,8 @@ export const fr: TranslationStructure = {
                     targetUnavailable: ({ agent }: { agent: string }) => `${agent} n’est pas disponible sur cette machine. Rien n’a été envoyé.`,
                     sourceNotIdle: ({ agent }: { agent: string }) => `${agent} travaille encore. Rien n’a été envoyé : réessaie une fois terminé.`,
                     sourceStopFailed: ({ agent }: { agent: string }) => `Impossible d’arrêter ${agent}, donc rien n’a changé. Rien n’a été envoyé.`,
+                    connectedAccountUnsupported: ({ agent }: { agent: string }) => `Ce compte ne peut pas être utilisé avec ${agent}. Rien n’a été envoyé — choisissez un autre compte et réessayez.`,
+                    connectedAccountMissing: ({ account }: { account: string }) => `Le compte sélectionné « ${account} » n’existe plus. Le changement n’a pas démarré et votre session actuelle est inchangée. Choisissez un autre compte et réessayez.`,
                 },
                 conflictingDestination: ({ agent }: { agent: string }) => `Rien n’a été envoyé. Ce message a déjà une autre destination, il ne peut donc pas aussi faire passer cette session à ${agent}. Retirez l’un des deux et renvoyez.`,
                 sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} s’est arrêté, mais le passage à ${agent} n’a pas abouti. Ton message n’a pas été envoyé.`,

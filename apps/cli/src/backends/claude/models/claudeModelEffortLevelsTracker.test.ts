@@ -1,12 +1,15 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 import type { AnthropicModelEntry } from './fetchAnthropicModels';
 
-const { fetchAnthropicModelsMock, readClaudeCodeNativeCredentialMock } = vi.hoisted(() => ({
+const { fetchAnthropicModelsMock } = vi.hoisted(() => ({
   fetchAnthropicModelsMock: vi.fn<(...args: unknown[]) => Promise<AnthropicModelEntry[] | null>>(),
-  readClaudeCodeNativeCredentialMock: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
 }));
 
 vi.mock('./fetchAnthropicModels', async (importOriginal) => {
@@ -14,15 +17,11 @@ vi.mock('./fetchAnthropicModels', async (importOriginal) => {
   return { ...actual, fetchAnthropicModels: fetchAnthropicModelsMock };
 });
 
-vi.mock('@/backends/claude/connectedServices/nativeAuth/claudeCodeCredentialFile', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/backends/claude/connectedServices/nativeAuth/claudeCodeCredentialFile')>();
-  return { ...actual, readClaudeCodeNativeCredential: readClaudeCodeNativeCredentialMock };
-});
-
 import { createClaudeModelEffortLevelsTracker } from './claudeModelEffortLevelsTracker';
 import { resetClaudeModelCatalogCacheForTests } from './resolveClaudeModelCatalog';
 
 const envKeys = [
+  'CLAUDE_CONFIG_DIR',
   'ANTHROPIC_API_KEY',
   'ANTHROPIC_AUTH_TOKEN',
   'ANTHROPIC_OAUTH_TOKEN',
@@ -30,6 +29,7 @@ const envKeys = [
   'ANTHROPIC_BASE_URL',
 ] as const;
 let envScope = createEnvKeyScope(envKeys);
+let configDir: string;
 
 const effortCapabilities = (tiers: readonly string[]): AnthropicModelEntry['capabilities'] => ({
   effort: {
@@ -43,22 +43,24 @@ const createTracker = (
 ): ReturnType<typeof createClaudeModelEffortLevelsTracker> =>
   createClaudeModelEffortLevelsTracker({ resolveTimeoutMs: () => 1_000, accountSettings });
 
-beforeEach(() => {
+beforeEach(async () => {
   fetchAnthropicModelsMock.mockReset();
-  readClaudeCodeNativeCredentialMock.mockReset();
-  readClaudeCodeNativeCredentialMock.mockResolvedValue(null);
   resetClaudeModelCatalogCacheForTests();
   envScope.restore();
   envScope = createEnvKeyScope(envKeys);
+  for (const key of envKeys) delete process.env[key];
+  configDir = await mkdtemp(join(tmpdir(), 'happier-claude-effort-tracker-'));
+  process.env.CLAUDE_CONFIG_DIR = configDir;
   process.env.ANTHROPIC_API_KEY = 'sk-ant-key';
 });
 
-afterEach(() => {
+afterEach(async () => {
   // Leave no cached catalog behind: the cache is module state, so a later suite sharing this
   // module context would otherwise read entries this one populated.
   resetClaudeModelCatalogCacheForTests();
   envScope.restore();
   envScope = createEnvKeyScope(envKeys);
+  await rm(configDir, { recursive: true, force: true });
 });
 
 describe('createClaudeModelEffortLevelsTracker', () => {
@@ -71,7 +73,6 @@ describe('createClaudeModelEffortLevelsTracker', () => {
     await tracker.refresh('claude-opus-9');
 
     expect(tracker.getLevels()).toEqual([]);
-    expect(readClaudeCodeNativeCredentialMock).not.toHaveBeenCalled();
     expect(fetchAnthropicModelsMock).not.toHaveBeenCalled();
   });
 

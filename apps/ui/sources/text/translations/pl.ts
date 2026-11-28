@@ -5929,6 +5929,8 @@ export const pl: TranslationStructure = {
           targetUnavailable: ({ agent }: { agent: string }) => `${agent} nie jest dostępny na tym komputerze. Nic nie zostało wysłane.`,
           sourceNotIdle: ({ agent }: { agent: string }) => `${agent} nadal pracuje. Nic nie zostało wysłane — spróbuj ponownie po zakończeniu.`,
           sourceStopFailed: ({ agent }: { agent: string }) => `Nie udało się zatrzymać ${agent}, więc nic się nie zmieniło. Nic nie zostało wysłane.`,
+          connectedAccountUnsupported: ({ agent }: { agent: string }) => `Tego konta nie można używać z ${agent}. Nic nie zostało wysłane — wybierz inne konto i spróbuj ponownie.`,
+          connectedAccountMissing: ({ account }: { account: string }) => `Wybrane konto „${account}” już nie istnieje. Przełączenie się nie rozpoczęło, a bieżąca sesja pozostała bez zmian. Wybierz inne konto i spróbuj ponownie.`,
         },
         conflictingDestination: ({ agent }: { agent: string }) => `Nic nie zostało wysłane. Ta wiadomość ma już inny cel, więc nie może jednocześnie przełączyć tej sesji na ${agent}. Usuń jedno z dwóch i wyślij ponownie.`,
         sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} został zatrzymany, ale przełączenie na ${agent} nie zostało ukończone. Twoja wiadomość nie została wysłana.`,

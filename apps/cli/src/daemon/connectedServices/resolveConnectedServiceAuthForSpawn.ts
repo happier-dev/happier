@@ -280,6 +280,18 @@ function assertNoBlockingMaterializationDiagnostics(params: Readonly<{
   });
 }
 
+function assertSpawnCredentialHasNotExpired(record: ConnectedServiceCredentialRecordV1, nowMs: number): void {
+  const { expiresAt, serviceId, profileId } = record;
+  if (record.kind !== 'oauth' || typeof expiresAt !== 'number' || !Number.isFinite(expiresAt) || expiresAt > nowMs) return;
+  throw new ConnectedServiceSpawnCredentialRefreshError({
+    kind: 'reconnect_required',
+    diagnostic: {
+      serviceId, profileId, reason: 'spawn_preflight', status: 'refresh_failed',
+      category: 'provider_401', expiresAt, expiryAgeMs: nowMs - expiresAt, refreshWindowMs: 0,
+    },
+  });
+}
+
 async function applySpawnPreflightRefresh(params: Readonly<{
   recordsByServiceId: Map<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
   credentialRevisionsByServiceId: Map<ConnectedServiceId, ConnectedServiceCredentialRevisionV1 | null>;
@@ -292,21 +304,7 @@ async function applySpawnPreflightRefresh(params: Readonly<{
     const record = params.recordsByServiceId.get(binding.serviceId);
     if (!record || !shouldPreflightRefreshCredential(record)) continue;
     if (!params.refreshService) {
-      if (typeof record.expiresAt === 'number' && Number.isFinite(record.expiresAt) && record.expiresAt <= params.nowMs) {
-        throw new ConnectedServiceSpawnCredentialRefreshError({
-          kind: 'reconnect_required',
-          diagnostic: {
-            serviceId: binding.serviceId,
-            profileId: binding.profileId,
-            reason: 'spawn_preflight',
-            status: 'refresh_failed',
-            category: 'provider_401',
-            expiresAt: record.expiresAt,
-            expiryAgeMs: params.nowMs - record.expiresAt,
-            refreshWindowMs: 0,
-          },
-        });
-      }
+      assertSpawnCredentialHasNotExpired(record, params.nowMs);
       continue;
     }
 
@@ -1082,7 +1080,7 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
   existingSessionMetadata?: unknown;
   refreshService: ConnectedServiceSpawnCredentialRefreshService | null;
   forceOauthRefresh: boolean;
-  nowMs: number;
+  nowMs: () => number;
   vendorResumeId: string | null;
   resumeReachabilityRequired: boolean;
   candidatePersistedSessionFile: string | null;
@@ -1094,6 +1092,10 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
   materializationRoot: string;
   cleanupMaterializationRoot: () => void;
 }>) | null> {
+  if (!params.refreshService) {
+    const nowMs = params.nowMs();
+    for (const record of params.recordsByServiceId.values()) assertSpawnCredentialHasNotExpired(record, nowMs);
+  }
   const materialized = await materializeConnectedServicesForSpawn({
     agentId: params.agentId,
     materializationPurpose: params.materializationPurpose,
@@ -1111,7 +1113,7 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
             profileId,
             ...(params.forceOauthRefresh ? { force: true } : {}),
           });
-          const refreshed = resolveSpawnRefreshOutcome({ result, record, nowMs: params.nowMs });
+          const refreshed = resolveSpawnRefreshOutcome({ result, record, nowMs: params.nowMs() });
           if (!refreshed) return null;
           const revision = ConnectedServiceCredentialRevisionV1Schema.safeParse(result.credentialRevision);
           params.credentialRevisionsByServiceId.set(serviceId, revision.success ? revision.data : null);
@@ -1153,15 +1155,9 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
   return materialized;
 }
 
-export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
+type ConnectedServiceSpawnAdmissionInput = Readonly<{
   agentId: CatalogAgentId;
-  materializationPurpose?: 'probe';
-  sessionDirectory?: string | null;
   connectedServicesBindingsRaw: unknown;
-  materializationKey: string;
-  connectedServiceMaterializationIdentityV1?: ConnectedServiceMaterializationIdentityV1 | null;
-  activeServerDir: string;
-  baseDir: string;
   credentials: Credentials;
   api: ApiClient;
   accountUsageStore?: AccountUsageStoreForAuthGroupSwitchState | null;
@@ -1171,42 +1167,11 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
   sessionId?: string;
   authGroupSwitchCoordinator?: ConnectedServiceAuthGroupPreTurnSwitchCoordinator | null;
   quotaProbeDeadlineAtMs?: number;
-  accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
-  processEnv?: NodeJS.ProcessEnv;
-  previousMaterializedRoot?: string | null;
-  existingSessionMetadata?: unknown;
   credentialRefreshService?: ConnectedServiceSpawnCredentialRefreshService | null;
-  /**
-   * The vendor `--resume` reference the spawned process will resume from. Required for the §2
-   * post-materialization reachability re-verify; null/absent means this is a fresh (non-resume)
-   * spawn and the gate is skipped.
-   */
-  vendorResumeId?: string | null;
-  /**
-   * Whether shared-state continuity was requested for this spawn. When true (and a `vendorResumeId`
-   * is present), the reachability gate runs against the REAL materialized target before the vendor
-   * launches; when false the spawn is not continuity-gated (e.g. isolated state).
-   */
-  resumeReachabilityRequired?: boolean;
-  /**
-   * A persisted absolute vendor session-file hint, when known. Per D8 this is a fast-path hint only:
-   * a stale/cross-machine path that fails to stat must degrade to the id+cwd native search, never
-   * hard-fail.
-   */
-  candidatePersistedSessionFile?: string | null;
-  sessionStateMode?: 'existing';
   signal?: AbortSignal;
-  onCleanup?: (cleanup: () => Promise<void>) => void;
-}>): Promise<Readonly<{
-  env: Record<string, string>;
-  materializationRoot?: string | null;
-  cleanupMaterializationRoot?: (() => void) | null;
-  cleanupOnFailure: (() => void) | null;
-  cleanupOnExit: (() => void) | null;
-  connectedServicesBindings: ConnectedServicesBindingsV1;
-  runtimeAccountIdentitySelections: ReadonlyArray<RuntimeAccountIdentitySelectionInput>;
-  diagnostics?: readonly ConnectedServicesMaterializationDiagnostic[];
-}> | null> {
+}>;
+
+export async function admitConnectedServiceAuthForSpawn(params: ConnectedServiceSpawnAdmissionInput) {
   params.signal?.throwIfAborted();
   const selections = parseConnectedServiceBindingSelections(params.connectedServicesBindingsRaw);
   if (selections.length === 0) return null;
@@ -1278,6 +1243,58 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
       if (!switched) throw error;
     }
   }
+  return { selections, recordsByServiceId, credentialRevisionsByServiceId, groupSelections, forceSpawnPreflightOauthRefresh };
+}
+
+export type ConnectedServiceSpawnAdmission = NonNullable<Awaited<ReturnType<typeof admitConnectedServiceAuthForSpawn>>>;
+
+export async function resolveConnectedServiceAuthForSpawn(params: ConnectedServiceSpawnAdmissionInput & Readonly<{
+  materializationPurpose?: 'probe';
+  admittedAuth?: ConnectedServiceSpawnAdmission;
+  sessionDirectory?: string | null;
+  materializationKey: string;
+  connectedServiceMaterializationIdentityV1?: ConnectedServiceMaterializationIdentityV1 | null;
+  activeServerDir: string;
+  baseDir: string;
+  accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
+  processEnv?: NodeJS.ProcessEnv;
+  previousMaterializedRoot?: string | null;
+  existingSessionMetadata?: unknown;
+  /**
+   * The vendor `--resume` reference the spawned process will resume from. Required for the §2
+   * post-materialization reachability re-verify; null/absent means this is a fresh (non-resume)
+   * spawn and the gate is skipped.
+   */
+  vendorResumeId?: string | null;
+  /**
+   * Whether shared-state continuity was requested for this spawn. When true (and a `vendorResumeId`
+   * is present), the reachability gate runs against the REAL materialized target before the vendor
+   * launches; when false the spawn is not continuity-gated (e.g. isolated state).
+   */
+  resumeReachabilityRequired?: boolean;
+  /**
+   * A persisted absolute vendor session-file hint, when known. Per D8 this is a fast-path hint only:
+   * a stale/cross-machine path that fails to stat must degrade to the id+cwd native search, never
+   * hard-fail.
+   */
+  candidatePersistedSessionFile?: string | null;
+  sessionStateMode?: 'existing';
+  onCleanup?: (cleanup: () => Promise<void>) => void;
+}>): Promise<Readonly<{
+  env: Record<string, string>;
+  materializationRoot?: string | null;
+  cleanupMaterializationRoot?: (() => void) | null;
+  cleanupOnFailure: (() => void) | null;
+  cleanupOnExit: (() => void) | null;
+  connectedServicesBindings: ConnectedServicesBindingsV1;
+  runtimeAccountIdentitySelections: ReadonlyArray<RuntimeAccountIdentitySelectionInput>;
+  diagnostics?: readonly ConnectedServicesMaterializationDiagnostic[];
+}> | null> {
+  params.signal?.throwIfAborted();
+  const admitted = params.admittedAuth ?? await admitConnectedServiceAuthForSpawn(params);
+  if (!admitted) return null;
+  const { selections, recordsByServiceId, credentialRevisionsByServiceId, groupSelections, forceSpawnPreflightOauthRefresh } = admitted;
+  const nowMs = params.nowMs ?? Date.now;
   const maxMaterializationAttempts = resolveMaxSpawnMaterializationAttempts(groupSelections);
   for (let attempt = 0; attempt < maxMaterializationAttempts; attempt += 1) {
     const selectionsByServiceId = buildSelectionsByServiceIdForSpawn({
@@ -1344,7 +1361,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
         api: params.api,
         ...(params.sessionId ? { sessionId: params.sessionId } : {}),
         authGroupSwitchCoordinator: params.authGroupSwitchCoordinator ?? null,
-        nowMs,
+        nowMs: nowMs(),
       });
       if (!switched) throw error;
     }

@@ -1,3 +1,7 @@
+import { isDeepStrictEqual } from 'node:util';
+
+import { ConnectedServiceBindingsV1Schema } from '@happier-dev/protocol';
+
 import {
   AGENTS_CORE,
   evaluateVendorResumeEligibility,
@@ -7,6 +11,7 @@ import {
 } from '@happier-dev/agents';
 
 import { configuration } from '@/configuration';
+import { readConnectedServiceMaterializationIdentityV1 } from '@/daemon/connectedServices/materialize/createConnectedServiceMaterializationIdentity';
 import {
   isReplaySeedV1PendingProviderAcceptance,
   readReplaySeedV1FromMetadata,
@@ -17,6 +22,7 @@ import {
   type LocalAgentNativeResumeIdentityV1,
   type LocalAgentNativeResumeRecordKey,
   type LocalAgentNativeResumeRecordV1,
+  type NativeReturnAuth,
 } from '@/session/handoff/metadata/localAgentNativeResumeRecordStore';
 
 /**
@@ -82,6 +88,7 @@ export type LocalAgentNativeResumeRecordStore = Readonly<{
     input: LocalAgentNativeResumeRecordKey & Readonly<{
       identity: LocalAgentNativeResumeIdentityV1 | null;
       departureSeqInclusive: number;
+      auth?: NativeReturnAuth;
     }>,
   ) => Promise<void>;
 }>;
@@ -168,6 +175,22 @@ function isAgentNativeReturnUsable(params: Readonly<{
   }).eligible;
 }
 
+function readDepartingNativeReturnAuth(metadata: Record<string, unknown>): NativeReturnAuth | undefined {
+  const profilesByServiceId: Record<string, string> = {};
+  if (metadata.connectedServices == null) return { profilesByServiceId, materializationIdentity: null };
+  const parsed = ConnectedServiceBindingsV1Schema.safeParse(metadata.connectedServices);
+  if (!parsed.success) return undefined;
+  for (const [serviceId, binding] of Object.entries(parsed.data.bindingsByServiceId)) {
+    if (binding.source === 'native') continue;
+    const profileId = binding.selection === 'group' ? binding.appliedProfileId : binding.profileId;
+    if (!profileId) return undefined;
+    profilesByServiceId[serviceId] = profileId;
+  }
+  if (Object.keys(profilesByServiceId).length === 0) return { profilesByServiceId, materializationIdentity: null };
+  const materializationIdentity = readConnectedServiceMaterializationIdentityV1(metadata.connectedServiceMaterializationIdentityV1);
+  return materializationIdentity ? { profilesByServiceId, materializationIdentity } : undefined;
+}
+
 /**
  * Section 7.2 step 4 — before the source stop, while its identity is still the
  * committed current view.
@@ -228,6 +251,7 @@ export async function captureDepartingAgentNativeResumeRecord(params: Readonly<{
       ...key,
       identity,
       departureSeqInclusive,
+      ...(identity ? { auth: readDepartingNativeReturnAuth(params.sourceMetadata) } : {}),
     }).catch(() => {});
   };
 
@@ -379,12 +403,15 @@ export async function resolveAgentNativeReturnPlan(params: Readonly<{
   targetAgentId: AgentId;
   sourceMetadata: Record<string, unknown>;
   accountSettings: Record<string, unknown> | null;
+  selectedProfilesByServiceId?: Readonly<Record<string, string>>;
 }>): Promise<Readonly<{ record: LocalAgentNativeResumeRecordV1 | null; noNativeReturnRecord: boolean }>> {
   const record = await params.store.readAgentNativeResumeRecord({
     happierSessionId: params.sessionId,
     agentId: params.targetAgentId,
   }, { requireConclusiveAbsence: true }).catch(() => undefined);
-  const usable = isAgentNativeReturnUsable({
+  const usable = (params.selectedProfilesByServiceId === undefined
+    || (record?.auth && isDeepStrictEqual(record.auth.profilesByServiceId, params.selectedProfilesByServiceId)))
+    && isAgentNativeReturnUsable({
     sourceMetadata: params.sourceMetadata,
     targetAgentId: params.targetAgentId,
     identity: record?.identity ?? null,

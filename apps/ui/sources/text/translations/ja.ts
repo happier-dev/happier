@@ -6185,6 +6185,8 @@ localTailscale: {
           targetUnavailable: ({ agent }: { agent: string }) => `${agent} はこのマシンでは利用できません。何も送信されていません。`,
           sourceNotIdle: ({ agent }: { agent: string }) => `${agent} はまだ作業中です。何も送信されていません。完了してからもう一度お試しください。`,
           sourceStopFailed: ({ agent }: { agent: string }) => `${agent} を停止できなかったため、何も変わっていません。何も送信されていません。`,
+          connectedAccountUnsupported: ({ agent }: { agent: string }) => `そのアカウントは ${agent} では使用できません。何も送信されていません。別のアカウントを選んでもう一度お試しください。`,
+          connectedAccountMissing: ({ account }: { account: string }) => `選択したアカウント「${account}」は存在しません。切り替えは開始されず、現在のセッションはそのままです。別のアカウントを選んで再試行してください。`,
         },
         conflictingDestination: ({ agent }: { agent: string }) => `何も送信されていません。このメッセージには別の宛先がすでにあるため、同時にこのセッションを ${agent} に切り替えることはできません。どちらかを解除してから、もう一度送信してください。`,
         sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} は停止しましたが、${agent} への切り替えは完了しませんでした。メッセージは送信されていません。`,

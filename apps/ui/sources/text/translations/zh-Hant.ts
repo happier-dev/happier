@@ -5269,6 +5269,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                         targetUnavailable: ({ agent }: { agent: string }) => `${agent} 在這台機器上無法使用。尚未傳送任何內容。`,
                         sourceNotIdle: ({ agent }: { agent: string }) => `${agent} 仍在工作。尚未傳送任何內容，請在它完成後重試。`,
                         sourceStopFailed: ({ agent }: { agent: string }) => `無法停止 ${agent}，因此沒有任何變化。尚未傳送任何內容。`,
+                        connectedAccountUnsupported: ({ agent }: { agent: string }) => `該帳戶無法用於 ${agent}。尚未傳送任何內容——請選擇其他帳戶後再試一次。`,
+                        connectedAccountMissing: ({ account }: { account: string }) => `所選帳戶「${account}」已不存在。切換尚未開始，目前的工作階段維持不變。請選擇其他帳戶後再試一次。`,
                     },
                     conflictingDestination: ({ agent }: { agent: string }) => `尚未傳送任何內容。這則訊息已經有另一個目標，因此不能同時把此工作階段切換到 ${agent}。請去掉其中之一後重新傳送。`,
                     sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} 已停止，但切換到 ${agent} 未完成。你的訊息未傳送。`,
