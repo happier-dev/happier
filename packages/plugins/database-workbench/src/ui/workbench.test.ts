@@ -375,11 +375,20 @@ it('projects target facts from the connection and Machine owners without inventi
         expect(resource.get().data?.targets.map(target => target.machineLabel)).toEqual([...sameMachine.map(() => 'MacBook Pro'), 'Other Mac']);
         expect(machineReads).toHaveLength(2);
         expect(JSON.stringify(resource.get().data)).not.toContain('private');
+        const initial = resource.get();
+        const publications: ReturnType<typeof resource.get>[] = [];
+        resource.subscribe(() => publications.push(resource.get()));
+        resource.invalidate();
+        await resource.demand();
+        expect(machineReads).toHaveLength(4);
+        expect(publications).toHaveLength(0);
+        expect(resource.get()).toBe(initial);
         known = false;
         resource.invalidate();
         await resource.demand();
         expect(resource.get().data?.targets[0]).toMatchObject({ engineLabel: 'PostgreSQL', endpointLabel: null,
             machineLabel: null, relationCount: null });
-        expect(machineReads).toHaveLength(3);
+        expect(machineReads).toHaveLength(5);
+        expect(publications).toEqual([resource.get()]);
     } finally { instance.close(); }
 });

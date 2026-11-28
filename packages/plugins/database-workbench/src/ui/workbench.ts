@@ -13,7 +13,7 @@ import type {
     DatabaseStatsObservationV1,
 } from '@happier-dev/plugin-sdk/database';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { createCanonicalJsonSigningInput, PluginError } from '@happier-dev/plugin-sdk';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { workbenchTargetKey } from '../targetIdentity.js';
 import { inspectJsonCell } from './cellInspection.js';
@@ -70,12 +70,15 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
     const consoles = new Map<string, WorkbenchConsole>();
     let closed = false;
     if (options.selectedTarget) targets.set(workbenchTargetKey(options.selectedTarget.target), options.selectedTarget);
-    function resource<T>(resourceKey: string, load: () => Promise<T>, targetKey?: string, relation?: DatabaseRelationV1): WorkbenchResource<T> {
+    function resource<T>(
+        resourceKey: string, load: () => Promise<T>, targetKey?: string, relation?: DatabaseRelationV1,
+        equivalent?: (previous: T, next: T) => boolean,
+    ): WorkbenchResource<T> {
         if (closed) throw new Error('Workbench instance is closed');
         const held = resources.get(resourceKey);
         // Each private key is bound to one loader/result type for this instance.
         if (held) return held.resource as WorkbenchResource<T>;
-        const value = createResource(load);
+        const value = createResource(load, equivalent);
         resources.set(resourceKey, { targetKey, relation, resource: value as WorkbenchResource<unknown> });
         return value;
     }
@@ -248,7 +251,9 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
                         endpointLabel: descriptor.endpointLabel ?? null, relationCount: null,
                         machineLabel: machine?.status === 'ready' ? machine.displayName : null };
                 })), looked: result.looked ?? [], completeness: result.completeness };
-            });
+            }, undefined, undefined, (previous, next) =>
+                createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(previous)) ===
+                createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(next)));
         },
         /** Schema page only. Expanded groups demand their own relation page. */
         relations(targetKey: string, after?: string) {
