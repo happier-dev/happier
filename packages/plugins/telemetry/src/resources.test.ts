@@ -56,7 +56,7 @@ it('follows the issue count and last occurrence across the bounded own and Team 
         const snapshot = PluginServiceListFieldResourceResultV1Schema.parse(JSON.parse(String(value)));
         expect(snapshot.items).toEqual([
             { environmentId: 'app', value: null, facts: { 'open-issues': { value: 2 }, 'last-issue-seen': { value: 7 } } },
-            { environmentId: 'empty', value: null, facts: { 'open-issues': { value: 0 }, 'last-issue-seen': { value: null } } },
+            { environmentId: 'empty', value: null, facts: { 'last-issue-seen': { value: null } } },
         ]);
         const index = { index: 'by-environment', prefixes: [['app'], ['empty']], order: 'asc' };
         expect(own.mock.calls.map(([query]) => query)).toEqual([index, { ...index, cursor: 'own-next' }]);

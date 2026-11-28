@@ -348,6 +348,10 @@ export const DeploymentEnvironmentDetail = React.memo(
       } : null,
       [environmentServerId, environmentSourceId, detailEnvironmentId, controllerMachineId, pluginTargetMachineId],
     );
+    // The plugins this Environment deploys through: only their Environment pages belong on it.
+    const targetPluginIdsKey = [...new Set(detail?.targetLinks.flatMap(({ targetLink }) => targetLink.source.kind === 'plugin'
+      && targetLink.state !== 'detached' && targetLink.detachedAtMs === undefined && targetLink.deletedAtMs === undefined
+      ? [targetLink.source.contribution.pluginId] : []) ?? [])].sort().join('\n');
     const buildMachineId = detail?.environment.buildMachineId ?? null;
     const namedMachineIds = React.useMemo(
       () => [...new Set([...machineIds, ...(controllerMachineId ? [controllerMachineId] : []), ...(buildMachineId ? [buildMachineId] : [])])],
@@ -1410,7 +1414,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                 onAdd={() => { openAddDatabase?.(); }} />
               {props.lifetime && pluginTarget && environment.snapshot.status !== 'unavailable'
                 && props.demand.mounted && props.demand.visible && props.demand.focused ? (
-                <DeploymentEnvironmentPluginPages lifetime={props.lifetime} target={pluginTarget} />
+                <DeploymentEnvironmentPluginPages lifetime={props.lifetime} target={pluginTarget} targetPluginIdsKey={targetPluginIdsKey} />
               ) : null}
               {/* A stored definition's own section already says previews follow a repository: one cause, said once
                   (PAGE-ACCEPT-176 R10-D9). */}

@@ -2054,6 +2054,9 @@ describe('Project deployments page', () => {
           .toEqual([t('projects.deployments.removedOutcomeTitle', { name: detail.content.name })]);
         expect(String(vi.mocked(Modal.alertAsync).mock.calls[0]?.[1]))
           .toContain(t('projects.deployments.removedOutcomeDeleted', { names: 'app_data', count: 1 }));
+        // The kept volume is named too (R20-D4): its data is still on the Machine.
+        expect(String(vi.mocked(Modal.alertAsync).mock.calls[0]?.[1]))
+          .toContain(t('projects.deployments.removedOutcomeKept', { names: 'app_logs' }));
       }
       if (removed) expect(screen.findByTestId('project-deployments.disposition')).toBeNull();
       else {

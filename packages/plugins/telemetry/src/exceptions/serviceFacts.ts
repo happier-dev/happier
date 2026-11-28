@@ -51,7 +51,8 @@ const issueResource: PluginDynamicResourceRuntime = {
         await Promise.all([readOwn(), readShared()]);
         return JSON.stringify({ items: [...perEnvironment].map(([environmentId, summary]) => ({
             environmentId, value: null, facts: {
-                [TELEMETRY_OPEN_ISSUES_FIELD.id]: { value: summary.open.size },
+                // No open issue is the healthy state: it says nothing rather than "Open issues 0" under every row (R20-D8).
+                ...(summary.open.size > 0 ? { [TELEMETRY_OPEN_ISSUES_FIELD.id]: { value: summary.open.size } } : {}),
                 [TELEMETRY_LAST_ISSUE_SEEN_FACT_ID]: { value: summary.lastSeenAtMs },
             },
         })) } satisfies PluginServiceListFieldResourceResultV1);

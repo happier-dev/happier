@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentPreviewProvenanceV1Schema } from '@happier-dev/protocol/deployments/deploymentPreviewProvenanceV1';
 import { DeploymentEnvironmentUpdatePatchV1Schema, type DeploymentEnvironmentUpdateInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { deploymentRevisionLabelV1 as deploymentRevisionLabel } from '@happier-dev/deployments';
 import { formatHappierDataBytes, joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
@@ -335,6 +336,14 @@ function soleMachineName(machines: readonly ReviewMachine[], names: MachineNames
   return id ? names[id] ?? null : null;
 }
 
+/** A Docker build platform by the Machine CPU name its daemon reports (Node's `os.arch()`). */
+const DOCKER_PLATFORM_CPU: Readonly<Record<string, string>> = {
+  'linux/amd64': 'x64', 'linux/arm64': 'arm64', 'linux/arm64/v8': 'arm64', 'linux/arm/v7': 'arm', 'linux/386': 'ia32',
+};
+
+const selectMachineArch = (machine: Machine | null): string | null =>
+  typeof machine?.metadata?.arch === 'string' ? machine.metadata.arch : null;
+
 /**
  * The review as approval fields (lab d3 review card): one row per fact, its name then its value, through the
  * shared approval-fields owner every Action approval reads with. Facts come from the host's review only.
@@ -345,6 +354,8 @@ function describeReviewFields(
   names: MachineNames,
   collectorMachineId: string | null,
   projectName: string | null,
+  /** The sole Machine's own CPU (its Machine record), when known: a build for that CPU is not emulated. */
+  soleMachineArch: string | null = null,
 ): ApprovalFieldsPresentation {
   const { review, promotion } = approval;
   if (isPlatformCreate(review)) return describeCreateFields(review);
@@ -383,8 +394,10 @@ function describeReviewFields(
       names: secretBindingNames,
       note: soleMachine ? t('projects.deployments.review.secretsNoteOn', { machine: soleMachine }) : t('projects.deployments.review.secretsNote'),
     }),
+    // The emulation cost is said unless every platform is the Machine's own CPU (R20-D8: not for linux/amd64 on amd64).
     ...field('buildPlatforms', t('projects.deployments.review.buildPlatforms'), buildPlatforms.join(', '), {
-      note: t('projects.deployments.review.emulationCost'),
+      note: soleMachineArch && buildPlatforms.every(platform => DOCKER_PLATFORM_CPU[platform] === soleMachineArch)
+        ? undefined : t('projects.deployments.review.emulationCost'),
     }),
     ...(platform ? field('where.platform', t('projects.deployments.review.whereTitle'),
       joinHappierFacts(platform.platformName, platform.providerResourceId, platform.providerEnvironment)) : []),
@@ -422,7 +435,9 @@ function describeReviewFields(
         ownServer.migrationFailurePolicy && t(`projects.deployments.review.migrationFails.${ownServer.migrationFailurePolicy}`),
       ) }),
       // A rollback's "previous release" would read as the version it goes back to: name the one that comes back (R14-D9).
-      ...field('ifItFails', t('projects.deployments.review.ifItFails'), !ownServer.autoRestorePreviousRelease
+      // A first deploy has nothing to bring back, so it promises nothing (R20-D8).
+      ...field('ifItFails', t('projects.deployments.review.ifItFails'), replaces === null && ownServer.autoRestorePreviousRelease ? null
+        : !ownServer.autoRestorePreviousRelease
         ? t('projects.deployments.review.staysDown')
         : replaces && areDeploymentSourceLabelsEqualV1(replaces.revision, revision) !== true
           ? t('projects.deployments.review.restoresVersion', { revision: revisionText(replaces.revision) })
@@ -616,10 +631,14 @@ export const DeploymentReviewApprovalFacts = React.memo(
         ...(collectorMachineId ? [collectorMachineId] : []),
       ])];
     }, [review, environment?.ingress, collectorMachineId]);
+    const soleMachineId = machines.length === 1 ? machines[0]!.id : null;
+    const soleArch = useServerScopedMachine(props.serverId, soleMachineId ?? '', selectMachineArch);
+    const soleMachineArch = soleMachineId ? soleArch : null;
     return (
       <NamedMachines serverId={props.serverId} ids={ids}>
         {(names) => (
           <ReviewFields approval={props.approval} machines={machines} names={names} collectorMachineId={collectorMachineId} projectName={projectName}
+            soleMachineArch={soleMachineArch}
             serverId={props.serverId} testID={props.testID} decided={props.decided === true} technicalRows={props.technicalRows} />
         )}
       </NamedMachines>
@@ -633,13 +652,15 @@ const ReviewFields = React.memo(function ReviewFields(props: Readonly<{
   names: MachineNames;
   collectorMachineId: string | null;
   projectName: string | null;
+  soleMachineArch: string | null;
   serverId: string | null;
   testID: string;
   decided: boolean;
   technicalRows?: ApprovalFieldsPresentation['rows'];
 }>) {
   const { presentation, kept } = React.useMemo(() => {
-    const facts = describeReviewFields(props.approval, props.machines, props.names, props.collectorMachineId, props.projectName);
+    const facts = describeReviewFields(props.approval, props.machines, props.names, props.collectorMachineId, props.projectName,
+      props.soleMachineArch);
     const isKept = (row: ApprovalFieldsPresentation['rows'][number]) => row.kind === 'value' && row.path === REMOVAL_KEPT_PATH;
     const isTechnical = (row: ApprovalFieldsPresentation['rows'][number]) => row.kind === 'value' && row.technical === true;
     const keptRows = facts.rows.filter(isKept);
@@ -649,7 +670,7 @@ const ReviewFields = React.memo(function ReviewFields(props: Readonly<{
     return keptRows.length
       ? { presentation: { ...facts, rows: factRows }, kept: { rows: [...keptRows, ...technical], unrepresentable: null } }
       : { presentation: { ...facts, rows: [...factRows, ...technical] }, kept: null };
-  }, [props.approval, props.machines, props.names, props.collectorMachineId, props.projectName, props.technicalRows]);
+  }, [props.approval, props.machines, props.names, props.collectorMachineId, props.projectName, props.soleMachineArch, props.technicalRows]);
   const multiple = props.machines.length > 1;
   return (
     <>
@@ -679,12 +700,14 @@ export type DeploymentEnvironmentUpdateApproval = Readonly<{
   environmentId: string;
   definition: EnvironmentUpdatePatch['definition'];
   bindings: EnvironmentUpdatePatch['bindings'];
+  /** The previews switch or its settings; undefined when the update leaves previews alone. */
+  previewTemplate: EnvironmentUpdatePatch['previewTemplate'];
 }>;
 
 /**
  * An Environment update approval reads as what it changes, from the request's own arguments (the exact effect it
- * runs with): no host review exists for it. Only a content change (its definition or its variables) reads this way;
- * a preview or a setting-only update keeps the generic reading.
+ * runs with): no host review exists for it. A content change (its definition or its variables) or a previews change
+ * reads this way; a preparation (`mode: 'preview'`) or a setting-only update keeps the generic reading.
  */
 export function readDeploymentEnvironmentUpdateApproval(
   request: Readonly<{ actionId?: string | null; actionArgs?: unknown }>,
@@ -693,11 +716,95 @@ export function readDeploymentEnvironmentUpdateApproval(
   const args = readRecord(request.actionArgs);
   if (args.mode !== undefined || typeof args.environmentId !== 'string') return null;
   const patch = DeploymentEnvironmentUpdatePatchV1Schema.safeParse(args.patch);
-  if (!patch.success || (!patch.data.definition && !patch.data.bindings)) return null;
-  return { environmentId: args.environmentId, definition: patch.data.definition, bindings: patch.data.bindings };
+  if (!patch.success || (!patch.data.definition && !patch.data.bindings && patch.data.previewTemplate === undefined)) return null;
+  return { environmentId: args.environmentId, definition: patch.data.definition, bindings: patch.data.bindings,
+    previewTemplate: patch.data.previewTemplate };
 }
 
+/** A pull request's preview Create (the previews Workflow's `preview-create`): which Environment it copies, for which PR. */
+export type DeploymentPreviewCreateApproval = Readonly<{
+  templateEnvironmentId: string;
+  runtimeTargetLinkId: string;
+  pullRequestNumber: number | null;
+}>;
+
+/** Reads the preview reference a preview Create carries; the PR number comes from its captured provenance when present. */
+export function readDeploymentPreviewCreateApproval(
+  request: Readonly<{ actionId?: string | null; actionArgs?: unknown }>,
+): DeploymentPreviewCreateApproval | null {
+  if (request.actionId !== DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1) return null;
+  const args = readRecord(request.actionArgs);
+  if (args.purpose !== 'preview') return null;
+  const preview = readRecord(args.preview);
+  if (typeof preview.templateEnvironmentId !== 'string' || typeof preview.runtimeTargetLinkId !== 'string') return null;
+  const provenance = DeploymentPreviewProvenanceV1Schema.safeParse(preview.provenance);
+  return { templateEnvironmentId: preview.templateEnvironmentId, runtimeTargetLinkId: preview.runtimeTargetLinkId,
+    pullRequestNumber: provenance.success ? provenance.data.pullRequestNumber : null };
+}
+
+/** What a preview Create makes, in words: the copy of its Environment for one pull request, and where it runs. */
+export function describeDeploymentPreviewCreateFields(
+  approval: DeploymentPreviewCreateApproval,
+  template: Readonly<{ name: string | null; machine: string | null }>,
+): ApprovalFieldsPresentation {
+  const environment = template.name ?? t('projects.deployments.review.previewsThisEnvironment');
+  return { rows: [
+    ...field('previewCreate.what', t('projects.deployments.review.previewCreate'), approval.pullRequestNumber === null
+      ? t('projects.deployments.review.previewCreateValueUnnumbered', { environment })
+      : t('projects.deployments.review.previewCreateValue', { environment, number: approval.pullRequestNumber })),
+    ...field('previewCreate.machine', t('projects.deployments.review.previewCreateMachine'), template.machine),
+  ], unrepresentable: null };
+}
+
+/** The decision a preview Create leads with ("Create a preview of field-guide-site"), once its template has a name. */
+export function describeDeploymentPreviewCreateDecision(
+  approval: DeploymentPreviewCreateApproval | null,
+  templateName: string | null,
+): string | null {
+  return approval && templateName ? t('projects.deployments.review.decisionPreviewCreate', { environment: templateName }) : null;
+}
+
+/**
+ * A preview Create's approval: the template by name, the pull request by number and the Machine its copy runs on.
+ * The request's ids, request key and placement stay under Technical details.
+ */
+export const DeploymentPreviewCreateApprovalFacts = React.memo(function DeploymentPreviewCreateApprovalFacts(props: Readonly<{
+  approval: DeploymentPreviewCreateApproval;
+  serverId: string | null;
+  testID: string;
+  technicalRows?: ApprovalFieldsPresentation['rows'];
+}>) {
+  const { approval } = props;
+  const record = useEnvironmentRecord(props.serverId, approval.templateEnvironmentId);
+  const name = record.value?.content.name ?? null;
+  const machineId = record.value?.targetLinks.find(row => row.targetLink.id === approval.runtimeTargetLinkId)
+    ?.targetLink.machines[0] ?? null;
+  const machine = useReviewMachineName(props.serverId, machineId);
+  const presentation = React.useMemo(() => {
+    const facts = describeDeploymentPreviewCreateFields(approval, { name, machine });
+    return { ...facts, rows: [...facts.rows, ...props.technicalRows ?? []] };
+  }, [approval, name, machine, props.technicalRows]);
+  return <ActionApprovalFieldsCard presentation={presentation} anatomy="page" serverId={props.serverId}
+    title={t('projects.deployments.review.updateWhatTitle')} testID={`${props.testID}.fields`} />;
+});
+
 type EnvironmentNames = Readonly<Record<string, string>>;
+
+/** On, off, or a change while previews stay on, against the Environment's saved previews (R20-D2). */
+function describePreviewsChange(
+  next: DeploymentEnvironmentUpdateApproval['previewTemplate'],
+  current: Readonly<{ name: string | null; previewsOn?: boolean | null; previewMachine?: string | null }>,
+): ApprovalFieldsPresentation['rows'] | null {
+  if (next === undefined) return null;
+  const environment = current.name ?? t('projects.deployments.review.previewsThisEnvironment');
+  const title = t('projects.deployments.review.updatePreviews');
+  if (!next?.enabled) return field('environmentUpdate.previews', title, t('projects.deployments.review.updatePreviewsOff', { environment }));
+  if (current.previewsOn === true) return field('environmentUpdate.previews', title,
+    t('projects.deployments.review.updatePreviewsChanged', { environment }));
+  return field('environmentUpdate.previews', title, t('projects.deployments.review.updatePreviewsOn', { environment }), {
+    note: t('projects.deployments.review.updatePreviewsOnNote', { repository: next.repository.repository,
+      machine: current.previewMachine ?? t('projects.deployments.aMachine') }) });
+}
 
 /** Names every Environment the update's variables read from, one read each, so the hook count stays fixed. */
 function NamedEnvironments(props: Readonly<{
@@ -726,16 +833,20 @@ function NamedEnvironment(props: Readonly<{
 /** The facts an Environment update changes, consequences first: what stops, then what each variable reads. */
 export function describeDeploymentEnvironmentUpdateFields(
   approval: DeploymentEnvironmentUpdateApproval,
-  current: Readonly<{ name: string | null; services: readonly string[] | null }>,
+  current: Readonly<{ name: string | null; services: readonly string[] | null; previewsOn?: boolean | null; previewMachine?: string | null }>,
   environmentNames: EnvironmentNames,
 ): ApprovalFieldsPresentation {
+  const previews = describePreviewsChange(approval.previewTemplate, current);
   const nextServices = approval.definition?.services;
   const removed = nextServices && current.services ? current.services.filter(service => !nextServices.includes(service)) : [];
   const added = nextServices && current.services ? nextServices.filter(service => !current.services!.includes(service)) : [];
   const set = (approval.bindings?.set ?? []).flatMap(binding => binding.purpose === 'variable' ? [binding] : []);
   const removedVariables = (approval.bindings?.remove ?? []).flatMap(binding => binding.purpose === 'variable' ? [binding] : []);
+  // A previews change says itself in one sentence that names the Environment, so it needs no Environment row.
+  if (previews && !approval.definition && !approval.bindings) return { rows: previews, unrepresentable: null };
   return { rows: [
     ...field('environmentUpdate.environment', t('projects.deployments.review.environment'), current.name),
+    ...previews ?? [],
     ...field('environmentUpdate.removedServices', t('projects.deployments.review.updateRemovesServices'), removed.join(', '), {
       note: removed.length ? t('projects.deployments.review.updateRemovesServicesNote') : undefined }),
     ...field('environmentUpdate.addedServices', t('projects.deployments.review.updateAddsServices'), added.join(', ')),
@@ -765,10 +876,15 @@ export const DeploymentEnvironmentUpdateApprovalFacts = React.memo(function Depl
   const content = record.value?.content;
   const name = content?.name ?? null;
   const services = content ? content.definition.kind === 'stored' ? content.definition.services : null : null;
+  const previewsOn = content ? content.previewTemplate?.enabled === true : null;
+  const previewLinkId = approval.previewTemplate?.runtimeTargetLinkId ?? null;
+  const previewMachine = useReviewMachineName(props.serverId, previewLinkId === null ? null
+    : record.value?.targetLinks.find(row => row.targetLink.id === previewLinkId)?.targetLink.machines[0] ?? null);
   const referenced = React.useMemo(() => [...new Set((approval.bindings?.set ?? []).flatMap(binding =>
     binding.purpose === 'variable' && binding.source.kind === 'reference' ? [binding.source.environmentId] : []))], [approval.bindings]);
   return <NamedEnvironments serverId={props.serverId} ids={referenced}>
     {(names) => <EnvironmentUpdateFields approval={approval} name={name} services={services} names={names}
+      previewsOn={previewsOn} previewMachine={previewMachine}
       serverId={props.serverId} testID={props.testID} technicalRows={props.technicalRows} />}
   </NamedEnvironments>;
 });
@@ -777,15 +893,18 @@ const EnvironmentUpdateFields = React.memo(function EnvironmentUpdateFields(prop
   approval: DeploymentEnvironmentUpdateApproval;
   name: string | null;
   services: readonly string[] | null;
+  previewsOn: boolean | null;
+  previewMachine: string | null;
   names: EnvironmentNames;
   serverId: string | null;
   testID: string;
   technicalRows?: ApprovalFieldsPresentation['rows'];
 }>) {
   const presentation = React.useMemo(() => {
-    const facts = describeDeploymentEnvironmentUpdateFields(props.approval, { name: props.name, services: props.services }, props.names);
+    const facts = describeDeploymentEnvironmentUpdateFields(props.approval, { name: props.name, services: props.services,
+      previewsOn: props.previewsOn, previewMachine: props.previewMachine }, props.names);
     return { ...facts, rows: [...facts.rows, ...props.technicalRows ?? []] };
-  }, [props.approval, props.name, props.services, props.names, props.technicalRows]);
+  }, [props.approval, props.name, props.services, props.previewsOn, props.previewMachine, props.names, props.technicalRows]);
   return <ActionApprovalFieldsCard presentation={presentation} anatomy="page" serverId={props.serverId}
     title={t('projects.deployments.review.updateWhatTitle')} testID={`${props.testID}.fields`} />;
 });

@@ -506,12 +506,15 @@ describe('native confirmation of a carried executor review', () => {
       const callsBefore = vi.mocked(Modal.show).mock.calls.length;
       const input = { actionId: 'account.delete', actionArgs: {}, preview: { summary: 'Delete the receiving Account and its saved data.' },
         title: 'Delete Account?', summary: null, confirmLabel: 'Delete Account', irreversible: true, serverId: null,
-        typedConfirmation: { text: 'DELETE', placeholder: 'DELETE' } } satisfies Parameters<typeof confirmActionReview>[0];
+        typedConfirmation: { text: 'DELETE', placeholder: 'DELETE', instruction: 'Type DELETE to continue.' } } satisfies Parameters<typeof confirmActionReview>[0];
       const answer = confirmActionReview(input);
       try {
         await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
         expect(screen.getTextContent()).toContain('Delete the receiving Account and its saved data.');
         expect(screen.findByTestId('actions.confirmation-review.typed-confirmation')).not.toBeNull();
+        // The prompt follows the card's lead; the request's facts and Technical details close the card (R19-D6).
+        const text = screen.getTextContent();
+        expect(text.indexOf('Type DELETE to continue.')).toBeLessThan(text.indexOf('Delete the receiving Account and its saved data.'));
         await act(async () => {
           screen.changeTextByTestId('actions.confirmation-review.typed-confirmation', typed);
         });

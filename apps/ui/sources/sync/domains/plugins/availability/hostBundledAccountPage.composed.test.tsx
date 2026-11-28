@@ -417,8 +417,9 @@ it.each(['platform', 'machine-context', 'machine'] as const)('mounts an admitted
         } });
     };
     publishAvailability(1, true);
+    // The page's own plugin deploys this Environment: an Environment page belongs only where its plugin is linked.
     const runtime = createDeploymentTargetLinkHeaderV1({
-        source: { kind: 'plugin', contribution: { pluginId, localId: 'runtime' } },
+        source: { kind: 'plugin', contribution: { pluginId: installed ? pluginId : 'happier.fixture', localId: 'runtime' } },
         targetKind: 'vercel',
         machines: [], members: [], state: 'configured', activeDeploymentId: undefined,
         ...(placement !== 'platform' ? { machineId, installationId: 'target-installation' } : {}),
@@ -445,6 +446,10 @@ it.each(['platform', 'machine-context', 'machine'] as const)('mounts an admitted
     account.home.answer(scope.serverId, `GET /v1/deployments/environments/${id}`, { select: () => ({ body: admit
         ? { ok: true, environment: detail.environment, targetLinks: [runtime] }
         : { ok: false, error: 'deployment_access_denied' } }) });
+    // A Machine or Compose Environment no plugin deploys: no plugin's Environment page (R20-D7).
+    account.home.answer(scope.serverId, 'GET /v1/deployments/environments/unlinked', {
+        body: { ok: true, environment: { ...detail.environment, id: 'unlinked', runtimeTargetLinkId: undefined }, targetLinks: [] },
+    });
     account.home.answer(scope.serverId, 'GET /v1/deployments/environments/foreign', {
         body: { ok: true, environment: detail.environment, targetLinks: [] },
     });
@@ -534,6 +539,11 @@ it.each(['platform', 'machine-context', 'machine'] as const)('mounts an admitted
             expect(countResourceReads()).toBe(before);
         };
         await assertIdle();
+        await screen.update(render('unlinked'));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.environment.header')).toBeTruthy());
+        await flushHookEffects();
+        expect(screen.findByTestId(pageTestId)).toBeNull();
+        expect(screen.findByTestId(expandButton)).toBeNull();
         for (const refused of ['foreign', 'foreign-source', 'foreign-home']) {
             await screen.update(render(refused, true, Object.fromEntries(expanded.searchParams)));
             await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.environment.state')).toBeTruthy());

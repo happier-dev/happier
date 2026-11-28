@@ -27,6 +27,7 @@ import type { DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
 import type { createDeploymentActions } from './deploymentActions';
 import { DeploymentActionFailureV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTabState } from './DeploymentTabState';
+import { deploymentVolumeDisplayName as volumeDisplayName } from './deploymentPresentation';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import type { DeploymentTeardownPreviewV1, DeploymentTeardownVolumesV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -35,7 +36,6 @@ import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/action
 
 type Choice = 'remove' | 'detach';
 /** Compose prefixes a volume with Happier's project id; the person's name for it is what follows. The exact name stays in the delete confirmation. */
-const volumeDisplayName = (name: string) => name.replace(/^happier-[0-9a-f]+_/, '');
 const NO_REVIEW: DeploymentReviewHandle = { pendingId: null, request: () => {}, open: () => {} };
 const PRESENTED = { mounted: true, visible: true, focused: true } as const;
 
@@ -162,6 +162,8 @@ function DeploymentDispositionSheet(
   // The volumes this removal deletes, by the names the person typed; said as a fact before and as the outcome after.
   const deletedVolumes = choice === 'remove' && volumeReview
     ? volumeReview.filter(volume => volumeChoices[volume.name] === 'delete').map(volume => volumeDisplayName(volume.name)) : [];
+  const keptVolumes = choice === 'remove' && volumeReview
+    ? volumeReview.filter(volume => volumeChoices[volume.name] !== 'delete').map(volume => volumeDisplayName(volume.name)) : [];
   const { onClose, onApproval, onDone, run } = props;
   const confirm = async () => {
     if (busy || (choice === 'remove' && (!props.canRemove || !domainsReady || !volumesReady || !volumesConfirmed || !resourceConfirmed))) return;
@@ -185,11 +187,13 @@ function DeploymentDispositionSheet(
       } else if (choice === 'remove' && outcome.kind === 'deleted') {
         // The Environment and its receipts leave with it, so what went is said once here, before its page closes.
         const stopped = props.running && props.services?.length ? props.services.join(', ') : null;
-        if (stopped || deletedVolumes.length) {
+        if (stopped || deletedVolumes.length || keptVolumes.length) {
           await Modal.alertAsync(t('projects.deployments.removedOutcomeTitle', { name: props.name }), [
             stopped ? t('projects.deployments.removedOutcomeStopped', { services: stopped }) : null,
             deletedVolumes.length ? t('projects.deployments.removedOutcomeDeleted',
               { names: deletedVolumes.join(', '), count: deletedVolumes.length }) : null,
+            // A kept volume is named too, so the person knows its data is still on the Machine (R20-D4).
+            keptVolumes.length ? t('projects.deployments.removedOutcomeKept', { names: keptVolumes.join(', ') }) : null,
           ].filter(Boolean).join('\n\n'));
         }
       }
@@ -396,11 +400,10 @@ function DeploymentDispositionSheet(
       ) : null}
       {resource && platform && resourceName && choice === 'remove' ? <ItemGroup testID="project-deployments.disposition.resource"
         title={resource.consequence ?? t('projects.deployments.platformLink.deleteConsequence', { resource: resourceName, platform })}>
-        {/* The prompt reads as a sentence; only the name to type is in the code face, in the field it must match. */}
         <Item title={resourceConfirmation} accessoryLayout="adaptive"
           showChevron={false} rightElement={<FieldTextInput testID="project-deployments.disposition.resourceConfirmation"
             accessibilityLabel={resourceConfirmation ?? undefined} placeholder={resource.name} placeholderIsValue
-            value={typedResource} editable={!busy} monospace autoCapitalize="none" autoComplete="off"
+            value={typedResource} editable={!busy} autoCapitalize="none" autoComplete="off"
             onChangeText={setTypedResource} />} />
       </ItemGroup> : null}
       {/* No named volumes: Keeps below already says what stays, so no separate empty Data card (PAGE-ACCEPT-176 R10-D13). */}
@@ -425,7 +428,7 @@ function DeploymentDispositionSheet(
               testID={`project-deployments.disposition.volume.${volume.name}.confirmation`}
               accessibilityLabel={t('projects.deployments.volumeConfirmation', { name: volumeDisplayName(volume.name) })}
               placeholder={volumeDisplayName(volume.name)} placeholderIsValue
-              value={confirmations[volume.name] ?? ''} editable={!busy} monospace autoCapitalize="none" autoComplete="off"
+              value={confirmations[volume.name] ?? ''} editable={!busy} autoCapitalize="none" autoComplete="off"
               onChangeText={text => setConfirmations(previous => ({ ...previous, [volume.name]: text }))} />} /> : null}
         </React.Fragment>)}
       </ItemGroup> : null}

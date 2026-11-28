@@ -11,6 +11,7 @@ import { isDeploymentRollbackSourceEligibleV1, type DeploymentMachineResultV1 } 
 import { deploymentInProgressStates } from '@happier-dev/protocol/deployments/deploymentStateV1';
 import { DeploymentReceiptAcceptedResultV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptResultV1';
 import { DeploymentExecutionFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
+import type { DeploymentTeardownContentV1 } from '@happier-dev/protocol/deployments/deploymentTeardownContentV1';
 import { randomUUID } from '@/platform/randomUUID';
 import { ROLLBACK_RESPONSE_UNAVAILABLE } from '@/sync/ops/actions/actionResult';
 import type { UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -66,7 +67,6 @@ import {
   readDeploymentPromotionTarget,
   deploymentDeployAvailability,
   deploymentFailureTitle,
-  deploymentReceiptTitle,
   deploymentHealthFact,
   deploymentEnvironmentHealthKind,
   deploymentMachineHealthLabel,
@@ -80,6 +80,8 @@ import {
   deploymentActorLabel,
   keptForRollbackValue,
   readDeploymentRefusalRecovery,
+  deploymentReceiptPageTitle,
+  deploymentRemovalVolumes,
 } from './deploymentPresentation';
 import { useDeploymentActorPresentations } from './useDeploymentActorPresentations';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -611,7 +613,7 @@ export const DeploymentReceiptDetail = React.memo(
           <ItemList testID="project-deployments.receipt">
             <PageHeader
               testID="project-deployments.receipt.header"
-              title={deploymentReceiptTitle(deployment, sourceLabel)}
+              title={deploymentReceiptPageTitle(deployment, sourceLabel, props.environmentName)}
               alwaysShowTitle
               // The commit's own subject says what this version is; a stored definition has none.
               description={facts.commitSubject ?? undefined}
@@ -683,6 +685,9 @@ export const DeploymentReceiptDetail = React.memo(
                   : undefined}
                 details={failureCode ? [failureCode] : undefined}
               />
+            ) : deployment.state === 'succeeded' && deployment.operation === 'teardown' && content.teardown?.machines.length ? (
+              // A removal leads with what it stopped, what it did to each volume and what stays (R20-D4).
+              <RemovalOutcome teardown={content.teardown} machineName={machineName} />
             ) : deployment.state === 'succeeded' && deployment.operation !== 'teardown' ? (
               // A removal's title already says it removed; what happened to its data follows, never a "Deployed" card.
               <SucceededOutcome
@@ -912,6 +917,31 @@ function ReceiptMenu(props: Readonly<{
  * A successful deploy's outcome is the thing itself (lab d3 `success`): the address it recorded, or the Machine
  * it serves on, with the health it had when it settled and the downtime it took.
  */
+/** A finished removal in the person's terms: where it stopped, each volume deleted or kept by name, what stays. */
+function RemovalOutcome(props: Readonly<{
+  teardown: DeploymentTeardownContentV1;
+  machineName: (machineId: string) => string;
+}>) {
+  const { deleted, kept } = deploymentRemovalVolumes(props.teardown);
+  const machines = [...new Set(props.teardown.machines.map(member => props.machineName(member.machineId)))].join(', ');
+  return (
+    <ItemGroup testID="project-deployments.receipt.outcome.removed">
+      <Item
+        testID="project-deployments.receipt.outcome.removed.row"
+        leftElement={<WorkStatusGlyph status={deploymentWorkStatus('succeeded')} testIDSuffix="deployment-outcome" />}
+        title={t('projects.deployments.removedOutcomeStoppedOn', { machine: machines })}
+        subtitle={[
+          deleted.length ? t('projects.deployments.removedOutcomeDeleted', { names: deleted.join(', '), count: deleted.length }) : null,
+          kept.length ? t('projects.deployments.removedOutcomeKept', { names: kept.join(', ') }) : null,
+          t('projects.deployments.removedOutcomeStays'),
+        ].filter(Boolean).join('\n')}
+        subtitleLines={0}
+        mode="info"
+      />
+    </ItemGroup>
+  );
+}
+
 const SucceededOutcome = React.memo(function SucceededOutcome(props: Readonly<{
   facts: DeploymentReceiptFactsV1;
   live: DeploymentLiveAddress | null;

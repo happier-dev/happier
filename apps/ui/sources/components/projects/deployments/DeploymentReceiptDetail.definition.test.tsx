@@ -240,6 +240,47 @@ describe('retained stored deployment source', () => {
     }
   });
 
+  it.each([
+    ['remove', 'absent', 'Deleted postgres-data and its data.'],
+    ['retain', 'retained', 'Kept postgres-data.'],
+  ] as const)('leads a native removal with what it stopped and did to each volume (%s)', async (disposition, proved, expected) => {
+    const serverId = await homes.addHome({ name: 'Team Wiki', serverUrl: 'https://team-wiki.test',
+      serverIdentityId: `srv_${'a'.repeat(32)}`, accountId: 'account-owner', currentAccount: true });
+    const base = createDeploymentReceiptDetailV1();
+    const member = { machineId: 'machine-a', installationId: 'installation-a' };
+    const volume = 'happier-0123abcd_postgres-data';
+    const receipt = createDeploymentReceiptDetailV1({ deployment: { ...base.deployment, operation: 'teardown', state: 'succeeded' },
+      content: { ...base.content, teardown: { reason: 'manual', targetLinkRevision: 1, machines: [member],
+        resources: [{ id: 'environment', kind: 'workload', machineId: 'machine-a', ownership: 'owned', disposition: 'remove' },
+          { id: volume, kind: 'data', machineId: 'machine-a', ownership: 'owned', disposition }],
+        proofs: [{ step: 'removeTarget', ...member, state: 'succeeded', resources: [{ resourceId: volume, disposition: proved }] }] } } });
+    const environment = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
+    const controller = createDeploymentReadControllerV1({ scope: { serverId, accountId: 'account-owner' }, transport: {
+      listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+      readEnvironment: async () => ({ ok: true, value: environment }),
+      listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+      readReceipt: async () => ({ ok: true, value: receipt }),
+    } });
+    try {
+      const screen = await renderAccountScreen(<DeploymentReceiptDetail controller={controller} environmentId={receipt.deployment.environmentId}
+        deploymentId={receipt.deployment.id} environmentName="Production" demand={{ mounted: true, visible: true, focused: true }}
+        accountId="account-owner" serverId={serverId} readLogs={null} onBack={() => {}} rollback={null} cancel={null} deploy={null}
+        phone={false} linkPath={null} review={{ pendingId: null, request() {}, open() {} }} onOpenReceipt={() => {}} />);
+      await waitForReceipt(screen);
+      expect(screen.findAllByProps({ title: 'Production removed' }).length).toBeGreaterThan(0);
+      const outcome = screen.findByTestId('project-deployments.receipt.outcome.removed');
+      expect(outcome, screen.getTextContent()).not.toBeNull();
+      const text = screen.getTextContent();
+      expect(text).toContain(expected);
+      expect(text).toContain(t('projects.deployments.removedOutcomeStays'));
+      // The outcome row itself says it, so it leads before the record of what was deployed.
+      expect(screen.findAllByProps({ testID: 'project-deployments.receipt.outcome.removed.row' })
+        .some(row => String(row.props.subtitle).includes(expected))).toBe(true);
+    } finally {
+      controller.retire();
+    }
+  });
+
   it.each(['deploy', 'teardown'] as const)('keeps exact retained definition history for %s without claiming removed apps survive', async operation => {
     const serverId = await homes.addHome({ name: 'Definitions', serverUrl: 'https://definitions.test',
       serverIdentityId: `srv_${'a'.repeat(32)}`, accountId: 'account-owner', currentAccount: true });

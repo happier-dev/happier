@@ -37,7 +37,8 @@ vi.mock('@/text', async () => {
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const { DeploymentReviewApprovalFacts, describeDeploymentReviewDecision, readDeploymentReviewApproval,
-  readDeploymentEnvironmentUpdateApproval, describeDeploymentEnvironmentUpdateFields, describeDeploymentEnvironmentUpdateDecision } = await import('./DeploymentReviewApprovalFacts');
+  readDeploymentEnvironmentUpdateApproval, describeDeploymentEnvironmentUpdateFields, describeDeploymentEnvironmentUpdateDecision,
+  readDeploymentPreviewCreateApproval, describeDeploymentPreviewCreateFields, describeDeploymentPreviewCreateDecision } = await import('./DeploymentReviewApprovalFacts');
 
 
 const { ApprovalIncludedSteps, readApprovalIncludedSteps } = await import('./ApprovalIncludedSteps');
@@ -441,6 +442,33 @@ describe('DeploymentReviewApprovalFacts', () => {
     expect(contents).not.toContain('collector-id');
   });
 
+  it.each([['x64', false], ['arm64', true], [null, true]] as const)(
+    'says the emulation cost only when the build is not for the Machine\'s own CPU (arch %s)', async (arch, emulated) => {
+      const serverId = getActiveServerSnapshot().serverId;
+      const machine = createMachineFixture({ id: 'machine-target', metadata: { displayName: 'Build box', host: 'b.local',
+        platform: 'linux', happyCliVersion: '0.0.0-test', happyHomeDir: '/h', homeDir: '/h', ...(arch ? { arch } : {}) } });
+      storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] },
+        machineListStatusByServerId: { [serverId]: 'idle' } });
+      const screen = await renderScreen(
+        <DeploymentReviewApprovalFacts approval={{ review: { ...machineReview, machineId: 'machine-target',
+          buildSupport: { status: 'notObserved' as const, requestedPlatforms: ['linux/amd64'] } }, promotion: null }}
+          serverId={serverId} testID="facts" />,
+      );
+      expect(screen.getTextContent()).toContain('linux/amd64');
+      expect(screen.getTextContent().includes('projects.deployments.review.emulationCost')).toBe(emulated);
+    });
+
+  it('promises no restored release on a first deploy, where nothing served before (R20-D8)', async () => {
+    const ownServer = { rollout: 'recreate', autoRestorePreviousRelease: true };
+    const render = (replaces: unknown) => renderScreen(<DeploymentReviewApprovalFacts approval={{ review: { ...machineReview, risks: [],
+      revision: { kind: 'repository', sha: 'a'.repeat(40) }, replaces, ownServer } as never, promotion: null }}
+      serverId={null} testID="facts" />);
+    expect((await render(null)).getTextContent()).not.toContain('projects.deployments.review.ifItFails');
+    standardCleanup();
+    expect((await render({ deploymentId: 'serving', revision: { kind: 'repository', sha: 'b'.repeat(40) } })).getTextContent())
+      .toContain('projects.deployments.review.restoresVersion');
+  });
+
   it('does not redraw the approval page when only the Machine presence changes', async () => {
     const serverId = getActiveServerSnapshot().serverId;
     const machine = createMachineFixture({ id: 'machine-target', metadata: { displayName: 'Rebound workstation', host: 'w.local',
@@ -529,5 +557,52 @@ describe('an Environment update approval (a data Move cutover) reads as what it 
     expect(readDeploymentEnvironmentUpdateApproval({ actionId: 'deployments.environments.update',
       actionArgs: { ...actionArgs, patch: { protection: 'production' } } })).toBeNull();
     expect(readDeploymentEnvironmentUpdateApproval({ actionId: 'deployments.deploy', actionArgs })).toBeNull();
+  });
+
+  // The previews switch's Save as the Settings page sends it (R20-D2): ids, a boolean and the forge's identity.
+  const previewTemplate = { v: 1, enabled: true, forkPreviews: 'off',
+    repository: { kind: 'github', deployment: 'https://github.com', repository: 'hapier-qa/field-guide-site' },
+    runtimeTargetLinkId: 'link-runtime', domain: null, bindingBlueprints: [], data: [] };
+  const previewsArgs = { serverId: 'server-1', environmentId: 'env-fg', expectedRevision: 3,
+    contentArtifactId: '786dc6c9-0f58-831a-be04-e2fe84052d00', contentHeaderVersion: 1, contentBodyVersion: 1,
+    patch: { previewTemplate } };
+
+  it('says a previews switch turns previews on for the Environment, where each copy runs, with no ids or booleans', () => {
+    const approval = readDeploymentEnvironmentUpdateApproval({ actionId: 'deployments.environments.update', actionArgs: previewsArgs });
+    expect(approval).not.toBeNull();
+    const { rows } = describeDeploymentEnvironmentUpdateFields(approval!,
+      { name: 'field-guide-site Production', services: null, previewsOn: false, previewMachine: 'NLDW3-5-36-33' }, {});
+    const facts = rows.map(row => row.kind === 'value' ? `${row.title}=${row.value}` : row.kind);
+    expect(facts).toEqual(['projects.deployments.review.updatePreviews=projects.deployments.review.updatePreviewsOn']);
+    const shown = JSON.stringify(rows);
+    for (const raw of ['env-fg', 'link-runtime', '786dc6c9', 'true', 'github']) expect(shown).not.toContain(raw);
+    // Turning previews off says so; a change while they stay on says it changes how they are made.
+    const off = readDeploymentEnvironmentUpdateApproval({ actionId: 'deployments.environments.update',
+      actionArgs: { ...previewsArgs, patch: { previewTemplate: { ...previewTemplate, enabled: false } } } });
+    expect(describeDeploymentEnvironmentUpdateFields(off!, { name: 'Staging', services: null, previewsOn: true, previewMachine: null }, {})
+      .rows.map(row => row.kind === 'value' ? row.value : row.kind)).toEqual(['projects.deployments.review.updatePreviewsOff']);
+    expect(describeDeploymentEnvironmentUpdateFields(approval!, { name: 'Staging', services: null, previewsOn: true, previewMachine: null }, {})
+      .rows.map(row => row.kind === 'value' ? row.value : row.kind)).toEqual(['projects.deployments.review.updatePreviewsChanged']);
+  });
+
+  it('reads a preview create as the preview of its template for one pull request', () => {
+    const approval = readDeploymentPreviewCreateApproval({ actionId: 'deployments.environments.create', actionArgs: {
+      serverId: 'server-1', projectSourceId: 'source-1', requestKey: 'a'.repeat(64), mode: 'apply', name: 'pr-3', purpose: 'preview',
+      protection: 'nonProduction', deployerMode: 'managers',
+      preview: { templateEnvironmentId: 'env-fg', expectedTemplateRevision: 3, runtimeTargetLinkId: 'link-runtime',
+        pullRequestId: '5536414932', headSha: 'b'.repeat(40), provenance: { v: 1, templateEnvironmentId: 'env-fg',
+          runtimeTargetLinkId: 'link-runtime', repository: previewTemplate.repository, headRepository: previewTemplate.repository,
+          pullRequestId: '5536414932', pullRequestNumber: 3, author: { id: '1', login: 'octo' } } } } });
+    expect(approval).toEqual({ templateEnvironmentId: 'env-fg', runtimeTargetLinkId: 'link-runtime', pullRequestNumber: 3 });
+    const { rows } = describeDeploymentPreviewCreateFields(approval!, { name: 'field-guide-site Production', machine: 'NLDW3-5-36-33' });
+    expect(rows.map(row => row.kind === 'value' ? `${row.title}=${row.value}` : row.kind)).toEqual([
+      'projects.deployments.review.previewCreate=projects.deployments.review.previewCreateValue',
+      'projects.deployments.review.previewCreateMachine=NLDW3-5-36-33',
+    ]);
+    expect(describeDeploymentPreviewCreateDecision(approval, 'field-guide-site Production'))
+      .toBe('projects.deployments.review.decisionPreviewCreate');
+    // A standard Create keeps its own reading.
+    expect(readDeploymentPreviewCreateApproval({ actionId: 'deployments.environments.create',
+      actionArgs: { serverId: 'server-1', purpose: 'standard' } })).toBeNull();
   });
 });

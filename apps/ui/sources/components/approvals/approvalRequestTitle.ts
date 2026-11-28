@@ -16,7 +16,8 @@ import { readPluginInstallApprovalChange, readPluginInstallSourceName } from './
 import { useApprovalReferenceReading } from './approvalReferenceReading';
 import { useIncomingDiscussionApprovalNames } from './useIncomingDiscussionApprovalNames';
 import type { ActionApprovalPresentationInput } from './actionApprovalPresentation';
-import { describeDeploymentEnvironmentUpdateDecision, describeDeploymentReviewDecision, readDeploymentEnvironmentUpdateApproval,
+import { describeDeploymentEnvironmentUpdateDecision, describeDeploymentPreviewCreateDecision, readDeploymentPreviewCreateApproval,
+  describeDeploymentReviewDecision, readDeploymentEnvironmentUpdateApproval,
   readDeploymentReviewApproval } from './DeploymentReviewApprovalFacts';
 
 export type ApprovalRequestTitleInput = Pick<ActionApprovalPresentationInput, 'execution' | 'executionOriginV1' | 'incomingDiscussionNames'> & Readonly<{
@@ -94,7 +95,9 @@ export function resolveApprovalRequestTitle(
   const reviewedDecision = describeDeploymentReviewDecision(readDeploymentReviewApproval({ preview: input.preview }), actionId || null, null);
   // An Environment update names the Environment it changes once its name is read, never "Update deployment environment".
   const environmentUpdateTitle = reviewedDecision ? null
-    : describeDeploymentEnvironmentUpdateDecision(readDeploymentEnvironmentUpdateApproval(input), input.triggerEnvironmentName ?? null);
+    : describeDeploymentEnvironmentUpdateDecision(readDeploymentEnvironmentUpdateApproval(input), input.triggerEnvironmentName ?? null)
+      // A pull request's preview Create names the Environment it copies ("Create a preview of field-guide-site").
+      ?? describeDeploymentPreviewCreateDecision(readDeploymentPreviewCreateApproval(input), input.triggerEnvironmentName ?? null);
   const title = reviewedDecision ? reviewedDecision.title : environmentUpdateTitle ? environmentUpdateTitle : subjectName && actionTitle ? `${actionTitle} · ${subjectName}` :
     generated
       ? (presentation.title ?? actionTitle ?? t('inbox.work.rows.approvalUntitled'))
@@ -173,7 +176,8 @@ export function useApprovalRequestTitle(input: ApprovalRequestTitleInput, server
   const reading = useApprovalReferenceReading(reference, reference?.id ?? '', serverId);
   // A subject still being read is not a name yet; the title gains it once the read lands.
   const environmentId = readPluginEventTriggerApprovalEnvironmentId(input)
-    ?? readDeploymentEnvironmentUpdateApproval(input)?.environmentId ?? null;
+    ?? readDeploymentEnvironmentUpdateApproval(input)?.environmentId
+    ?? readDeploymentPreviewCreateApproval(input)?.templateEnvironmentId ?? null;
   const { name: triggerEnvironmentName } = useEnvironmentName(serverId, environmentId);
   return resolveApprovalRequestTitle({ ...input, incomingDiscussionNames, triggerEnvironmentName,
       subject: reading.named && !reading.resolving ? reading.text : null });

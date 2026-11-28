@@ -1,5 +1,6 @@
 import { ActionFailureCauseV1Schema, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentReceiptHeaderV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import type { DeploymentTeardownContentV1 } from '@happier-dev/protocol/deployments/deploymentTeardownContentV1';
 import { isNativeDeploymentPromotionSourceV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentEnvironmentContentV1, DeploymentMachineResultV1, DeploymentReceiptFailureV1, DeploymentReceiptDetailV1, DeploymentStepV1 } from '@happier-dev/deployments/contracts/v1';
 import { deploymentHealthSavedCheckCauseV1, isDeploymentServiceRunningWithoutCheckV1, type DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
@@ -221,6 +222,41 @@ const receiptTitleCopy = {
   headline: t,
   state: deploymentStateLabel,
 };
+
+/** A native volume by the name its Compose file gives it, never Compose's `happier-<id>_` project prefix (R15-D9). */
+export function deploymentVolumeDisplayName(name: string): string {
+  return name.replace(/^happier-[0-9a-f]+_/, '');
+}
+
+/**
+ * What a removal did to each volume, by name: the signed proofs say what is gone or kept; a volume no proof mentions
+ * reads by the disposition the person chose.
+ */
+export function deploymentRemovalVolumes(teardown: DeploymentTeardownContentV1 | undefined): Readonly<{
+  deleted: readonly string[]; kept: readonly string[];
+}> {
+  const deleted: string[] = [];
+  const kept: string[] = [];
+  for (const resource of teardown?.resources ?? []) {
+    if (resource.kind !== 'data') continue;
+    const proved = teardown!.proofs.flatMap(proof => proof.resources)
+      .filter(entry => entry.resourceId === resource.id).map(entry => entry.disposition);
+    const gone = proved.includes('absent') || (proved.length === 0 && resource.disposition === 'remove');
+    (gone ? deleted : kept).push(deploymentVolumeDisplayName(resource.id));
+  }
+  return { deleted, kept };
+}
+
+/** A settled removal is titled by the Environment it removed when the page knows it ("Production removed"). */
+export function deploymentReceiptPageTitle(
+  receipt: Pick<DeploymentReceiptHeaderV1, 'state' | 'operation'>,
+  revisionLabel: string | null,
+  environmentName: string | null | undefined,
+): string {
+  return receipt.operation === 'teardown' && receipt.state === 'succeeded' && environmentName
+    ? t('projects.deployments.removedOutcomeTitle', { name: environmentName })
+    : deploymentReceiptTitle(receipt, revisionLabel);
+}
 
 export function deploymentReceiptTitle(
   receipt: Pick<DeploymentReceiptHeaderV1, 'state' | 'operation'>,

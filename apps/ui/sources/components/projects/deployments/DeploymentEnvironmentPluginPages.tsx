@@ -20,12 +20,18 @@ import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 
 type EnvironmentTarget = Extract<PluginSurfaceTarget, { kind: 'deploymentEnvironment' }>;
 
-/** The Environment read owns the addressed record. Plugin admission and rendering stay with the shared page host. */
+/**
+ * The Environment read owns the addressed record. Plugin admission and rendering stay with the shared page host.
+ * A deployment plugin's page belongs to the Environments it deploys: it shows only where one of the Environment's
+ * live target links comes from that plugin (R20-D7: no "Vercel project" section on a Machine or Compose Environment).
+ */
 export function DeploymentEnvironmentPluginPages(props: Readonly<{
     target: EnvironmentTarget;
     lifetime: ServerAccountScopeLifetime;
+    /** The plugins behind this Environment's live target links, as one stable key (ids joined by a newline). */
+    targetPluginIdsKey: string;
 }>): React.ReactElement | null {
-    const { target, lifetime } = props;
+    const { target, lifetime, targetPluginIdsKey } = props;
     const params = useLocalSearchParams<Record<string, string | string[] | undefined>>();
     const openPage = usePluginPageCatalogActivationHandler();
     const projection = useAppShellPluginUiPageProjection();
@@ -35,9 +41,12 @@ export function DeploymentEnvironmentPluginPages(props: Readonly<{
     const sameAccount = account?.isCurrent() === true && lifetime.isCurrent()
         && account.scope.accountId === lifetime.scope.accountId
         && areServerProfileIdentifiersEquivalent(account.scope.serverId, target.serverId);
-    const placements = React.useMemo(() => sameAccount
-        ? selectPluginPagePlacements(projection.pluginUiProjection, { container: 'appPage', targetKind: target.kind })
-        : [], [sameAccount, projection.pluginUiProjection, target.kind]);
+    const placements = React.useMemo(() => {
+        if (!sameAccount || !targetPluginIdsKey) return [];
+        const linked = new Set(targetPluginIdsKey.split('\n'));
+        return selectPluginPagePlacements(projection.pluginUiProjection, { container: 'appPage', targetKind: target.kind })
+            .filter(placement => linked.has(placement.pluginId));
+    }, [sameAccount, targetPluginIdsKey, projection.pluginUiProjection, target.kind]);
     const pages = usePluginPages({ target, placements, localize });
     const selected = PluginUiDestinationReferenceV1Schema.safeParse({
         pluginId: params.deploymentPlugin, localId: params.deploymentPluginPage,

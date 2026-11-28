@@ -109,6 +109,15 @@ function ConfirmationReviewModal(props: ConfirmationReviewModalProps) {
   return (
     <ListPresentationProvider value="page" pageInsets="contained">
       <View testID="actions.confirmation-review" style={styles.body}>
+        {/* A typed challenge answers the card's lead, so it sits right under it; the request's facts and their Technical
+            details close the card rather than standing between the question and its answer (R19-D6). */}
+        {typedConfirmation && !notice ? <View style={styles.challenge}>
+          {typedConfirmation.instruction ? <Text variant="body">{typedConfirmation.instruction}</Text> : null}
+          <FieldTextInput testID="actions.confirmation-review.typed-confirmation"
+            accessibilityLabel={typedConfirmation.text} value={typedValue} onChangeText={setTypedValue}
+            placeholder={typedConfirmation.placeholder ?? typedConfirmation.text} autoCapitalize="none"
+            onSubmitEditing={() => answer(true)} returnKeyType="done" />
+        </View> : null}
         {notice ? <View accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.challenge}>
           <Text variant="body" emphasis="semiBold">{notice.title}</Text>
           <Text variant="body">{notice.body}</Text>
@@ -122,13 +131,6 @@ function ConfirmationReviewModal(props: ConfirmationReviewModalProps) {
           testID="actions.confirmation-review"
           summaryPlacement={props.summaryPlacement}
         />}
-        {typedConfirmation && !notice ? <View style={styles.challenge}>
-          {typedConfirmation.instruction ? <Text variant="body">{typedConfirmation.instruction}</Text> : null}
-          <FieldTextInput testID="actions.confirmation-review.typed-confirmation"
-            accessibilityLabel={typedConfirmation.text} value={typedValue} onChangeText={setTypedValue}
-            placeholder={typedConfirmation.placeholder ?? typedConfirmation.text} autoCapitalize="none"
-            onSubmitEditing={() => answer(true)} returnKeyType="done" />
-        </View> : null}
       </View>
     </ListPresentationProvider>
   );
