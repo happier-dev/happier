@@ -97,6 +97,46 @@ export async function acquireMachineRegistrationAccountsInTx(tx: Tx, input: Read
     return declarationBodies;
 }
 
+type MachineTerminalBinding = Readonly<{
+    id: string;
+    kind: MachineKind;
+    accountId: string;
+    terminalAuthRequestId: string | null;
+    deploymentAppDeploymentId: string | null;
+    replacedByMachineId: string | null;
+}>;
+
+type MachineRegistrationCredential = Readonly<{
+    managedEnrollment?: MachineEnrollmentCorrelationV1;
+    terminalAuthRequestId?: string;
+}>;
+
+export function readMachineRegistrationCredentialToBind(
+    machine: MachineTerminalBinding,
+    { managedEnrollment, terminalAuthRequestId }: MachineRegistrationCredential,
+): string | undefined {
+    if (managedEnrollment || machine.deploymentAppDeploymentId || machine.replacedByMachineId || !isPersistentMachine(machine)) {
+        return undefined;
+    }
+    return terminalAuthRequestId === machine.terminalAuthRequestId ? undefined : terminalAuthRequestId;
+}
+
+/** The registration Account lock serializes writers for the signed, Account-owned terminal id. */
+export async function bindMachineRegistrationCredentialInTx(
+    tx: Tx,
+    machine: MachineTerminalBinding,
+    credential: MachineRegistrationCredential,
+): Promise<void> {
+    const terminalAuthRequestId = readMachineRegistrationCredentialToBind(machine, credential);
+    if (!terminalAuthRequestId) return;
+    const bound = await tx.machine.findUnique({ where: { terminalAuthRequestId }, select: { id: true } });
+    if (bound) return;
+    await tx.machine.update({
+        where: { accountId_id: { accountId: machine.accountId, id: machine.id } },
+        data: { terminalAuthRequestId },
+    });
+}
+
 export async function createMachineWithInstallationIdentityInTx(
     tx: Tx,
     params: Readonly<{
@@ -169,6 +209,8 @@ export async function createMachineWithInstallationIdentityInTx(
         }),
     }).then(decodeMachineStoredContent);
 
+    if (!params.managedEnrollment) await bindMachineRegistrationCredentialInTx(tx, machine, params);
+
     const machineReplacement = isPersistentMachine(machine) && params.installationIdentity?.replacesMachineId
         ? await applyVerifiedMachineRegistrationReplacement({
             tx,
@@ -177,6 +219,7 @@ export async function createMachineWithInstallationIdentityInTx(
             replacementMachine: machine,
             replacesMachineId: params.installationIdentity.replacesMachineId,
             reason: params.replacementReason,
+            terminalAuthRequestId: readMachineRegistrationCredentialToBind(machine, params),
         })
         : null;
 

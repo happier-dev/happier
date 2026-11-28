@@ -88,7 +88,9 @@ describe('core e2e: machine installation identity replacement', () => {
     let daemon: Awaited<ReturnType<typeof startTestDaemon>> | undefined;
     let ui: Awaited<ReturnType<typeof connectUiActionClient>> | undefined;
     try {
-      fixture = await startTeamSetupFFixture({ testDir, dbProvider: 'postgres',
+      // A key-challenge terminal credential can still reach the Machine registration route after removal.
+      // The paired-credential sign-out journey covers the earlier auth refusal separately.
+      fixture = await startTeamSetupFFixture({ testDir, dbProvider: 'postgres', daemonAuthentication: 'existing-terminal',
         serverEnv: { DATABASE_URL: postgres.homeDatabaseUrl } });
       const account = await fixture.createAccount('rotation-owner');
       // Keep the actual Action client alive across registration, rather than

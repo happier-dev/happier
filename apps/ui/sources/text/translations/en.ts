@@ -19872,7 +19872,7 @@ const enMachine = {
     removeMachineSubtitle:
       'Revokes this machine and removes it from your account.',
     removeMachineConfirmBody:
-      'This will revoke access from this machine (including access keys and automation assignments). Dependent Automations pause, waiting Runs that can no longer execute are cancelled, and possibly-started Runs are marked Outcome uncertain. You can reconnect later by signing in again from the CLI.',
+      'Removing a terminal-paired computer signs it out of your account and revokes its access keys and automation assignments. Dependent Automations pause, waiting Runs that can no longer execute are cancelled, and possibly-started Runs are marked Outcome uncertain. It keeps anything it already downloaded. You can reconnect later by signing in again from the CLI.',
     removeMachineAlreadyRemoved:
       'This machine has already been removed from your account.',
   },

@@ -15482,7 +15482,7 @@ settingsSession: {
           actions: {
               removeMachine: 'Elimina la màquina',
               removeMachineSubtitle: 'Revoca aquesta màquina i la elimina del teu compte.',
-              removeMachineConfirmBody: 'Això revocarà l’accés d’aquesta màquina (incloent-hi claus d’accés i assignacions d’automatitzacions). Pots reconnectar-la més endavant iniciant sessió de nou des del CLI.',
+              removeMachineConfirmBody: 'Si has vinculat aquest ordinador des del terminal, eliminar-lo en tanca la sessió del teu compte i revoca les claus d’accés i les assignacions d’automatització. Conserva tot el que ja ha baixat. Pots reconnectar-la més endavant iniciant sessió de nou des del CLI.',
               removeMachineAlreadyRemoved: 'Aquesta màquina ja s’ha eliminat del teu compte.',
           },
           replacementRepair: {

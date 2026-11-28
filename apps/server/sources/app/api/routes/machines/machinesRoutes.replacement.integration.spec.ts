@@ -5,13 +5,16 @@ import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent, signMac
     computeContentPublicKeyFingerprint, serializeAutomationStoredWorkflowDefinitionRecipeV2,
     buildAccountStoredContentCompatibilityHttpHeadersV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from "@happier-dev/protocol";
 import { db } from "@/storage/db";
+import { auth } from "@/app/auth/auth";
+import { randomUUID } from "node:crypto";
 import { eventRouter } from "@/app/events/eventRouter";
+import { applyVerifiedMachineRegistrationReplacement } from "@/app/machines/applyVerifiedMachineRegistrationReplacement";
 import { createSessionMachineAccessKeyInTx } from "@/app/accessKeys/sessionMachineAccessKeyMutations";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
 import { createSocketRoomDiscoveryHarness } from '../../testkit/socketHarness';
-import { getMachineSocketRoom } from '@/app/api/socketRooms';
+import { getMachineSocketRoom, getTerminalCredentialRevocationSocketRoom } from '@/app/api/socketRooms';
 import { machinesRoutes } from "./machinesRoutes";
 import { seedBundledManagedAvailability } from '@/app/machines/managed/managedProjectionVolume.testkit';
 import { admitManagedControl } from '@/app/machines/managed/managedMutations';
@@ -24,7 +27,7 @@ describe("machinesRoutes machine replacement", () => {
     let fingerprint: string;
     const connectedMachines = new Set<string>();
     const homeId = `srv_${'a'.repeat(32)}`;
-    beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: "happier-machine-route-replacement-", initAuth: false,
+    beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: "happier-machine-route-replacement-", initAuth: true,
         initEncrypt: true, env: { HAPPIER_SERVER_IDENTITY_ID: homeId } }); }, 120_000);
     beforeEach(async () => {
         connectedMachines.clear();
@@ -78,6 +81,55 @@ describe("machinesRoutes machine replacement", () => {
             contentPublicKeyFingerprint: plain ? null : fingerprint, active: true, lastActiveAt: new Date() } });
         if (connected) connectedMachines.add('m2');
     }
+
+    it("carries the registering terminal credential across automatic replacement and signs it out on removal", async () => {
+        const session = randomUUID();
+        const terminal = await auth.createToken(accountId, { session }, { kind: "terminal", authority: "account_automation" });
+        const person = await auth.createToken(accountId, undefined, { kind: "account", authority: "present_user" });
+        const disconnected: string[] = [];
+        eventRouter.setIo({ to: rooms => ({
+            emit: () => undefined,
+            disconnectSockets: () => disconnected.push(...(Array.isArray(rooms) ? rooms : [rooms])),
+        }) });
+        await withAuthenticatedTestApp(machinesRoutes, async app => {
+            const request = (method: "GET" | "POST", url: string, token: string, payload?: unknown) => app.inject({
+                method, url, headers: { authorization: `Bearer ${token}` }, payload,
+            });
+            const rejoin = await request("POST", "/v1/machines", terminal, { id: "m1", metadata: "opaque" });
+            expect(rejoin.statusCode).toBe(200);
+            expect(await db.machine.findUniqueOrThrow({ where: { id: "m1" }, select: { terminalAuthRequestId: true } }))
+                .toEqual({ terminalAuthRequestId: session });
+            const sibling = await request("POST", "/v1/machines", terminal, proposal());
+            expect(sibling.statusCode).toBe(200);
+            expect(await db.machine.findUniqueOrThrow({ where: { id: "m2" }, select: { terminalAuthRequestId: true } }))
+                .toEqual({ terminalAuthRequestId: null });
+            const replacement = await request("POST", "/v1/machines", terminal, proposal("m1"));
+            expect(replacement.statusCode).toBe(200);
+            expect(replacement.json()).toMatchObject({ machine: { id: "m2" }, machineReplacement: { status: "applied" } });
+            expect(disconnected).toEqual([getMachineSocketRoom(accountId, "m1")]);
+            expect((await request("GET", "/v1/machines", terminal)).statusCode).toBe(200);
+            expect((await request("POST", "/v1/machines/m2/revoke", person)).statusCode).toBe(200);
+            expect(disconnected).toContain(getTerminalCredentialRevocationSocketRoom(accountId, session));
+            expect((await request("GET", "/v1/machines", terminal)).statusCode).toBe(401);
+            const refused = await request("POST", "/v1/machines", person, proposal());
+            expect(refused.statusCode).toBe(410);
+            expect(refused.json()).toEqual({ error: "machine_revoked" });
+        }, { authentication: "real" });
+    });
+
+    it("preserves sign-out when an admitted registration replaces a Machine already removed", async () => {
+        const session = randomUUID();
+        await readyReplacement(false, false);
+        await db.machine.update({ where: { id: "m1" }, data: { revokedAt: new Date(), terminalAuthRequestId: session } });
+
+        const replaced = await inTx(tx => applyVerifiedMachineRegistrationReplacement({
+            tx, accountId, replacesMachineId: "m1", replacementMachineId: "m2",
+            terminalAuthRequestId: session, reason: "credentials_moved",
+        }));
+        expect(replaced).toMatchObject({ status: "applied" });
+        expect(await db.machine.findUniqueOrThrow({ where: { terminalAuthRequestId: session }, select: { id: true } }))
+            .toEqual({ id: "m1" });
+    });
 
     it("creates machines with installation identity and replacement fields serialized", async () => {
         const response = await invoke(proposal());

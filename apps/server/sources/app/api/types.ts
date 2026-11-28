@@ -8,7 +8,7 @@ import type { PeerMediationViewerSocketOwnershipVerifier } from "@/app/api/socke
 import type { ExternalActionDaemonDispatcher } from "@/app/api/socket/externalActionDispatcher";
 import type { ExternalProviderBrokerDispatch } from "@/app/api/routes/providers/registerExternalProviderApiRoutes";
 import type { TeamCredentialResourceTestBrokerDispatch } from "@/app/api/routes/providers/externalProviderBrokerDispatcher";
-import type { VerifiedApiTokenPrincipal } from "@/app/auth/auth";
+import type { VerifiedApiTokenPrincipal, VerifiedAuthToken } from "@/app/auth/auth";
 import type { AccountStoredContentCompatibilityEvaluation } from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import type { MachineDaemonPresenceSocketServer } from "@/app/machines/machineDaemonPresence";
 import type { AutomationReplyHandoffDispatchResultV1 } from '@happier-dev/protocol/automations/event';
@@ -143,8 +143,8 @@ declare module 'fastify' {
         authTokenLegacy?: boolean;
         /** Epoch of the exact verified signed bearer; never inferred from current Account state. */
         authTokenEpoch?: number;
-        /** Existing pairing-request id from this verified terminal credential's signed extras. */
-        authTerminalRequestId?: string;
+        /** Verified terminal pairing and deployment enrollment facts. */
+        authTerminalCredential?: VerifiedAuthToken["terminalCredential"];
         /** Server-produced method/provider facts carried by the verified credential. */
         authTokenAuthenticationEvidence?: readonly AuthTokenAuthenticationEvidenceV1[];
         /** Request-local verified provenance for an admitted PAT; never a raw bearer. */

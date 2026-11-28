@@ -11,6 +11,7 @@ import { formatGovernanceChange, formatGovernanceSummary, readGovernanceApproval
 import { appendTeamCredentialSourceSummary } from '@happier-dev/protocol/actions/specs/teamCredentialApproval';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MACHINE_REMOVE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
 import { describeManagedAcquireApprovalLine } from '@/components/settings/machines/managed/managedProvisionerKind';
 import { describeApprovalActionFields, readSettledSessionTeamApproval, readTeamMemberApprovalPresentation,
     type ApprovalActionReference, type SettledSessionTeamApproval } from '@happier-dev/protocol/actions/actionApprovalPresentation';
@@ -335,7 +336,8 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
                 : english ? summarySource : resolveActionSummary(spec.id, summarySource), subject, role: roleIdentity });
     const erasure = AccountErasureReviewV1Schema.safeParse(readRecord(input.preview).accountErasure);
     const shareLoss = erasure.success ? erasure.data.sharedEnvironments.map(row => t('homeGovernance.erasureSharedEnvironment', row)) : [];
-    const visibleSummary = teamMember && !distinctAuthoredSummary ? null
+    const visibleSummary = spec.id === MACHINE_REMOVE_ACTION_ID_V1 ? t('machine.actions.removeMachineConfirmBody')
+        : teamMember && !distinctAuthoredSummary ? null
         : !distinctAuthoredSummary && summarySource === `${spec.title}.`
         && (summary === titleSource || summary === `${titleSource}.`) ? null : summary;
     // Backup authority follows the Action into both confirmation and Inbox, including authored previews.

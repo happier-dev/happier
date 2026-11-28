@@ -16925,7 +16925,7 @@ settingsSession: {
         removeMachineSubtitle:
           "Revoca questa macchina e la rimuove dal tuo account.",
         removeMachineConfirmBody:
-          "Questo revocherà l’accesso da questa macchina (incluse chiavi di accesso e assegnazioni automazioni). Puoi riconnetterla più tardi accedendo di nuovo dalla CLI.",
+          "Rimuovere un computer associato dal terminale lo disconnette dal tuo account e revoca le sue chiavi di accesso e le assegnazioni delle automazioni. Il computer conserva ciò che ha già scaricato. Puoi riconnetterla più tardi accedendo di nuovo dalla CLI.",
         removeMachineAlreadyRemoved:
           "Questa macchina è già stata rimossa dal tuo account.",
       },

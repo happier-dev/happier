@@ -27,8 +27,10 @@ import {
 } from "@/app/machines/installationProof";
 import {
     acquireMachineRegistrationAccountsInTx,
+    bindMachineRegistrationCredentialInTx,
     createMachineWithInstallationIdentityInTx,
     MachineStorageModeMismatchError,
+    readMachineRegistrationCredentialToBind,
     revokeMachineInTx,
     recheckMachineStoredContentMutationAdmissionInTx,
 } from "@/app/machines/machineMutations";
@@ -535,6 +537,12 @@ export function machinesRoutes(app: Fastify) {
             return reply.code(400).send({ error: "invalid-params", reason: installationRegistration.reason });
         }
         const verifiedInstallationIdentity = installationRegistration.identity;
+        const terminalCredential = request.authTerminalCredential;
+        const registrationCredential = {
+            managedEnrollment,
+            terminalAuthRequestId: terminalCredential?.pendingDeploymentAppEnrollment && !managedEnrollment
+                ? undefined : terminalCredential?.terminalAuthRequestId,
+        };
         if (managedEnrollment && !verifiedInstallationIdentity) {
             return reply.code(400).send({ error: "invalid-params", reason: "installation_identity_required" });
         }
@@ -550,10 +558,12 @@ export function machinesRoutes(app: Fastify) {
             }
             const wantsInstallationUpdate = Object.keys(installationIdentityUpdate.data).length > 0;
             const wantsAutomaticReplacement = Boolean(verifiedInstallationIdentity?.replacesMachineId);
+            const wantsCredentialBinding = Boolean(readMachineRegistrationCredentialToBind(machine, registrationCredential));
 
             if (
                 !wantsInstallationUpdate
                 && !wantsAutomaticReplacement
+                && !wantsCredentialBinding
                 && !managedEnrollment
             ) {
                 try {
@@ -618,15 +628,6 @@ export function machinesRoutes(app: Fastify) {
                         return { error: 'invalid_installation_identity' as const, reason: currentInstallationIdentityUpdate.reason };
                     }
                     const currentWantsInstallationUpdate = Object.keys(currentInstallationIdentityUpdate.data).length > 0;
-                    const currentWantsAutomaticReplacement = Boolean(verifiedInstallationIdentity?.replacesMachineId);
-
-                    if (
-                        !currentWantsInstallationUpdate
-                        && !currentWantsAutomaticReplacement
-                    ) {
-                        if (managedEnrollment) await linkMachineEnrollmentInTx(tx, managedEnrollment, userId, current.id, declarationBodies, request.authTerminalRequestId);
-                        return serializeMachineRowForRequestInTx(tx, current, request, accountMode);
-                    }
 
                     // Registration metadata/state/envelope are create-only. Existing metadata also contains
                     // user-owned fields such as displayName, and the server cannot merge its
@@ -642,6 +643,7 @@ export function machinesRoutes(app: Fastify) {
                         await markAccountChanged(tx, { accountId: userId, kind: 'machine', entityId: updatedMachine.id });
                     }
 
+                    if (!managedEnrollment) await bindMachineRegistrationCredentialInTx(tx, updatedMachine, registrationCredential);
                     if (verifiedInstallationIdentity?.replacesMachineId) {
                         machineReplacement = await applyVerifiedMachineRegistrationReplacement({
                             tx,
@@ -650,10 +652,11 @@ export function machinesRoutes(app: Fastify) {
                             replacementMachine: updatedMachine,
                             replacesMachineId: verifiedInstallationIdentity.replacesMachineId,
                             reason: automaticReplacementReason,
+                            terminalAuthRequestId: readMachineRegistrationCredentialToBind(updatedMachine, registrationCredential),
                         });
                     }
 
-                    if (managedEnrollment) await linkMachineEnrollmentInTx(tx, managedEnrollment, userId, updatedMachine.id, declarationBodies, request.authTerminalRequestId);
+                    if (managedEnrollment) await linkMachineEnrollmentInTx(tx, managedEnrollment, userId, updatedMachine.id, declarationBodies, registrationCredential.terminalAuthRequestId);
                     return serializeMachineRowForRequestInTx(tx, updatedMachine, request, accountMode);
                 }, {
                     // Exclusive Account admission protects installation and managed lifecycle predicates.
@@ -664,7 +667,7 @@ export function machinesRoutes(app: Fastify) {
                 if (error instanceof MachineRegistrationReplacementError) {
                     return reply.code(error.statusCode).send({ error: "invalid-params", reason: error.reason });
                 }
-                if (managedEnrollment && (isPrismaErrorCode(error, 'P2028') || isPrismaErrorCode(error, 'P1008'))) {
+                if ((managedEnrollment || wantsCredentialBinding) && (isPrismaErrorCode(error, 'P2028') || isPrismaErrorCode(error, 'P1008'))) {
                     throw error;
                 }
 
@@ -743,9 +746,8 @@ export function machinesRoutes(app: Fastify) {
                     installationIdentity: verifiedInstallationIdentity,
                     contentPublicKeyFingerprint: resolvedContentPublicKeyFingerprint,
                     replacementReason: automaticReplacementReason,
-                    managedEnrollment,
                     declarationBodies,
-                    terminalAuthRequestId: request.authTerminalRequestId,
+                    ...registrationCredential,
                     });
                     return { ...registered, machine: await serializeMachineRowForRequestInTx(tx, registered.machine, request, accountMode) };
                 }, {
@@ -797,11 +799,13 @@ export function machinesRoutes(app: Fastify) {
                                         winningMachine = await updateMachineInstallationIdentityInTx(tx, current, identityUpdate.data);
                                         await markAccountChanged(tx, { accountId: userId, kind: 'machine', entityId: current.id });
                                     }
-                                    if (managedEnrollment) await linkMachineEnrollmentInTx(tx, managedEnrollment, userId, existingSameAccount.id, declarationBodies, request.authTerminalRequestId);
+                                    if (managedEnrollment) await linkMachineEnrollmentInTx(tx, managedEnrollment, userId, existingSameAccount.id, declarationBodies, registrationCredential.terminalAuthRequestId);
+                                    else await bindMachineRegistrationCredentialInTx(tx, winningMachine, registrationCredential);
                                     if (verifiedInstallationIdentity?.replacesMachineId) {
                                         machineReplacement = await applyVerifiedMachineRegistrationReplacement({ tx, accountId: userId,
                                             replacementMachineId: existingSameAccount.id, replacementMachine: winningMachine,
-                                            replacesMachineId: verifiedInstallationIdentity.replacesMachineId, reason: automaticReplacementReason });
+                                            replacesMachineId: verifiedInstallationIdentity.replacesMachineId, reason: automaticReplacementReason,
+                                            terminalAuthRequestId: readMachineRegistrationCredentialToBind(winningMachine, registrationCredential) });
                                     }
                                     return serializeMachineRowForRequestInTx(tx, winningMachine, request, accountMode);
                                 }, {

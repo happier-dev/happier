@@ -358,7 +358,7 @@ export function enableAuthentication(app: Fastify) {
         const principal = verification.principal;
         const tokenKind = principal.kind;
         request.authTokenEpoch = principal.tokenEpoch;
-        request.authTerminalRequestId = principal.terminalAuthRequestId;
+        request.authTerminalCredential = principal.terminalCredential;
         if (logDiagnostics) {
             log({ module: 'auth-decorator' }, `Auth success - user: ${principal.accountId}`);
         }

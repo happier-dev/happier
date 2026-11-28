@@ -168,6 +168,12 @@ After a declined request or scan error, the unreleased 0.3 scanner pauses. Choos
 **Scan new QR** to resume, or **Enter URL manually** to paste a link. Leaving the
 same QR in view does not automatically reopen the request.
 
+In unreleased 0.3, use **Machines → Details → Remove machine** or
+`happier machines remove <id>` to sign out a computer paired through terminal
+connect. Its background service disconnects, and its CLI loses access to the
+Home. The computer keeps anything it already downloaded. To reconnect it, run
+`happier auth login` on that computer and approve the new terminal request.
+
 ## QR safety and optional Home approval
 
 Direct Home QR linking uses possession of the deliberately displayed, short-lived QR as its

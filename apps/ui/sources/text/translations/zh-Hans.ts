@@ -16209,7 +16209,7 @@ settingsSession: {
         removeMachineSubtitle:
           "撤销此机器并将其从你的账号中移除。",
         removeMachineConfirmBody:
-          "这将撤销此机器的访问权限（包括访问密钥与自动化分配）。你以后可以通过在 CLI 再次登录来重新连接。",
+          "移除通过终端配对的电脑会将它从你的账号退出登录，并撤销其访问密钥和自动化分配。电脑上已下载的内容会保留。你以后可以通过在 CLI 再次登录来重新连接。",
         removeMachineAlreadyRemoved:
           "此机器已从你的账号中移除。",
       },

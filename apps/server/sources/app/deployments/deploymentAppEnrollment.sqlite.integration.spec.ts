@@ -198,6 +198,14 @@ describe('deployment App enrollment through ordinary registration', () => {
             const pendingSocketOutcome = await connect(terminalBearer).then(() => ({ status: 'connected' }),
                 (error: unknown) => ({ status: 'refused', data: (error as { data?: unknown }).data }));
             expect(pendingSocketOutcome).toMatchObject({ status: 'refused', data: { statusCode: 401, error: 'invalid-token' } });
+            const ordinaryMachineId = randomUUID();
+            const ordinaryRegistration = await app.inject({ method: 'POST', url: '/v1/machines',
+                headers: { ...currentAccountStoredContentCompatibilityHeaders, authorization: `Bearer ${terminalBearer}` },
+                payload: { id: ordinaryMachineId, metadata: encodePlainMachineStoredContent({ host: 'Standalone' }),
+                    dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } });
+            expect(ordinaryRegistration.statusCode, ordinaryRegistration.body).toBe(200);
+            expect(await db.machine.findUniqueOrThrow({ where: { id: ordinaryMachineId }, select: { terminalAuthRequestId: true } }))
+                .toEqual({ terminalAuthRequestId: null });
             // An unmarked terminal can have an open stream before ordinary App registration binds its selector.
             const preMarkerSocket = await connect(preMarkerBearer);
             const childKeys = nacl.sign.keyPair();

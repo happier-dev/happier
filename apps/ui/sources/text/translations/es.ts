@@ -16552,7 +16552,7 @@ settingsSession: {
         removeMachineSubtitle:
           "Revoca esta máquina y la elimina de tu cuenta.",
         removeMachineConfirmBody:
-          "Esto revocará el acceso de esta máquina (incluidas las claves de acceso y asignaciones de automatización). Puedes volver a conectarla iniciando sesión de nuevo desde el CLI.",
+          "Al eliminar un equipo vinculado desde la terminal, se cierra su sesión en tu cuenta y se revocan sus claves de acceso y asignaciones de automatización. El equipo conserva lo que ya descargó. Puedes volver a conectarla iniciando sesión de nuevo desde el CLI.",
         removeMachineAlreadyRemoved:
           "Esta máquina ya se ha eliminado de tu cuenta.",
       },

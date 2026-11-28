@@ -1,6 +1,6 @@
 import { AuthTokenProvenanceSchema, AuthTokenProvenanceV2Schema, AuthTokenAuthoritySchema, type AuthTokenKind, type AuthTokenProvenanceAny, type AuthTokenAuthenticationEvidenceV1 } from '@happier-dev/protocol/auth/authToken';
 
-import { auth, type VerifiedApiTokenPrincipal } from "@/app/auth/auth";
+import { auth, type VerifiedApiTokenPrincipal, type VerifiedAuthToken } from "@/app/auth/auth";
 import type { VerifiedEphemeralSessionRunnerPrincipal } from "@happier-dev/protocol/ephemeralRunner/principal";
 import { enforceLoginEligibility } from "@/app/auth/enforceLoginEligibility";
 import type { LoginEligibilityResult } from "@/app/auth/loginEligibilityResult";
@@ -29,7 +29,7 @@ export type VerifiedRequestPrincipal = Readonly<{
     apiTokenPrincipal: VerifiedApiTokenPrincipal | null;
     sessionRuntimePrincipal: VerifiedEphemeralSessionRunnerPrincipal | null;
     authenticationEvidence?: readonly AuthTokenAuthenticationEvidenceV1[];
-    terminalAuthRequestId?: string;
+    terminalCredential?: VerifiedAuthToken["terminalCredential"];
 }>;
 
 export type RequestPrincipalVerification =
@@ -53,7 +53,7 @@ export type RequestPrincipalVerification =
 type VerifiedTokenProvenance = Readonly<{
     userId: string;
     tokenEpoch?: number;
-    extras?: unknown;
+    terminalCredential?: VerifiedAuthToken["terminalCredential"];
     authTokenKind?: unknown;
     authority?: unknown;
     authTokenMintedAuthority?: unknown;
@@ -190,9 +190,7 @@ export async function verifyRequestPrincipal(input: Readonly<{
             accountId: verified.userId,
             ...(verified.tokenEpoch !== undefined ? { tokenEpoch: verified.tokenEpoch } : {}),
             kind: provenance.kind,
-            ...(provenance.kind === 'terminal' && typeof verified.extras === 'object' && verified.extras !== null
-                && 'session' in verified.extras && typeof verified.extras.session === 'string'
-                ? { terminalAuthRequestId: verified.extras.session } : {}),
+            ...(verified.terminalCredential ? { terminalCredential: verified.terminalCredential } : {}),
             authority: effectiveAuthority.data,
             legacy: verified.legacy,
             apiTokenPrincipal: resolveVerifiedApiTokenPrincipal(verified, provenance.kind),

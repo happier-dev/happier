@@ -4,6 +4,8 @@ import { mkdir, readFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import { it } from 'vitest';
+import { MACHINE_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { MACHINE_REMOVE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contributionIdentity';
 import { ManagedCancelOutputV1Schema, ManagedControllerReportV1Schema, ManagedGetOutputV1Schema, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
@@ -11,6 +13,7 @@ import { MACHINE_PROVISIONER_DIMENSIONS_V1, type MachineProvisionerSelectionV1 }
 import { createRunDirs } from '../../src/testkit/runDir';
 import { repoRootDir } from '../../src/testkit/paths';
 import type { EnvOverrides } from '../../src/testkit/env';
+import { runCliJson } from '../../src/testkit/uiE2e/cliJson';
 
 /**
  * Real-provider variant; requires an explicitly selected disposable provider on
@@ -162,6 +165,7 @@ it(nativeDockerTest, async () => {
     const controller = await fixture.enrollDaemon(account);
     ui = await connectUiPersonActionClient({ serverUrl: fixture.server.baseUrl, accountSecret: account.auth.accountSigningSeed });
     const homeId = fixture.serverId;
+    const home = fixture;
     cancelBoundGuest = async managedId => {
       const target = { homeId, managedId };
       const read = await account.execute('machines.managed.get', target);
@@ -184,7 +188,20 @@ it(nativeDockerTest, async () => {
       ...(cancelLateEnrollment ? { async assertLateEnrollmentRefused() {
         await waitFor(() => lateRegistrationStatus !== undefined, { context: 'late native Machine registration response' });
         assert.equal(lateRegistrationStatus, 409);
-      } } : {}) });
+      } } : { async verifyBeforeNativeCleanup(guestMachineId: string) {
+        assert.notEqual(guestMachineId, controller.target.machineId);
+        const invokeFromParent = (actionId: string, actionInput: unknown) => runCliJson({
+          testDir, cliHomeDir: controller.homeDir, serverUrl: home.actionServerApiUrl, webappUrl: home.server.baseUrl,
+          env: { ...process.env, NODE_OPTIONS: home.sourceOptions, NODE_EXTRA_CA_CERTS: home.guestHomeCaCertificatePath },
+          label: `paired-parent-${actionId}`, launchOptions: { preferSourceEntrypoint: true, skipSharedDepsBuild: true },
+          acceptedExitCodes: [1],
+          args: ['actions', 'invoke', actionId, '--input-json', JSON.stringify(actionInput), '--yes', '--json'],
+        });
+        const removed = await invokeFromParent(MACHINE_REMOVE_ACTION_ID_V1, { serverId: homeId, machineId: guestMachineId });
+        assert.equal(removed.ok, true, `Remove child: ${JSON.stringify(removed)}`);
+        const parent = await invokeFromParent(MACHINE_LIST_ACTION_ID_V1, { serverId: homeId });
+        assert.equal(parent.ok, true, `Parent CLI stays signed in: ${JSON.stringify(parent)}`);
+      } }) });
     if (cancelLateEnrollment) {
       assert.ok(result.managedId);
       assert.deepEqual(nativeContainers(result.managedId), [], 'Approved Delete must also leave the native resource absent');

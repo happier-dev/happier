@@ -23,6 +23,7 @@ export type ApplyMachineReplacementParams = Readonly<{
     actorUserId: string | null;
     confirmActiveOldMachine?: boolean;
     replacedAt?: Date;
+    terminalAuthRequestId?: string;
 }>;
 
 export class MachineReplacementWriteConflictError extends Error {
@@ -39,13 +40,18 @@ export async function applyMachineReplacement(params: ApplyMachineReplacementPar
         includeSingleAccount: true, intent: 'serializing',
     });
     const machines = await params.tx.machine.findMany({ where: { id: { in: [params.oldMachineId, params.replacementMachineId] } } }).then(decodeMachineStoredContent);
+    const oldMachine = machines.find(machine => machine.id === params.oldMachineId) ?? null;
     const validation = validateMachineReplacement({ accountId: params.accountId,
-        oldMachine: machines.find(machine => machine.id === params.oldMachineId) ?? null,
+        oldMachine,
         replacementMachine: machines.find(machine => machine.id === params.replacementMachineId) ?? null,
         replacementMachineId: params.replacementMachineId, source: params.source,
         confirmActiveOldMachine: params.confirmActiveOldMachine });
     if (!validation.ok) throw new MachineReplacementWriteConflictError(validation.reason, validation.statusCode);
     const replacedAt = params.replacedAt ?? new Date();
+    const oldTerminalAuthRequestId = oldMachine?.terminalAuthRequestId;
+    const transferredTerminalAuthRequestId = params.source === "automatic" && !oldMachine?.revokedAt && !oldMachine?.deploymentAppDeploymentId
+        && oldTerminalAuthRequestId && oldTerminalAuthRequestId === params.terminalAuthRequestId
+        ? oldTerminalAuthRequestId : null;
     const invalidatedSessionBindings = await readMachineAccessKeySessionBindingsInTx(params.tx, {
         accountId: params.accountId,
         machineId: params.oldMachineId,
@@ -76,7 +82,7 @@ export async function applyMachineReplacement(params: ApplyMachineReplacementPar
                     { replacedByMachineId: params.replacementMachineId },
                 ],
             },
-            data: replacementData,
+            data: { ...replacementData, ...(transferredTerminalAuthRequestId ? { terminalAuthRequestId: null } : {}) },
         });
         if (update.count === 0) {
             const current = await params.tx.machine.findFirst({
@@ -86,6 +92,12 @@ export async function applyMachineReplacement(params: ApplyMachineReplacementPar
             if (current?.replacedByMachineId !== params.replacementMachineId) {
                 throw new MachineReplacementWriteConflictError();
             }
+        }
+        if (transferredTerminalAuthRequestId) {
+            await params.tx.machine.update({
+                where: { accountId_id: { accountId: params.accountId, id: params.replacementMachineId } },
+                data: { terminalAuthRequestId: transferredTerminalAuthRequestId },
+            });
         }
     } else {
         const updated = await params.tx.machine.updateMany({
@@ -107,7 +119,7 @@ export async function applyMachineReplacement(params: ApplyMachineReplacementPar
         eventRouter.disconnectMachineAndSessionSockets({
             accountId: params.accountId,
             machineId: params.oldMachineId,
-            terminalAuthRequestId: machines.find(machine => machine.id === params.oldMachineId)?.terminalAuthRequestId,
+            terminalAuthRequestId: transferredTerminalAuthRequestId ? null : oldTerminalAuthRequestId,
             sessionBindings: invalidatedSessionBindings,
         });
         eventRouter.emitUpdate({

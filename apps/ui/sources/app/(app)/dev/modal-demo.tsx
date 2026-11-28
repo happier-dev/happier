@@ -8,6 +8,8 @@ import { Modal } from '@/modal';
 import { Typography } from '@/constants/Typography';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { confirmActionReview } from '@/components/approvals/ActionConfirmationReview';
+import { presentActionApproval } from '@/components/approvals/actionApprovalPresentation';
+import { MACHINE_REMOVE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
 
 /** A Machine's carried Restart review (its approval builder's preview): the exact child it would start. */
 const RESTART_WORKSPACE = { serverId: 'home', machineId: 'devbox', workspaceId: 'checkout', rootPath: '/src/storefront' };
@@ -140,6 +142,19 @@ export default function ModalDemoScreen() {
                 </ItemGroup>
 
                 <ItemGroup title="Confirmation Modals">
+                    <Item
+                        title="Remove machine"
+                        destructive
+                        onPress={async () => {
+                            const actionId = MACHINE_REMOVE_ACTION_ID_V1;
+                            const actionArgs = { machineId: 'devbox' };
+                            const review = presentActionApproval({ actionId, actionArgs, kind: 'confirmation', subject: 'devbox' });
+                            const result = await confirmActionReview({ actionId, actionArgs,
+                                title: review.title ?? 'Remove machine', summary: review.summary,
+                                confirmLabel: review.confirmLabel ?? 'Remove', irreversible: true, destructive: true, serverId: null });
+                            setLastResult(result ? 'Confirmed removal preview' : 'Cancelled removal preview');
+                        }}
+                    />
                     <Item
                         title="Basic Confirmation"
                         subtitle="Simple yes/no confirmation"

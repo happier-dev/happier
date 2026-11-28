@@ -38,6 +38,7 @@ export async function runManagedMachineJourney(input: Readonly<{
   installAgentFixture?: (machine: ReturnType<typeof unwrapManagedMachineReadV1>) => Promise<void>;
   /** The guest ingress holds real Machine registration until the person cancels creation. */
   assertLateEnrollmentRefused?: () => Promise<void>;
+  verifyBeforeNativeCleanup?: (guestMachineId: string) => Promise<void>;
   /** Share an explicit caller budget when the containing run supplies one. */
   deadlineAt?: number;
 }>) {
@@ -363,6 +364,10 @@ export async function runManagedMachineJourney(input: Readonly<{
       await writeFile(join(input.testDir, 'before-delete.inspect.json'), JSON.stringify(inspect, null, 2));
       const controllerOperation = creationOperationId ? await operation(creationOperationId) : null;
       await writeFile(join(input.testDir, 'before-delete.controller.json'), JSON.stringify(controllerOperation, null, 2));
+      if (!failure && guestMachineId && input.verifyBeforeNativeCleanup) {
+        try { await input.verifyBeforeNativeCleanup(guestMachineId); }
+        catch (error) { failure = error; }
+      }
       const current = await readMachine();
       const deleted = ManagedDeleteOutputV1Schema.parse(await action('machines.managed.delete', {
         homeId, managedId, when: 'now', expectedRevision: current.intentRevision,

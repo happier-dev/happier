@@ -16701,7 +16701,7 @@ settingsSession: {
         actions: {
             removeMachine: 'Rechner entfernen',
             removeMachineSubtitle: 'Entzieht diesem Rechner den Zugriff und entfernt ihn aus deinem Konto.',
-            removeMachineConfirmBody: 'Damit wird diesem Rechner der Zugriff entzogen (inklusive Zugriffsschlüssel und Automations-Zuweisungen). Du kannst dich später über die CLI wieder anmelden.',
+            removeMachineConfirmBody: 'Bei einem über das Terminal gekoppelten Rechner meldet das Entfernen den Rechner aus deinem Konto ab und entzieht ihm die Zugriffsschlüssel und Automations-Zuweisungen. Bereits heruntergeladene Daten bleiben auf dem Rechner. Du kannst dich später über die CLI wieder anmelden.',
             removeMachineAlreadyRemoved: 'Dieser Rechner wurde bereits aus deinem Konto entfernt.',
         },
         replacementRepair: {

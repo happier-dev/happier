@@ -12,6 +12,7 @@ export type ApplyVerifiedMachineRegistrationReplacementParams = Readonly<{
     replacesMachineId: string | null | undefined;
     replacementMachine?: MachineReplacementRow | null;
     reason: string;
+    terminalAuthRequestId?: string;
 }>;
 
 export class MachineRegistrationReplacementError extends Error {
@@ -61,6 +62,7 @@ export async function applyVerifiedMachineRegistrationReplacement(
             reason: params.reason,
             source: "automatic",
             actorUserId: null,
+            terminalAuthRequestId: params.terminalAuthRequestId,
         });
     } catch (error) {
         if (error instanceof MachineReplacementWriteConflictError) {

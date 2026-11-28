@@ -16379,7 +16379,7 @@ settingsSession: {
         removeMachineSubtitle:
           "Cofa uprawnienia tej maszyny i usuwa ją z Twojego konta.",
         removeMachineConfirmBody:
-          "To cofnie dostęp z tej maszyny (w tym klucze dostępu i przypisania automatyzacji). Możesz połączyć ją ponownie, logując się jeszcze raz z CLI.",
+          "Usunięcie komputera sparowanego przez terminal wyloguje go z Twojego konta i cofnie jego klucze dostępu oraz przypisania automatyzacji. Komputer zachowa to, co już pobrał. Możesz połączyć ją ponownie, logując się jeszcze raz z CLI.",
         removeMachineAlreadyRemoved:
           "Ta maszyna została już usunięta z Twojego konta.",
       },

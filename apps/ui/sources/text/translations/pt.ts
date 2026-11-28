@@ -16662,7 +16662,7 @@ settingsSession: {
         removeMachineSubtitle:
           "Revoga esta máquina e a remove da sua conta.",
         removeMachineConfirmBody:
-          "Isso revogará o acesso desta máquina (incluindo chaves de acesso e atribuições de automação). Você pode reconectá-la mais tarde entrando novamente pelo CLI.",
+          "Remover um computador pareado pelo terminal encerra a sessão dele na sua conta e revoga suas chaves de acesso e atribuições de automação. O computador mantém o que já baixou. Você pode reconectá-la mais tarde entrando novamente pelo CLI.",
         removeMachineAlreadyRemoved:
           "Esta máquina já foi removida da sua conta.",
       },
