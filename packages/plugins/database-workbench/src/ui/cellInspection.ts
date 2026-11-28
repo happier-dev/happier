@@ -8,7 +8,24 @@ export type JsonCellInspection =
 /** Format tokens, rather than round-tripping JS numbers, to preserve database JSON precision. */
 function formatJson(value: string): string | undefined {
     try { JSON.parse(value); } catch { return undefined; }
-    const tokens = value.match(/"(?:\\.|[^"\\])*"|[{}\[\],:]|[^\s{}\[\],:]+/gu) ?? [];
+    const tokens: string[] = [];
+    const tokenPattern = /["{}\[\],:]|[^\s"{}\[\],:]+/gu;
+    for (let match = tokenPattern.exec(value); match; match = tokenPattern.exec(value)) {
+        if (match[0] !== '"') {
+            tokens.push(match[0]);
+            continue;
+        }
+        // JSON.parse guarantees a closing quote. Scan for it without regex backtracking over the string body.
+        let end = value.indexOf('"', tokenPattern.lastIndex);
+        for (;;) {
+            let backslash = end - 1;
+            while (value[backslash] === '\\') backslash--;
+            if ((end - 1 - backslash) % 2 === 0) break;
+            end = value.indexOf('"', end + 1);
+        }
+        tokenPattern.lastIndex = end + 1;
+        tokens.push(value.slice(match.index, end + 1));
+    }
     let depth = 0;
     let formatted = '';
     const newline = () => { formatted += `\n${'  '.repeat(depth)}`; };

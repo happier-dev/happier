@@ -14,6 +14,21 @@ it('keeps an incomplete JSON read explicit instead of parsing a retained prefix 
     expect(await inspectJsonCell(cell, async () => ({ value: cell, completeness: { complete: false, reason: 'transport_unproven' } }))).toMatchObject({ status: 'incomplete' });
 });
 
+it('formats the full JSON string read from a clipped grid cell without losing any bytes', async () => {
+    const body = 'x'.repeat(24_000_001) + '\\"tail';
+    const encoded = JSON.stringify(body);
+    const value = `{"id":9007199254740993,"body":${encoded}}`;
+    const result = await inspectJsonCell({
+        type: 'partial', valueType: 'json', value: '{', encoding: 'utf8',
+        range: { offset: 0, length: 1, total: value.length, unit: 'utf8_bytes' },
+    }, async () => ({ value: { type: 'json', value }, completeness: { complete: true } }));
+
+    expect(result.status).toBe('complete');
+    if (result.status !== 'complete') return;
+    expect(result.value === value).toBe(true);
+    expect(result.formatted === `{\n  "id": 9007199254740993,\n  "body": ${encoded}\n}`).toBe(true);
+});
+
 it('assembles contiguous cell continuation slices and does not read an already complete JSON cell', async () => {
     const reads: number[] = [];
     const initial = { type: 'partial' as const, valueType: 'json' as const, value: '[', encoding: 'utf8' as const, range: { offset: 0, length: 1, total: 5, unit: 'utf8_bytes' as const } };
