@@ -210,6 +210,27 @@ describe('shared Usage identity and dependent coverage', () => {
         expect.soft(page.findByTestId('rhythm.notRead')).not.toBeNull();
         expect(page.findByTestId('daily.notRead')).not.toBeNull();
     });
+    it('on the Usage page a refused read says "Not read" in one line that the card fits, never a blank body (USAGE-DESIGN-PASS-57 #20)', async () => {
+        const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+        const { UsagePeriodSummaryWidget } = await import('./UsagePeriodSummaryWidget');
+        const query = normalizeUsageQuery({ period: { relative: 'today' }, includeActivity: true, activityResolution: 'both' });
+        const refused = resolveUsagePageAggregation({ queries: [query],
+            accounting: [{ query, status: 'error', errorCode: 'not_found' }] }, bundledUsageModelPriceCatalog).results[0]!;
+        const model: UsageWidgetBodyModel = { requestedQuery: null, shownQuery: null, slice: refused, pending: false, error: null,
+            freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
+        const page = await renderScreen(<InjectedAuthProvider credentials={null}>
+            <UsageWidgetBatchProvider clauses={readUsageWidgetQueryOverrides(query)}>
+                <UsageDailyWidget query={query} slice={refused} model={model} serverId="home" id="usage_daily" testID="hourly" />
+                <UsagePeriodSummaryWidget query={query} slice={refused} model={model} serverId="home" id="usage_period_summary" testID="summary" />
+            </UsageWidgetBatchProvider>
+        </InjectedAuthProvider>);
+        for (const id of ['hourly.notRead', 'summary.notRead']) {
+            const line = page.findAllByType(SurfaceStateCard).find(node => node.props.testID === id);
+            expect.soft(line?.props.size).toBe('line');
+            // Replacing the body, the line reports itself to the frame so the card fits it.
+            expect.soft(line?.props.replacesContent).toBe(true);
+        }
+    });
     it.each([false, true])('keeps the real open-ended QA calendar and gaps visible (relative: %s)', async relative => {
         const accounting = usageQaAccountingFixture();
         const query = normalizeUsageQuery({ period: relative ? { relative: '7days' } : { startMs: 1791064800000 },
@@ -291,6 +312,13 @@ describe('shared Usage identity and dependent coverage', () => {
         const card = screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'loop.empty')!;
         expect(card.props.size).toBe('line');
         expect(card.props.replacesContent).toBe(true);
+    });
+    it('puts an insufficient line\'s way forward after its sentence, beneath it once the sentence takes the row (USAGE-DESIGN-PASS-57 #14)', async () => {
+        const { UsageBodyInsufficient } = await import('./usageBodyKit');
+        const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+        const screen = await renderScreen(<UsageBodyInsufficient testID="coach.empty" replacesContent={false}
+            title="Not enough work to check yet" reason="The Coach reads your sessions." action={{ label: 'Start a session', onPress: () => {} }} />);
+        expect(screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'coach.empty')?.props.lineLayout).toBe('after');
     });
     it('names a Rhythm card by its Style and keeps only the measure in its caption (USAGE-ACCEPT #11)', async () => {
         const query = normalizeUsageQuery({ period: { relative: '7days' }, includeActivity: true, activityResolution: 'both' });

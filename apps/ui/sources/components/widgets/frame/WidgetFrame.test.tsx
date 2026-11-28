@@ -660,7 +660,7 @@ describe('WidgetFrame', () => {
         }
     });
 
-    it('shows the scene on phone Home and hugs the state without reserved rows', async () => {
+    it('hugs a first-run scene and an empty Usage line on phone Home', async () => {
         device.type = 'phone';
         const medium = { size: 'medium' as const,
             footprint: { columns: 2, columnSpan: 1, rowSpan: 2, height: 'regular' as const, width: 'half' as const } };
@@ -672,8 +672,10 @@ describe('WidgetFrame', () => {
         expect(StyleSheet.flatten(own.findByTestId('frame.viewport')!.props.style).minHeight).toBeUndefined();
         standardCleanup();
         const body = await renderFrame({ widgetPresentation: medium, body: { kind: 'content', children:
-            <UsageBodyInsufficient testID="usage-empty" title="No subscription connected" reason="See what each plan has left." /> } });
-        expect(body.findByTestId('usage-empty-scene')).not.toBeNull();
+            <UsageBodyInsufficient testID="usage-empty" title="No steering recorded in this period" /> } });
+        expect(body.getTextContent()).toContain('No steering recorded in this period');
+        expect(body.findByTestId('usage-empty-scene')).toBeNull();
+        expect(StyleSheet.flatten(body.findByTestId('frame.viewport')!.props.style).minHeight).toBeUndefined();
         standardCleanup();
         // Real content on a phone is its rows' height too: Home cards hug their content (owner 2026-11-18).
         const rows = await renderFrame({ widgetPresentation: medium });

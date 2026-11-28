@@ -401,7 +401,8 @@ export function UsageBodyReading(props: Readonly<{
   if (shape?.kind === 'chart') {
     // Bars standing on the plot's floor at the settled plot height, then the axis and legend lines; the room
     // under them is the chart's own chrome, so the settled chart lands without moving anything below.
-    const chrome = resolveUsageChartChromePx(bodyWidth, { peak: shape.peak === true });
+    // On the Usage page the settled chart draws no coverage note (the header says it), so its room is not held.
+    const chrome = resolveUsageChartChromePx(bodyWidth, { peak: shape.peak === true, note: !pageHasDetail });
     return (
       <View testID={props.testID} style={{ minHeight: shape.plotPx + chrome }}>
         <View testID={`${props.testID}.plot`} style={{ height: shape.plotPx }}>
@@ -593,7 +594,12 @@ const readingStyles = StyleSheet.create(() => ({
  * second line (`narrowChrome`), which the plot leaves room for, so the coverage note is never cut by the frame.
  * Daily usage and Usage flow share the anatomy and this one rule; only Daily draws the peak.
  */
-export const USAGE_CHART_FRAME_PX = Object.freeze({ chrome: 84, narrowFrame: 420, narrowChrome: 20, peak: 32, plot: 252 });
+export const USAGE_CHART_FRAME_PX = Object.freeze({ chrome: 84, narrowFrame: 420, narrowChrome: 20, peak: 32, plot: 252,
+  /**
+   * The coverage note's share of `chrome`: one freshness line and its gap. On the Usage page the header says coverage
+   * once and the body draws no note, so a first read there holds the chart without it (USAGE-DESIGN-PASS-57 #6).
+   */
+  note: HAPPIER_FRESHNESS_LINE_METRICS.minHeightPx + HAPPIER_FRESHNESS_LINE_METRICS.gapPx });
 
 /**
  * A sized chart's plot height: what its frame leaves after the chrome, never more than its declared plot
@@ -638,11 +644,12 @@ export function useUsageChartPlotPx(minPx: number, options?: Readonly<{ peak?: b
     : { width: geometry?.width ?? USAGE_CHART_FRAME_PX.narrowFrame, height: room }, minPx, options);
 }
 
-export function resolveUsageChartChromePx(frameWidth: number | undefined, options?: Readonly<{ peak?: boolean }>): number {
+export function resolveUsageChartChromePx(frameWidth: number | undefined, options?: Readonly<{ peak?: boolean; note?: boolean }>): number {
   const width = frameWidth ?? USAGE_CHART_FRAME_PX.narrowFrame;
   return USAGE_CHART_FRAME_PX.chrome
     + (width < USAGE_CHART_FRAME_PX.narrowFrame ? USAGE_CHART_FRAME_PX.narrowChrome : 0)
-    + (options?.peak ? USAGE_CHART_FRAME_PX.peak : 0);
+    + (options?.peak ? USAGE_CHART_FRAME_PX.peak : 0)
+    - (options?.note === false ? USAGE_CHART_FRAME_PX.note : 0);
 }
 
 export function isUsageReadOutstanding(slice: UsageQueryResultSlice, sources: readonly string[]): boolean {
@@ -727,18 +734,9 @@ export function UsageBodyReadFailed(props: Readonly<{
     ? [{ source: 'accounting', status: 'error', errorCode: props.errorCode }] : visibleGaps);
   const canRetry = resourceFailure ? !refusal : visibleGaps.some(canRetryUsageCoverageFailure) || gaps.length === 0;
   const retry = useUsageRetryCommand(props.onRetry, !hidden && canRetry);
-  if (hidden && readUsageScopeRefusal(gaps) && !gaps.some(canRetryUsageCoverageFailure)) return null;
-  if (hidden)
-    return (
-      <SurfaceStateCard
-        testID={`${props.testID}.notRead`}
-        kind="empty"
-        layout="inline"
-        size="line"
-        replacesContent={false}
-        title={t('usage.board.page.notReadTitle')}
-      />
-    );
+  // The header says the cause and its recovery once (a refusal included); every body it covers says the same quiet
+  // line, never a blank card beside a sibling that says it (USAGE-DESIGN-PASS-57 #20).
+  if (hidden) return <UsageBodyPageLine testID={`${props.testID}.notRead`} title={t('usage.board.page.notReadTitle')} />;
   return (
     <>
       {refusal && <UsageScopeRefusalLine testID={`${props.testID}.scopeRefused`} codes={refusal.codes} />}
@@ -755,6 +753,15 @@ export function UsageBodyReadFailed(props: Readonly<{
   );
 }
 
+/**
+ * A body on the Usage page whose state the page header already says with its detail and recovery: one quiet line in
+ * the header's word ("Not read", "Partial"). It replaces the body, so the card fits the line rather than holding its
+ * grid room around it.
+ */
+export function UsageBodyPageLine(props: Readonly<{ testID: string; title: string }>) {
+  return <SurfaceStateCard testID={props.testID} kind="empty" layout="inline" size="line" replacesContent title={props.title} />;
+}
+
 export function UsageBodyInsufficient(
   props: Readonly<{
     title: string;
@@ -765,7 +772,10 @@ export function UsageBodyInsufficient(
     action?: Readonly<{ label: string; onPress: (callerContext?: ActionExecutorContext) => void }>;
   }>,
 ) {
-  // Whole-body states use the frame's room. An insufficient sub-section stays at the content edge.
+  // Not enough data (or a measured zero) is one quiet line at every footprint: a Usage card sits beside populated
+  // cards, so it keeps its one-line hint and never draws the first-run scene (USAGE-DESIGN-PASS-57 fix 1). Replacing
+  // the body, it still reports itself to the frame so the card holds a line's height; a sub-section beside admitted
+  // facts also sits inline.
   const replacesContent = props.replacesContent !== false;
   const action = props.action;
   const commands = useCurrentUiContextLocalCommands(action ? [{ key: 'action', title: action.label,
@@ -775,7 +785,11 @@ export function UsageBodyInsufficient(
       testID={props.testID}
       kind="empty"
       replacesContent={replacesContent}
-      {...(replacesContent ? {} : { layout: 'inline' as const, size: 'line' as const })}
+      size="line"
+      {...(replacesContent ? {} : { layout: 'inline' as const })}
+      // The way forward follows its sentence and moves beneath the words once they take the row (a phone), never to
+      // the right of a wrapped paragraph (USAGE-DESIGN-PASS-57 #14; happier-ui-craft "Phones recompose").
+      {...(props.action ? { lineLayout: 'after' as const } : {})}
       title={props.title}
       {...(props.reason ? { reason: props.reason } : {})}
       {...(props.action
