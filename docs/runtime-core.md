@@ -831,6 +831,13 @@ outbox and close/cancellation lifetimes; sidechain output retains its own path.
 The [Session result reader](pending-delivery.md#correlated-session-answers-03-development)
 owns observation of retained turns with incomplete anchors.
 
+In 0.3 development, the Claude Agent SDK Session keeps the accepted foreground
+Turn open when a native success arrives with an unsettled background Agent
+launched by that Turn. The progress reply stays in the transcript. The SDK
+consumes the task notification and the final response on the same query so Home
+can anchor the accepted input to that response. Process exit before that final
+response follows the existing typed turn-failure path.
+
 A host-proven native-mode startup refusal uses that same exact-input outcome
 owner in 0.3 development source. Session creation can be acknowledged before its
 caller offers the first input, so the failed host keeps its existing Pending

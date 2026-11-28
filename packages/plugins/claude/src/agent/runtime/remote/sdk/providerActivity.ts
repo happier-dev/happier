@@ -601,8 +601,9 @@ export function createClaudeProviderActivityLedger(options?: ClaudeProviderActiv
       return activeEntries(ownerScope).length > 0;
     },
     /** Active tasks plus Agents awaiting their own children: the query must keep observing them. */
-    hasUnsettledProviderTasks(ownerScope?: object): boolean {
-      return unsettledEntries(ownerScope).length > 0;
+    hasUnsettledProviderTasks(ownerScope?: object, matches?: (identity: ClaudeProviderTaskIdentity) => boolean): boolean {
+      const unsettled = unsettledEntries(ownerScope);
+      return matches ? unsettled.some(matches) : unsettled.length > 0;
     },
     hasProviderTask(identity: ClaudeProviderTaskIdentity): boolean {
       return entries.get(keyOf(identity))?.phase === 'active';

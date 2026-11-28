@@ -689,6 +689,58 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
     } finally { subscription.dispose(); await session.dispose(); }
   });
 
+  it.each(['review-result', 'process-exit'] as const)('settles a detached reviewer input on %s after native background work', async ending => {
+    const exec = createSdkExecFixture();
+    const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, { exec: exec.service });
+    const operations = createClaudeAgentSdkProviderOperations({ ctx, directory: '/tmp/claude-project', launchEnv: {},
+      happierSessionId: 'sdk-detached-review', permissionMode: 'default', publishTranscriptMessages: true, enableSessionWorkState: true });
+    const context = { session: { services: {
+      activeInput: { bind: () => ({ dispose() {} }) }, models: { bind: () => ({ dispose() {} }) },
+    } } } as unknown as AgentSessionRuntimeContext;
+    const session = createClaudeNativeSessionRuntimeFromOperations(operations,
+      { kind: 'create', sessionId: 'sdk-detached-review', cwd: '/tmp/claude-project' }, context);
+    const observed: AgentSessionRuntimeEvent[] = [];
+    const subscription = session.watch(event => observed.push(event));
+    const turnId = 'workflow-review-turn';
+    const sessionId = 'native-detached-review';
+    const waiting = 'The background inspection is still running.';
+    const review = JSON.stringify({ reviewOutcome: 'complete', summary: 'Clean change.', overviewMarkdown: 'No findings.',
+      findings: [], questions: [], assumptions: [], quality: { score: 5, rationale: 'The patch preserves behavior.' } });
+    const assistant = (uuid: string, text: string) => exec.emit({ type: 'assistant', uuid, session_id: sessionId,
+      parent_tool_use_id: null, message: { role: 'assistant', content: [{ type: 'text', text }] } });
+    const result = (uuid: string, text: string) => exec.emit({ type: 'result', subtype: 'success', is_error: false,
+      uuid, result: text, session_id: sessionId, queued_turn_count: 0, usage: {}, modelUsage: {} });
+    try {
+      await session.send({ inputIds: ['workflow-review-input'], input: { text: 'Inspect using a background Agent, then report the review as JSON.' },
+        delivery: { kind: 'newTurn', turnId } });
+      await exec.emit({ type: 'system', subtype: 'init', session_id: sessionId });
+      await exec.emit({ type: 'assistant', uuid: 'inspect', session_id: sessionId, parent_tool_use_id: null,
+        message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_a1', name: 'Agent', input: { run_in_background: true } }] } });
+      await exec.emit({ ...claudeAsyncAgentLaunchAck({ toolUseId: 'toolu_a1' }), session_id: sessionId });
+      await assistant('waiting', waiting);
+      await result('waiting-result', waiting);
+      if (ending === 'process-exit') {
+        await exec.exitWith({ exitCode: 1, signal: null });
+      } else {
+        await exec.emit({ type: 'system', subtype: 'task_notification', task_id: 'a1', tool_use_id: 'toolu_a1',
+          status: 'completed', session_id: sessionId, uuid: 'task-terminal', summary: 'No findings.' });
+        await exec.emit({ type: 'user', uuid: 'task-pointer', session_id: sessionId, isReplay: true,
+          origin: { kind: 'task-notification', producer: 'session-task' },
+          message: { role: 'user', content: claudeHandbackPointerNotification({ toolUseId: 'toolu_a1' }).attachment.prompt } });
+        await assistant('review', review);
+        await result('review-result', review);
+      }
+      const terminal = () => observed.filter(event => event.kind === 'turn-complete' || event.kind === 'turn-failed');
+      await vi.waitFor(() => expect(terminal()).toHaveLength(1));
+      const outcome = terminal()[0]!;
+      expect(outcome).toMatchObject(ending === 'review-result' ? { kind: 'turn-complete', turnId }
+        : { kind: 'turn-failed', turnId, diagnostic: { code: 'claude_sdk_stream_error' } });
+      const answers = observed.slice(0, observed.indexOf(outcome)).filter(event =>
+        event.kind === 'transcript-message-committed' && event.role === 'assistant' && event.turnId === turnId);
+      expect(answers.map(event => 'text' in event ? event.text : null)).toEqual(ending === 'review-result' ? [waiting, review] : [waiting]);
+    } finally { subscription.dispose(); await session.dispose(); }
+  });
+
   it.each(['completed', 'failed', 'stopped'] as const)('settles a background Agent only on its %s notification and keeps later hand-backs standalone', async (status) => {
     const exec = createSdkExecFixture();
     const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, { exec: exec.service });

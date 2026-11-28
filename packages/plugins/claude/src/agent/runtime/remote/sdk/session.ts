@@ -14,6 +14,7 @@ import {
     type SessionContextUsageSnapshotV1,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { HappierStructuredInputV1Schema } from '@happier-dev/plugin-sdk/sessions';
+import { isGenericSubagentToolName } from '@happier-dev/plugin-sdk/sessions/subagents';
 import type { AgentSessionInputFilesService } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createClaudeMcpUsageWitness } from './mcpUsage.js';
 import { createClaudeSkillUsageWitness } from './skillUsage.js';
@@ -125,6 +126,7 @@ import {
     normalizeClaudeProviderTaskEvent,
     readClaudeProviderTaskToolTarget,
     type ClaudeProviderTaskActivity,
+    type ClaudeProviderTaskIdentity,
 } from './providerActivity.js';
 import {
     applyClaudeProviderTaskActivity,
@@ -1926,6 +1928,9 @@ export function createClaudeAgentSdkTurnOperations(
         let observedMainModelId: string | null = null;
         let unpublishedLaunchEffort = launchEffort ?? null;
         const toolNameByCallId = new Map<string, string>();
+        const foregroundAgents = new Map<string, string>();
+        const isForegroundAgent = ({ sessionId, taskId }: ClaudeProviderTaskIdentity): boolean =>
+            foregroundAgents.get(taskId) === sessionId;
         const publishTerminal = (event: ClaudeProviderEvent): void => {
             if (!completion.claimTerminalPublication()) return;
             if (event.kind === 'turn-failed') {
@@ -2050,6 +2055,17 @@ export function createClaudeAgentSdkTurnOperations(
                 const completedBackgroundTasks = observeProviderTaskActivity(message, undefined, turnQuery)
                     && sawResult
                     && !providerActivityLedger.hasUnsettledProviderTasks(turnQuery);
+                if (params.enableSessionWorkState === true && message.type === 'user'
+                    && readForegroundTurnId() && isClaudePrimaryNativeActivity(message)) {
+                    const launch = readClaudeTaskLifecycleEnvelope(message);
+                    if (launch?.subtype === 'async-launch' && launch.taskId && launch.toolUseId) {
+                        const toolName = toolNameByCallId.get(launch.toolUseId);
+                        const sessionId = launch.sourceSessionId ?? providerSessionId;
+                        if (toolName && isGenericSubagentToolName(toolName) && sessionId) {
+                            foregroundAgents.set(launch.taskId, sessionId);
+                        }
+                    }
+                }
                 const isSuccessfulResultMessage = isSdkResultMessage(message)
                     && message.subtype === 'success'
                     && message.is_error !== true;
@@ -2201,8 +2217,16 @@ export function createClaudeAgentSdkTurnOperations(
                     reconcileProviderTaskRuntimeActivityForCurrentQuery('result-with-queued-user-turns');
                     continue;
                 }
-                const usedSkills = skillUsage.finish();
                 const foregroundTurnId = readForegroundTurnId();
+                if (isSuccessfulResultMessage && foregroundTurnId && foregroundAgents.size > 0
+                    && providerActivityLedger.hasUnsettledProviderTasks(turnQuery, isForegroundAgent)) {
+                    // The native Stop ends this inference while the accepted Session turn still
+                    // owes a response to the Agent's notification. Keep consuming its query.
+                    publishResultEvidence(resultTurn);
+                    publishedTranscriptText = false;
+                    continue;
+                }
+                const usedSkills = skillUsage.finish();
                 if (foregroundTurnId && usedSkills.length) {
                     publishRuntimeEvent(ClaudeProviderEventSchema.parse({ kind: 'skill-usage',
                         sessionId: readRuntimeEventSessionId(), turnId: foregroundTurnId, emittedAtMs: Date.now(), skills: usedSkills }));
