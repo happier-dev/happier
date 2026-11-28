@@ -29,12 +29,16 @@ const mockWindow = vi.hoisted(() => ({
   readOwner: null,
 }));
 
+const mockViewDemand = vi.hoisted(() => vi.fn());
+
 vi.mock('../../ui/window/useTriageListWindow.js', () => ({
   useTriageListWindow: () => mockWindow,
 }));
 
 vi.mock('../../ui/window/useTriageListWindowViewDemand.js', () => ({
-  useTriageListWindowViewDemand: () => undefined,
+  useTriageListWindowViewDemand: (...args: unknown[]) => {
+    mockViewDemand(...args);
+  },
 }));
 
 function makeWindow(entries: ReadonlyArray<{
@@ -87,11 +91,13 @@ const mountedFixtures: PluginUiTestkit[] = [];
 afterEach(async () => {
   mockWindow.snapshot = { window: undefined, taskProjection: undefined, passes: 1 };
   mockWindow.refresh.mockClear();
+  mockViewDemand.mockClear();
   for (const fixture of mountedFixtures.splice(0)) await fixture.dispose();
 });
 
 async function mountSection(input: Readonly<{
   sessionId: string;
+  active?: boolean;
   onOpenSurface?: (view: unknown) => void;
   onExecuteAction?: (input: unknown) => Promise<unknown>;
 }>): Promise<PluginUiTestkit> {
@@ -101,7 +107,9 @@ async function mountSection(input: Readonly<{
     fixture = await createPluginUiTestkit({
       identity: { instanceId: 'fixture-session-work-tasks', mountNonce: `mount-${mountedFixtures.length}` },
       authorPlugin: { id: 'happier.triage', version: '0.0.0' },
-      surface: renderSurface,
+      surface: input.active === undefined
+        ? renderSurface
+        : (context) => renderSurface({ ...context, activity: { active: input.active! } }),
       surfaceContext: createSurfaceContextFixture({
         target: { kind: 'session', sessionId: input.sessionId },
       }),
@@ -171,5 +179,18 @@ describe('TriageSessionWorkTasksSection', () => {
     const fixture = await mountSection({ sessionId: 'session-a' });
     await expect(fixture.queryByText('Tasks')).resolves.toBeUndefined();
     await expect(fixture.queryByText('Unrelated task')).resolves.toBeUndefined();
+  });
+
+  it('keeps view demand silent while the retained Session Work surface is inactive', async () => {
+    mockWindow.snapshot = makeWindow([{ id: 't-linked', title: 'Fix retry backoff', linkedSession: 'session-a' }]);
+
+    await mountSection({ sessionId: 'session-a', active: false });
+    expect(mockViewDemand).toHaveBeenCalled();
+    expect(mockViewDemand.mock.calls.every(call => call[0] === false)).toBe(true);
+
+    mockViewDemand.mockClear();
+    await mountSection({ sessionId: 'session-a', active: true });
+    expect(mockViewDemand).toHaveBeenCalled();
+    expect(mockViewDemand.mock.calls.every(call => call[0] === true)).toBe(true);
   });
 });

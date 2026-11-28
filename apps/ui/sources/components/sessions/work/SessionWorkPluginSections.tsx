@@ -25,9 +25,10 @@ export const SessionWorkPluginSections = React.memo(function SessionWorkPluginSe
 }>): React.ReactElement | null {
     const sessionAddress = useSessionAddressForSessionId(props.sessionId, props.serverId ?? undefined);
     const runtime = useSessionPluginRuntime({ address: sessionAddress });
+    const runtimePlatform = runtime?.platform;
     const policyContext = React.useMemo(
-        () => (runtime ? createPluginUiPolicyEvaluationContext(undefined, { platform: runtime.platform, channel: 'internal' }) : undefined),
-        [runtime],
+        () => (runtimePlatform ? createPluginUiPolicyEvaluationContext(undefined, { platform: runtimePlatform, channel: 'internal' }) : undefined),
+        [runtimePlatform],
     );
     const placements = React.useMemo(() => {
         if (!runtime?.pluginUiProjection) return null;

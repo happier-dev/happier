@@ -7,6 +7,7 @@ import {
   TaskStatusGlyph,
   defineUiSurface,
   usePluginHostApi,
+  usePluginSurfaceActivity,
   usePluginTranslation,
   useSurfaceContext,
 } from '@happier-dev/plugin-ui';
@@ -61,10 +62,11 @@ export function projectSessionWorkTasksV1(input: Readonly<{
 export function TriageSessionWorkTasksSection(): React.ReactElement | null {
   const text = usePluginTranslation();
   const hostApi = usePluginHostApi();
+  const { active } = usePluginSurfaceActivity();
   const surfaceContext = useSurfaceContext();
   const sessionId = surfaceContext.target.kind === 'session' ? surfaceContext.target.sessionId : null;
   const window = useTriageListWindow();
-  useTriageListWindowViewDemand(sessionId !== null, window.refresh, window.readiness, window.readOwner);
+  useTriageListWindowViewDemand(active && sessionId !== null, window.refresh, window.readiness, window.readOwner);
 
   const tasks = React.useMemo(
     () => (sessionId === null ? EMPTY_ROWS : projectSessionWorkTasksV1({

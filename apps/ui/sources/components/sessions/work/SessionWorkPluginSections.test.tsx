@@ -10,8 +10,14 @@ import { normalizePluginUiProjection, type PluginUiProjectionModel } from '@/syn
 import type { PluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 
 const mountedInlineHosts = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+const mockRuntimeListeners = vi.hoisted(() => new Set<() => void>());
 const mockRuntime = vi.hoisted(() => ({ current: null as PluginUiProjectionCurrentness | null }));
 const mockSessionAddress = vi.hoisted(() => ({ current: { serverId: 'server-1', sessionId: 'session-1' } as { serverId: string; sessionId: string } | null }));
+
+function setMockRuntime(next: PluginUiProjectionCurrentness | null) {
+    mockRuntime.current = next;
+    for (const listener of mockRuntimeListeners) listener();
+}
 
 vi.mock('@/components/plugins/surfaces', () => ({
     PluginInlineSurfaceHost: (props: Record<string, unknown>) => {
@@ -22,7 +28,14 @@ vi.mock('@/components/plugins/surfaces', () => ({
 
 vi.mock('@/components/sessions/plugins/useSessionPluginRuntime', () => ({
     useSessionAddressForSessionId: () => mockSessionAddress.current,
-    useSessionPluginRuntime: () => mockRuntime.current,
+    useSessionPluginRuntime: () => React.useSyncExternalStore(
+        (listener) => {
+            mockRuntimeListeners.add(listener);
+            return () => { mockRuntimeListeners.delete(listener); };
+        },
+        () => mockRuntime.current,
+        () => mockRuntime.current,
+    ),
 }));
 
 function buildProjection(entries: ReadonlyArray<{
@@ -123,5 +136,30 @@ describe('SessionWorkPluginSections', () => {
 
         expect(mountedInlineHosts).toHaveLength(0);
         expect(screen.tree.toJSON()).toBeNull();
+    });
+
+    it('keeps placement selection memoized across unrelated runtime object rebuilds when platform and projection are unchanged', async () => {
+        const selectors = await import('@/sync/domains/plugins/ui/surfacePlacementSelectors');
+        const selectSpy = vi.spyOn(selectors, 'selectRenderablePluginInlineSurfacePlacementsForRole');
+        try {
+            const projection = buildProjection([
+                { id: 'work-tasks', pluginId: 'acme.tasks', role: 'sessionWorkSection', targetKind: 'session' },
+            ]);
+            mockRuntime.current = makeRuntime(projection);
+
+            const { SessionWorkPluginSections } = await import('./SessionWorkPluginSections');
+            await renderScreen(<SessionWorkPluginSections sessionId="session-1" serverId="server-1" />);
+            expect(selectSpy).toHaveBeenCalledTimes(1);
+
+            await React.act(async () => {
+                setMockRuntime({
+                    ...makeRuntime(projection),
+                    interactionEnabled: false,
+                } as unknown as PluginUiProjectionCurrentness);
+            });
+            expect(selectSpy).toHaveBeenCalledTimes(1);
+        } finally {
+            selectSpy.mockRestore();
+        }
     });
 });

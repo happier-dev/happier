@@ -372,17 +372,23 @@ export async function findAdmittedExternalTaskDiscussionIdsInTx(tx: Tx, input: R
         accountId: input.actorAccountId, ref: input.ref, state: input.state,
     });
     if (candidateIds.length === 0) return [];
-    const rows = await tx.discussion.findMany({
-        where: { id: { in: candidateIds } },
-        select: { id: true, anchorV1: true },
-        orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }],
-    });
-    const matchingIds = rows.filter(row => matchesExternalTaskAnchor(row.anchorV1, input.ref)).map(row => row.id);
-    if (matchingIds.length === 0) return [];
-    const contexts = await resolveDiscussionContextsInTx(tx, {
-        discussionIds: matchingIds, accountId: input.actorAccountId, authentication: input.authentication,
-    });
-    return matchingIds.filter(id => contexts.has(id));
+    const [rows, contexts] = await Promise.all([
+        (async () => {
+            const found: Array<{ id: string; anchorV1: unknown }> = [];
+            for (const ids of portableQueryChunks({ values: candidateIds, bindingsPerValue: 1 })) {
+                found.push(...await tx.discussion.findMany({
+                    where: { id: { in: [...ids] } },
+                    select: { id: true, anchorV1: true },
+                }));
+            }
+            return found;
+        })(),
+        resolveDiscussionContextsInTx(tx, {
+            discussionIds: candidateIds, accountId: input.actorAccountId, authentication: input.authentication,
+        }),
+    ]);
+    const matchingById = new Set(rows.filter(row => matchesExternalTaskAnchor(row.anchorV1, input.ref)).map(row => row.id));
+    return candidateIds.filter(id => matchingById.has(id) && contexts.has(id));
 }
 
 /** Verify that a requested Discussion id is admitted for the given Task or external anchor ref. */
@@ -426,20 +432,29 @@ async function listExactTaskDiscussionInTx(tx: Tx, input: Reader & Readonly<{ an
         accountId: input.actorAccountId, ref, state: input.state,
     });
     if (candidateIds.length === 0) return empty;
-    const rows = await tx.discussion.findMany({
-        where: { id: { in: candidateIds } },
-        select: DISCUSSION_SELECT,
-        orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }],
+    const [rows, contexts] = await Promise.all([
+        (async () => {
+            const found: DiscussionRow[] = [];
+            for (const ids of portableQueryChunks({ values: candidateIds, bindingsPerValue: 1 })) {
+                found.push(...await tx.discussion.findMany({
+                    where: { id: { in: [...ids] } },
+                    select: DISCUSSION_SELECT,
+                }));
+            }
+            return found;
+        })(),
+        resolveDiscussionContextsInTx(tx, {
+            discussionIds: candidateIds,
+            accountId: input.actorAccountId,
+            authentication: input.authentication,
+            includeActorAudience: true,
+        }),
+    ]);
+    const rowsById = new Map(rows.map(row => [row.id, row]));
+    const admitted = candidateIds.flatMap(id => {
+        const row = rowsById.get(id);
+        return row && matchesExternalTaskAnchor(row.anchorV1, ref) && contexts.has(id) ? [row] : [];
     });
-    const matching = rows.filter(row => matchesExternalTaskAnchor(row.anchorV1, ref));
-    if (matching.length === 0) return empty;
-    const contexts = await resolveDiscussionContextsInTx(tx, {
-        discussionIds: matching.map(row => row.id),
-        accountId: input.actorAccountId,
-        authentication: input.authentication,
-        includeActorAudience: true,
-    });
-    const admitted = matching.filter(row => contexts.has(row.id));
     if (admitted.length === 0) return empty;
     const projected = await projectDiscussionsForViewerInTx(tx, {
         contexts,
