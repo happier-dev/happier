@@ -2810,7 +2810,6 @@ export const es: TranslationStructure = {
       noticeTitle: "Acerca del estado de la cuenta",
       noticeBody: "Lee el uso desde el servicio de cuentas de Google. Google no admite oficialmente el acceso de terceros a estos servicios; activarlo queda a tu criterio.",
       learnMore: "Más información",
-      dismiss: "Entendido",
     },
     importAccounts: {
         unknownResult: "El resultado de la importación es desconocido. Actualiza la lista de cuentas y revisa este perfil antes de reintentar.",

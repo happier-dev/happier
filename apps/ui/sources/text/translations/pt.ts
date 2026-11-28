@@ -2932,7 +2932,6 @@ export const pt: TranslationStructure = {
       noticeTitle: "Sobre o estado da conta",
       noticeBody: "Lê o uso a partir do serviço de contas do Google. O Google não oferece suporte oficial ao acesso de terceiros a estes serviços; ativar isto fica ao seu critério.",
       learnMore: "Saiba mais",
-      dismiss: "Entendi",
     },
     importAccounts: {
         unknownResult: "O resultado da importação é desconhecido. Atualize a lista de contas e confira este perfil antes de tentar novamente.",

@@ -3121,7 +3121,6 @@ localTailscale: {
       noticeTitle: "アカウントの状態について",
       noticeBody: "Google のアカウントサービスから使用量を読み取ります。Google はこれらのサービスへのサードパーティからのアクセスを公式にはサポートしていません。有効にするかどうかはご自身でご判断ください。",
       learnMore: "詳細",
-      dismiss: "OK",
     },
     importAccounts: {
         unknownResult: "インポート結果を確認できません。再試行する前にアカウント一覧を更新し、このプロフィールを確認してください。",

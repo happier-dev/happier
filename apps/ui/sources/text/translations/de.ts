@@ -2594,7 +2594,6 @@ export const de: TranslationStructure = {
             noticeTitle: "Über den Kontostatus",
             noticeBody: "Liest die Nutzung aus dem Kontodienst von Google. Google unterstützt den Zugriff durch Drittanbieter auf diese Dienste offiziell nicht; die Aktivierung liegt in deinem Ermessen.",
             learnMore: "Mehr erfahren",
-            dismiss: "Verstanden",
         },
         importAccounts: {
             unknownResult: "Das Ergebnis des Imports ist unbekannt. Aktualisiere die Kontoliste und prüfe dieses Profil vor einem neuen Versuch.",

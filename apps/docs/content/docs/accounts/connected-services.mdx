@@ -101,10 +101,11 @@ in either of two ways, and neither needs the other:
 - Adding accounts to an Antigravity **pool** turns it on for the pool's members.
   Pools also use it to choose accounts and switch automatically.
 
-Both places show a one-time note: Happier reads usage from Google's account
-service, which Google doesn't officially support for third-party apps, so turning
-it on is your choice. Pools created before this change keep working and show the
-same note once.
+Both ask you to confirm first: Happier reads usage from Google's account service,
+which Google doesn't officially support for third-party apps, so turning it on is
+your choice. **Learn more** opens Google's page, **Cancel** leaves the setting off
+or doesn't create the pool, and **Continue** goes ahead. Pools created before this
+change keep working.
 
 When account status is on, Happier asks the installed Antigravity CLI itself for
 the account's usage (`agy -p /usage`, no model turn) on the existing quota

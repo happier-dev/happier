@@ -2843,7 +2843,6 @@ export const pl: TranslationStructure = {
       noticeTitle: "O stanie konta",
       noticeBody: "Odczytuje użycie z usługi kont Google. Google oficjalnie nie wspiera dostępu stron trzecich do tych usług; włączenie tego zależy od Ciebie.",
       learnMore: "Dowiedz się więcej",
-      dismiss: "Rozumiem",
     },
     importAccounts: {
         unknownResult: "Wynik importu jest nieznany. Odśwież listę kont i sprawdź ten profil przed ponowną próbą.",

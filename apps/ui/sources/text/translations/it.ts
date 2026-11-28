@@ -3160,7 +3160,6 @@ export const it: TranslationStructure = {
       noticeTitle: "Informazioni sullo stato dell’account",
       noticeBody: "Legge l’utilizzo dal servizio account di Google. Google non supporta ufficialmente l’accesso di terze parti a questi servizi; l’attivazione è a tua discrezione.",
       learnMore: "Scopri di più",
-      dismiss: "Ho capito",
     },
     importAccounts: {
         unknownResult: "Il risultato dell’importazione è sconosciuto. Aggiorna l’elenco degli account e verifica questo profilo prima di riprovare.",

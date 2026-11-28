@@ -2743,7 +2743,6 @@ export const zhHans: TranslationStructure = {
       noticeTitle: "关于账号状态",
       noticeBody: "从 Google 的账号服务读取用量。Google 并未正式支持第三方访问这些服务；是否启用由你自行决定。",
       learnMore: "了解更多",
-      dismiss: "知道了",
     },
     importAccounts: {
         unknownResult: "导入结果未知。请刷新账户列表并检查此配置后再重试。",

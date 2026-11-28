@@ -1501,7 +1501,6 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             noticeTitle: "關於帳號狀態",
             noticeBody: "從 Google 的帳號服務讀取用量。Google 並未正式支援第三方存取這些服務；是否啟用由你自行決定。",
             learnMore: "了解更多",
-            dismiss: "知道了",
         },
         importAccounts: {
             unknownResult: "匯入結果未知。請更新帳號清單並檢查此設定檔後再重試。",

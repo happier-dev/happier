@@ -2680,7 +2680,6 @@ export const ca: TranslationStructure = {
             noticeTitle: "Sobre l’estat del compte",
             noticeBody: "Llegeix l’ús des del servei de comptes de Google. Google no admet oficialment l’accés de tercers a aquests serveis; activar-ho queda a criteri teu.",
             learnMore: "Més informació",
-            dismiss: "Entesos",
         },
         importAccounts: {
             unknownResult: "El resultat de la importació és desconegut. Actualitza la llista de comptes i revisa aquest perfil abans de tornar-ho a provar.",

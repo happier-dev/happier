@@ -23,7 +23,6 @@ import { t } from '@/text';
 
 import { ConnectedServiceCapacityAvatar, CONNECTED_SERVICE_GAUGE_BOX } from '../ConnectedServiceCapacityAvatar';
 import { Icon } from '@/components/ui/icons/Icon';
-import { ConnectedServiceConsentNotice } from '../consent/ConnectedServiceConsentNotice';
 import {
     resolveAccountCapacityView,
     type AccountCapacityView,
@@ -450,7 +449,6 @@ export const PoolsList = React.memo(function PoolsList(props: PoolsListProps) {
     return (
         <>
             {staleErrorBanner}
-            <ConnectedServiceConsentNotice serviceId={props.serviceId} />
             <ItemGroup title={t('connectedServices.pools.title')} columns={2}>
                 {pools.map((group) => (
                     <PoolRow
