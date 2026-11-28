@@ -699,8 +699,8 @@ describe('Database workbench surfaces', () => {
         platformProjectId: 'project', branchId: 'branch', database: 'railway' } as const;
     const connected = { ...descriptor, target, engine, label: 'Billing',
       origin: { label: 'Railway', environmentName: 'Orders API Production', environment: 'production' as const } };
-    // The identity line names the database, then the rail's facts; the description stays generic.
-    const identity = `railway · ${engineName} · Orders API Production`;
+    // The identity line uses the saved label followed by the rail's facts.
+    const identity = `Billing · ${engineName} · Orders API Production`;
     const openSurface = vi.fn<PluginUiHostApi['openSurface']>().mockResolvedValue(undefined);
     await openWorkbenchPage({ openSurface }, connected);
     const [, , options] = openSurface.mock.calls[0]!;
@@ -1291,7 +1291,8 @@ describe('Database workbench surfaces', () => {
     const target = { kind: 'managed_deployment', environment: { serverId: 'home', environmentId: 'env', projectSourceId: 'source' },
       targetLinkId: 'link', database: 'billing_dev', contribution: { pluginId: `fixture.${provider.toLowerCase()}`, contributionId: engine },
       platformProjectId: 'project', branchId: 'branch' } as const;
-    const connected = { ...descriptor, engine, target, origin: { label: provider, environmentName, environment }, ...trust };
+    const connected = { ...descriptor, engine, target, origin: { label: provider, environmentName, environment },
+      access: { canRead: true, canWrite: true }, ...trust };
     const executeAction = daemonAnswers([connected], true);
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'insert-row', mountNonce: 'insert-row' },
