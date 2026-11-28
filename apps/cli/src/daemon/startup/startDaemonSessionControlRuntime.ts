@@ -4498,10 +4498,9 @@ export async function startDaemonSessionControlRuntime(
           const spawnResult = await spawnConcurrencyGate.run(
             async () =>
               await (await import('./executeSpawnSessionRequest')).executeSpawnSessionRequest({
-                ...(() => {
-                  const sessionHost = sessionHostPlacement.place();
-                  return sessionHost ? { sessionHost, machineId: spawnParams.machineId, freshCallerDemand } : {};
-                })(),
+                sessionHost: sessionHostPlacement.place(),
+                machineId: spawnParams.machineId,
+                freshCallerDemand,
                 prepareAgentIsolationMember: prepareSessionAgentIsolationMember(requesterRuntime,
                   shutdownCancellationDomains.daemonWorkSignal, ordinaryAgentIsolationAccountSource
                     ?? (!requesterRuntime && !existingSessionId

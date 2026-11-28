@@ -8682,10 +8682,10 @@ session host
 ([`daemonSessionHost.ts`](../apps/cli/src/daemon/sessionHost/daemonSessionHost.ts))
 to add the Session; the host is started on first use through the same launch owner
 as runners (`launchDetachedHappierProcess.ts`: binary-safe command, Linux user scope,
-OOM score, sanitized stderr) as `happier session-host`. TTY-bound launches (tmux,
-Windows terminal, adapter hosts) and every Windows spawn keep one runner process per
-Session under the current launch placement rule. Windows local RPC clients verify
-the connected pipe server's same-user SID before sending input. The exact
+OOM score, sanitized stderr) as `happier session-host`. Headless Sessions on Windows
+use the shared host too. Launches bound to tmux, a Windows terminal or an adapter
+host use a dedicated runner. Windows local RPC clients verify the connected pipe
+server's same-user SID before sending input. The exact
 internal host invocation brings up the Home transport and local listener before
 loading general CLI dispatch. An admitted add loads that dispatch in the host
 when the Session starts.

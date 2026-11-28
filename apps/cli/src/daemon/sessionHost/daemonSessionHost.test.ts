@@ -459,12 +459,17 @@ describe('session host launch', () => {
 });
 
 describe('session host placement decision', () => {
-  it('places every headless Session in the session host, except on Windows (no switch)', () => {
-    const placement = (platform: NodeJS.Platform) =>
-      createSessionHostPlacement({ processEnv: {}, logDebug: () => {}, platform }).place();
-    expect(placement('linux')).toBeDefined();
-    expect(placement('darwin')).toBeDefined();
-    expect(placement('win32')).toBeUndefined();
+  it.each(['linux', 'darwin', 'win32'])('uses one shared host for headless Sessions on %s', (platform) => {
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { ...originalPlatform, value: platform });
+    try {
+      const placement = createSessionHostPlacement({ processEnv: {}, logDebug: () => {} });
+      const host = placement.place();
+      expect(host).toBeDefined();
+      expect(placement.place()).toBe(host);
+    } finally {
+      Object.defineProperty(process, 'platform', originalPlatform);
+    }
   });
 });
 

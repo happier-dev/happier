@@ -392,17 +392,14 @@ export function createDaemonSessionHost(params: Readonly<{
 
 /**
  * The spawn placement decision: headless daemon-started Sessions run in the daemon's session host
- * (a one-Session runner is the same command in its own process). Windows keeps one runner process
- * per Session: callers cannot yet verify the local pipe server's identity. A host that is already
- * running when the daemon starts (its Sessions reattached from markers) is adopted: its Sessions
- * must be stopped and observed through it.
+ * across supported platforms. A host that is already running when the daemon starts (its Sessions
+ * reattached from markers) is adopted so its Sessions can be stopped and observed through it.
  */
 export function createSessionHostPlacement(params: Readonly<{
   processEnv: NodeJS.ProcessEnv;
   logDebug: (message: string, payload?: unknown) => void;
-  platform?: NodeJS.Platform;
 }>): Readonly<{
-  place: () => DaemonSessionHost | undefined;
+  place: () => DaemonSessionHost;
   /** New Session intent: prestart the host where Sessions are hosted (see `DaemonSessionHost.prestart`). */
   prestart: (signal: AbortSignal) => Promise<void>;
   adoptReattachedSessions: DaemonSessionHost['adoptReattachedSessions'];
@@ -410,13 +407,12 @@ export function createSessionHostPlacement(params: Readonly<{
   stopIdleHost: DaemonSessionHost['stopIdleHost'];
 }> {
   let host: DaemonSessionHost | null = null;
-  const daemonHost = (): DaemonSessionHost =>
+  const place = (): DaemonSessionHost =>
     host ??= createDaemonSessionHost({ processEnv: params.processEnv, directory: process.cwd(), logDebug: params.logDebug });
-  const place = (): DaemonSessionHost | undefined => (params.platform ?? process.platform) === 'win32' ? undefined : daemonHost();
   return {
     place,
-    prestart: async (signal) => { await place()?.prestart(signal); },
-    adoptReattachedSessions: (input) => place()?.adoptReattachedSessions(input) ?? 0,
+    prestart: async (signal) => { await place().prestart(signal); },
+    adoptReattachedSessions: (input) => place().adoptReattachedSessions(input),
     readIdleHost: async signal => await host?.readIdleHost(signal),
     stopIdleHost: async () => { await host?.stopIdleHost(); },
   };
