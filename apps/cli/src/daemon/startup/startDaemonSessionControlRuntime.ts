@@ -11591,7 +11591,6 @@ export async function startDaemonSessionControlRuntime(
     ? createDaemonExternalActionContributedInvoker({
         managedProviderOperationAuthority: params.managedProviderOperationAuthority,
         observePluginExecution: request => observeContributedPluginExecution(request),
-        requestCurrentIntent: pluginActionCurrentIntent,
       })
     : null;
   const externalActionContributedDefinitionLister = externalActionAccountId

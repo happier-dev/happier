@@ -32,6 +32,7 @@ import {
   createCommittedContributedActionInvoker,
 } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
+import { createCredentialedTargetActionCurrentIntent } from '@/session/actions/approvals/credentialedTargetActionCurrentIntent';
 import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { projectContributedActionFailure } from '@/plugins/runtime/invocation/actions/contributedActionFailure';
 import {
@@ -86,11 +87,14 @@ export function createDaemonExternalActionContributedInvoker(input: Readonly<{
   requestCurrentIntent?: (
     request: TargetActionCurrentIntentRequest,
   ) => Promise<TargetActionCurrentIntentResult>;
-}> = {}): NonNullable<ActionExecutorDeps['invokeContributedAction']> {
+}> = {}): (
+  request: Parameters<NonNullable<ActionExecutorDeps['invokeContributedAction']>>[0],
+  credentials?: StoredCredentials,
+) => Promise<ActionExecuteResult> {
   const acquireRuntimeRegistryLease = input.acquireRuntimeRegistryLease
     ?? acquireExecutableAuthoritativePluginRuntimeRegistryLease;
 
-  return createCommittedContributedActionInvoker({
+  const bind = (requestCurrentIntent: typeof input.requestCurrentIntent) => createCommittedContributedActionInvoker({
     managedProviderOperationAuthority: input.managedProviderOperationAuthority,
     daemonHoldsApprovalWaiter: true,
     ...(input.observePluginExecution ? { observePluginExecution: input.observePluginExecution } : {}),
@@ -99,8 +103,12 @@ export function createDaemonExternalActionContributedInvoker(input: Readonly<{
       happyHomeDir: configuration.happyHomeDir,
       ...(params?.signal ? { signal: params.signal } : {}),
     }),
-    ...(input.requestCurrentIntent ? { requestCurrentIntent: input.requestCurrentIntent } : {}),
+    ...(requestCurrentIntent ? { requestCurrentIntent } : {}),
   });
+  const uncredentialed = bind(input.requestCurrentIntent);
+  return (request, credentials) => credentials
+    ? bind(createCredentialedTargetActionCurrentIntent(credentials))(request)
+    : uncredentialed(request);
 }
 
 /**

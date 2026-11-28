@@ -1469,7 +1469,7 @@ resolveServerFeaturesSnapshot?: () =>
           context: { ...request.context, ...(apiMachineForSessions ? {
             prepareFileDownload: apiMachineForSessions.createFileDownloadPublisher(params.serverId, request.context),
           } : {}) },
-        }),
+        }, credentials),
         targetActionApprovalReplay: invocationContributedApprovalReplay!,
         isApprovalExecutionOriginCurrent: invocationApprovalCurrentness,
         prepareApprovalExecutionAuthorization: prepareInvocationApprovalExecutionAuthorization,

@@ -29,6 +29,7 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
+import { createCredentialedTargetActionCurrentIntent } from '@/session/actions/approvals/credentialedTargetActionCurrentIntent';
 import { registerApprovalRpcHandlers } from '@/rpc/handlers/approvals';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { handleActionsCommand } from '@/cli/commands/actions';
@@ -333,6 +334,69 @@ function createExternalActionIngressExecutor(scope: 'global' | 'session' = 'sess
 }
 
 describe('createDaemonExternalActionContributedInvoker', () => {
+  it('publishes a Session Ask to its Account when another Account owns the Machine', async () => {
+    const home = 'https://session-approval.example.test';
+    const makeCredentials = (accountId: string) => ({
+      token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`,
+      encryption: null,
+    });
+    const member = makeCredentials('alice');
+    const custodian = makeCredentials('machine-owner');
+    const app = fastify();
+    const features = registerAccountHomeHttp(app, {
+      accountId: 'alice', serverId: 'server-external', settings: accountSettingsParse({}),
+    });
+    registerPlainArtifactRoutes(app, 'alice');
+    // At Home only the requesting Account may create or read its Artifacts.
+    app.addHook('onRequest', async (request, reply) => {
+      if (request.url.startsWith('/v1/artifacts') && request.headers.authorization !== `Bearer ${member.token}`) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+    });
+    const restoreHttp = installAxiosFastifyAdapter({ app, origin: home });
+    vi.stubGlobal('fetch', async () => Response.json(features));
+    const attribution = { requestRef: 'member-request', requester: { serverId: 'server-external', accountId: 'alice' },
+      persona: { serverId: 'server-external', sessionId: 'bot-session' }, origin: null };
+    const { context } = createSharedBotContributedContext('session');
+    const source = context.externalActionExecutionAuthorization!;
+    if (!('sessionActionOrigin' in source.binding)) throw new Error('Expected an admitted Session fixture');
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({
+      ...source,
+      binding: {
+        ...source.binding,
+        custodianAccountId: 'machine-owner',
+        sessionActionOrigin: { ...source.binding.sessionActionOrigin, actionRequestAttributionV1: attribution },
+      },
+    });
+    const effect = vi.fn();
+    const runtime = createExternalActionRuntime('global', 'acme.external', effect,
+      undefined, undefined, undefined, undefined, 'writesRemote', undefined, { surfaces: ['agent'] });
+    const lease: PluginRuntimeRegistryLease = { registry: runtime, source: 'ephemeral',
+      durableRevision: runtime.durableRevision ?? -1, release: async () => {} };
+    const invoke = createDaemonExternalActionContributedInvoker({
+      acquireRuntimeRegistryLease: async () => lease,
+      requestCurrentIntent: createCredentialedTargetActionCurrentIntent(custodian),
+    });
+    const executor = createExternalActionExecutor(request => invoke(request, member));
+    try {
+      await runWithServerHttpBaseUrl(home, async () => {
+        const result = await executor.execute('action.invoke', {
+          action: { pluginId: 'acme.external', localId: 'inspect' }, input: { title: 'Rollback' },
+        }, { ...context, externalActionExecutionAuthorization: authorization, actionRequestAttributionV1: attribution });
+        expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: expect.any(String) } });
+        const { artifactId } = result.ok ? result.result as { artifactId: string } : { artifactId: '' };
+        expect(await createCliApprovalsArtifactStore({ credentials: member }).targetActionApprovalsGet({ artifactId }))
+          .toMatchObject({ status: 'open', executionOriginV1: { accountId: 'alice' } });
+        expect(await createCliApprovalsArtifactStore({ credentials: custodian }).targetActionApprovalsGet({ artifactId })).toBeNull();
+        expect(effect).not.toHaveBeenCalled();
+      });
+    } finally {
+      restoreHttp();
+      vi.unstubAllGlobals();
+      await app.close();
+    }
+  });
+
   it.each(['same-account', 'foreign-executor', 'unverified-source'] as const)(
     'uses only the admitted Session Account for a replayed Review publication (%s)', scenario =>
     withConfiguredDaemonTestHome({ prefix: 'review-publication-replay-', env: { HAPPIER_ACTIONS_SETTINGS_V1: undefined } }, async () => {
