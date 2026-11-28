@@ -73,6 +73,91 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Automation defi
         expect(page).toMatchObject({ attached: [], skippedNotSharedCount: 0, nextCursor: null });
     });
 
+    it('does no Artifact work on an Action miss and admits only its matching Workflow candidates', async () => {
+        const subject = { kind: 'machine' as const, serverId: await getOrCreateServerIdentityId(), machineId: randomUUID() };
+        const actionId = 'session.archive';
+        const selection = { accountId, actionId, phase: 'after' } as const;
+        const artifact = (ownerAccountId: string) => ({ id: randomUUID(), accountId: ownerAccountId,
+            header: Buffer.from(encodePlainArtifactStoredContent({ kind: 'workflow-definition.v1' }), 'base64'),
+            body: Buffer.from(encodePlainArtifactStoredContent({}), 'base64'),
+            dataEncryptionKey: Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64'),
+        });
+        const smallInventory = Array.from({ length: 2 }, () => artifact(accountId));
+        const largeInventory = Array.from({ length: 2048 }, () => artifact(accountId));
+        const owned = artifact(accountId);
+        const shared = artifact(otherAccountId);
+        const candidates = [owned, shared].map(workflow => ({ workflow, automationId: randomUUID(),
+            triggerId: AutomationTriggerIdSchema.parse(randomUUID()) }));
+        const traced = await createDbMaintenanceClient('postgres', process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL!,
+            { log: [{ emit: 'event', level: 'query' }] });
+        const queries: Array<{ sql: string; bindings: unknown[] }> = [];
+        onDbClientQuery(traced, event => { queries.push({ sql: event.query, bindings: JSON.parse(event.params) as unknown[] }); });
+        const originalTransaction = db.$transaction;
+        const artifactReads = () => queries.filter(({ sql }) => sql.includes('"Artifact"') && sql.trimStart().startsWith('SELECT'));
+        const countArtifactRowsVisited = async () => {
+            let visited = 0;
+            for (const { sql, bindings } of artifactReads()) {
+                const plan = await traced.$queryRawUnsafe<unknown[]>(`EXPLAIN (ANALYZE, FORMAT JSON) ${sql}`, ...bindings);
+                for (const node of queryPlanNodes(plan).filter(node => node['Relation Name'] === 'Artifact')) {
+                    visited += (Number(node['Actual Rows']) + Number(node['Rows Removed by Filter'] ?? 0)
+                        + Number(node['Rows Removed by Index Recheck'] ?? 0)) * Number(node['Actual Loops']);
+                }
+            }
+            return visited;
+        };
+        db.$transaction = traced.$transaction.bind(traced);
+        try {
+            const emptyArtifactWork = [];
+            for (const inventory of [smallInventory, largeInventory]) {
+                await db.artifact.createMany({ data: inventory });
+                queries.length = 0;
+                expect(await listAutomationDefinitionsPage(selection)).toMatchObject({
+                    automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0,
+                });
+                emptyArtifactWork.push(await countArtifactRowsVisited());
+            }
+            expect(emptyArtifactWork).toEqual([0, 0]);
+
+            await db.artifact.createMany({ data: [owned, shared] });
+            await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: shared.id,
+                accountId, accessLevel: 'view', createdByAccountId: otherAccountId } });
+            for (const { workflow, automationId, triggerId } of candidates) {
+                await db.automation.create({ data: { id: automationId, accountId: workflow.accountId,
+                    workflowDefinitionId: workflow.id, name: 'Action selection fixture', templateCiphertext: '{}',
+                    triggers: { create: { id: triggerId, kind: 'action', actionId, actionIdsJson: JSON.stringify([actionId]),
+                        phase: 'after', subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject), reachesOthers: true,
+                        definitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
+                            binding: { v: 1, automationId, triggerId, triggerRevision: 0, triggerKind: 'action' },
+                            definition: { kind: 'action', phase: 'after', actionIds: [actionId], subject } })),
+                    } },
+                } });
+            }
+            await db.$executeRawUnsafe('ANALYZE "Artifact"');
+            queries.length = 0;
+            const page = await listAutomationDefinitionsPage(selection);
+            expect(page.attached).toHaveLength(2);
+            expect(page.attached).toEqual(expect.arrayContaining(candidates.map(({ workflow, triggerId }) => expect.objectContaining({
+                triggerId, workflowDefinitionId: workflow.id,
+                workflowAccess: { ownerAccountId: workflow.accountId, access: workflow === owned ? 'owner' : 'view' },
+            }))));
+            const sharedRow = page.attached?.find(row => row.workflowDefinitionId === shared.id);
+            expect(sharedRow?.summary).not.toHaveProperty('subjectKey');
+            expect(sharedRow?.summary).not.toHaveProperty('subjectKind');
+            const admission = artifactReads().filter(({ sql }) => !sql.includes('"AutomationTrigger"'));
+            expect(admission).toHaveLength(1);
+            const artifactIds = new Set<unknown>([...smallInventory, ...largeInventory, owned, shared].map(row => row.id));
+            expect(admission.flatMap(query => query.bindings.filter(binding => artifactIds.has(binding))).sort())
+                .toEqual([owned.id, shared.id].sort());
+            // The shared candidate may need a discovery probe before the two exact admission reads.
+            expect(await countArtifactRowsVisited()).toBeLessThanOrEqual(3);
+        } finally {
+            db.$transaction = originalTransaction;
+            await traced.$disconnect();
+            await db.automation.deleteMany({ where: { id: { in: candidates.map(row => row.automationId) } } });
+            await db.artifact.deleteMany({ where: { id: { in: [...smallInventory, ...largeInventory, owned, shared].map(row => row.id) } } });
+        }
+    });
+
     it('pages only matching shared triggers with a stable denied count and indexed structural SQL', async () => {
         const subject = { kind: 'machine' as const, serverId: await getOrCreateServerIdentityId(), machineId: randomUUID() };
         const unreadableSubject = { ...subject, machineId: randomUUID() };
@@ -186,7 +271,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Automation defi
                 actionCursor = page.nextCursor;
             } while (actionCursor);
             expect(actionSelected).toEqual(visibleTriggerIds);
-            const actionCandidates = queries.filter(query => query.sql.includes('JOIN "Automation" a')
+            const actionCandidates = queries.filter(query => query.sql.includes('JOIN "Automation"')
                 && query.sql.includes('"actionIdsJson"'));
             expect(actionCandidates.length).toBeGreaterThan(0);
             for (const [pageIndex, query] of actionCandidates.entries()) {

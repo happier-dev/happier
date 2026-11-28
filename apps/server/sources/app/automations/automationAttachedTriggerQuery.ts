@@ -8,12 +8,14 @@ import { summarizeWorkflowTriggerInputsV1, type WorkflowAttachedTriggerPageV1 } 
 import { parseWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionRefV1';
 import { ACCOUNT_DISPLAY_PROFILE_SELECT, resolveAccountDisplayLabelV1 } from '@/app/account/profile/accountDisplayProfile';
 import { inTx } from '@/storage/inTx';
-import { getDbProviderFromEnv } from '@/storage/prisma';
+import { getDbProviderFromEnv, prismaRuntime } from '@/storage/prisma';
 import { resolveDbSqlDialect } from '@/config/databaseProvider';
+import { artifactOrdinarySqlPredicate } from '@/app/artifacts/artifactClassification';
+import { resourceGrantAccessSqlPredicate } from '@/app/teams/resourceGrantAccess';
 import { automationTriggerListItemSelect } from './automationPersistenceSelect';
 import { automationActionTriggerConfigurationSelect } from './automationActionTriggerConfiguration';
 import { toAutomationTriggerSummaryProjection } from './automationApiProjection';
-import { readAutomationActorConsentReferencesInTx, readWorkflowSummaryArtifactAccessInTx, readWorkflowSummaryArtifactCandidatesInTx,
+import { readAutomationActorConsentReferencesInTx, readWorkflowSummaryArtifactAccessInTx, workflowSummaryArtifactCandidateKinds,
     redactSharedWorkflowTriggerSubject, type WorkflowSummaryArtifactAccess } from './automationSharedWorkflowSummaries';
 import { loadAutomationEventStatusProjections } from './automationEventStatusProjection';
 import { loadAutomationSessionLifecycleStatusProjections } from './automationSessionLifecycleStatusProjection';
@@ -74,42 +76,47 @@ export async function listAutomationAttachedTriggers(params: AutomationAttachedT
             return [...subjectsPage, ...accountPage].sort((left, right) => left.id.localeCompare(right.id))
                 .slice(0, AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS);
         };
-        const actionWorkflowIds = 'actionId' in params ? await readWorkflowSummaryArtifactCandidatesInTx(tx, params.accountId) : [];
         const readCandidates = async (cursor: string | null): Promise<Awaited<ReturnType<typeof readSubjectCandidates>>> => {
             if (!('actionId' in params)) return readSubjectCandidates(cursor);
             const dialect = resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres'));
             // Match the complete structural selector. The singleton actionId leaf
             // cannot answer a multi-Action lookup. PostgreSQL's phase-specific GIN
             // indexes cover this exact expression and live matching-row predicate.
-            const binds: unknown[] = [];
-            const bind = (value: unknown) => { binds.push(value); return dialect === 'postgres' ? `$${binds.length}` : '?'; };
+            const { sql, raw, join, empty } = prismaRuntime;
             const membership = dialect === 'postgres'
-                ? `t."actionIdsJson"::jsonb @> ${bind(JSON.stringify([params.actionId]))}::jsonb`
+                ? sql`t."actionIdsJson"::jsonb @> ${JSON.stringify([params.actionId])}::jsonb`
                 : dialect === 'mysql'
-                    ? `JSON_CONTAINS(t."actionIdsJson", JSON_QUOTE(${bind(params.actionId)}))`
-                    : `EXISTS (SELECT 1 FROM json_each(t."actionIdsJson") selected_action WHERE selected_action.value = ${bind(params.actionId)})`;
-            const phase = params.phase === undefined ? `t."phase" IN ('before', 'after')`
-                : `t."phase" = '${params.phase === 'before' ? 'before' : 'after'}'`;
-            const account = bind(params.accountId);
-            const workflowSelection = actionWorkflowIds.length === 0 ? '' : (() => {
-                const ids = bind(JSON.stringify(actionWorkflowIds));
-                const selected = dialect === 'postgres' ? `SELECT jsonb_array_elements_text(${ids}::jsonb)`
-                    : dialect === 'mysql' ? `SELECT id COLLATE utf8mb4_unicode_ci FROM JSON_TABLE(${ids}, '$[*]' COLUMNS (id VARCHAR(191) PATH '$')) selected`
-                        : `SELECT value FROM json_each(${ids})`;
-                return `OR (a."scopeSessionId" IS NULL AND t."reachesOthers" = TRUE
-                    AND (t."subjectKind" IS NULL OR t."subjectKind" <> 'plugin') AND t."subjectKey" IS NOT NULL AND a."workflowDefinitionId" IN (${selected}))`;
-            })();
-            const sql = `SELECT t."id", t."subjectKind", t."subjectKey", t."reachesOthers",
-                a."id" AS "automationId", a."accountId", a."workflowDefinitionId", a."scopeSessionId"
-                FROM "AutomationTrigger" t JOIN "Automation" a ON a."id" = t."automationId"
+                    ? sql`JSON_CONTAINS(t."actionIdsJson", JSON_QUOTE(${params.actionId}))`
+                    : sql`EXISTS (SELECT 1 FROM json_each(t."actionIdsJson") selected_action WHERE selected_action.value = ${params.actionId})`;
+            const phase = params.phase === undefined ? sql`t."phase" IN ('before', 'after')`
+                : params.phase === 'before' ? sql`t."phase" = 'before'` : sql`t."phase" = 'after'`;
+            const artifactGrant = resourceGrantAccessSqlPredicate({ actorAccountId: params.accountId,
+                resourceTablePrefix: 'Artifact', resourceIdColumn: 'artifactId' });
+            // Use a scalar lookup on the Artifact primary key so this witness stays
+            // correlated to a trigger match. Batch admission determines access.
+            const sharedWorkflow = sql`(SELECT TRUE FROM "Artifact" a WHERE a."id" = d."workflowDefinitionId"
+                    AND a."deletedAt" IS NULL AND ${raw(artifactOrdinarySqlPredicate(dialect === 'mysql'))}
+                    AND (a."kind" IS NULL OR a."kind" IN (${join(workflowSummaryArtifactCandidateKinds)}))
+                    AND ${artifactGrant})`;
+            // Keep the witness in the shared arm. PostgreSQL can push a copy of
+            // an equivalent OR predicate into the Automation join and run it twice.
+            const selection = sql`SELECT t."id", t."subjectKind", t."subjectKey", t."reachesOthers",
+                d."id" AS "automationId", d."accountId", d."workflowDefinitionId", d."scopeSessionId"
+                FROM "AutomationTrigger" t JOIN "Automation" d ON d."id" = t."automationId"
                 WHERE t."kind" = 'action' AND t."deletedAt" IS NULL AND t."consentForAutomationId" IS NULL
                   AND ${phase} AND ${membership}
-                  AND a."deletedAt" IS NULL AND (a."accountId" = ${account} ${workflowSelection})
-                  ${cursor === null ? '' : `AND t."id" > ${bind(cursor)}`}
-                ORDER BY t."id" ASC LIMIT ${bind(AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS)}`;
+                  AND d."deletedAt" IS NULL
+                  AND CASE WHEN d."accountId" = ${params.accountId} THEN TRUE
+                    WHEN d."scopeSessionId" IS NULL AND t."reachesOthers" = TRUE
+                      AND (t."subjectKind" IS NULL OR t."subjectKind" <> 'plugin') AND t."subjectKey" IS NOT NULL
+                    THEN ${sharedWorkflow} ELSE FALSE END
+                  ${cursor === null ? empty : sql`AND t."id" > ${cursor}`}
+                ORDER BY t."id" ASC LIMIT ${AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS}`;
+            const query = dialect === 'postgres' ? selection.text
+                : dialect === 'mysql' ? selection.sql.replaceAll('"', '`') : selection.sql;
             type Candidate = Awaited<ReturnType<typeof readSubjectCandidates>>[number];
             const rows = await tx.$queryRawUnsafe<Array<Pick<Candidate, 'id' | 'subjectKind' | 'subjectKey' | 'reachesOthers'>
-                & Candidate['automation'] & { automationId: string }>>(dialect === 'mysql' ? sql.replaceAll('"', '`') : sql, ...binds);
+                & Candidate['automation'] & { automationId: string }>>(query, ...selection.values);
             return rows.map(({ automationId, accountId, workflowDefinitionId, scopeSessionId, ...row }) => ({ ...row,
                 reachesOthers: Boolean(row.reachesOthers), automation: { id: automationId, accountId, workflowDefinitionId, scopeSessionId } }));
         };

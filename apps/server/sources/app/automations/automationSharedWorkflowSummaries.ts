@@ -36,17 +36,17 @@ export async function readWorkflowSummaryArtifactAccessInTx(tx: Tx, input: Reado
     }]));
 }
 
-const workflowCandidateKinds = [...getArtifactTeamResourceStoredKindsV1().workflows, ...ArtifactCoarseKindV1Schema.options];
+export const workflowSummaryArtifactCandidateKinds = [...getArtifactTeamResourceStoredKindsV1().workflows, ...ArtifactCoarseKindV1Schema.options];
 
 /** Push indexed Artifact access into unbounded shared-trigger discovery. */
-export async function readWorkflowSummaryArtifactCandidatesInTx(tx: Tx, accountId: string): Promise<string[]> {
+async function readWorkflowSummaryArtifactCandidatesInTx(tx: Tx, accountId: string): Promise<string[]> {
     const { owned, received } = readArtifactCandidateAccess(accountId);
     const rows = await tx.artifact.findMany({ where: {
         ...artifactVisibleWhere,
         AND: [
             { OR: [...(owned ? [owned] : []), ...received] },
             // Retained Workflows may precede the persisted kind hint.
-            { OR: [{ kind: null }, { kind: { in: workflowCandidateKinds } }] },
+            { OR: [{ kind: null }, { kind: { in: workflowSummaryArtifactCandidateKinds } }] },
         ],
     }, select: { id: true } });
     return rows.map(row => row.id);
