@@ -574,6 +574,18 @@ describe('/oauth/connected-account/callback', () => {
     expect(boundary.clipboard).toHaveBeenCalledWith(`${genericCallbackUrl}${query}`);
   });
 
+  it('uses generic denial copy for an unverified signed-out callback', async () => {
+    install();
+    const unverifiedDescription = 'Unverified provider description';
+    browser.location = { search: `?${new URLSearchParams({
+      error: 'server_error', error_description: unverifiedDescription, state: 'attempt-1.nonce',
+    })}` };
+    const screen = await renderScreen(<ConnectedAccountOAuthCallbackRoute />);
+    await settle(screen, 'connected-account-oauth-callback:denied');
+    expect(boundary.execute).not.toHaveBeenCalled();
+    expect(screen.getTextContent()).not.toContain(unverifiedDescription);
+  });
+
   it.each([false, true])('shows cancellation without giving the person a code to copy (opener=%s)', async opener => {
     install(opener ? 'https://cloud.happier.dev' : undefined);
     browser.location = { search: '?error=access_denied&state=attempt-1.nonce&iss=https%3A%2F%2Fissuer.example' };

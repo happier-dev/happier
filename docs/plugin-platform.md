@@ -12198,8 +12198,10 @@ plain text. The completion Action settles a denial after the attempt owner
 validates the callback, full state and issuer. The live response carries the
 provider's reason and the existing begin command for a fresh attempt. A mounted
 setup sheet on the same app or browser origin receives that settled response.
-The callback retains the error and recovery action when its browser cannot
-reach the attempt. The provider's error URI stays informational. The public authoring example is in the
+When the browser cannot validate the denial through the attempt owner, the
+callback uses generic copy based on the error code and offers recovery.
+Provider descriptions come from the settled daemon diagnostic. The provider's
+error URI stays informational. The public authoring example is in the
 [Connected accounts guide](../apps/docs/content/docs/plugins/services/auth-connected-services.mdx).
 
 In 0.3 development source, the host records sign-in provenance only from an

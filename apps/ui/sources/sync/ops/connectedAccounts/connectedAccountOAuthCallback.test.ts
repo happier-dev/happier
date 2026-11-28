@@ -6,7 +6,7 @@ import { completeConnectedAccountOAuthCallback, createConnectedAccountOAuthCallb
 const callbackUrl = `${CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1}?code=code&state=attempt.with.dots.nonce&iss=`;
 
 describe('Connected Account callback controller', () => {
-    it('returns the Railway authorization failure instead of a pasteable URL', async () => {
+    it('retains only the error code for an unauthenticated denial', async () => {
         const callbackUrl = `${CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1}?${new URLSearchParams({
             error: 'invalid_scope',
             error_description: 'Workspace and project access must be requested at the same level.',
@@ -14,10 +14,7 @@ describe('Connected Account callback controller', () => {
         })}`;
         expect(await completeConnectedAccountOAuthCallback({ callbackUrl })).toEqual({
             kind: 'denied',
-            denial: {
-                error: 'invalid_scope',
-                errorDescription: 'Workspace and project access must be requested at the same level.',
-            },
+            denial: { error: 'invalid_scope' },
         });
     });
 

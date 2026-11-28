@@ -98,7 +98,7 @@ export function subscribeToConnectedAccountOAuthDenial(account: AccountAddress, 
 async function settleDenial(account: ConnectedAccountOAuthCallbackInput['account'], attemptId: string,
     completion: Readonly<{ state: string; iss?: string; callbackUrl: string; denial: OauthAuthorizationDenial }>,
 ): Promise<ConnectedAccountOAuthCallbackOutcome> {
-    const fallback = { kind: 'denied' as const, denial: completion.denial };
+    const fallback = { kind: 'denied' as const, denial: { error: completion.denial.error } };
     if (!account) return fallback;
     try {
         const { runConnectedAccountAuthenticationAction } = await import('./connectedAccountDaemon');
