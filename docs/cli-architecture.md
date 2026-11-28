@@ -6614,6 +6614,10 @@ recorded in the default file log and can be retried by a subsequent flush.
 Before local admission succeeds, that retained text is process-local. Once admitted,
 the existing session outbox owns reconnect delivery and restart recovery.
 
+The writer batches live appends on a 100 ms default interval. Set
+`HAPPIER_STREAM_LIVE_INTERVAL_MS` to tune it. Opening snapshots and terminal
+publications bypass the batching window.
+
 A transcript snapshot can carry optional top-level `happierHolderReplayV1` metadata.
 Each range names the holder instance and the first included and first excluded
 positions, measured in bytes within the holder's existing stdout frame sequence.

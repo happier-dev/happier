@@ -3,7 +3,7 @@ import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessi
 const DEFAULT_INITIAL_CHECKPOINT_DELAY_MS = 500;
 const DEFAULT_CHECKPOINT_INTERVAL_MS = 2_000;
 const DEFAULT_CHECKPOINT_MIN_CHARS = 256;
-const DEFAULT_LIVE_SNAPSHOT_INTERVAL_MS = 40;
+const DEFAULT_LIVE_SNAPSHOT_INTERVAL_MS = 100;
 const DEFAULT_LIVE_SNAPSHOT_MIN_CHARS = 1;
 
 function resolveNonNegativeIntEnv(input: unknown, fallback: number): number {

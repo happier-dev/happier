@@ -1336,6 +1336,49 @@ describe('createStreamedTranscriptWriter delta live streaming', () => {
     });
   }
 
+  it('batches live appends at the default interval and flushes a pending delta at turn end', async () => {
+    const { session, liveCalls, deltaCalls, durableCalls } = createDeltaSessionStub();
+    const writer = runInHostedSessionScope({ environment: { NODE_ENV: 'test' } }, () =>
+      createDeltaWriter(session, { liveSnapshotIntervalMs: null }),
+    );
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1_000));
+    try {
+      writer.appendAssistantDelta('Hel');
+      await settleCommittedSnapshot();
+      expect(liveCalls.map(call => call.body)).toEqual([{ type: 'message', message: 'Hel' }]);
+
+      await vi.advanceTimersByTimeAsync(30);
+      writer.appendAssistantDelta('lo ');
+      await vi.advanceTimersByTimeAsync(30);
+      writer.appendAssistantDelta('world');
+      await vi.advanceTimersByTimeAsync(39);
+      expect(deltaCalls).toHaveLength(0);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(deltaCalls).toMatchObject([{ body: { type: 'message', message: 'lo world' }, baseLength: 3 }]);
+
+      writer.appendAssistantDelta('!');
+      await writer.flushAll({ reason: 'turn-end' });
+      expect(deltaCalls).toMatchObject([
+        { body: { message: 'lo world' }, baseLength: 3 },
+        {
+          body: { type: 'message', message: '!' },
+          baseLength: 11,
+          meta: { happierStreamSegmentV1: { segmentState: 'complete' } },
+        },
+      ]);
+      expect(durableCalls.map(call => call.body)).toEqual([{ type: 'message', message: 'Hello world!' }]);
+
+      await vi.advanceTimersByTimeAsync(100);
+      expect(liveCalls).toHaveLength(1);
+      expect(deltaCalls).toHaveLength(2);
+    } finally {
+      writer.discard();
+      vi.useRealTimers();
+    }
+  });
+
   it('emits a full snapshot first, then append-only deltas with chained ticks and base lengths', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));
