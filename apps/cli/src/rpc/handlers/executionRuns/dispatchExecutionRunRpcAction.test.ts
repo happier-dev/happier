@@ -2375,6 +2375,24 @@ describe('createExecutionRunRpcActionExecutor', () => {
     expect(diagnostics.dispatch).not.toHaveBeenCalled();
   });
 
+  it('admits a plain execution-run get once', async () => {
+    const manager = createExecutionRunBridgeWithRun();
+    const lookup = vi.spyOn(manager, 'getForRequest');
+    const deps = createExecutionRunRpcActionDeps({
+      manager,
+      context: { sessionId: 'sess_1', cwd: '/workspace' },
+      policy: resolveExecutionRunPolicy({
+        defaults: { boundedTimeoutMs: null, reviewBoundedTimeoutMs: null, maxTurns: null },
+      }),
+      isExecutionRunsEnabled: () => true,
+    });
+
+    await expect(deps.executionRunGet('sess_1', { runId: 'run_1' })).resolves.toMatchObject({
+      run: { runId: 'run_1', status: 'running' },
+    });
+    expect(lookup).toHaveBeenCalledTimes(1);
+  });
+
   it('returns the same lossless terminal projection from execution-run get and wait', async () => {
     const waitForInputTurn = vi.fn(async () => null);
     const run = {

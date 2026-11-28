@@ -730,7 +730,8 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       if (!isAuthoritativeScope(sessionId)) return executionRunScopeMismatch();
       await params.manager.recoverRetainedRuns();
       const parsed = ExecutionRunGetRequestSchema.parse(request);
-      if (!await params.manager.getForRequest(parsed.runId, sessionId, opts?.requesterWorkAttributionV1)) return executionRunNotFound();
+      const admittedRun = await params.manager.getForRequest(parsed.runId, sessionId, opts?.requesterWorkAttributionV1);
+      if (!admittedRun) return executionRunNotFound();
       opts?.signal?.throwIfAborted();
       if (parsed.waitForInputId && opts?.permissionRequestStore !== undefined) {
         const store = readPermissionRequestStore(opts.permissionRequestStore);
@@ -742,7 +743,9 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       const observedInputTurn = parsed.waitForInputId
         ? await params.manager.waitForInputTurn(parsed.runId, parsed.waitForInputId, opts?.signal)
         : null;
-      const run = await params.manager.getForRequest(parsed.runId, sessionId, opts?.requesterWorkAttributionV1);
+      const run = parsed.waitForOutput || parsed.waitForInputId
+        ? await params.manager.getForRequest(parsed.runId, sessionId, opts?.requesterWorkAttributionV1)
+        : admittedRun;
       if (!run) return executionRunNotFound();
       const response = projectExecutionRunGetResponse(run, parsed.includeStructured === true, parsed.includeLatestToolResult !== false);
       if (!observedInputTurn) return response;
