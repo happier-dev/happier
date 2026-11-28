@@ -223,7 +223,10 @@ function DeploymentEnvironmentRowsBody(props: DeploymentEnvironmentRowsProps & R
           ? contributed.byline.filter(fact => !layout?.shownColumnKeys?.has(fact.field.id))
           : foldedByline;
         if (facts.length === 0) return line;
-        return <View style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 1, gap: theme.space.s8 }}>
+        // Beside columns, a fact that no longer fits the Environment column moves beneath, whole, rather than running
+        // under the next column (F21 at 1000 px). A phone row folds two facts and ellipsizes the deploy text instead.
+        return <View style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 1, columnGap: theme.space.s8,
+          ...(columns ? { flexWrap: 'wrap' as const } : {}) }}>
           {line ? <Text variant="meta" style={meta} numberOfLines={1}>{line}</Text> : null}
           {facts.map(fact => <ServiceBylineFact key={fact.field.id} fact={fact}
             environmentId={row.environmentId} collectorMachineId={row.collectorMachineId}
