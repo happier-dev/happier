@@ -9,9 +9,9 @@ import { useLocalSettings, useSettings } from '@/sync/store/hooks';
 import { buildAccountSettingsSnapshot } from './buildAccountSettingsSnapshot';
 import { buildFeatureAnalyticsSnapshot } from './buildFeatureAnalyticsSnapshot';
 import { buildLocalSettingsSnapshot } from './buildLocalSettingsSnapshot';
-import { diffAnalyticsProperties } from './diffAnalyticsSnapshot';
 import { getDeviceAnalyticsId } from './deviceAnalyticsIdentity';
 import { flushTrackingClient } from './flushTrackingClient';
+import { takeAnalyticsPropertiesToSend } from './propertiesSendLedger';
 
 export function SettingsAnalyticsRuntime() {
     const settings = useSettings();
@@ -23,14 +23,6 @@ export function SettingsAnalyticsRuntime() {
         getTrackingAnonymousUserId,
         getTrackingAnonymousUserId,
     );
-    const previousAccountPropertiesRef = React.useRef<Record<string, string | number | boolean | null> | null>(null);
-    const previousLocalPropertiesRef = React.useRef<Record<string, string | number | boolean | null> | null>(null);
-
-    React.useEffect(() => {
-        previousAccountPropertiesRef.current = null;
-        previousLocalPropertiesRef.current = null;
-    }, [anonymousUserId]);
-
     React.useEffect(() => {
         if (!tracking || !anonymousUserId) return;
 
@@ -44,24 +36,23 @@ export function SettingsAnalyticsRuntime() {
             ...accountSnapshot.properties,
             ...featureSnapshot.properties,
         };
-        const changedAccountProperties = diffAnalyticsProperties(previousAccountPropertiesRef.current, accountProperties);
         let didEmitAnalyticsUpdate = false;
 
-        if (changedAccountProperties) {
-            tracking.identify(anonymousUserId, changedAccountProperties);
+        const accountPropertiesToSend = takeAnalyticsPropertiesToSend('person', anonymousUserId, accountProperties);
+        if (accountPropertiesToSend) {
+            tracking.identify(anonymousUserId, accountPropertiesToSend);
             didEmitAnalyticsUpdate = true;
         }
-        previousAccountPropertiesRef.current = accountProperties;
 
         const deviceAnalyticsId = getDeviceAnalyticsId();
         if (deviceAnalyticsId) {
-            const changedLocalProperties = diffAnalyticsProperties(previousLocalPropertiesRef.current, localSnapshot.properties);
-            if (changedLocalProperties) {
-                tracking.group('device_user', `${anonymousUserId}:${deviceAnalyticsId}`, changedLocalProperties);
+            const deviceUserKey = `${anonymousUserId}:${deviceAnalyticsId}`;
+            const localPropertiesToSend = takeAnalyticsPropertiesToSend('device_user', deviceUserKey, localSnapshot.properties);
+            if (localPropertiesToSend) {
+                tracking.group('device_user', deviceUserKey, localPropertiesToSend);
                 didEmitAnalyticsUpdate = true;
             }
         }
-        previousLocalPropertiesRef.current = localSnapshot.properties;
 
         if (didEmitAnalyticsUpdate) {
             flushTrackingClient(tracking);

@@ -85,9 +85,11 @@ export type AgentTurnLivenessProbeResult = Readonly<{
   diagnostics?: Readonly<Record<string, unknown>>;
 }>;
 
+export type AgentCancelOptions = Readonly<{ sessionEnding?: boolean }>;
+
 /**
  * Universal interface for agent backends.
- * 
+ *
  * All agent implementations (Claude, Codex, Gemini, etc.) should implement
  * this interface to be usable through the Happier CLI and app.
  */
@@ -165,10 +167,12 @@ export interface AgentBackend {
   
   /**
    * Cancel the current operation in a session.
-   * 
+   *
    * @param sessionId - The session to cancel
+   * @param options.sessionEnding - The runtime is terminating and `dispose()` follows: settle the
+   *   current work as cancelled, but do not re-arm native session state for later prompts.
    */
-  cancel(sessionId: SessionId): Promise<void>;
+  cancel(sessionId: SessionId, options?: AgentCancelOptions): Promise<void>;
   
   /**
    * Register a handler for agent messages.

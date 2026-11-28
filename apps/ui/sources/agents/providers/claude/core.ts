@@ -9,6 +9,11 @@ import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agen
 
 export const CLAUDE_CORE: AgentCoreConfig = {
     id: 'claude',
+    localHistory: {
+        providerId: 'claude',
+        source: { kind: 'claudeConfig' },
+        accountPolicyRoute: '/settings/providers/claude',
+    },
     displayNameKey: 'agentInput.agent.claude',
     subtitleKey: 'profiles.aiBackend.claudeSubtitle',
     permissionModeI18nPrefix: 'agentInput.permissionMode',

@@ -486,7 +486,7 @@ export class ScmStatusSync {
             if (scmErrorCode === SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED) {
                 this.projectAutoRefreshSuspended.add(scheduledProjectKey);
             }
-            reportScmStatusSyncError({ projectKey, error });
+            reportScmStatusSyncError({ error });
         }
     }
 

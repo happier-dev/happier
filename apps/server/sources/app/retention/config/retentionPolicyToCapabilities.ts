@@ -1,7 +1,8 @@
 import type { ServerRetentionCapabilities } from '@happier-dev/protocol';
+import type { LimitTable } from '@/app/plans/accountLimits';
 
 import type { RetentionPolicy } from './retentionPolicyTypes';
-import { resolveEffectiveRetentionDomains, resolveEffectiveRetentionEnabled } from './retentionPolicyState';
+import { hasPaidRetentionLimit, resolveEffectiveRetentionDomains, resolveEffectiveRetentionEnabled } from './retentionPolicyState';
 
 function toAgePolicyCapability(policy: RetentionPolicy['domains'][Exclude<keyof RetentionPolicy['domains'], 'sessions'>]) {
     if (policy.mode === 'keep_forever') return { mode: 'keep_forever' } as const;
@@ -11,8 +12,9 @@ function toAgePolicyCapability(policy: RetentionPolicy['domains'][Exclude<keyof 
     } as const;
 }
 
-export function retentionPolicyToCapabilities(policy: RetentionPolicy): ServerRetentionCapabilities {
-    const enabled = resolveEffectiveRetentionEnabled(policy);
+export function retentionPolicyToCapabilities(policy: RetentionPolicy, table?: LimitTable): ServerRetentionCapabilities {
+    const hasPaidSessionRetention = policy.enabled && table !== undefined && hasPaidRetentionLimit(table, 'sessionRetentionDays');
+    const enabled = resolveEffectiveRetentionEnabled(policy) || hasPaidSessionRetention;
     const domains = resolveEffectiveRetentionDomains(policy);
     const sessions =
         domains.sessions.mode === 'keep_forever'
@@ -25,6 +27,9 @@ export function retentionPolicyToCapabilities(policy: RetentionPolicy): ServerRe
 
     return {
         policyVersion: 1,
+        ...(enabled && (sessions.mode === 'delete_inactive' || hasPaidSessionRetention) && policy.startsAt !== undefined
+            ? { startsAt: policy.startsAt, noticeDays: policy.noticeDays }
+            : {}),
         enabled,
         sessions,
         accountChanges: toAgePolicyCapability(domains.accountChanges),

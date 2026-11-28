@@ -41,6 +41,7 @@ export const UpdateBodySchema = lazySchema(() => z.discriminatedUnion('t', [
   z.object({
     t: z.literal('new-message'),
     sid: z.string(),
+    cloudCopyLeftAt: z.null().optional(),
     message: z
       .object({
         id: z.string(),
@@ -122,6 +123,7 @@ export const UpdateBodySchema = lazySchema(() => z.discriminatedUnion('t', [
     runtimeActivityRevision: z.number().int().nonnegative().safe().optional(),
     meaningfulActivityAt: TimestampMsSchema.optional(),
     archivedAt: TimestampMsSchema.nullable().optional(),
+    cloudCopyLeftAt: TimestampMsSchema.nullable().optional(),
   }).passthrough(),
   z.object({
     t: z.literal('pending-changed'),

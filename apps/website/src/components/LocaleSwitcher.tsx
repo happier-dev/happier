@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { LOCALES, LOCALE_META, pathForLocale, useI18n } from '../i18n';
+import { LOCALES, LOCALE_META, pathForLocale, useI18n, type Locale } from '../i18n';
 import { useTheme } from '../islands/themeStore';
 
 /**
@@ -29,15 +29,10 @@ import { useTheme } from '../islands/themeStore';
  * standards, `::-webkit-details-marker` for older Safari) so nothing about it
  * reads as a native disclosure triangle.
  *
- * IT OFFERS EVERY LOCALE BECAUSE EVERY ROUTE HAS EVERY LOCALE. It cannot ask the
- * route: `findRoute()` lives in src/routes.tsx, which statically imports all
- * nine page components and every data module, and this footer renders on all 210
- * pages — importing it here would pull the whole site into the chunk every page
- * shares and undo the bundle split. The invariant is asserted instead, in
- * src/i18n/localeSwitcher.test.ts, which fails naming the route rather than
- * letting this link to a page the build never wrote.
+ * The page shell supplies the route's published locales so the footer island
+ * can render links without loading the route registry into the browser bundle.
  */
-export function LocaleSwitcher() {
+export function LocaleSwitcher({ availableLocales = LOCALES }: { availableLocales?: readonly Locale[] } = {}) {
     const { locale: current, path } = useI18n();
     const { theme } = useTheme();
     const isDark = theme === 'dark';
@@ -96,7 +91,7 @@ export function LocaleSwitcher() {
                         : '0 24px 60px -10px rgba(10,10,11,0.18)',
                 }}
             >
-                {LOCALES.map((locale) => {
+                {availableLocales.map((locale) => {
                     const meta = LOCALE_META[locale];
                     const isCurrent = locale === current;
                     return (

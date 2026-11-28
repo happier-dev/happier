@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { execFileSync } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
@@ -17,15 +17,14 @@ function resolveServerLightSqliteDbPath(server: StartedServer): string {
 
 function markAccountChangesAsStaleInSqlite(params: { server: StartedServer }): void {
   const dbPath = resolveServerLightSqliteDbPath(params.server);
-  const staleEpochMs = String(new Date('2024-01-01T00:00:00.000Z').getTime());
-  execFileSync(
-    'sqlite3',
-    [
-      dbPath,
-      `UPDATE "AccountChange" SET "changedAt" = ${staleEpochMs};`,
-    ],
-    { stdio: 'pipe' },
-  );
+  const staleEpochMs = Date.parse('2024-01-01T00:00:00.000Z');
+  const database = new DatabaseSync(dbPath);
+  try {
+    database.exec('PRAGMA busy_timeout=5000');
+    database.prepare('UPDATE "AccountChange" SET "changedAt" = ?').run(staleEpochMs);
+  } finally {
+    database.close();
+  }
 }
 
 async function waitForChangesFloorAdvance(params: {
@@ -63,6 +62,8 @@ describe('core e2e: server retention account-change pruning', () => {
       dbProvider: 'sqlite',
       extraEnv: {
         HAPPIER_SERVER_RETENTION__ENABLED: '1',
+        HAPPIER_SERVER_RETENTION__DRY_RUN: 'false',
+        HAPPIER_SERVER_RETENTION__STARTS_AT: '2024-01-01T00:00:00.000Z',
         HAPPIER_SERVER_RETENTION__INTERVAL_MS: '200',
         HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__MODE: 'delete_older_than',
         HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__DAYS: '1',

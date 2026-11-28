@@ -1,60 +1,23 @@
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import { LOCALES, LOCALE_META, SITE_ORIGIN, localePath, localeUrl, pathForLocale } from './index';
-import { ROUTES, localesFor, fileForRoute } from '../routes';
+import { ROUTES, localesFor, routeManifest } from '../routes';
+import { App } from '../App';
 
-/**
- * The switcher offers TEN languages on every page, and it does not check.
- *
- * It cannot: `findRoute()` lives in src/routes.tsx, which statically imports
- * every page component and every data module, and the footer renders on all 210
- * pages — importing it there would pull the whole site into the chunk every page
- * shares and undo the bundle split. So src/components/LocaleSwitcher.tsx maps
- * over LOCALES and trusts that every route has all of them.
- *
- * This is what makes that trust safe. The moment a route narrows its `locales`,
- * the switcher starts linking to a URL the build never wrote, and this test
- * fails instead — naming the route and pointing at the component.
- */
 describe('the footer locale switcher only ever links to pages that exist', () => {
-    it('gives every route every locale, which is what the switcher assumes', () => {
-        for (const route of ROUTES) {
-            expect(
-                [...localesFor(route)].sort(),
-                `${route.path} does not ship in every language, but ` +
-                    'src/components/LocaleSwitcher.tsx links to all of them from every page. ' +
-                    'Either give the route the missing locales, or make the switcher take the ' +
-                    "route's list — it cannot import findRoute() to ask.",
-            ).toEqual([...LOCALES].sort());
-        }
-    });
-
-    it('builds a URL the prerenderer actually writes, for every route and locale', () => {
-        // The switcher's href and the file on disk are produced by two different
-        // functions — pathForLocale here, localeUrl in the route manifest — and
-        // a trailing-slash or prefix disagreement between them is a 404 that no
-        // type checks and no page shows until someone clicks.
-        const built = new Set(
-            ROUTES.flatMap((route) =>
-                localesFor(route).map((locale) => {
-                    const prefix = LOCALE_META[locale].pathPrefix;
-                    const path = route.path === '/' ? prefix || '/' : `${prefix}${route.path}`;
-                    return fileForRoute(path);
-                }),
-            ),
-        );
-
-        for (const route of ROUTES) {
-            for (const from of localesFor(route)) {
-                const fromPrefix = LOCALE_META[from].pathPrefix;
-                const currentPath = route.path === '/' ? fromPrefix || '/' : `${fromPrefix}${route.path}`;
-
-                for (const to of LOCALES) {
-                    const href = pathForLocale(to, currentPath);
-                    expect(
-                        built.has(fileForRoute(href)),
-                        `switcher on ${currentPath} links to ${href}, which the build does not write`,
-                    ).toBe(true);
+    it('offers localized destinations and hides the switcher on English-only pages', () => {
+        const destinations = new Set(routeManifest().map(({ path }) => path));
+        for (const path of ['/fr/enterprise', '/plans', '/open', '/supporters']) {
+            const html = renderToStaticMarkup(createElement(App, { path }));
+            const switcher = /<details[^>]*data-section="locale-switcher"[\s\S]*?<\/details>/.exec(html)?.[0];
+            if (path === '/supporters') {
+                expect(switcher).toBeUndefined();
+            } else {
+                expect(switcher).toBeDefined();
+                for (const [, href] of switcher!.matchAll(/href="([^"]+)"/g)) {
+                    expect(destinations.has(href), href).toBe(true);
                 }
             }
         }
@@ -69,7 +32,7 @@ describe('the footer locale switcher only ever links to pages that exist', () =>
      */
     it('links to each page at exactly the URL it declares as canonical', () => {
         for (const route of ROUTES) {
-            for (const to of LOCALES) {
+            for (const to of localesFor(route)) {
                 const canonical = localeUrl(to, route.path).slice(SITE_ORIGIN.length);
                 for (const from of localesFor(route)) {
                     const fromPrefix = LOCALE_META[from].pathPrefix;
@@ -93,6 +56,16 @@ describe('the footer locale switcher only ever links to pages that exist', () =>
             expect(meta.suggestion.action.length, `${locale} suggestion.action`).toBeGreaterThan(0);
             expect(meta.suggestion.dismiss.length, `${locale} suggestion.dismiss`).toBeGreaterThan(0);
         }
+    });
+
+    it('keeps readers in the same locale between open, plans and download', () => {
+        const open = renderToStaticMarkup(createElement(App, { path: '/zh/open' }));
+        const plans = renderToStaticMarkup(createElement(App, { path: '/zh/plans' }));
+
+        expect(open).toContain('href="/zh/plans#any-server"');
+        expect(open).toContain('href="/supporters" hreflang="en"');
+        expect(plans).toContain('href="/zh/download"');
+        expect(plans).toContain('href="/zh/open"');
     });
 });
 

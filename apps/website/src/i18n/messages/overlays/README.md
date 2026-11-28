@@ -27,6 +27,16 @@ Three things that will bite otherwise:
   (`src/routes.tsx`), which is also what emits the hreflang and the sitemap row.
   Translating first and declaring second is the intended order.
 
-Route titles and descriptions are **not** here. They cannot be translated into
-their character caps — the English is authored at 143–155 against a 155 ceiling —
-so they are re-authored per locale in `Route.i18n` instead.
+Author message changes in `.parts/<locale>.*.json` and run
+`node scripts/i18n-merge-overlays.mjs` from `apps/website` to validate and merge
+them into the locale files above.
+
+Author localized route titles and descriptions in `.parts/routeMeta.<locale>.json`.
+Run `node scripts/i18n-dump-route-meta.mjs` after changing the published routes,
+then `node scripts/i18n-apply-route-meta.mjs` to validate coverage and character
+limits and regenerate `routeMeta.json` and `src/data/routeMetaI18n.ts`.
+
+After widening a route, run `yarn build:server` and `yarn i18n:slice` to update
+the translation namespaces each route reads. Run
+`node scripts/i18n-generate-entries.mjs --write` when the slicer reports missing
+or stale entries, then rerun the slicer to verify them.

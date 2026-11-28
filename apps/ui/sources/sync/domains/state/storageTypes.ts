@@ -449,6 +449,7 @@ export interface Session {
      * Optional for mixed-version safety with older servers.
      */
     archivedAt?: number | null,
+    cloudCopyLeftAt?: number | null,
     /**
      * Server-side pending queue (V2) summary fields.
      * Optional for mixed-version safety with older servers.

@@ -22,6 +22,8 @@ import { configuration } from '@/configuration';
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 
 import { isPidSafeHappySessionProcess } from '../pidSafety';
+import { isPidAliveBySignal } from '../processRunState';
+import { listSessionMarkers } from '../sessionRegistry';
 import {
   isTrackedSessionRunnerCurrent,
   readTrackedSessionRunner,
@@ -241,19 +243,22 @@ export function createStopSession(params: Readonly<{
     const isPidFallback = normalizedSessionId.startsWith('PID-');
     const fallbackPid = isPidFallback ? Number.parseInt(normalizedSessionId.replace('PID-', ''), 10) : NaN;
 
-    const pidsToStop: number[] = [];
-    const expectedByTrackingPid = new Map<number, { session: TrackedSession; runner: ReturnType<typeof readTrackedSessionRunner> }>();
-    for (const [pid, session] of pidToTrackedSession.entries()) {
+    const matchesTrackedSession = (pid: number, session: TrackedSession): boolean => {
       const happySessionId = typeof session.happySessionId === 'string' ? session.happySessionId : '';
       const existingSessionId =
         session.spawnOptions && typeof (session.spawnOptions as any).existingSessionId === 'string'
           ? String((session.spawnOptions as any).existingSessionId).trim()
           : '';
-      const matches =
+      return (
         happySessionId === normalizedSessionId ||
         existingSessionId === normalizedSessionId ||
-        (isPidFallback && Number.isFinite(fallbackPid) && pid === fallbackPid);
-      if (matches) {
+        (isPidFallback && Number.isFinite(fallbackPid) && pid === fallbackPid)
+      );
+    };
+    const pidsToStop: number[] = [];
+    const expectedByTrackingPid = new Map<number, { session: TrackedSession; runner: ReturnType<typeof readTrackedSessionRunner> }>();
+    for (const [pid, session] of pidToTrackedSession.entries()) {
+      if (matchesTrackedSession(pid, session)) {
         pidsToStop.push(pid);
         expectedByTrackingPid.set(pid, { session, runner: readTrackedSessionRunner(session) });
       }
@@ -337,9 +342,23 @@ export function createStopSession(params: Readonly<{
       }) ?? Promise.resolve(null);
       return await terminalHostAdaptersPromise;
     };
+    const readExitedMarkerRunnerPids = async (): Promise<readonly number[]> => {
+      try {
+        const markers = (await listSessionMarkers({ requireComplete: true }))
+          .filter((marker) => marker.happySessionId.trim() === normalizedSessionId);
+        for (const [pid, session] of pidToTrackedSession) {
+          if (matchesTrackedSession(pid, session)) return [];
+        }
+        if (markers.some((marker) => isPidAliveBySignal(marker.pid))) return [];
+        return markers.filter((marker) => marker.startedBy === 'daemon').map((marker) => marker.pid);
+      } catch (error) {
+        logWarning(`[DAEMON RUN] Could not verify persisted runner exit for session ${normalizedSessionId}`, error);
+        return [];
+      }
+    };
     const retireLegacyAttachmentAfterPositiveDeath = async (
       legacyAttachment: LegacyTerminalAttachmentInfo,
-      options: Readonly<{ runnerExitProven: boolean; exitedRunnerPids: readonly number[] }>,
+      trackedExitedRunnerPids?: readonly number[],
     ): Promise<StopSessionResult> => {
       const handle = buildLegacyTerminalAttachmentHostHandle(
         legacyAttachment,
@@ -350,15 +369,17 @@ export function createStopSession(params: Readonly<{
           || legacyAttachment.terminal.mode === 'windows_console'
           ? legacyAttachment.terminal.windows?.pid
           : undefined;
-        const exactWindowsRunnerExited = options.runnerExitProven
-          && typeof persistedWindowsPid === 'number'
-          && Number.isSafeInteger(persistedWindowsPid)
-          && persistedWindowsPid > 0
-          && options.exitedRunnerPids.includes(persistedWindowsPid);
-        if (
-          !exactWindowsRunnerExited
-          && (legacyAttachment.terminal.mode !== 'plain' || !options.runnerExitProven)
-        ) {
+        const isPlain = legacyAttachment.terminal.mode === 'plain';
+        if (!isPlain && (
+          typeof persistedWindowsPid !== 'number' || !Number.isSafeInteger(persistedWindowsPid) || persistedWindowsPid <= 0
+        )) {
+          return incompleteStopSession('legacy_attachment');
+        }
+        const exitedRunnerPids = trackedExitedRunnerPids ?? await readExitedMarkerRunnerPids();
+        const runnerExitProven = isPlain
+          ? exitedRunnerPids.length > 0
+          : exitedRunnerPids.some((pid) => pid === persistedWindowsPid);
+        if (!runnerExitProven) {
           return incompleteStopSession('legacy_attachment');
         }
       } else {
@@ -388,10 +409,7 @@ export function createStopSession(params: Readonly<{
 
     if (pidsToStop.length === 0) {
       if (attachmentInfo?.version === 1) {
-        return await retireLegacyAttachmentAfterPositiveDeath(attachmentInfo, {
-          runnerExitProven: false,
-          exitedRunnerPids: [],
-        });
+        return await retireLegacyAttachmentAfterPositiveDeath(attachmentInfo);
       }
       if (!isPidFallback && params.recoverStrandedTerminalControlServiceability) {
         try {
@@ -728,10 +746,10 @@ export function createStopSession(params: Readonly<{
         : incompleteStopSession('destroy_failed');
     }
     if (attachmentInfo?.version === 1) {
-      return await retireLegacyAttachmentAfterPositiveDeath(attachmentInfo, {
-        runnerExitProven: true,
-        exitedRunnerPids: Array.from(expectedByTrackingPid.values(), ({ runner }) => runner.pid),
-      });
+      return await retireLegacyAttachmentAfterPositiveDeath(
+        attachmentInfo,
+        Array.from(expectedByTrackingPid.values(), ({ runner }) => runner.pid),
+      );
     }
     return { status: 'stopped' };
   };

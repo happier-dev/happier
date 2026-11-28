@@ -70,6 +70,8 @@ export type DeferredApiSessionTarget = Readonly<{
   updateAgentState: (updater: (state: AgentState) => AgentState, options?: AgentStateWriteOptions) => void | Promise<void>;
   updateAgentStateRequestSettlement: (updater: (state: AgentState) => AgentState) => Promise<void>;
   getRuntimeActivitySnapshotPublisher?: () => SessionRuntimeActivitySnapshotPublisher | null;
+  readRuntimeActivitySnapshotTail?: SessionClientPort['readRuntimeActivitySnapshotTail'];
+  waitForRuntimeActivitySnapshotTailChange?: SessionClientPort['waitForRuntimeActivitySnapshotTailChange'];
   keepAlive: (thinking: boolean, mode: 'local' | 'remote') => void;
   getMetadataSnapshot: () => Metadata | null;
   getAgentStateSnapshot?: () => AgentState | null;
@@ -650,6 +652,18 @@ export class DeferredApiSessionClient {
 
   getRuntimeActivitySnapshotPublisher(): SessionRuntimeActivitySnapshotPublisher | null {
     return this.target?.getRuntimeActivitySnapshotPublisher?.() ?? null;
+  }
+
+  readRuntimeActivitySnapshotTail(): ReturnType<NonNullable<SessionClientPort['readRuntimeActivitySnapshotTail']>> {
+    if (this.cancelled) return undefined;
+    return this.target?.readRuntimeActivitySnapshotTail?.();
+  }
+
+  async waitForRuntimeActivitySnapshotTailChange(sequence: number, signal?: AbortSignal): Promise<boolean> {
+    return await this.withAttachedTarget(
+      (target) => target.waitForRuntimeActivitySnapshotTailChange?.(sequence, signal) ?? false,
+      false,
+    );
   }
 
   wakePendingMaterialization(): void {

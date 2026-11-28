@@ -199,6 +199,7 @@ function coerceLegacySessionRecord(raw: unknown): V2SessionRecord | null {
         active,
         activeAt,
         archivedAt: readNullableNumber(raw.archivedAt),
+        cloudCopyLeftAt: readNullableNumber(raw.cloudCopyLeftAt),
         encryptionMode: raw.encryptionMode === 'plain' ? 'plain' : raw.encryptionMode === 'e2ee' ? 'e2ee' : undefined,
         metadata,
         metadataVersion,

@@ -91,6 +91,7 @@ export function buildSessionViewShellSessionSignature(session: Session): string 
             createdAt: session.createdAt ?? 0,
             active: session.active === true,
             archivedAt: session.archivedAt ?? null,
+            cloudCopyLeftAt: session.cloudCopyLeftAt ?? null,
             agentStateVersion: session.agentStateVersion ?? null,
             encryptionMode: session.encryptionMode ?? null,
             presence: session.presence ?? null,

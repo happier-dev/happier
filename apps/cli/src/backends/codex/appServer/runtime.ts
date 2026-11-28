@@ -152,6 +152,7 @@ import {
 import type { CodexChatGptTokensRefreshBridgeResponse } from '../connectedServices/refreshCodexChatGptTokensForBridge';
 import type { CodexConnectedServiceAppliedIdentity } from '../connectedServices/runtimeAppliedIdentity';
 import { applyCodexConnectedServiceAuthGeneration } from '../connectedServices/applyCodexConnectedServiceAuthGeneration';
+import { reconcileCodexResumeRolloutPath } from '../connectedServices/reconcileCodexResumeRolloutPath';
 import { applyCodexAppServerChatGptAuthTokens } from '../connectedServices/authApplication/liveAppServerApply';
 import { isCodexAuthStoreProjectionCurrent } from '../connectedServices/writeCodexAuthStoreFile';
 import { resolveConnectedServiceSelectionHomeDir } from '@/daemon/connectedServices/homes/resolveConnectedServiceHomeDir';
@@ -3779,10 +3780,13 @@ export function createCodexAppServerRuntime(params: Readonly<{
         });
     };
 
+    let clientLifecycle: AbortController | undefined;
     const ensureClient = async (options: Readonly<{
         reattachRetainedThread?: boolean;
     }> = {}): Promise<DisposableCodexAppServerClient> => {
         if (!clientPromise) {
+            const lifecycle = new AbortController();
+            clientLifecycle = lifecycle;
             const retainedThreadId = options.reattachRetainedThread === false ? null : threadId;
             historyBoundary.beginHydration();
             clientPromise = (params.createClient
@@ -4138,21 +4142,24 @@ export function createCodexAppServerRuntime(params: Readonly<{
                         }
                     }
                     if (retainedThreadId) {
-                        return resumeThread(client, retainedThreadId, {
-                            preserveRequestedThreadId: true,
-                        }).then(async (resumedThread) => {
-                            await applyStartOrLoadResponse(
-                                client,
-                                resumedThread.nextThreadId,
-                                resumedThread.response,
-                            );
-                            return client;
-                        });
+                        try {
+                            const resumedThread = await resumeThread(client, retainedThreadId, {
+                                signal: lifecycle.signal,
+                                preserveRequestedThreadId: true,
+                            });
+                            lifecycle.signal.throwIfAborted();
+                            await applyStartOrLoadResponse(client, resumedThread.nextThreadId, resumedThread.response);
+                        } catch (error) {
+                            await client.dispose().catch(cleanupError => {
+                                logger.debug('[codex-app-server] Retained reattach cleanup failed', cleanupError);
+                            });
+                            throw error;
+                        }
                     }
                     return client;
                 })
                 .catch((error) => {
-                    clientPromise = null;
+                    if (clientLifecycle === lifecycle) clientPromise = null;
                     throw error;
                 });
         }
@@ -4169,6 +4176,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
         if (options?.emitUndeliverablePrompts !== false) {
             emitAllPendingProviderPromptsAsUndeliverable();
         }
+        const lifecycle = clientLifecycle;
+        lifecycle?.abort();
+        clientLifecycle = undefined;
         const activeClientPromise = clientPromise;
         clientPromise = null;
         if (!activeClientPromise) {
@@ -4182,8 +4192,11 @@ export function createCodexAppServerRuntime(params: Readonly<{
             return;
         }
         try {
-            const client = await activeClientPromise;
-            await client.dispose(options?.pendingTurnError
+            const client = await activeClientPromise.catch(error => {
+                if (lifecycle?.signal.aborted && error instanceof Error && error.name === 'AbortError') return null;
+                throw error;
+            });
+            await client?.dispose(options?.pendingTurnError
                 ? { pendingRequestError: options.pendingTurnError }
                 : undefined);
         } finally {
@@ -4203,12 +4216,14 @@ export function createCodexAppServerRuntime(params: Readonly<{
             strictNativeResumeIdentity?: boolean;
             allowOversizedResponseRecovery?: boolean;
             includeTurns?: boolean;
+            signal?: AbortSignal;
         }>,
     ): Promise<Readonly<{ nextThreadId: string; response: unknown }>> => {
         historyBoundary.beginHydration();
-        const resumeRequestOptions = { timeoutMs: null } as const;
+        const signalOptions = options.signal ? { signal: options.signal } : {};
+        const resumeRequestOptions = { timeoutMs: null, ...signalOptions } as const;
         const recoveryReadRequestOptions = options.allowOversizedResponseRecovery
-            ? { timeoutMs: readCodexAppServerResumeRecoveryTimeoutMs(runtimeEnv) }
+            ? { timeoutMs: readCodexAppServerResumeRecoveryTimeoutMs(runtimeEnv), ...signalOptions }
             : undefined;
         const readResumedThreadHistory = async (): Promise<unknown> => {
             const startedAt = Date.now();
@@ -4255,6 +4270,11 @@ export function createCodexAppServerRuntime(params: Readonly<{
             persistExtendedHistory: true,
             excludeTurns: options.includeTurns === true ? false : true,
         };
+        await reconcileCodexResumeRolloutPath({
+            env: runtimeEnv, vendorResumeId: requestedThreadId, cwd: params.directory,
+            sqliteHome: await client.readRuntimeSqliteHome?.(signalOptions) ?? null,
+        });
+        options.signal?.throwIfAborted();
         let response: unknown;
         try {
             response = await requestWithManagedPermissionFallback(client, 'thread/resume', 'thread', requestParams, resumeRequestOptions);

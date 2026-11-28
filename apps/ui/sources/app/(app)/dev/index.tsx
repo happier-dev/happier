@@ -16,6 +16,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { setLastViewedReleaseId, getChangelogEntries } from '@/changelog';
 import { t } from '@/text';
 import { MotionPreviewDevSection } from '@/components/devSettings/MotionPreviewDevSection';
+import { PlansPromptsPreviewDevSection } from '@/components/devSettings/PlansPromptsPreviewDevSection';
 import { StoryDeckPreviewDevSection } from '@/components/devSettings/StoryDeckPreviewDevSection';
 import { WebHmrDevSettingsSection } from '@/components/devSettings/WebHmrDevSettingsSection';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -276,6 +277,8 @@ export default function DevScreen() {
 
             <MotionPreviewDevSection />
 
+            <PlansPromptsPreviewDevSection />
+
             {/* Test Features */}
             <ItemGroup title="Test Features" footer="These actions may affect app stability">
                 <Item
@@ -336,12 +339,6 @@ export default function DevScreen() {
 
             {/* System */}
             <ItemGroup title="System">
-                <Item
-                    title="Purchases"
-                    subtitle="View subscriptions and entitlements"
-                    icon={<Icon name="credit-card" size={29} color="#007AFF" />}
-                    onPress={() => router.push('/dev/purchases')}
-                />
                 <Item
                     title="Expo Constants"
                     subtitle="View expoConfig, manifests, and system constants"

@@ -114,6 +114,7 @@ export async function createSessionMessageFromPending(tx: Tx, params: {
         select: { seq: true },
         data: {
             seq: { increment: 1 },
+            cloudCopyLeftAt: null,
         },
     });
     // Materializing a pending message advances `seq` without moving the read cursor, so the session

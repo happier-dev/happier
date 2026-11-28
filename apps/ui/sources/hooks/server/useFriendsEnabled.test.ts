@@ -96,7 +96,7 @@ describe('useFriendsEnabled', () => {
             'fetch',
             vi.fn(async (input: any) => {
                 const url = typeof input === 'string' ? input : String(input?.url ?? '');
-                if (url.includes('legacy.example.test') && url.endsWith('/v1/features')) {
+                if (url.includes('legacy.example.test') && url.split('?')[0]?.endsWith('/v1/features')) {
                     return { ok: false, status: 404 } as any;
                 }
                 return {

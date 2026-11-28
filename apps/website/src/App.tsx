@@ -1,4 +1,4 @@
-import { findRoute } from './routes';
+import { findRoute, localesFor } from './routes';
 import { LocaleProvider } from './i18n';
 import { LocaleSuggestion } from './components/LocaleSuggestion';
 import { localeFromPathname } from './i18n/locales';
@@ -36,7 +36,7 @@ export function App({ path }: { path: string }) {
     // not take, so the two sides disagreed by construction on every prefixed
     // URL. One input, one answer, both sides.
     return (
-        <LocaleProvider locale={localeFromPathname(path)} path={path}>
+        <LocaleProvider locale={localeFromPathname(path)} path={path} availableLocales={localesFor(route)}>
             <LocaleSuggestion />
             {route.render()}
         </LocaleProvider>

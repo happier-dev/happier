@@ -71,5 +71,6 @@ export {
   buildClaudeRemoteProviderSettingsShape,
   isValidClaudeRemoteAdvancedOptionsJson,
   normalizeClaudeRemoteAdvancedOptionsJson,
+  resolveClaudeCodeIncludeInNativeHistory,
   resolveClaudeUnifiedTerminalResponseLocations,
 } from './definitions/claudeRemote.js';

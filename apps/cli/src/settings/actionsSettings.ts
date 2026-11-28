@@ -45,10 +45,11 @@ export function isActionEnabledByEnv(
 export function isActionApprovalRequiredByEnv(
   actionId: ActionId,
   ctx?: Readonly<{ surface?: keyof ActionSurfaces | null }>,
+  defaultRequired = false,
 ): boolean {
   return isApprovalRequiredByActionsSettings(actionId, readActionsSettingsFromEnv(), {
     surface: ctx?.surface ?? null,
-  });
+  }, defaultRequired);
 }
 
 export function listDisabledActionIdsForSurfaceFromEnv(surface: keyof ActionSurfaces): readonly ActionId[] {

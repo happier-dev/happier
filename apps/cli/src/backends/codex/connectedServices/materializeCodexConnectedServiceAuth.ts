@@ -50,7 +50,7 @@ export async function materializeCodexConnectedServiceAuth(params: Readonly<{
     targetMaterializedRoot: params.rootDir,
     env: {
       CODEX_HOME: codexHome,
-      CODEX_SQLITE_HOME: syncResult.targetSqliteHome,
+      ...(syncResult.targetSqliteHome ? { CODEX_SQLITE_HOME: syncResult.targetSqliteHome } : {}),
     },
     ...(diagnostics.length > 0 ? { diagnostics } : {}),
   };

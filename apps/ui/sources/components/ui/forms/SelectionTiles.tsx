@@ -1,10 +1,15 @@
 import React from 'react';
 import { View, Pressable, Platform, useWindowDimensions } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { resolveMotionSpring } from '@/components/ui/motion/motionSprings';
+import { resolveMotionPresentation } from '@/components/ui/motion/reducedMotionTable';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 
 import {
     ITEM_CHEVRON_SIZE,
@@ -21,6 +26,11 @@ export interface SelectionTile<T extends string> {
     icon?: IconName;
     disabled?: boolean;
     badge?: string;
+    /**
+     * Visual tiles: a small rendering of what this option looks like. Pass the real artwork, not a
+     * drawn replica, so the preview cannot drift from the product.
+     */
+    preview?: React.ReactNode;
 }
 
 export type SelectionTileFooterRenderer<T extends string> = (params: Readonly<{
@@ -31,6 +41,11 @@ export type SelectionTileFooterRenderer<T extends string> = (params: Readonly<{
 
 type SelectionTilesBaseProps<T extends string> = {
     options: Array<SelectionTile<T>>;
+    /**
+     * `card` (default): text tiles with an icon, title and subtitle. `visual`: a picker for options
+     * that change what you see; each tile is the option's `preview` with its label underneath.
+     */
+    variant?: 'card' | 'visual';
     testIdPrefix?: string;
     density?: 'regular' | 'compact';
     minimumColumns?: number;
@@ -72,6 +87,34 @@ function handleToggle<T extends string>(props: SelectionTilesProps<T>, id: T) {
     props.onChange(id);
 }
 
+/** Visual tiles: the narrowest tile before the grid drops a column, and the widest grid. */
+const VISUAL_MIN_TILE_WIDTH = 96;
+const VISUAL_MAX_COLUMNS = 4;
+const SELECTION_MARK_SIZE = 20;
+
+/** The chosen tile's check. Mounted only on the chosen tile; arrives once when the choice moves to it. */
+function SelectionMark(props: Readonly<{ animateIn: boolean }>) {
+    const { theme } = useUnistyles();
+    const reducedMotion = useReducedMotionPreference();
+    const travel = props.animateIn && resolveMotionPresentation('selectionMark', reducedMotion) === 'animate';
+    const progress = useSharedValue(travel ? 0 : 1);
+    React.useEffect(() => {
+        if (travel) progress.value = withSpring(1, resolveMotionSpring('statusSettle', { reducedMotion }));
+    }, [progress, reducedMotion, travel]);
+    const style = useAnimatedStyle(() => ({
+        opacity: progress.value,
+        transform: [{ scale: 0.25 + 0.75 * progress.value }],
+    }));
+    return (
+        <Animated.View
+            pointerEvents="none"
+            style={[stylesheet.selectionMark, { backgroundColor: theme.colors.text.primary }, style]}
+        >
+            <Icon name="check" size={ICON_SIZE.xs} weight="bold" color={theme.colors.surface.base} />
+        </Animated.View>
+    );
+}
+
 export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
@@ -86,12 +129,24 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>) 
     const gap = 10;
     const density = props.density ?? 'regular';
     const compact = density === 'compact';
+    const visual = props.variant === 'visual';
+    // The check arrives with a press; the tile chosen when the picker opens simply shows it.
+    const settledRef = React.useRef(false);
+    React.useEffect(() => {
+        settledRef.current = true;
+    }, []);
     const minimumColumns = React.useMemo(
         () => Math.max(1, Math.min(props.minimumColumns ?? 1, Math.max(1, props.options.length))),
         [props.minimumColumns, props.options.length],
     );
 
     const columns = React.useMemo(() => {
+        if (visual) {
+            const maxColumns = Math.max(1, Math.min(VISUAL_MAX_COLUMNS, props.options.length));
+            const available = width > 0 ? width : fallbackViewportWidth;
+            const fit = Math.floor((available + gap) / (VISUAL_MIN_TILE_WIDTH + gap));
+            return Math.max(1, Math.min(maxColumns, fit));
+        }
         const ensureMinimumColumns = (computed: number, availableWidth: number): number => {
             if (minimumColumns <= 1) {
                 return computed;
@@ -125,7 +180,7 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>) 
         if (width >= 520) return ensureMinimumColumns(Math.min(3, props.options.length), width);
         if (width >= 260) return ensureMinimumColumns(Math.min(2, props.options.length), width);
         return ensureMinimumColumns(1, width);
-    }, [compact, fallbackViewportWidth, gap, minimumColumns, props.options.length, width]);
+    }, [compact, fallbackViewportWidth, gap, minimumColumns, props.options.length, visual, width]);
 
     const tileWidth = React.useMemo(() => {
         if (width <= 0) return undefined;
@@ -136,6 +191,7 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>) 
         if (width > 0) return null;
         if (columns <= 1) return { width: '100%' } as const;
         if (columns === 2) return { width: '48%', maxWidth: '48%', flexGrow: 0, flexShrink: 0 } as const;
+        if (columns >= 4) return { width: '23%', maxWidth: '23%', flexGrow: 0, flexShrink: 0 } as const;
         return { width: '31%', maxWidth: '31%', flexGrow: 0, flexShrink: 0 } as const;
     }, [columns, width]);
 
@@ -151,14 +207,58 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>) 
                 const selected = isSelected(props, option.id);
                 const disabled = option.disabled === true;
                 const iconName: IconName = option.icon ?? (selected ? 'check-circle' : 'circle');
+                // The selected mark uses the text colour, not the primary button fill: in dark the
+                // button fill sits a few shades off the surface and the selection disappeared.
                 const borderColor = selected
-                    ? theme.colors.button.primary.background
+                    ? theme.colors.text.primary
                     : theme.colors.border.default;
                 const iconColor = selected
-                    ? theme.colors.button.primary.background
+                    ? theme.colors.text.primary
                     : theme.colors.text.secondary;
                 const hasSubtitle = typeof option.subtitle === 'string' && option.subtitle.trim().length > 0;
                 const footer = props.renderOptionFooter?.({ option, selected, disabled });
+
+                if (visual) {
+                    return (
+                        <View
+                            key={option.id}
+                            style={[
+                                styles.tile,
+                                tileWidth ? { width: tileWidth } : fallbackTileWidthStyle,
+                                { borderColor },
+                            ]}
+                        >
+                            <Pressable
+                                testID={props.testIdPrefix ? `${props.testIdPrefix}:${option.id}` : undefined}
+                                accessibilityRole={selectionAccessibilityRole}
+                                accessibilityLabel={hasSubtitle ? `${option.title}, ${option.subtitle}` : option.title}
+                                accessibilityState={props.selectionMode === 'multiple'
+                                    ? { checked: selected, disabled }
+                                    : { selected, disabled }}
+                                disabled={disabled}
+                                onPress={() => {
+                                    if (disabled) {
+                                        return;
+                                    }
+                                    handleToggle(props, option.id);
+                                }}
+                                style={({ pressed }) => [
+                                    styles.visualPressable,
+                                    { opacity: disabled ? 0.5 : (pressed ? 0.85 : 1) },
+                                ]}
+                            >
+                                <View style={styles.visualPreview}>{option.preview}</View>
+                                <Text style={[styles.visualLabel, selected ? styles.visualLabelSelected : null]} numberOfLines={1}>
+                                    {option.title}
+                                </Text>
+                                {hasSubtitle ? (
+                                    <Text style={styles.visualSublabel} numberOfLines={1}>{option.subtitle}</Text>
+                                ) : null}
+                            </Pressable>
+                            {selected ? <SelectionMark animateIn={settledRef.current} /> : null}
+                        </View>
+                    );
+                }
 
                 return (
                     <View
@@ -250,6 +350,46 @@ const stylesheet = StyleSheet.create((theme) => ({
         minHeight: 44,
         paddingTop: 8,
         paddingBottom: 8,
+    },
+    visualPressable: {
+        flexGrow: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        paddingHorizontal: 8,
+        paddingTop: 14,
+        paddingBottom: 12,
+    },
+    visualPreview: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 2,
+    },
+    visualLabel: {
+        ...Typography.default(),
+        fontSize: ITEM_SUBTITLE_TEXT_METRICS.comfortable.fontSize,
+        color: theme.colors.text.primary,
+        textAlign: 'center',
+    },
+    visualLabelSelected: {
+        ...Typography.default('semiBold'),
+    },
+    visualSublabel: {
+        ...Typography.default(),
+        fontSize: ITEM_SUBTITLE_TEXT_METRICS.compact.fontSize,
+        color: theme.colors.text.secondary,
+        textAlign: 'center',
+        marginTop: -4,
+    },
+    selectionMark: {
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        width: SELECTION_MARK_SIZE,
+        height: SELECTION_MARK_SIZE,
+        borderRadius: SELECTION_MARK_SIZE / 2,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     headerRow: {
         flexDirection: 'row',

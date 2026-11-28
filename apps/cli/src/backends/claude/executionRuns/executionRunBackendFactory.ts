@@ -15,7 +15,7 @@ export const executionRunBackendFactory: ExecutionRunBackendFactory = (opts) => 
     settingsPath: opts.isolation?.settingsPath,
     env: {
       ...opts.isolation?.env,
-      ...resolveClaudeSessionEnvOverlay({ claudeCodeIncludeInNativeHistory: opts.accountSettings?.claudeCodeIncludeInNativeHistory === true }),
+      ...resolveClaudeSessionEnvOverlay({ claudeCodeIncludeInNativeHistory: opts.accountSettings?.claudeCodeIncludeInNativeHistory }),
     },
   });
 };

@@ -174,7 +174,9 @@ function slotsBalanced(text) {
 }
 
 const locales = existsSync(PARTS)
-    ? [...new Set(readdirSync(PARTS).filter((f) => f.endsWith('.json')).map((f) => f.split('.')[0]))]
+    ? [...new Set(readdirSync(PARTS)
+        .filter((file) => file.endsWith('.json') && !file.startsWith('routeMeta.'))
+        .map((file) => file.split('.')[0]))]
     : [];
 
 if (!locales.length) {
@@ -265,6 +267,8 @@ for (const s of summary) {
 console.log(
     anyFatal
         ? '\nFAILED — locales with fatal problems were NOT written.'
-        : `\nOK — wrote ${summary.length} overlay(s) to src/i18n/messages/overlays/`,
+        : CHECK
+            ? `\nOK — validated ${summary.length} overlay(s) without writing`
+            : `\nOK — wrote ${summary.length} overlay(s) to src/i18n/messages/overlays/`,
 );
 process.exit(anyFatal ? 1 : 0);

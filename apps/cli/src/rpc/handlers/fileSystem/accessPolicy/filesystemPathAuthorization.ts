@@ -83,7 +83,7 @@ async function resolveRealPathForAuthorizationAsync(pathValue: string, platform:
   }
 }
 
-function isWithinResolvedRoot(targetPath: string, rootPath: string, platform: NodeJS.Platform): boolean {
+export function isWithinResolvedRoot(targetPath: string, rootPath: string, platform: NodeJS.Platform): boolean {
   const api = pathApi(platform);
   const relativePath = api.relative(rootPath, targetPath);
   return relativePath === ''

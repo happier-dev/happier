@@ -1,3 +1,4 @@
+import { readConnectedServiceProfileHealths } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 import {
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
   ConnectedServiceUxDiagnosticCodeV1Schema,
@@ -5,8 +6,6 @@ import {
   ConnectedServiceCredentialRevisionV1Schema,
   ConnectedServiceIdSchema,
   isConnectedServiceCredentialHealthStatusReconnectRequired,
-  isConnectedServiceCredentialHealthStatusUsable,
-  normalizeConnectedServiceCredentialHealthStatus,
   type ConnectedServiceUxDiagnosticV1,
   type ConnectedServiceAuthGroupV1,
   type ConnectedServiceBindingsV1,
@@ -126,6 +125,7 @@ export type SessionConnectedServiceAuthSwitchErrorCode =
   | 'continuity_unsupported'
   | 'profile_missing'
   | 'profile_disconnected'
+  | 'profile_resolution_unavailable'
   | 'group_missing'
   | 'group_generation_conflict'
   | 'provider_state_sharing_required'
@@ -252,7 +252,7 @@ export type SessionConnectedServiceAuthSwitchRequest = Readonly<{
 }>;
 
 type ConnectedServiceProfilesApi = Readonly<{
-  listConnectedServiceProfiles(input: Readonly<{ serviceId: ConnectedServiceId }>): Promise<Readonly<{
+  listConnectedServiceProfiles(input: Readonly<{ serviceId: ConnectedServiceId; forceRefresh?: boolean }>): Promise<Readonly<{
     serviceId: ConnectedServiceId;
     profiles: ReadonlyArray<Readonly<{
       profileId: string;
@@ -381,8 +381,16 @@ export type SwitchSessionConnectedServiceAuthInput = Readonly<{
     cwd?: string | null;
     /** Persisted vendor session-file hint (provider-derived by the caller) — reachability fast path. */
     candidatePersistedSessionFile?: string | null;
+    failedFirstLaunch?: 'retry_original_transition';
     metadata?: Record<string, unknown> | null;
   }> | null>;
+  /**
+   * Waits for resume spawns of this session that were already in flight when the inactive switch
+   * persisted its binding. Such a spawn may have read the previous binding; once it has registered
+   * its runner, the switch re-runs against that tracked runner so the runner adopts the accepted
+   * binding (restart or hot apply) instead of keeping the stale one.
+   */
+  settleRacingSessionSpawns?(input: Readonly<{ sessionId: string }>): Promise<void>;
   api: ConnectedServiceProfilesApi;
   resolveContinuity(input: Readonly<{
     tracked: TrackedSession | null;
@@ -405,6 +413,7 @@ export type SwitchSessionConnectedServiceAuthInput = Readonly<{
      */
     cwd?: string | null;
     candidatePersistedSessionFile?: string | null;
+    failedFirstLaunch?: 'retry_original_transition';
   }>): Promise<SessionConnectedServiceSwitchContinuity>;
   materializeRuntimeAuthSelection?(
     input: SessionConnectedServiceRuntimeAuthSelectionMaterializerInput,
@@ -752,31 +761,41 @@ function buildTrackedSessionEnvironmentVariables(input: Readonly<{
   return Object.keys(environmentVariables).length > 0 ? environmentVariables : undefined;
 }
 
-async function validateConnectedProfile(input: Readonly<{
+async function validateConnectedProfiles(input: Readonly<{
   api: ConnectedServiceProfilesApi;
   serviceId: ConnectedServiceId;
-  profileId: string;
+  profileIds: readonly string[];
   diagnosticSource: ConnectedServiceUxDiagnosticV1['source'];
 }>): Promise<SessionConnectedServiceAuthSwitchFailure | null> {
-  const profiles = await input.api.listConnectedServiceProfiles({ serviceId: input.serviceId });
-  const profile = profiles.profiles.find((candidate) => candidate.profileId === input.profileId) ?? null;
-  if (!profile) {
-    return { ok: false, errorCode: 'profile_missing', serviceId: input.serviceId };
-  }
-  const healthStatus = normalizeConnectedServiceCredentialHealthStatus(profile.status);
-  if (isConnectedServiceCredentialHealthStatusReconnectRequired(healthStatus)) {
-	    return failureResult('profile_action_required', {
-	      serviceId: input.serviceId,
-	      failurePhase: 'normalization',
-	      diagnosticSource: input.diagnosticSource,
-	      actionRequired: {
-        kind: 'reconnect_profile',
-        profileId: input.profileId,
-        healthStatus: 'needs_reauth',
-      },
-    });
-  }
-  if (!isConnectedServiceCredentialHealthStatusUsable(healthStatus)) {
+  const profiles = await readConnectedServiceProfileHealths({
+    api: input.api, serviceId: input.serviceId, profileIds: input.profileIds,
+  });
+  for (const [profileId, health] of profiles) {
+    if (health.kind === 'unknown') {
+      return failureResult('profile_resolution_unavailable', {
+        serviceId: input.serviceId,
+        failurePhase: 'normalization',
+        diagnosticSource: input.diagnosticSource,
+        retryable: true,
+      });
+    }
+    if (health.kind === 'confirmed_missing') {
+      return { ok: false, errorCode: 'profile_missing', serviceId: input.serviceId };
+    }
+    if (health.kind === 'usable') continue;
+    const healthStatus = health.status;
+    if (isConnectedServiceCredentialHealthStatusReconnectRequired(healthStatus)) {
+      return failureResult('profile_action_required', {
+        serviceId: input.serviceId,
+        failurePhase: 'normalization',
+        diagnosticSource: input.diagnosticSource,
+        actionRequired: {
+          kind: 'reconnect_profile',
+          profileId,
+          healthStatus: 'needs_reauth',
+        },
+      });
+    }
     return { ok: false, errorCode: 'profile_disconnected', serviceId: input.serviceId };
   }
   return null;
@@ -872,22 +891,13 @@ async function normalizeRequestedBindings(input: Readonly<{
         requestedFallbackProfileId: binding.profileId,
         activeProfileId,
       });
-	      const profileError = await validateConnectedProfile({
-	        api: input.api,
-	        serviceId,
-	        profileId: activeProfileId,
-	        diagnosticSource: input.diagnosticSource,
-	      });
+      const profileError = await validateConnectedProfiles({
+        api: input.api,
+        serviceId,
+        profileIds: fallbackProfileId === activeProfileId ? [activeProfileId] : [activeProfileId, fallbackProfileId],
+        diagnosticSource: input.diagnosticSource,
+      });
       if (profileError) return profileError;
-      if (fallbackProfileId !== activeProfileId) {
-	        const fallbackProfileError = await validateConnectedProfile({
-	          api: input.api,
-	          serviceId,
-	          profileId: fallbackProfileId,
-	          diagnosticSource: input.diagnosticSource,
-	        });
-        if (fallbackProfileError) return fallbackProfileError;
-      }
 
       normalizedBindingsByServiceId[serviceId] = {
         source: 'connected',
@@ -936,22 +946,14 @@ async function normalizeRequestedBindings(input: Readonly<{
           requestedFallbackProfileId: binding.profileId,
           activeProfileId,
         });
-	      const activeProfileError = await validateConnectedProfile({
-	        api: input.api,
-	        serviceId,
-	        profileId: activeProfileId,
-	        diagnosticSource: input.diagnosticSource,
-	      });
+        const activeProfileError = await validateConnectedProfiles({
+          api: input.api,
+          serviceId,
+          profileIds: fallbackProfileId === activeProfileId ? [activeProfileId] : [activeProfileId, fallbackProfileId],
+          diagnosticSource: input.diagnosticSource,
+        });
         if (activeProfileError) return activeProfileError;
-        if (fallbackProfileId !== activeProfileId) {
-	        const fallbackProfileError = await validateConnectedProfile({
-	          api: input.api,
-	          serviceId,
-	          profileId: fallbackProfileId,
-	          diagnosticSource: input.diagnosticSource,
-	        });
-          if (fallbackProfileError) return fallbackProfileError;
-        }
+
         normalizedBindingsByServiceId[serviceId] = {
           source: 'connected',
           selection: 'group',
@@ -975,10 +977,10 @@ async function normalizeRequestedBindings(input: Readonly<{
       }
     }
 
-	    const profileError = await validateConnectedProfile({
+	    const profileError = await validateConnectedProfiles({
 	      api: input.api,
 	      serviceId,
-	      profileId: binding.profileId,
+	      profileIds: [binding.profileId],
 	      diagnosticSource: input.diagnosticSource,
 	    });
     if (profileError) return profileError;
@@ -2016,6 +2018,7 @@ export async function switchSessionConnectedServiceAuth(
           }
           const continuity = await input.resolveContinuity({
             tracked: null,
+            failedFirstLaunch: inactive.failedFirstLaunch,
             sessionId: input.request.sessionId,
             agentId: inactive.agentId,
             serviceId,
@@ -2068,6 +2071,11 @@ export async function switchSessionConnectedServiceAuth(
           });
         } catch {
 	          return failureResult('metadata_update_failed', { failurePhase: 'metadata', diagnosticSource });
+        }
+
+        await input.settleRacingSessionSpawns?.({ sessionId: input.request.sessionId });
+        if (findTrackedSession(input.getChildren(), input.request.sessionId)) {
+          return await execute(authoritativeGroupTargetRetriesRemaining);
         }
 
         emitManualSwitchEvents({

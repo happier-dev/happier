@@ -1,117 +1,41 @@
+/** @vitest-environment jsdom */
 import * as React from 'react';
-import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { act } from 'react';
+import { createRoot } from 'react-dom/client';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-const addEventListenerSpy = vi.fn();
-const removeEventListenerSpy = vi.fn();
-
-const wheelHandlers: Array<(e: any) => void> = [];
-const touchMoveHandlers: Array<(e: any) => void> = [];
-
-function setFakeDocument(scrollLocked: boolean) {
-    (globalThis as any).MutationObserver = class {
-        observe() {}
-        disconnect() {}
-    };
-
-    const body: any = {
-        style: { overflow: scrollLocked ? 'hidden' : 'visible', overflowY: scrollLocked ? 'hidden' : 'visible' },
-        hasAttribute: () => false,
-        getAttribute: () => null,
-    };
-    const documentElement: any = {
-        hasAttribute: () => false,
-        getAttribute: () => null,
-    };
-
-    (globalThis as any).document = {
-        body,
-        documentElement,
-        defaultView: {
-            getComputedStyle: () => ({
-                overflow: scrollLocked ? 'hidden' : 'visible',
-                overflowY: scrollLocked ? 'hidden' : 'visible',
-            }),
-        },
-        // A real page also takes the stylesheets web components inject (e.g. the loading spinner).
-        getElementById: () => null,
-        createElement: (tagName: string) => ({ tagName: tagName.toUpperCase(), id: '', textContent: '' }),
-        head: { appendChild: (node: unknown) => node },
-    };
-}
-
-const fakeDomNode = {
-    addEventListener: (type: string, handler: any) => {
-        addEventListenerSpy(type, handler);
-        if (type === 'wheel') wheelHandlers.push(handler);
-        if (type === 'touchmove') touchMoveHandlers.push(handler);
-    },
-    removeEventListener: (type: string, handler: any) => {
-        removeEventListenerSpy(type, handler);
-    },
-};
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                                                    Platform: {
-                                                                    OS: 'web',
-                                                                },
-                                                                    View: React.forwardRef((props: any, ref: any) => {
-                                                                            if (ref && typeof ref === 'object') {
-                                                                                ref.current = fakeDomNode;
-                                                                            }
-                                                                            return React.createElement('View', props, props.children);
-                                                                        }),
-                                                                    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-                                                                    ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-                                                                }
-    );
+vi.mock('react-native', async () => vi.importActual('react-native-web'));
+vi.mock('react-native-reanimated', async () => {
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+    const { View, Text, ScrollView } = await import('react-native');
+    const mock = createReanimatedModuleMock();
+    return { ...mock, default: { ...mock.default, View, Text, ScrollView }, View, Text, ScrollView };
+});
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
 });
 
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-    Ionicons: 'Ionicons',
-}));
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-}));
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}), eyebrow: () => ({}), keyHint: () => ({}) },
-}));
-
-vi.mock('@/components/sessions/files/views/SessionCommitDetailsView', () => ({
-    SessionCommitDetailsView: () => React.createElement('SessionCommitDetailsView'),
-}));
-
-vi.mock('@/components/sessions/files/views/SessionFileDetailsView', () => ({
-    SessionFileDetailsView: () => React.createElement('SessionFileDetailsView'),
-}));
-
-vi.mock('@/components/sessions/files/views/SessionScmReviewDetailsView', () => ({
-    SessionScmReviewDetailsView: () => React.createElement('SessionScmReviewDetailsView'),
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-    useLocalSetting: (key: string) => {
-        return null;
-    },
-    useLocalSettingMutable: () => [false, vi.fn()],
-});
+// Stands in for a scrollable detail view (such as the subagent transcript) that consumes React wheel/touch input.
+const descendantWheel = vi.fn();
+const descendantTouchMove = vi.fn();
+vi.mock('./SessionDetailsPanelDetailViews', async () => {
+    const { View } = await import('react-native');
+    const DetailView = () => React.createElement(View as unknown as React.ComponentType<Record<string, unknown>>, {
+        testID: 'detail-view-scroll',
+        onWheel: descendantWheel,
+        onTouchMove: descendantTouchMove,
+    });
+    return {
+        SessionCommitDetailsViewForPanel: DetailView,
+        SessionFileDetailsViewForPanel: DetailView,
+        SessionScmReviewDetailsViewForPanel: DetailView,
+        SessionScmStashDetailsViewForPanel: DetailView,
+        SessionSubagentDetailsViewForPanel: DetailView,
+        SessionTranscriptDetailsViewForPanel: DetailView,
+    };
 });
 
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
@@ -131,70 +55,45 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     }),
 }));
 
-describe('SessionDetailsPanel (web scroll-lock bypass)', () => {
-    it('installs native wheel/touchmove listeners when a scroll-lock is active', async () => {
-        setFakeDocument(true);
-        const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
+const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
 
-        const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
-
-        // Flush effects that may schedule post-commit work in React 18.
-        await act(async () => {});
-
-        expect(addEventListenerSpy).toHaveBeenCalledWith('wheel', expect.any(Function));
-        expect(addEventListenerSpy).toHaveBeenCalledWith('touchmove', expect.any(Function));
-
-        const stopPropagation = vi.fn();
-        wheelHandlers.at(-1)?.({ stopPropagation });
-        expect(stopPropagation).toHaveBeenCalled();
-
-        await act(async () => {
-            screen.tree.unmount();
-        });
-        expect(removeEventListenerSpy).toHaveBeenCalledWith('wheel', expect.any(Function));
-        expect(removeEventListenerSpy).toHaveBeenCalledWith('touchmove', expect.any(Function));
+describe('SessionDetailsPanel web wheel/touch propagation', () => {
+    afterEach(() => {
+        document.body.innerHTML = '';
+        descendantWheel.mockClear();
+        descendantTouchMove.mockClear();
     });
 
-    it('stops wheel/touchmove propagation on the root view on web (prevents global scroll-lock from breaking pane scroll)', async () => {
-        setFakeDocument(true);
-        const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
+    it('delivers wheel/touchmove to React handlers inside the panel while keeping them away from document-level scroll locks', async () => {
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+        const documentWheel = vi.fn();
+        const documentTouchMove = vi.fn();
+        document.addEventListener('wheel', documentWheel);
+        document.addEventListener('touchmove', documentTouchMove);
 
-        const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
+        try {
+            await act(async () => root.render(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />));
+            const target = await vi.waitFor(() => {
+                const node = container.querySelector<HTMLElement>('[data-testid="detail-view-scroll"]');
+                if (!node) throw new Error('detail view not rendered');
+                return node;
+            });
 
-        const root = screen.findByTestId('session-details-panel-root');
-        if (!root) {
-            throw new Error('expected session-details-panel-root to render');
+            await act(async () => {
+                target.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -100 }));
+                target.dispatchEvent(new Event('touchmove', { bubbles: true }));
+            });
+
+            expect(descendantWheel).toHaveBeenCalledTimes(1);
+            expect(descendantTouchMove).toHaveBeenCalledTimes(1);
+            expect(documentWheel).not.toHaveBeenCalled();
+            expect(documentTouchMove).not.toHaveBeenCalled();
+        } finally {
+            document.removeEventListener('wheel', documentWheel);
+            document.removeEventListener('touchmove', documentTouchMove);
+            await act(async () => root.unmount());
         }
-        expect(typeof root.props.onWheel).toBe('function');
-        expect(typeof root.props.onTouchMove).toBe('function');
-
-        const stopPropagation = vi.fn();
-        root.props.onWheel({ stopPropagation });
-        root.props.onTouchMove({ stopPropagation });
-        expect(stopPropagation).toHaveBeenCalled();
-
-        await act(async () => {
-            screen.tree.unmount();
-        });
-    });
-
-    it('installs bypass listeners even when no scroll-lock is detected (defensive against heuristic misses)', async () => {
-        addEventListenerSpy.mockClear();
-        removeEventListenerSpy.mockClear();
-        wheelHandlers.length = 0;
-        touchMoveHandlers.length = 0;
-
-        setFakeDocument(false);
-        const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
-
-        const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
-        await act(async () => {});
-
-        expect(addEventListenerSpy).toHaveBeenCalledWith('wheel', expect.any(Function));
-        expect(addEventListenerSpy).toHaveBeenCalledWith('touchmove', expect.any(Function));
-
-        await act(async () => {
-            screen.tree.unmount();
-        });
     });
 });

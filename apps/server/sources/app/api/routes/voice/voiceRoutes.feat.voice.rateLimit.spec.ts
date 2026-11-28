@@ -28,7 +28,6 @@ describe("voiceRoutes (rate limit)", () => {
             HAPPIER_FEATURE_VOICE__ENABLED: "1",
             ELEVENLABS_API_KEY: "el_key",
             ELEVENLABS_AGENT_ID_PROD: "agent_prod",
-            REVENUECAT_SECRET_KEY: "rc_secret",
         });
         dbMocks.db.voiceSessionLease.deleteMany.mockResolvedValue({ count: 0 });
         dbMocks.db.voiceSessionLease.create.mockResolvedValue({ id: "lease_1" });
@@ -84,7 +83,6 @@ describe("voiceRoutes (rate limit)", () => {
             HAPPIER_FEATURE_VOICE__ENABLED: "1",
             ELEVENLABS_API_KEY: "el_key",
             ELEVENLABS_AGENT_ID_PROD: "agent_prod",
-            REVENUECAT_SECRET_KEY: "rc_secret",
             HAPPIER_API_RATE_LIMITS_ROUTE_KEY_STRATEGY: "ip-only",
         });
 
@@ -104,7 +102,6 @@ describe("voiceRoutes (rate limit)", () => {
             HAPPIER_FEATURE_VOICE__ENABLED: "1",
             ELEVENLABS_API_KEY: "el_key",
             ELEVENLABS_AGENT_ID_PROD: "agent_prod",
-            REVENUECAT_SECRET_KEY: "rc_secret",
             HAPPIER_VOICE_TOKEN_RATE_LIMIT_MAX: "7",
             HAPPIER_VOICE_TOKEN_RATE_LIMIT_WINDOW: "30 seconds",
         });

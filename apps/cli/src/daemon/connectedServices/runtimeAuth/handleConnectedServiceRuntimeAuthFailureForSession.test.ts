@@ -865,6 +865,69 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
     expect(resolveCurrentRuntimeAuthFailureSource).not.toHaveBeenCalled();
   });
 
+  it('recovers a stale direct-profile runner through the pool its session is now bound to', async () => {
+    // Live incident 2026-11-27 14:48: a runner still on a direct account hit its usage limit after
+    // the session had been switched to a pool; recovery waited for that account's reset.
+    const tracked = {
+      startedBy: 'daemon' as const,
+      happySessionId: 'sess_stale_direct_runner',
+      pid: 123,
+      spawnOptions: {
+        directory: '/tmp/project',
+        connectedServices: {
+          v: 1 as const,
+          bindingsByServiceId: { antigravity: { source: 'connected' as const, selection: 'group' as const, groupId: 'agy' } },
+        },
+        environmentVariables: {
+          [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+            kind: 'profile', serviceId: 'antigravity', profileId: 'leeroybrun',
+            credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+          }]),
+        },
+      },
+    } satisfies TrackedSession;
+    const switchAfterClassifiedFailure = vi.fn(async () => ({
+      status: 'no_eligible_member' as const,
+      generation: 4,
+      groupExhausted: true as const,
+      retryAtMs: null,
+      excluded: [],
+    }));
+
+    await handleConnectedServiceRuntimeAuthFailureForSession({
+      getChildren: () => [tracked],
+      sessionId: tracked.happySessionId,
+      switchesThisTurn: 0,
+      classification: {
+        kind: 'usage_limit',
+        serviceId: 'antigravity',
+        profileId: 'leeroybrun',
+        groupId: null,
+        groupGeneration: null,
+        credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+        resetsAtMs: 1_796_289_658_341,
+        planType: null,
+        rateLimits: null,
+        source: 'structured_provider_error',
+      },
+      resolveRegisteredRuntimeAuthFailureSource: () => ({
+        serviceId: 'antigravity',
+        groupId: null,
+        profileId: 'leeroybrun',
+        generation: null,
+        credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+      }),
+      runtimeAuthApply: registryOnlyRuntimeAuthCapability,
+      switchCoordinator: { switchAfterClassifiedFailure },
+    });
+
+    expect(switchAfterClassifiedFailure).toHaveBeenCalledWith(expect.objectContaining({
+      serviceId: 'antigravity',
+      groupId: 'agy',
+      observedProfileId: 'leeroybrun',
+    }));
+  });
+
   it('keeps the registered non-group profile authoritative through action selection', async () => {
     const refreshConnectedServiceCredentialForRuntimeAuthFailure = vi.fn(async (input: Readonly<{
       serviceId: 'claude-subscription';

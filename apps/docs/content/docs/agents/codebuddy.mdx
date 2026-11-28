@@ -33,8 +33,12 @@ the models and modes CodeBuddy advertises through ACP. Image prompts and
 Happier MCP tools are experimental for CodeBuddy. Happier does not copy a static
 model list.
 
-Happier permission modes map onto CodeBuddy's own modes, and CodeBuddy enforces
-them:
+CodeBuddy's own modes mix approval levels with Plan. Happier splits them: the
+permission picker chooses the approval level, and the mode picker offers
+**Build** and **Plan**, like a Claude session.
+
+In Build, Happier permission modes map onto CodeBuddy's own modes, and CodeBuddy
+enforces them:
 
 - **Default** keeps your CodeBuddy permission settings.
 - **Read Only Mode** uses `dontAsk`: safe actions and anything you pre-approved
@@ -43,13 +47,13 @@ them:
 - **Auto** uses `auto`: CodeBuddy's classifier approves safe actions and denies
   risky ones.
 - **YOLO** uses `bypassPermissions`.
-- **Plan Mode** uses `plan`.
 
-An explicit approval mode chosen under **Mode** takes precedence over this
-mapping, including after resume. The permission picker shows CodeBuddy's
-reported mode and explains the override. Choose **Use permission setting** in Mode to clear the override and use the
-current mapped permission setting again. **Default** leaves CodeBuddy's own
-policy in place. See [Session modes](/sessions/session-modes).
+Plan switches CodeBuddy to `plan` until you choose Build again; Build returns to
+the mode your permission setting maps to. No Happier permission mode selects
+CodeBuddy's `acceptEdits` mode; **Default** leaves CodeBuddy on the mode its own
+settings choose. A session saved with an approval mode picked in an earlier version's mode
+picker resumes in Build with its current permission setting. See
+[Session modes](/sessions/session-modes).
 
 CodeBuddy does not advertise ACP session listing, so Happier resumes sessions it
 started but cannot browse sessions created directly in the CodeBuddy terminal.

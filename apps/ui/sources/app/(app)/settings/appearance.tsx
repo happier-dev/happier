@@ -31,6 +31,7 @@ import {
 import type { ThemeProfileMode } from '@/theme/profiles/themeProfileTypes';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { Icon } from '@/components/ui/icons/Icon';
+import { resolveAppIconHost } from '@/components/settings/appearance/appIcon/appIconHost';
 import { isNativeBlurAvailable } from '@/components/ui/glass/blurMaterial';
 import {
     LOADING_INDICATOR_STYLE_LABEL_KEYS,
@@ -90,6 +91,9 @@ function AvatarStylePreviewIcon(props: Readonly<{ styleId: AvatarStyleId }>) {
 export default React.memo(function AppearanceSettingsScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
+    // Shown only where this device can change its icon: iOS and Android binaries with the native
+    // module (an older binary on a JS update has none), and the desktop app. Not on the web.
+    const appIconAvailable = React.useMemo(() => resolveAppIconHost() !== null, []);
     const deviceType = useDeviceType();
     const foldMetrics = useWindowFoldMetrics();
     const [systemTabBarEnabled, setSystemTabBarEnabled] = useLocalSettingMutable('systemTabBarEnabled');
@@ -362,6 +366,18 @@ export default React.memo(function AppearanceSettingsScreen() {
                     onPress={() => router.push('/settings/appearance/themes')}
                 />
             </ItemGroup>
+
+            {appIconAvailable ? (
+                <ItemGroup>
+                    <Item
+                        testID="settings-appearance-appIcon"
+                        title={t('settingsAppearance.appIcon.title')}
+                        subtitle={t('settingsAppearance.appIcon.rowSubtitle')}
+                        icon={<Icon name="smiley" size={29} color={theme.colors.accent.indigo} />}
+                        onPress={() => router.push('/settings/appearance/app-icon')}
+                    />
+                </ItemGroup>
+            ) : null}
 
             {/* Language Settings */}
             <ItemGroup title={t('settingsLanguage.title')} footer={t('settingsLanguage.description')}>

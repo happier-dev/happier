@@ -32,11 +32,6 @@ vi.mock('@/voice/context/voiceHooks', () => ({
 vi.mock('@/track', () => ({
     initializeTracking: vi.fn(),
     tracking: null,
-    trackPaywallPresented: vi.fn(),
-    trackPaywallPurchased: vi.fn(),
-    trackPaywallCancelled: vi.fn(),
-    trackPaywallRestored: vi.fn(),
-    trackPaywallError: vi.fn(),
 }));
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';

@@ -44,15 +44,13 @@ mismatch is pending; offline matching results are last confirmed. Missing or
 malformed reports never imply success. Local administrative file declarations
 produce a may-override warning; remote/MDM source selection remains vendor-owned.
 
-The existing launch `--settings` merger protects only a proven shared physical
-`projects` store when native Claude has an explicit longer configured period.
-The native configuration marker is produced by the configuration materializer
-and carried in its environment. Isolated stores and explicit shorter policies
-are not replaced by a global maximum. A launch using the same physical settings
-file as native Claude retains its explicit launch-setting precedence. Local,
-unified-terminal, Agent SDK, legacy SDK and catalog probes use this same merger
-and their effective child environment.
-No second settings argument or independent retention engine is introduced.
+When separate settings files point to the same physical `projects` store, the
+launch `--settings` merger raises shorter launch periods to the longest period
+configured in either file. The configuration materializer passes the native
+configuration marker in the child environment. Launches using the native
+settings file or a separate transcript store retain their explicit launch
+settings precedence. Local, unified-terminal, Agent SDK, legacy SDK and catalog
+probes use this same merger and their effective child environment.
 
 ## Runtime surfaces
 
@@ -418,7 +416,7 @@ title content; failed writes remain pending for a later flush.
 
 ## Claude Code history attribution (development source)
 
-`claudeCodeIncludeInNativeHistory` is an additive, account-scoped boolean, default false, owned by `packages/agents/src/providerSettings/definitions/claudeRemote.ts`. The existing outgoing-message metadata owner carries it to the CLI; absent or malformed input cannot enable it. Existing clients and CLIs ignore the additive key.
+`claudeCodeIncludeInNativeHistory` is an account-scoped boolean owned by `packages/agents/src/providerSettings/definitions/claudeRemote.ts`. The outgoing-message metadata writer and the CLI launch path use the same resolver. Missing or malformed account settings use the default of true. A saved false overrides that default. Incoming messages with an omitted or malformed field preserve the session’s effective setting.
 
 `resolveClaudeSessionEnvOverlay` extends the existing Claude launch overlay with explicit `CLAUDE_CODE_ENTRYPOINT=happier` when enabled. Local, legacy remote, Agent SDK, unified terminal, execution runs, cached startup metadata probes, and non-persisted preflight probes consume that owner. Metadata probe cache fingerprints include explicit attribution; off preserves existing cache keys. `prepareClaudeSubprocessEnv` in `spawn/buildClaudeSubprocessEnv.ts` removes inherited nested-session markers and restores only an explicit child entrypoint overlay. Generic daemon-runner sanitation remains unchanged. Queue mode hashes include this launch-time choice; already-running Claude processes and existing JSONL are not rewritten.
 

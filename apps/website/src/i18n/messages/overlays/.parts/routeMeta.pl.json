@@ -71,7 +71,7 @@
   },
   "/agents/kilo": {
     "title": "Kilo CLI na telefonie, laptopie i w przeglądarce",
-    "description": "Jedna aplikacja open source dla Kilo CLI i dwunastu innych agentów w wierszu poleceń, na twoich komputerach i kontach. Bez stanowisk i bramek funkcji.",
+    "description": "Jedna aplikacja open source dla Kilo CLI i dwunastu innych agentów w wierszu poleceń, na twoich komputerach i kontach. Wszystkie funkcje są bezpłatne.",
     "ogTitle": "Kilo CLI na telefonie, laptopie i w przeglądarce",
     "ogDescription": "Jedna aplikacja open source dla Kilo i dwunastu pozostałych agentów kodujących w wierszu poleceń, które możesz mieć zainstalowane.",
     "ogImageAlt": "Logotyp Happier nad słowami: Jeden klient do każdego agenta kodującego."
@@ -152,5 +152,19 @@
     "ogTitle": "Pobierz Happier na wszystkie swoje urządzenia",
     "ogDescription": "Aplikacje desktopowe i mobilne, bezpośredni APK oraz CLI uruchamiające agentów na twoim komputerze. Wszystkie wersje na jednej stronie.",
     "ogImageAlt": "Logotyp Happier nad słowami: Jeden klient do każdego agenta kodującego."
+  },
+  "/open": {
+    "title": "Jak Happier pozostaje darmowy",
+    "description": "Poznaj obietnice Happier, zasady opłat i sposób finansowania rozwoju. Zobacz miesięczne koszty i wpływy projektu.",
+    "ogTitle": "Obietnice i finanse Happier",
+    "ogDescription": "Sprawdź, jak Happier utrzymuje bezpłatny dostęp do wszystkich funkcji i na co przeznacza wpłaty.",
+    "ogImageAlt": "Jak Happier pozostaje darmowy"
+  },
+  "/plans": {
+    "title": "Plany i pakiet wspierającego",
+    "description": "Porównaj bezpłatny własny serwer, limity historii w Happier Cloud, miesięczne plany Lite i Plus oraz pakiet wspierającego.",
+    "ogTitle": "Plany Happier i wsparcie projektu",
+    "ogDescription": "Korzystaj z Happier bezpłatnie, wybierz dłuższą historię w chmurze lub wesprzyj rozwój projektu.",
+    "ogImageAlt": "Plany Happier i pakiet wspierającego"
   }
 }

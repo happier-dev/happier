@@ -61,6 +61,8 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
     return {
         features: {
             bugReports: { enabled: true },
+            plans: { enabled: false },
+            supporter: { enabled: false },
             e2ee: {
                 keylessAccounts: { enabled: false },
             },

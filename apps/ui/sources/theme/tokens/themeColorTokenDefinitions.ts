@@ -248,6 +248,9 @@ export const THEME_COLOR_TOKEN_CLASSIFICATIONS = [
     ...accentPaletteTokenClassifications,
     ...desktopPetOverlayTokenClassifications,
     ...shadowLevelTokenClassifications,
+    { path: ['supporter', 'accent'], status: 'internal', reason: 'Plans & Supporter identity colour for supporter marks; not part of the V1 public theme profile surface.' },
+    { path: ['supporter', 'tint'], status: 'internal', reason: 'Plans & Supporter gold chip wash; not part of the V1 public theme profile surface.' },
+    { path: ['supporter', 'onTint'], status: 'internal', reason: 'Plans & Supporter gold chip ink on supporter.tint; not part of the V1 public theme profile surface.' },
 
     { path: ['button', 'primary', 'gradient', 'colors', '0'], status: 'derived', reason: 'Primary button gradient stop derived from the primary button background recipe.' },
     { path: ['button', 'primary', 'gradient', 'colors', '1'], status: 'derived', reason: 'Primary button gradient stop derived from the primary button background recipe.' },
