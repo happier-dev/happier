@@ -6,6 +6,21 @@ import { completeConnectedAccountOAuthCallback, createConnectedAccountOAuthCallb
 const callbackUrl = `${CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1}?code=code&state=attempt.with.dots.nonce&iss=`;
 
 describe('Connected Account callback controller', () => {
+    it('returns the Railway authorization failure instead of a pasteable URL', async () => {
+        const callbackUrl = `${CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1}?${new URLSearchParams({
+            error: 'invalid_scope',
+            error_description: 'Workspace and project access must be requested at the same level.',
+            state: '00000000-0000-4000-8000-000000000000.qa-denial-sample',
+        })}`;
+        expect(await completeConnectedAccountOAuthCallback({ callbackUrl })).toEqual({
+            kind: 'denied',
+            denial: {
+                error: 'invalid_scope',
+                errorDescription: 'Workspace and project access must be requested at the same level.',
+            },
+        });
+    });
+
     it('strips synchronously before completion or Account readiness, preserving the exact incoming answer', async () => {
         const replaceUrl = vi.fn();
         const controller = createConnectedAccountOAuthCallbackController({ callbackUrl, browser: { replaceUrl, close() {} } });

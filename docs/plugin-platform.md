@@ -12192,10 +12192,14 @@ read the exact attempt and complete it on its daemon. The state prefix is only
 a routing hint; full state, issuer, PKCE and settlement remain with the attempt
 owner. MCP keeps its service/message identity and retained return path through
 a thin protocol adapter. Generic discovery reads exact attempts without
-inventing a service selector. Signed-out, unavailable and unfinished callbacks
-retain their full original URL for explicit paste; a denial never cancels a
-guessed attempt. Neither the UI nor the built-in server exchange gains vendor
-OAuth work. The public authoring example is in the
+inventing a service selector. Unfinished code responses remain available for
+explicit paste. The Connected Account relay presents authorization denials as
+plain text. The completion Action settles a denial after the attempt owner
+validates the callback, full state and issuer. The live response carries the
+provider's reason and the existing begin command for a fresh attempt. A mounted
+setup sheet on the same app or browser origin receives that settled response.
+The callback retains the error and recovery action when its browser cannot
+reach the attempt. The provider's error URI stays informational. The public authoring example is in the
 [Connected accounts guide](../apps/docs/content/docs/plugins/services/auth-connected-services.mdx).
 
 In 0.3 development source, the host records sign-in provenance only from an

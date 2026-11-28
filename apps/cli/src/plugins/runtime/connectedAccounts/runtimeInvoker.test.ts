@@ -1543,13 +1543,12 @@ describe('connected-account runtime invoker', () => {
                             }),
                         }),
                         acknowledge: async () => {},
-                        acceptCompletion: async (
-                            completion:
-                                ConnectedAccountOAuthCallbackCompletion,
-                        ) => Object.freeze({
-                                ...completion,
-                                pkceVerifier: 'pkce-verifier-1',
-                            }),
+                        acceptCompletion: async <Completion extends ConnectedAccountOAuthCallbackCompletion>(
+                            completion: Completion,
+                        ) => ({
+                            ...completion,
+                            pkceVerifier: 'pkce-verifier-1',
+                        }),
                         close: async () => {},
                     }),
                 }),

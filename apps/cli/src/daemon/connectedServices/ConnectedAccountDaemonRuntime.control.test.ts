@@ -192,7 +192,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
           oauth: { create: async () => {
             transactionCreateEntered = true;
             if (scenario === 'cancelledOAuthCreate') await callbackGate;
-            return { request: { callbackUrl: 'http://127.0.0.1/callback', state: 'oauth-state', pkce: { challenge: 'challenge', method: 'S256' as const } }, acceptCompletion: async (completion: ConnectedAccountOAuthCallbackCompletion) => ({ ...completion, pkceVerifier: 'verifier' }), close: async () => { transactionClosed = true; } };
+            return { request: { callbackUrl: 'http://127.0.0.1/callback', state: 'oauth-state', pkce: { challenge: 'challenge', method: 'S256' as const } }, acceptCompletion: async <Completion extends ConnectedAccountOAuthCallbackCompletion>(completion: Completion) => ({ ...completion, pkceVerifier: 'verifier' }), close: async () => { transactionClosed = true; } };
           } },
           settlement: { settle: async (request) => ({ status: 'connected', account: { service, accountId: request.accountId } }) },
         },

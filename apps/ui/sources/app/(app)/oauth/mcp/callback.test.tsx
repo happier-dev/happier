@@ -467,6 +467,44 @@ describe('/oauth/connected-account/callback', () => {
     expect(boundary.execute).not.toHaveBeenCalled();
   });
 
+  it('shows Railway’s reason and begins a fresh OAuth attempt from Try again', async () => {
+    install();
+    signIn();
+    const attemptId = '00000000-0000-4000-8000-000000000000';
+    const state = `${attemptId}.qa-denial-sample`;
+    const reason = 'Workspace and project access must be requested at the same level.';
+    browser.location = { search: `?${new URLSearchParams({ error: 'invalid_scope', error_description: reason, state })}` };
+    const retry = { operation: 'beginConnect', service: { pluginId: 'example.railway', localId: 'railway' }, modeId: 'oauth' };
+    const denial = { error: 'invalid_scope', errorDescription: reason };
+    boundary.execute.mockImplementation(async (actionId: string) => {
+      if (actionId === 'connectedServices.authentication.completeOAuth') return { ok: true, result: {
+        status: 'rejected', code: 'connected_account_oauth_denied', attemptId, diagnostic: { denial, providerName: 'Railway', retry },
+      } };
+      if (actionId === 'connectedServices.authentication.beginConnect') return { ok: true, result: {
+        status: 'awaitingOAuth', attemptId: 'fresh-attempt', callbackUrl: genericCallbackUrl,
+        authorizationUrl: 'https://railway.com/oauth/authorize?state=fresh-attempt.new-nonce',
+      } };
+      if (actionId === 'links.openExternal') return { ok: true, result: { status: 'opened' } };
+      throw new Error(`unexpected Action ${actionId}`);
+    });
+    const screen = await renderScreen(<ConnectedAccountOAuthCallbackRoute />);
+    await settle(screen, 'connected-account-oauth-callback:denied');
+    expect(screen.getTextContent()).toContain('Railway');
+    expect(screen.getTextContent()).toContain(reason);
+    expect(screen.getTextContent()).not.toContain('invalid_scope');
+    expect(screen.findAllByTestId('connected-account-oauth-callback:copy')).toHaveLength(0);
+    expect(boundary.execute).toHaveBeenCalledWith('connectedServices.authentication.completeOAuth', {
+      attemptId, completion: { callbackUrl: genericCallbackUrl, state, denial },
+    }, expect.anything());
+    await screen.pressByTestIdAsync('connected-account-oauth-callback:retry');
+    expect(boundary.execute).toHaveBeenCalledWith('connectedServices.authentication.beginConnect', {
+      service: retry.service, modeId: retry.modeId,
+    }, expect.anything());
+    expect(boundary.execute).toHaveBeenCalledWith('links.openExternal', {
+      url: 'https://railway.com/oauth/authorize?state=fresh-attempt.new-nonce',
+    }, expect.anything());
+  });
+
   it.each(['https://cloud.happier.dev.evil.example', 'https://self-hosted.example', 'inaccessible'])('copies the original callback rather than sending it to %s', async origin => {
     install(origin);
     signIn();
@@ -536,19 +574,15 @@ describe('/oauth/connected-account/callback', () => {
     expect(boundary.clipboard).toHaveBeenCalledWith(`${genericCallbackUrl}${query}`);
   });
 
-  it.each([false, true])('relays an explicit denial only to the exact opener, never to a guessed attempt (opener=%s)', async opener => {
+  it.each([false, true])('shows cancellation without giving the person a code to copy (opener=%s)', async opener => {
     install(opener ? 'https://cloud.happier.dev' : undefined);
     browser.location = { search: '?error=access_denied&state=attempt-1.nonce&iss=https%3A%2F%2Fissuer.example' };
-    signIn();
     const screen = await renderScreen(<ConnectedAccountOAuthCallbackRoute />);
-    await settle(screen, `connected-account-oauth-callback:${opener ? 'opener' : 'paste'}`);
+    await settle(screen, 'connected-account-oauth-callback:denied');
     expect(boundary.execute).not.toHaveBeenCalled();
-    if (opener) expect(posted).toEqual([{ origin: 'https://cloud.happier.dev', message: {
-      type: 'happier.connected-account.oauth', state: 'attempt-1.nonce', iss: 'https://issuer.example', error: 'access_denied',
-    } }]);
-    else {
-      await screen.pressByTestIdAsync('connected-account-oauth-callback:copy');
-      expect(boundary.clipboard).toHaveBeenCalledWith(`${genericCallbackUrl}?error=access_denied&state=attempt-1.nonce&iss=https%3A%2F%2Fissuer.example`);
-    }
+    expect(screen.getTextContent()).toContain('You cancelled the sign-in');
+    expect(screen.getTextContent()).not.toContain('access_denied');
+    expect(screen.findAllByTestId('connected-account-oauth-callback:copy')).toHaveLength(0);
+    expect(screen.findAllHostsByTestId('connected-account-oauth-callback:retry')).toHaveLength(1);
   });
 });

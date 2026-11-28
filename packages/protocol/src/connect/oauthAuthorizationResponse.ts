@@ -22,11 +22,17 @@ export function resolveConnectedAccountOAuthCallbackUrlV1(input: Readonly<{
   return `${webapp.origin}${webapp.pathname.replace(/\/+$/u, '')}${CONNECTED_ACCOUNT_OAUTH_CALLBACK_PATH_V1}`;
 }
 
+export type OauthAuthorizationDenial = Readonly<{
+  error: string;
+  errorDescription?: string;
+  errorUri?: string;
+}>;
+
 export type OauthAuthorizationResponse =
   | Readonly<{ kind: 'invalid' }>
   | Readonly<{ kind: 'rawAuthorizationCode'; code: string }>
   | Readonly<{ kind: 'codeState'; code: string; state: string }>
-  | Readonly<{ kind: 'callback'; code?: string; state?: string; iss?: string; error?: string }>;
+  | Readonly<{ kind: 'callback'; code?: string; state?: string; iss?: string } & Partial<OauthAuthorizationDenial>>;
 
 function parseUrl(value: string, base?: URL): URL | null {
   try { return base ? new URL(value, base) : new URL(value); } catch { return null; }
@@ -89,8 +95,11 @@ export function parseOauthAuthorizationResponse(params: Readonly<{
   const code = url.searchParams.get('code') || hash.get('code') || undefined;
   const state = url.searchParams.get('state') || hash.get('state') || undefined;
   const error = url.searchParams.get('error') || hash.get('error') || undefined;
+  const errorDescription = error ? url.searchParams.get('error_description') ?? hash.get('error_description') : null;
+  const errorUri = error ? url.searchParams.get('error_uri') ?? hash.get('error_uri') : null;
   // Presence matters: an empty issuer must not be accepted as an omitted issuer.
   const iss = url.searchParams.get('iss') ?? hash.get('iss') ?? undefined;
   return { kind: 'callback', ...(code ? { code } : {}), ...(state ? { state } : {}),
-    ...(iss === undefined ? {} : { iss }), ...(error ? { error } : {}) };
+    ...(iss === undefined ? {} : { iss }), ...(error ? { error } : {}),
+    ...(errorDescription ? { errorDescription } : {}), ...(errorUri ? { errorUri } : {}) };
 }

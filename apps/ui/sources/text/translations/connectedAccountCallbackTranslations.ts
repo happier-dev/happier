@@ -1,11 +1,20 @@
 import { mcpSignInTranslations } from './mcpSignInTranslations';
 
-export type CallbackCopy = Omit<(typeof mcpSignInTranslations)['en']['callback'], 'openServers'> & Readonly<{ openConnections: string }>;
+const denialCopy = {
+    deniedTitle: 'Sign-in failed',
+    providerDeniedTitle: ({ providerName }: { providerName: string }) => `Sign-in with ${providerName} failed`,
+    cancelledTitle: 'You cancelled the sign-in',
+    deniedBody: 'The provider declined the sign-in.',
+    tryAgain: 'Try again',
+};
+
+export type CallbackCopy = Omit<(typeof mcpSignInTranslations)['en']['callback'], 'openServers'>
+    & Readonly<{ openConnections: string }> & Readonly<typeof denialCopy>;
 type Overrides = Pick<CallbackCopy, 'connectedBody' | 'pasteBody' | 'invalidBody' | 'unfinishedBody' | 'openConnections'>;
 export type Locale = keyof typeof mcpSignInTranslations;
 
 export function callbackCopy(locale: Locale, overrides: Overrides): CallbackCopy {
-    return { ...mcpSignInTranslations[locale].callback, ...overrides };
+    return { ...mcpSignInTranslations[locale].callback, ...denialCopy, ...overrides };
 }
 
 /** Same callback slots as MCP, with connection-screen recovery for generic accounts. */

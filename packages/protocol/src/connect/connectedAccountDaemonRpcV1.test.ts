@@ -25,6 +25,14 @@ describe('Connected Account daemon RPC v1', () => {
       completion: { code: 'code', callbackUrl: 'https://cloud.happier.dev/oauth/mcp/callback', state: 'attempt.random', iss } } };
     expect(ConnectedAccountAuthenticationCommandRequestSchema.parse(request)).toEqual(request);
   });
+  it('accepts a denial with full state over the completion RPC and rejects a mixed response', () => {
+    const completion = { callbackUrl: 'https://cloud.happier.dev/oauth/connected-account/callback', state: 'attempt.random',
+      denial: { error: 'invalid_scope', errorDescription: 'Check the scopes.', errorUri: 'https://issuer.example/help' } };
+    const request = { v: 1, machineId: 'machine-1', command: { operation: 'completeOAuth', attemptId: 'attempt', completion } };
+    expect(ConnectedAccountAuthenticationCommandRequestSchema.parse(request)).toEqual(request);
+    expect(ConnectedAccountAuthenticationCommandRequestSchema.safeParse({ ...request, command: { ...request.command,
+      completion: { ...completion, code: 'ambiguous' } } }).success).toBe(false);
+  });
   it('carries exact reviewed native responsibility through the existing revoke command and response', () => {
     const account = { service: { pluginId: 'acme.accounts', localId: 'work' }, accountId: 'account-1' };
     const recovery = { reference: 'native-resource', reason: 'manual_recovery' };

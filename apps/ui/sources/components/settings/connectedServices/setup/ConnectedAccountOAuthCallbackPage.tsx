@@ -24,6 +24,7 @@ import {
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
+import { resolveConnectedAccountOAuthDenialReason } from '../connectedServiceSettingsErrors';
 
 const RESPONSE_PARAMS = [
   'code',
@@ -167,6 +168,7 @@ export function ConnectedAccountOAuthCallbackPage({
   const [view, setView] = React.useState<ConnectedAccountOAuthCallbackView>({ kind: 'working' });
   const writeClipboard = useClipboardWrite(scope, { enabled: view.kind === 'paste' || view.kind === 'unfinished' });
   const [copied, setCopied] = React.useState(false);
+  const [retrying, setRetrying] = React.useState(false);
   const started = React.useRef(false);
   const controller = React.useRef<ReturnType<typeof createConnectedAccountOAuthCallbackController> | null>(null);
   // Read once, before the controller strips the address.
@@ -226,6 +228,25 @@ export function ConnectedAccountOAuthCallbackPage({
     if (view.kind !== 'paste' && view.kind !== 'unfinished') return;
     setCopied(await writeClipboard(view.answer));
   }, [view, writeClipboard]);
+  const retry = React.useCallback(async () => {
+    if (retrying || view.kind !== 'denied') return;
+    if (!view.retry) return openConnections();
+    setRetrying(true);
+    try {
+      const attempt = await view.retry();
+      if (!execution.isCurrent()) return;
+      if (attempt.status === 'awaitingOAuth' && attempt.authorizationUrl) {
+        const opened = await execution.execute('links.openExternal', { url: attempt.authorizationUrl }, {});
+        if (opened.ok && typeof opened.result === 'object' && opened.result !== null
+            && 'status' in opened.result && opened.result.status === 'opened') return;
+      }
+      openConnections();
+    } catch {
+      if (execution.isCurrent()) openConnections();
+    } finally {
+      setRetrying(false);
+    }
+  }, [execution, openConnections, retrying, view]);
 
   return (
     <ConnectedAccountOAuthCallbackStateView
@@ -236,6 +257,8 @@ export function ConnectedAccountOAuthCallbackPage({
       copied={copied}
       onCopy={copyAnswer}
       onOpenConnections={openConnections}
+      onRetry={retry}
+      retrying={retrying}
       canOpenConnectionsWhenInvalid={auth.isAuthenticated}
     />
   );
@@ -254,6 +277,8 @@ export function ConnectedAccountOAuthCallbackStateView(props: Readonly<{
   copied: boolean;
   onCopy: () => unknown;
   onOpenConnections: () => unknown;
+  onRetry?: () => unknown;
+  retrying?: boolean;
   canOpenConnectionsWhenInvalid: boolean;
 }>) {
   const { view, copy, testIdPrefix, invalidClientCopy } = props;
@@ -308,6 +333,27 @@ export function ConnectedAccountOAuthCallbackStateView(props: Readonly<{
         />
       );
       break;
+    case 'denied': {
+      const cancelled = view.denial.error === 'access_denied';
+      content = (
+        <SurfaceStateCard
+          testID={testIdPrefix + ':denied'}
+          kind={cancelled ? 'warning' : 'error'}
+          title={cancelled ? resolveConnectedAccountOAuthDenialReason(view.denial)
+            : view.providerName ? t('capabilities.connectedAccountCallback.providerDeniedTitle', { providerName: view.providerName })
+            : t('capabilities.connectedAccountCallback.deniedTitle')}
+          reason={cancelled ? undefined : resolveConnectedAccountOAuthDenialReason(view.denial)}
+          action={{
+            testID: testIdPrefix + ':retry',
+            label: t('capabilities.connectedAccountCallback.tryAgain'),
+            busy: props.retrying,
+            disabled: props.retrying,
+            onPress: props.onRetry ?? props.onOpenConnections,
+          }}
+        />
+      );
+      break;
+    }
     case 'invalid':
       content = (
         <SurfaceStateCard

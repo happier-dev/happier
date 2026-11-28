@@ -113,22 +113,20 @@ Implement exchange, refresh, revocation and identity/granted-scope verification 
 daemon runtime. The callback page never exchanges a code or contacts a vendor.
 
 The page captures the answer once and removes the query before waiting for
-authentication or Actions. It forwards only the OAuth response fields to an
-opener at the exact callback origin. Without an opener, it reads the exact
-attempt on reachable Machines in the signed-in Account and completes through
-the existing authentication Action. A state prefix is a routing hint; it grants
-no service, account, return-path or credential authority.
+authentication or Actions. It can forward an authorization code to an opener
+at the exact callback origin or complete the exact attempt through the
+signed-in Account's authentication Action. A state prefix is a routing hint.
+The attempt owner validates the full state and callback address.
 
-When signed out, on another Account, disconnected, or unfinished, the page keeps
-the original callback URL available to copy into the initiating connection
-screen. A denial never exchanges a code or cancels an attempt guessed from
-state. The MCP callback keeps its existing URL and opener message through the
-same controller.
+When the provider denies authorization, the page shows its reason. **Try again**
+starts a fresh sign-in when Happier can reach the original attempt. The same
+reason appears in the initiating connection screen when it is open in the
+same app or browser origin. A code callback outside the originating Account
+can still be copied into the connection screen. The MCP callback keeps its
+existing URL and opener message.
 
 This unreleased 0.3 behavior also applies when a callback opens in an already
-running app. If the signed-in Account cannot find the exact attempt, the page
-offers the original answer for Paste, as it does without a ready signed-in
-Account. Opening the callback in a running app does not require restarting it.
+running app.
 
 This relay does not make any vendor's OAuth integration available. A service
 still needs registration, permission and token-lifecycle validation; retain a

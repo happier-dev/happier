@@ -1587,8 +1587,11 @@ describe('ConnectedAccountSetupController real ownership', () => {
         } finally { await screen.unmount(); }
     });
 
-    it.each(['oauth', 'device'] as const)('retires the acknowledged %s form before notifying the setup host', async kind => {
+    it.each(['oauth', 'device', 'oauthDenial'] as const)('retires the acknowledged %s form when the attempt settles', async settlement => {
+        const kind = settlement === 'device' ? 'device' : 'oauth';
+        const denial = { error: 'invalid_scope', errorDescription: 'Workspace and project access must be requested at the same level.' };
         const callbackUrl = 'http://127.0.0.1:4000/auth/callback';
+        const state = 'attempt-1.setup-state';
         installDescription({ ...described, descriptor: { ...described.descriptor,
             authentication: { defaultModeId: kind, modes: [kind === 'device'
                 ? { id: kind, kind: 'oauthDeviceCode', outcomeReconciliation: 'providerCheck' }
@@ -1599,8 +1602,12 @@ describe('ConnectedAccountSetupController real ownership', () => {
             : command.operation === 'beginConnect'
                 ? kind === 'device'
                     ? { status: 'awaitingDeviceAuthorization', attemptId: 'attempt-1', verificationUri: 'https://provider.example/device', userCode: 'SAFE-CODE' }
-                    : { status: 'awaitingOAuth', attemptId: 'attempt-1', authorizationUrl: 'https://provider.example/authorize?state=setup-state', callbackUrl }
-                : { status: 'connected', attemptId: 'attempt-1', account: { service, accountId: 'new-account' } };
+                    : { status: 'awaitingOAuth', attemptId: 'attempt-1', authorizationUrl: `https://provider.example/authorize?state=${state}`, callbackUrl }
+                : settlement === 'oauthDenial'
+                    ? { status: 'rejected', attemptId: 'attempt-1', code: 'connected_account_oauth_denied', diagnostic: {
+                        denial, retry: { operation: 'beginConnect', service, modeId: kind },
+                    } }
+                    : { status: 'connected', attemptId: 'attempt-1', account: { service, accountId: 'new-account' } };
         const [{ captureLazyActionAccountContext }, { createNativeAttemptAddressBoundary, answerAttemptTransaction },
             { createUiConnectedAccountAttemptTransactionApi }, { createUiConnectedAccountContent }] = await Promise.all([
             import('@/sync/ops/actions/actionAccountContext'),
@@ -1626,7 +1633,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
                     content: await nativeContent.seal('attempt', await nativeContent.resolveAccountMode('fresh-authority'), null),
                     scope: { machineId: selection.selectedTarget!.machineId,
                         phase: response.status, createdAtMs: Date.now(), intent: 'connect', service, modeId: kind } });
-            } else if (response.status === 'connected' || response.status === 'cancelled') {
+            } else if (response.status === 'connected' || response.status === 'cancelled' || response.status === 'rejected') {
                 await address.clear(response.attemptId);
             }
             return response;
@@ -1645,11 +1652,28 @@ describe('ConnectedAccountSetupController real ownership', () => {
             await vi.waitFor(() => expect(screen.findHostByTestId(startId)).not.toBeNull());
             expect(screen.findHostByTestId('connected-service-setup:method-continue')).toBeNull();
             expect(authenticationCommands).toEqual([]);
-            await screen.pressByTestIdAsync(startId);
+            await pressReadyAction(screen, startId);
             await vi.waitFor(() => expect(screen.findHostByTestId(formId)).not.toBeNull());
             expect(authenticationCommands.filter(command => command.operation === 'beginConnect')).toHaveLength(1);
+            if (settlement === 'oauthDenial') {
+                const { completeConnectedAccountOAuthCallback, CONNECTED_ACCOUNT_OAUTH_CALLBACK_PROTOCOL } =
+                    await import('@/sync/ops/connectedAccounts/connectedAccountOAuthCallback');
+                const scope = getActiveServerAccountScope()!;
+                await act(async () => {
+                    const url = `${callbackUrl}?${new URLSearchParams({ error: denial.error, error_description: denial.errorDescription, state })}`;
+                    const outcome = await completeConnectedAccountOAuthCallback({ callbackUrl: url, account: {
+                        serverId: scope.serverId, expectedAccountId: scope.accountId, assertCurrent: captured.assertCurrent,
+                    } }, { ...CONNECTED_ACCOUNT_OAUTH_CALLBACK_PROTOCOL, callbackUrl });
+                    expect(outcome, JSON.stringify(authenticationCommands)).toMatchObject({ kind: 'denied', denial, retry: expect.any(Function) });
+                });
+                await vi.waitFor(() => expect(screen.getTextContent()).toContain(denial.errorDescription));
+                expect(screen.findHostByTestId(formId)).toBeNull();
+                expect(onConnected).not.toHaveBeenCalled();
+                expect(transactions.size).toBe(0);
+                return;
+            }
             if (kind === 'oauth') {
-                await act(async () => screen.changeTextByTestId(formId, `${callbackUrl}?code=accepted-code&state=setup-state`));
+                await act(async () => screen.changeTextByTestId(formId, `${callbackUrl}?code=accepted-code&state=${state}`));
                 expect(getActiveUnsavedChangesGuard()?.isDirtyRef.current).toBe(true);
             }
             await screen.pressByTestIdAsync(kind === 'device' ? 'connected-account-device:poll' : 'connected-account-oauth:submit');

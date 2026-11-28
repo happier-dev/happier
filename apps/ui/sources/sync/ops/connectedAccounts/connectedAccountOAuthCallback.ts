@@ -1,5 +1,6 @@
-import { parseOauthAuthorizationResponse } from '@happier-dev/protocol/connect/oauthAuthorizationResponse';
-import type { ConnectedAccountAttemptResponse } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
+import { parseOauthAuthorizationResponse, type OauthAuthorizationDenial } from '@happier-dev/protocol/connect/oauthAuthorizationResponse';
+import { ConnectedAccountAttemptResponseSchema, ConnectedAccountOAuthDenialDiagnosticSchema,
+    type ConnectedAccountAttemptResponse } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import type { runConnectedAccountAuthenticationAction } from './connectedAccountDaemon';
 import { resolveConnectedAccountOAuthCallbackPageUrl } from './connectedAccountOAuthCallbackUrl';
 
@@ -42,6 +43,8 @@ export type ConnectedAccountOAuthCallbackInput = Readonly<{
 
 export type ConnectedAccountOAuthCallbackOutcome =
     | Readonly<{ kind: 'invalid' }>
+    | Readonly<{ kind: 'denied'; denial: OauthAuthorizationDenial; providerName?: string;
+        retry?: () => Promise<ConnectedAccountAttemptResponse> }>
     | Readonly<{ kind: 'opener' }>
     /** `answer`: what the person carries to the sign-in that started this, shown and copied as is. */
     | Readonly<{ kind: 'paste'; answer: string }>
@@ -51,6 +54,81 @@ export type ConnectedAccountOAuthCallbackOutcome =
 export type ConnectedAccountOAuthCallbackController = Readonly<{
     complete(account?: ConnectedAccountOAuthCallbackInput['account']): Promise<ConnectedAccountOAuthCallbackOutcome>;
 }>;
+
+type Rejection = Extract<ConnectedAccountAttemptResponse, { status: 'rejected' }>;
+type AccountAddress = Pick<NonNullable<ConnectedAccountOAuthCallbackInput['account']>, 'serverId' | 'expectedAccountId'>;
+const denialListeners = new Map<string, Set<(response: Rejection) => void>>();
+
+function denialAddress(account: AccountAddress, state: string): string {
+    return JSON.stringify(['happier.connected-account.oauth-denial', account.serverId, account.expectedAccountId, state]);
+}
+
+function openDenialChannel(address: string): BroadcastChannel | undefined {
+    if (typeof window === 'undefined' || typeof BroadcastChannel !== 'function') return;
+    try { return new BroadcastChannel(address); } catch { return; }
+    return undefined;
+}
+
+/** Observe the settled result for the exact state minted for this mounted sheet. */
+export function subscribeToConnectedAccountOAuthDenial(account: AccountAddress, authorizationUrl: string,
+    listener: (response: Rejection) => void): (() => void) | undefined {
+    let state: string | null;
+    try { state = new URL(authorizationUrl).searchParams.get('state'); } catch { return; }
+    if (!state) return;
+    const address = denialAddress(account, state);
+    const channel = openDenialChannel(address);
+    if (channel) {
+        channel.onmessage = event => {
+            const parsed = ConnectedAccountAttemptResponseSchema.safeParse(event.data);
+            if (parsed.success && parsed.data.status === 'rejected' && parsed.data.code === 'connected_account_oauth_denied') {
+                listener(parsed.data);
+            }
+        };
+        return () => channel.close();
+    }
+    const listeners = denialListeners.get(address) ?? new Set();
+    listeners.add(listener);
+    denialListeners.set(address, listeners);
+    return () => {
+        listeners.delete(listener);
+        if (listeners.size === 0) denialListeners.delete(address);
+    };
+}
+
+async function settleDenial(account: ConnectedAccountOAuthCallbackInput['account'], attemptId: string,
+    completion: Readonly<{ state: string; iss?: string; callbackUrl: string; denial: OauthAuthorizationDenial }>,
+): Promise<ConnectedAccountOAuthCallbackOutcome> {
+    const fallback = { kind: 'denied' as const, denial: completion.denial };
+    if (!account) return fallback;
+    try {
+        const { runConnectedAccountAuthenticationAction } = await import('./connectedAccountDaemon');
+        const { requestId: _requestId, ...settled } = await runConnectedAccountAuthenticationAction({
+            ...account, command: { operation: 'completeOAuth', attemptId, completion },
+        });
+        if (settled.status !== 'rejected' || settled.attemptId !== attemptId) return fallback;
+        if (settled.code === 'connected_account_oauth_completion_invalid' || settled.code === 'connected_account_oauth_issuer_invalid') {
+            return { kind: 'invalid' };
+        }
+        if (settled.code !== 'connected_account_oauth_denied') return fallback;
+        const diagnostic = ConnectedAccountOAuthDenialDiagnosticSchema.safeParse(settled.diagnostic);
+        if (!diagnostic.success) return fallback;
+        const address = denialAddress(account, completion.state);
+        // Send only the attempt result. The state stays in the private per-attempt address.
+        const channel = openDenialChannel(address);
+        if (channel) {
+            try { channel.postMessage(settled); } finally { channel.close(); }
+        } else {
+            for (const listener of denialListeners.get(address) ?? []) listener(settled);
+        }
+        const { denial, providerName, retry, machineId } = diagnostic.data;
+        return { kind: 'denied', denial, providerName,
+            retry: () => runConnectedAccountAuthenticationAction({ ...account, machineId, command: retry }),
+        };
+    } catch {
+        // A public callback can arrive on a browser without access to the attempt.
+        return fallback;
+    }
+}
 
 /** Capture and strip synchronously, even when the signed-in Action binding is not ready yet. */
 export function createConnectedAccountOAuthCallbackController(
@@ -93,6 +171,15 @@ async function completeCapturedCallback(
     const separator = response.state.lastIndexOf('.');
     if (separator <= 0 || separator === response.state.length - 1) return { kind: 'invalid' };
     const attemptId = response.state.slice(0, separator);
+    if (response.error) {
+        const { error, errorDescription, errorUri } = response;
+        return settleDenial(account, attemptId, { state: response.state, callbackUrl: protocol.callbackUrl,
+            ...(response.iss === undefined ? {} : { iss: response.iss }), denial: { error,
+            ...(errorDescription === undefined ? {} : { errorDescription }),
+            ...(errorUri === undefined ? {} : { errorUri }),
+            },
+        });
+    }
     const answer = readPasteableAnswer(input.callbackUrl, response);
     const paste = { kind: 'paste' as const, answer };
     const origin = new URL(protocol.callbackUrl).origin;
@@ -100,13 +187,11 @@ async function completeCapturedCallback(
         if (input.browser.opener.origin !== origin) return paste;
         input.browser.opener.postMessage({ type: protocol.openerMessageType,
             ...(response.code ? { code: response.code } : {}), state: response.state,
-            ...(response.iss === undefined ? {} : { iss: response.iss }),
-            ...(response.error ? { error: response.error } : {}) }, origin);
+            ...(response.iss === undefined ? {} : { iss: response.iss }) }, origin);
         input.browser.close();
         return { kind: 'opener' };
     }
-    // The completion Action accepts a code, not a denial. Never cancel a guessed attempt from its state prefix.
-    if (!response.code || response.error || !account) return paste;
+    if (!response.code || !account) return paste;
     const assertCurrent = () => { account.signal?.throwIfAborted(); account.assertCurrent(); };
     assertCurrent();
     const { runConnectedAccountAuthenticationAction } = await import('./connectedAccountDaemon');

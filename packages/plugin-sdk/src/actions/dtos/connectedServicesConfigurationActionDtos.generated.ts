@@ -49,6 +49,15 @@ export type ConnectedServicesConfigurationActionInputById = {
             callbackUrl: string;
             state: string;
             iss?: string | undefined;
+        } | {
+            denial: {
+                error: string;
+                errorDescription?: string | undefined;
+                errorUri?: string | undefined;
+            };
+            callbackUrl: string;
+            state: string;
+            iss?: string | undefined;
         };
         attemptId: string;
     };

@@ -383,8 +383,8 @@ export function createConnectedAccountAttemptTransactionAdapters(
         payload = nextPayload;
         record = nextRecord;
       },
-      async acceptCompletion(
-        completion: ConnectedAccountOAuthCallbackCompletion,
+      async acceptCompletion<Completion extends ConnectedAccountOAuthCallbackCompletion>(
+        completion: Completion,
       ) {
         if (
           closed
@@ -410,10 +410,12 @@ export function createConnectedAccountAttemptTransactionAdapters(
         });
         payload = nextPayload;
         record = nextRecord;
-        return Object.freeze({
+        const accepted = {
           ...completion,
           pkceVerifier: payload.verifier,
-        });
+        };
+        Object.freeze(accepted);
+        return accepted;
       },
       async close() {
         if (closed) return;

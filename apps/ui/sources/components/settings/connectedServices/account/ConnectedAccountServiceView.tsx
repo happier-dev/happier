@@ -85,11 +85,13 @@ import {
     captureActiveServerAccountScopeCurrentness,
 } from '@/sync/domains/scope/activeServerAccountScope';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
+import { subscribeToConnectedAccountOAuthDenial } from '@/sync/ops/connectedAccounts/connectedAccountOAuthCallback';
 
 import {
     readConnectedServiceSettingsErrorCode,
     readConnectedServiceSettingsErrorDetailsCode,
     readConnectedServiceSettingsErrorRequestId,
+    readConnectedAccountOAuthDenialReason,
     resolveConnectedServiceSettingsErrorMessage,
     resolveConnectedServiceSettingsErrorRecovery,
 } from '../connectedServiceSettingsErrors';
@@ -999,6 +1001,15 @@ const ConnectedAccountServiceController = React.memo(
     }, [cancelDiscardedAttempt, completeSetup, isControllerCurrent, readConfiguration, refreshDescription, renameAccount]);
 
     React.useEffect(() => {
+        if (attempt?.status !== 'awaitingOAuth' || !attempt.authorizationUrl || !('scope' in accountLifetime)) return;
+        const requestEpoch = setupAttemptEpochRef.current;
+        return subscribeToConnectedAccountOAuthDenial({ serverId: accountLifetime.scope.serverId,
+            expectedAccountId: accountLifetime.scope.accountId }, attempt.authorizationUrl, response => {
+            if (response.attemptId === attempt.attemptId) void acceptAttemptResponse(response, requestEpoch);
+        });
+    }, [acceptAttemptResponse, accountLifetime, attempt]);
+
+    React.useEffect(() => {
         if (panelIntent?.kind === 'add' && !hasExplicitAuthenticationIntent && !preparesInitialClientConfiguration && !restoresInitialDeviceAttempt) return;
         if ((!description && !restoresInitialDeviceAttempt) || !service || !serverId || machineRequired && !machineId || attempt || busy) return;
         const scopeKey = JSON.stringify([serverId, machineRequired ? machineId : null, service.pluginId, service.localId]);
@@ -1776,7 +1787,7 @@ const ConnectedAccountServiceController = React.memo(
             kind="error"
             // ONE owner turns a daemon error code into copy, so this
             // screen never re-decides which failures are explainable.
-            title={resolveConnectedServiceSettingsErrorMessage(setupError, errorPhase === 'load'
+            title={readConnectedAccountOAuthDenialReason(setupError) ?? resolveConnectedServiceSettingsErrorMessage(setupError, errorPhase === 'load'
                 ? { phase: 'load', serviceName: title }
                 : errorPhase === 'oauthCompletion' ? { phase: 'oauthCompletion' } : undefined)}
             action={retry ? {

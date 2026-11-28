@@ -24,6 +24,7 @@ import type { MachineTargetV1 } from '@happier-dev/protocol/machines/machineAcce
 import { areConnectedAccountManualFieldsValidV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
 import { normalizeLegacyConnectedServiceUxDiagnosticCode } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { resolveConnectedAccountOAuthCallbackUrlV1 } from '@happier-dev/protocol/connect/oauthAuthorizationResponse';
+import type { ConnectedAccountDaemonCommand, ConnectedAccountOAuthDenialDiagnostic } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 
 import { ConnectedAccountAuthenticationModeUnavailableError, ConnectedAccountRuntimeInvocationNotStartedError } from './runtimeInvocationError.js';
 import { projectConnectedAccountFailure } from './failureProjection.js';
@@ -44,10 +45,7 @@ type PluginConnectedAccountRef = Extract<
 export type ConnectedAccountAttemptSettlementResult =
     | Readonly<{ status: 'connected'; account: PluginConnectedAccountRef }>
     | Readonly<{ status: 'conflict' | 'rejected' | 'unavailable'; code: string; diagnostic?: PluginDiagnosticData }>;
-export type ConnectedAccountOAuthCallbackCompletion = Readonly<Pick<
-    PluginConnectedAccountOAuthCompletion,
-    'code' | 'callbackUrl' | 'state'
-> & { iss?: string }>;
+export type ConnectedAccountOAuthCallbackCompletion = Extract<ConnectedAccountDaemonCommand, { operation: 'completeOAuth' }>['completion'];
 
 export type ConnectedAccountAttemptConfigurationAdmission =
     | Readonly<{
@@ -71,6 +69,7 @@ export type ConnectedAccountAttemptConfigurationAdmission =
 
 export type ConnectedAccountAttemptModeAdmission = Readonly<{
     service: PluginContributionRef;
+    serviceName?: string;
     descriptor: PluginConnectedAccountAuthenticationModeV2;
     authenticationModeCardinality?: 'single' | 'multiple';
     /** Process-local fence for provider callbacks; never persisted. */
@@ -208,9 +207,9 @@ export type ConnectedAccountOAuthTransaction = Readonly<{
     acknowledge?(
         snapshot: ConnectedAccountOAuthTransactionSnapshot,
     ): MaybePromise<void>;
-    acceptCompletion(
-        completion: ConnectedAccountOAuthCallbackCompletion,
-    ): MaybePromise<PluginConnectedAccountOAuthCompletion>;
+    acceptCompletion<Completion extends ConnectedAccountOAuthCallbackCompletion>(
+        completion: Completion,
+    ): MaybePromise<Completion & { pkceVerifier: string }>;
     close(): MaybePromise<void>;
 }>;
 
@@ -3911,10 +3910,11 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     status: 'rejected', attemptId: attempt.id,
                     code: 'connected_account_oauth_issuer_invalid',
                 };
-                await destroyAttempt(attempt, response);
+                if ('denial' in input.completion) attempt.phase = 'awaitingOAuth';
+                else await destroyAttempt(attempt, response);
                 return response;
             }
-            let completion: PluginConnectedAccountOAuthCompletion;
+            let completion: ConnectedAccountOAuthCallbackCompletion & { pkceVerifier: string };
             try {
                 completion = await attempt.oauthTransaction!.acceptCompletion(input.completion);
             } catch (error) {
@@ -3928,13 +3928,29 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                         phase: 'connected_account.attempt.completion',
                     }),
                 };
-                await destroyAttempt(attempt, response);
+                if ('denial' in input.completion) attempt.phase = 'awaitingOAuth';
+                else await destroyAttempt(attempt, response);
                 return response;
             }
             const afterCompletion = attemptOwnershipFailure(attempt);
             if (afterCompletion) {
                 await compensateLateDurableWrite(attempt, 'oauth');
                 return afterCompletion;
+            }
+            if ('denial' in completion) {
+                const machineId = params.resolveExecutionMachine?.()?.machineId;
+                const diagnostic: ConnectedAccountOAuthDenialDiagnostic = {
+                    denial: completion.denial,
+                    ...(attempt.admission.serviceName ? { providerName: attempt.admission.serviceName } : {}),
+                    retry: attempt.account && attempt.intent === 'reconnect'
+                        ? { operation: 'beginReconnect', account: attempt.account }
+                        : { operation: 'beginConnect', service: attempt.admission.service, modeId: attempt.admission.modeId },
+                    ...(machineId ? { machineId } : {}),
+                };
+                const response: AttemptResponse = { status: 'rejected', attemptId: attempt.id,
+                    code: 'connected_account_oauth_denied', diagnostic };
+                await destroyAttempt(attempt, response);
+                return response;
             }
             attempt.phase = 'outcomeUnknown';
             attempt.lastResponse = {

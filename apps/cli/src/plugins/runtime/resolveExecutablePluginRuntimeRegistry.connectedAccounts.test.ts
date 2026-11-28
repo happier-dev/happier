@@ -42,6 +42,7 @@ import {
 import type { AccountPluginDataStorageHostDependencies } from './context/accountPluginDataStorage';
 import {
     createConnectedAccountAuthenticationAttemptOwner,
+    type ConnectedAccountOAuthCallbackCompletion,
 } from '@happier-dev/cli-common/connectedAccounts';
 import {
     ConnectedAccountRuntimeInvocationNotStartedError,
@@ -684,11 +685,7 @@ describe('executable plugin runtime Connected Accounts integration', () => {
                         // party that completes the callback with it. Returning the
                         // bare callback fields would hand the runtime an
                         // `undefined` secret to register for redaction.
-                        acceptCompletion: async (completion: Readonly<{
-                            code: string;
-                            callbackUrl: string;
-                            state: string;
-                        }>) => Object.freeze({
+                        acceptCompletion: async <Completion extends ConnectedAccountOAuthCallbackCompletion>(completion: Completion) => ({
                             ...completion,
                             pkceVerifier: 'pkce-verifier-1',
                         }),

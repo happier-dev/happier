@@ -3,6 +3,8 @@ import { PluginDiagnosticRemediationV1Schema } from '@happier-dev/protocol/daemo
 import { resolvePluginDiagnosticRemediationMessage } from '@/components/settings/plugins/diagnostics/pluginDiagnosticRemediation';
 import { readRpcErrorCode, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { normalizeLegacyConnectedServiceUxDiagnosticCode } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import type { OauthAuthorizationDenial } from '@happier-dev/protocol/connect/oauthAuthorizationResponse';
+import { ConnectedAccountOAuthDenialDiagnosticSchema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 
 type ErrorLike = Readonly<{
     code?: unknown;
@@ -16,6 +18,18 @@ type ErrorLike = Readonly<{
 
 function asErrorLike(error: unknown): ErrorLike {
     return error && typeof error === 'object' ? error as ErrorLike : {};
+}
+
+export function resolveConnectedAccountOAuthDenialReason(denial: OauthAuthorizationDenial): string {
+    return denial.error === 'access_denied' ? t('capabilities.connectedAccountCallback.cancelledTitle')
+        : denial.errorDescription?.trim() || t('capabilities.connectedAccountCallback.deniedBody');
+}
+
+export function readConnectedAccountOAuthDenialReason(error: unknown): string | null {
+    const failure = asErrorLike(error);
+    if (failure.code !== 'connected_account_oauth_denied') return null;
+    const diagnostic = ConnectedAccountOAuthDenialDiagnosticSchema.safeParse(failure.diagnostic);
+    return diagnostic.success ? resolveConnectedAccountOAuthDenialReason(diagnostic.data.denial) : null;
 }
 
 export function readConnectedServiceSettingsErrorRequestId(error: unknown): string | undefined {

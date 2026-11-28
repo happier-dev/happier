@@ -344,8 +344,8 @@ function harness(input: Readonly<{
                         pkce: Object.freeze({ challenge: 'challenge-1', method: 'S256' as const }),
                     }),
                     acknowledge: async () => {},
-                    acceptCompletion: async (
-                        completion: ConnectedAccountOAuthCallbackCompletion,
+                    acceptCompletion: async <Completion extends ConnectedAccountOAuthCallbackCompletion>(
+                        completion: Completion,
                     ) => {
                         if (completion.state !== 'state-1') throw new Error('state mismatch');
                         return {
@@ -1203,6 +1203,28 @@ describe('provider-discovered manual configuration', () => {
 });
 
 describe('OAuth issuer admission', () => {
+    it('settles a provider denial only for the exact state without exchanging a code', async () => {
+        const api = createConnectedAccountAttemptTransactionApiBoundary();
+        const transactions = createQualifiedConnectedAccountAttemptTransactionAdapters({ credentials: { token: 'account-token', encryption: null },
+            getAccountEncryptionMode: async () => 'plain', getMachineId: () => 'machine-1', now: () => 1_000, api });
+        const h = harness({ admittedMode: oauthMode({ outcomeReconciliation: 'none' }), oauthTransactions: transactions.oauth, now: () => 1_000,
+            invoke: async () => ({ status: 'awaitingOAuthRedirect', authorizationUrl: 'https://railway.com/oauth/authorize' }) });
+        try {
+            await h.owner.beginConnect({ service, modeId: 'oauth' });
+            await waitForAttemptStatus(h.owner, 'attempt-1', 'awaitingOAuth');
+            const transaction = await transactions.oauth.read!('attempt-1');
+            const { callbackUrl, state } = transaction!.request;
+            const denial = { error: 'invalid_scope', errorDescription: 'Workspace and project access must be requested at the same level.' };
+            await expect(h.owner.completeOAuth({ attemptId: 'attempt-1', completion: { callbackUrl, state: `${state}-wrong`, denial } }))
+                .resolves.toMatchObject({ status: 'rejected', code: 'connected_account_oauth_completion_invalid' });
+            await expect(h.owner.read({ attemptId: 'attempt-1' })).resolves.toMatchObject({ status: 'awaitingOAuth' });
+            await expect(h.owner.completeOAuth({ attemptId: 'attempt-1', completion: { callbackUrl, state, denial } }))
+                .resolves.toMatchObject({ status: 'rejected', code: 'connected_account_oauth_denied', diagnostic: { denial } });
+            expect(api.records.has('attempt-1')).toBe(false);
+            expect(h.invoke.mock.calls.map(([input]) => input.operation.kind)).toEqual(['beginOAuth']);
+        } finally { h.owner.dispose(); }
+    });
+
     it('publishes the sealed transaction expiry when an authorization server supplies no expiry', async () => {
         // The transaction HTTP/database boundary is replaced; the actual PKCE,
         // envelope, revision and attempt owners run together.
@@ -1438,8 +1460,8 @@ function durableOAuthTransactions(input: Readonly<{
             await input.beforeAcknowledge?.(snapshot);
             current.snapshot = snapshot;
         }),
-        acceptCompletion: vi.fn(async (
-            completion: ConnectedAccountOAuthCallbackCompletion,
+        acceptCompletion: vi.fn(async <Completion extends ConnectedAccountOAuthCallbackCompletion>(
+            completion: Completion,
         ) => {
             if (
                 current.closed

@@ -48,6 +48,16 @@ type ReadonlyControlResponse<T> =
 export { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '../rpc/methods.js';
 
 const BoundedIdentitySchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
+const OAuthCallbackAddress = {
+  callbackUrl: z.url().check(z.maxLength(2_048)),
+  state: z.string().check(z.minLength(1), z.maxLength(4_096)),
+  iss: z.optional(z.string()),
+};
+const OAuthDenialSchema = z.strictObject({
+  error: z.string().check(z.minLength(1)),
+  errorDescription: z.optional(z.string()),
+  errorUri: z.optional(z.string()),
+});
 const ExpectedConfigurationRevisionSchema =
   lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
 const BuiltInLegacyConnectedAccountOperations = new Set<string>(
@@ -129,12 +139,10 @@ export const ConnectedAccountAuthenticationCommandSchemas = {
     completeOAuth: lazyZodSchema(() => z.strictObject({
       operation: z.literal('completeOAuth'),
       attemptId: BoundedIdentitySchema,
-      completion: z.strictObject({
-        code: z.string().check(z.minLength(1), z.maxLength(32 * 1024)),
-        callbackUrl: z.url().check(z.maxLength(2_048)),
-        state: z.string().check(z.minLength(1), z.maxLength(4_096)),
-        iss: z.optional(z.string()),
-      }),
+      completion: z.union([
+        z.strictObject({ ...OAuthCallbackAddress, code: z.string().check(z.minLength(1), z.maxLength(32 * 1024)) }),
+        z.strictObject({ ...OAuthCallbackAddress, denial: OAuthDenialSchema }),
+      ]),
     })),
     pollDevice: lazyZodSchema(() => z.strictObject({
       operation: z.literal('pollDevice'),
@@ -158,6 +166,15 @@ export const ConnectedAccountAuthenticationCommandSchemas = {
       waitForProviderStart: z.optional(z.boolean()),
     })),
 } as const;
+
+/** Live-only diagnostic of a state-validated denial. The retry is a new begin request. */
+export const ConnectedAccountOAuthDenialDiagnosticSchema = lazyZodSchema(() => z.strictObject({
+  denial: OAuthDenialSchema,
+  providerName: z.optional(z.string()),
+  retry: z.union([ConnectedAccountAuthenticationCommandSchemas.beginConnect, ConnectedAccountAuthenticationCommandSchemas.beginReconnect]),
+  machineId: z.optional(BoundedIdentitySchema),
+}));
+export type ConnectedAccountOAuthDenialDiagnostic = z.infer<typeof ConnectedAccountOAuthDenialDiagnosticSchema>;
 export const ConnectedAccountDaemonCommandSchema =
   lazyZodSchema(() => z.discriminatedUnion('operation', [
     ConnectedAccountAuthenticationCommandSchemas.beginConnect,

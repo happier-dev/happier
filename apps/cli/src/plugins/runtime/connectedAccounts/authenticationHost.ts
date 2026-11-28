@@ -9,6 +9,7 @@ import type { ActionExecuteResult, ActionExecutorContext, ActionId, ConnectedAcc
     PluginConnectedAccountAuthenticationV2 } from '@happier-dev/protocol';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_ID_BY_OPERATION, CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/connect/configurationActionsV1';
 import { connectedAccountSourceCustodyV1Equal } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { createConnectedServiceCredentialApi } from '@/api/client/connectedServiceCredentialApi';
 import { createConnectedAccountAttemptTransactionApi } from '@/api/client/connectedAccountAttemptTransactionApi';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -122,7 +123,7 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
                 async admit(request) {
                     const descriptor = selected.descriptor.authentication.modes.find(mode => mode.id === request.modeId);
                     if (!descriptor || !selected.runtime.authentication.modes[request.modeId]) throw new ConnectedAccountAuthenticationModeUnavailableError();
-                    return { service: selected.ref, descriptor,
+                    return { service: selected.ref, descriptor, serviceName: resolvePluginLocalizedStringV2Text(selected.descriptor.title),
                         authenticationModeCardinality: selected.descriptor.authentication.modes.length === 1 ? 'single' : 'multiple',
                         occurrenceId: selected.occurrenceId, sourceCustody: selected.sourceCustody };
                 },

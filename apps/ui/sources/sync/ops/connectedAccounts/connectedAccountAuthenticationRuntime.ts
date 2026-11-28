@@ -10,6 +10,7 @@ import type { ConnectedAccountConnectionTestResult } from '@happier-dev/protocol
 import type { ConnectedAccountMaterialization } from '@happier-dev/plugin-sdk/connected-accounts';
 import { replaceConnectedServiceConfigurationCatalogV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
 import { QualifiedConnectedAccountConfigurationPatchV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import type { resolvePluginUiAccountConnectedAccountRegistration } from '@/components/plugins/reactNative/clientExecutableContributions';
 import { createPluginSurfaceAccountNetworkServices } from '@/components/plugins/surfaces/pluginSurfaceAccountNetworkServices';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -175,6 +176,7 @@ export async function createUiConnectedAccountAuthenticationRuntime(input: Reado
                 const descriptor = mode(request.modeId);
                 if (!descriptor || !input.selected.runtime.authentication.modes[request.modeId]) throw new ConnectedAccountAuthenticationModeUnavailableError();
                 return { service: input.declaration.service, descriptor,
+                    serviceName: resolvePluginLocalizedStringV2Text(input.declaration.descriptor.title),
                     authenticationModeCardinality: input.declaration.descriptor.authentication.modes.length === 1 ? 'single' : 'multiple',
                     occurrenceId: input.declaration.occurrenceId, sourceCustody: input.declaration.sourceCustody };
             },

@@ -4,6 +4,7 @@ import type { PluginContributionRef } from '@happier-dev/plugin-sdk';
 import type { PendingConnectedAccountAttemptTransaction } from '@/api/client/connectedAccountAttemptTransactionApi';
 import { QualifiedConnectedAccountCredentialConflictError } from '@/api/client/qualifiedConnectedAccountApi';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { connectedAccountSourceCustodyV1Equal } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type {
@@ -322,6 +323,7 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                 return Object.freeze({
                     service: contribution.ref,
                     descriptor,
+                    serviceName: resolvePluginLocalizedStringV2Text(contribution.descriptor.title),
                     authenticationModeCardinality:
                         contribution.descriptor.authentication.modes.length
                             === 1

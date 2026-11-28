@@ -15,9 +15,10 @@ describe('OAuth authorization response issuer', () => {
       });
     },
   );
-  it('preserves issuer on error responses for admission before displaying provider errors', () => {
-    expect(parseOauthAuthorizationResponse({ input: 'https://cloud.happier.dev/oauth/mcp/callback?error=access_denied&iss=https%3A%2F%2Fevil.example' }))
-      .toEqual({ kind: 'callback', error: 'access_denied', iss: 'https://evil.example' });
+  it('preserves denial details, state and issuer together', () => {
+    expect(parseOauthAuthorizationResponse({ input: 'https://cloud.happier.dev/oauth/connected-account/callback?error=invalid_scope&error_description=Check+the+scopes.&error_uri=https%3A%2F%2Fissuer.example%2Fhelp&state=attempt.random&iss=https%3A%2F%2Fissuer.example' }))
+      .toEqual({ kind: 'callback', error: 'invalid_scope', errorDescription: 'Check the scopes.',
+        errorUri: 'https://issuer.example/help', state: 'attempt.random', iss: 'https://issuer.example' });
   });
   it('does not reinterpret a present empty issuer as omission', () => {
     expect(parseOauthAuthorizationResponse({ input: 'https://cloud.happier.dev/oauth/mcp/callback?code=code&state=state&iss=' }))
