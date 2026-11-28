@@ -16,6 +16,10 @@ import type { ApprovalPresentationContext } from '../actionSpecs.js';
 import { readActionFailureEnvelope } from './actionFailureEnvelope.js';
 import { ActionInvokeInputSchema } from '../actionInvokeInput.js';
 import { formatQualifiedPluginActionId } from '../../plugins/actions/qualifiedActionId.js';
+import { resolvePluginLocalizedStringV2Text } from '../../plugins/contributions/publicTypes.js';
+import type { PluginActionContributionV2 } from '../../plugins/actions/v2.js';
+import { isDatabaseActionIdV1 } from '../actionIdsDatabaseV1.js';
+import { databaseActionMetadata } from '../databaseActionMetadata.js';
 import { ComputerSelectedTargetResponseV1Schema, type ComputerApprovalDisplayV1 } from '../../computer/v1.js';
 import { SESSION_SPAWN_NEW_ACTION_ID_V1, type ActionId } from '../actionIds.js';
 import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
@@ -44,7 +48,7 @@ import { DaemonProviderConnectionsDescribeResponseV1Schema } from '../../rpc/pro
 import { prepareProviderEndpointPolicyReviewFromViewV1, summarizeProviderEndpointPolicyReviewV1 } from '../../providers/connections/endpointPolicyReviewV1.js';
 import { ProviderErrorV1Schema } from '../../providers/errors.js';
 import { areProviderContributionKeysEqualV1 } from '../../providers/contributionIdentityV1.js';
-import { projectApprovalReviewInput } from '../actionApprovalPresentation.js';
+import { projectApprovalReviewInput, projectTargetActionApprovalInput } from '../actionApprovalPresentation.js';
 import { appendTeamCredentialSourceSummary, prepareTeamCredentialSources, readTeamCredentialApprovalSources } from '../specs/teamCredentialApproval.js';
 import { SAVED_HEALTH_ALERT_TEST_ACTION_ID } from '../notificationConfigurationActionIds.js';
 import { NotificationConfigurationActionInputSchemas, SavedHealthAlertTestApprovalReviewSchema } from '../notificationConfigurationActionFamily.js';
@@ -272,12 +276,20 @@ function readContributedActionReview(deps: ActionExecutorDeps, input: unknown) {
   if (!invocation.success) return null;
   const id = formatQualifiedPluginActionId(invocation.data.action);
   const definition = deps.listContributedActionDefinitions?.({ id }).find(candidate => candidate.id === id);
-  if (!definition) return null;
+  const bundledDatabase: Pick<PluginActionContributionV2, 'title' | 'confirmation' | 'secretInputPaths'> | undefined =
+    isDatabaseActionIdV1(id) ? databaseActionMetadata[id] : undefined;
+  const title = definition?.title ?? (bundledDatabase ? resolvePluginLocalizedStringV2Text(bundledDatabase.title) : undefined);
+  if (!title) return null;
+  const confirmVerb = definition?.confirmVerb ?? bundledDatabase?.confirmation?.confirmLabel;
+  const description = definition?.description;
   return {
-    title: definition.title,
-    ...(definition.confirmVerb === undefined ? {} : { confirmVerb: definition.confirmVerb }),
-    ...(definition.description ? { description: definition.description } : {}),
-    fields: (definition.inputHints?.fields ?? []).map(field => ({ path: field.path, title: field.title })),
+    presentation: {
+      title,
+      ...(confirmVerb === undefined ? {} : { confirmVerb }),
+      ...(description ? { description } : {}),
+      fields: (definition?.inputHints?.fields ?? []).map(field => ({ path: field.path, title: field.title })),
+    },
+    secretInputPaths: bundledDatabase?.secretInputPaths?.map(path => `input.${path}`) ?? [],
   };
 }
 
@@ -310,6 +322,7 @@ export async function prepareApprovalRequest(params: Readonly<{
   hostReviewedChildren?: HostReviewedChildrenPlanV1;
   hostReviewedContent?: JsonValue;
   forCarriedReview?: boolean;
+  carriedContributedSecretInputPaths?: readonly string[];
   handoffTargetReplacementApproval?: NonNullable<ActionExecutorContext['handoffTargetReplacementApproval']>;
   executeCanonicalAction?: ExecutePreparationAction;
 }>): Promise<Readonly<{ actionArgs: unknown; preview: unknown }> | ActionExecuteFailure | null> {
@@ -506,7 +519,11 @@ export async function prepareApprovalRequest(params: Readonly<{
   if (computerApprovalDisplay && params.actionId === 'computer.target.select') {
     computerApprovalDisplay = { machineDisplayName: computerApprovalDisplay.machineDisplayName, requiresTargetSelection: true };
   }
-  const observedInput = spec.projectObservationInput
+  const contributed = params.actionId === 'action.invoke' ? readContributedActionReview(params.deps, params.input) : null;
+  const carriedContributedInput = params.carriedContributedSecretInputPaths === undefined ? undefined
+    : projectTargetActionApprovalInput(params.input, [...params.carriedContributedSecretInputPaths, ...(contributed?.secretInputPaths ?? [])]);
+  if (carriedContributedInput === null) return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
+  const observedInput = carriedContributedInput ? carriedContributedInput.input : spec.projectObservationInput
     ? spec.projectObservationInput(params.input)
     : params.input;
   const fragmentAction = WidgetLayoutFragmentActionIdV1Schema.safeParse(params.actionId);
@@ -577,10 +594,9 @@ export async function prepareApprovalRequest(params: Readonly<{
   const teamMemberPresentation = params.actionId === 'teams.members.add'
     ? await prepareTeamMemberApprovalPresentation(params) : null;
   // A pressed contributed Action is reviewed by its own declaration, not by the generic `action.invoke` host Action.
-  const contributedAction = params.actionId === 'action.invoke' ? readContributedActionReview(params.deps, observedInput) : null;
   const defaultPreview = {
     actionId: params.actionId,
-    ...(contributedAction ? { contributedAction } : {}),
+    ...(contributed ? { contributedAction: contributed.presentation } : {}),
     ...(params.hostReviewedContent === undefined ? {} : { hostReviewedContent: params.hostReviewedContent }),
     ...(params.hostReviewedChildren ? { hostReviewedChildren: params.hostReviewedChildren } : {}),
     actionArgs: observedInput,
@@ -599,7 +615,7 @@ export async function prepareApprovalRequest(params: Readonly<{
   }
   const customized = await params.deps.buildApprovalPreview?.({
     actionId: params.actionId,
-    input: spec.approvalInputCustody === 'live_only' ? observedInput : params.input,
+    input: carriedContributedInput || spec.approvalInputCustody === 'live_only' ? observedInput : params.input,
     context: params.context,
     defaultPreview,
   }) ?? defaultPreview;
@@ -657,7 +673,7 @@ export async function prepareApprovalRequest(params: Readonly<{
     // This private preview is distinct from shared observations. A declared
     // review schema validates its safe projection, including live-only inputs
     // whose raw operands stay with the originating waiter.
-    actionArgs: projectApprovalReviewInput(spec, params.input),
+    actionArgs: carriedContributedInput ? observedInput : projectApprovalReviewInput(spec, params.input),
     summary,
     ...(accountSignIn ? { accountSignIn } : {}),
     ...(teamCredentialDefaults ? { teamCredentialDefaults } : {}),
@@ -677,7 +693,7 @@ export async function prepareApprovalRequest(params: Readonly<{
   // Action's own safe observation projection. `resolveActionApprovalRouting`
   // keeps the admitted invocation as the blocking waiter, so the raw input
   // never leaves it, and a replay without that invocation fails closed.
-  if (spec.approvalInputCustody === 'live_only') {
+  if (carriedContributedInput || spec.approvalInputCustody === 'live_only') {
     return { actionArgs: observedInput, preview };
   }
 

@@ -1,5 +1,5 @@
 import { completeActionResult, settleActionOutput } from '@happier-dev/protocol/actions/actionExecutor';
-import { ActionIdSchema, isSessionSpawnNewActionIdV1, isWorkspaceSyncRelationshipWriteActionId, REVIEW_START_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_INVOKE_ACTION_ID_V1, ActionIdSchema, isSessionSpawnNewActionIdV1, isWorkspaceSyncRelationshipWriteActionId, REVIEW_START_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec, hasDeclaredActionDaemonIngress, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1, isDeploymentAccountMachineTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -76,7 +76,8 @@ export async function confirmOwnUiRefusal(actionId: ActionId, input: unknown, co
     // Preview confirms the original read. No teardown Receipt has been prepared for it.
     const compactCandidate = readDeploymentRolloutSemanticInput(actionId, parsed.data)
         || actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && operands.mode !== 'preview' && !('contentArtifactId' in operands);
-    const confirmed = await confirm({ actionId, input: liveOnly || compactCandidate ? review.actionArgs : parsed.data, context, preview: review.preview });
+    const confirmed = await confirm({ actionId, input: liveOnly || compactCandidate || actionId === ACTION_INVOKE_ACTION_ID_V1
+        ? review.actionArgs : parsed.data, context, preview: review.preview });
     if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled', effectAttempted: false };
     if (!confirmed) return { ok: false, errorCode: 'approval_canceled', error: 'approval_canceled', effectAttempted: false };
     const executed = compactCandidate

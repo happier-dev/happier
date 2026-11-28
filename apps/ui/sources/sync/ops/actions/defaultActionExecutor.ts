@@ -162,7 +162,7 @@ import { readSkillRulesForItemV1 } from '@happier-dev/protocol/prompts/library/s
 import { readSkillUsageCatalogV1 } from '@happier-dev/protocol/prompts/library/skills/skillActionOperations';
 import { readPromptLibraryCatalogProjectionInContext, mutatePromptLibraryRoleOverrideInContext } from '@/sync/api/account/apiPromptLibraryCatalog';
 import { doesExternalActionConsumeRequesterAccountContentV1, getActionSpec, resolveActionExecutionPlacementForInput, type PublicActionInputById } from '@happier-dev/protocol/actions/actionSpecs';
-import { ActionIdSchema, isWorkspaceSyncRelationshipWriteActionId, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_INVOKE_ACTION_ID_V1, ActionIdSchema, isWorkspaceSyncRelationshipWriteActionId, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { WorkflowRunStartRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { WorkspaceSyncRelationshipWriteActionInputV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
@@ -181,7 +181,7 @@ import { createAccountRoleActionExecutorV1, createRoleArtifactStoreV1 } from '@h
 import { isRoleActionIdV1 } from '@happier-dev/protocol/prompts/roles/roleActionIdsV1';
 import { RoleActionInputSchemasV1, RoleActionOutputSchemasV1 } from '@happier-dev/protocol/prompts/roles/roleActionsV1';
 import { readUiPluginRoleSources } from '@/sync/ops/roles/roleSources';
-import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
+import { isPresentUserHostInvocation, resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { resolveExecutorActionsSettingsV1, resolveActionsSettingsV1FromState } from '@/sync/domains/settings/actionsSettings';
 import { PluginWebhookActionHttpPathsV1, type PluginWebhookPresentUserActionIdV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
@@ -1138,7 +1138,7 @@ type VoiceActionExecutorBinding = Readonly<{
     return result;
   };
   const executeMachineOwnedAction = async (args: Readonly<{
-    actionId: string; input: unknown; context: ActionExecutorContext; confirmInFlow?: boolean; reviewDigest?: string;
+    actionId: string; input: unknown; context: UiActionExecutorContext; confirmInFlow?: boolean; reviewDigest?: string;
     reviewedDeploymentInput?: unknown;
     deploymentReview?: Parameters<typeof executeOriginalAccountMachineAction>[0]['deploymentReview'];
     responseRecovery?: UiActionResponseRecovery;
@@ -1300,6 +1300,8 @@ type VoiceActionExecutorBinding = Readonly<{
     }
     const confirmation = context.presentUserConfirmation?.inputDigest === undefined ? undefined : context.presentUserConfirmation;
     const reviewedParent = readHostReviewedParentV1(context);
+    const mountedPersonPress = args.actionId === ACTION_INVOKE_ACTION_ID_V1 && context.actionRequestId !== undefined
+      && args.context.presentedActionControlRequestId === context.actionRequestId && isPresentUserHostInvocation(context);
     // Delegate admission with the original host origin. The receiving daemon
     // owns the retained candidate, Action policy and sole approval Artifact.
     // Mounted plugins have their own sealed pluginInvocation provenance. Do
@@ -1307,7 +1309,7 @@ type VoiceActionExecutorBinding = Readonly<{
     // Credential-free codecs still need caller provenance: an unstamped
     // managed request is automation at the receiver, even after a UI press.
     const needsInvocation = machineOwnedAction && context.surface !== 'plugin'
-      && (reviewStart || Boolean(context.sessionCreationDefaults) || relationshipWrite || context.surface !== 'ui' || confirmation || reviewedParent
+      && (reviewStart || Boolean(context.sessionCreationDefaults) || relationshipWrite || context.surface !== 'ui' || confirmation || reviewedParent || mountedPersonPress
         || originalSpec.success && getActionSpec(originalSpec.data).originalExecution?.requesterCredentials === 'none'
         || context.presentUserApproval?.actionId === args.actionId
         || doesExternalActionConsumeRequesterAccountContentV1({ actionId: args.actionId, input: args.input,

@@ -26,7 +26,7 @@ async function withWorkbench(page: Page, caseName: string,
   }
 }
 
-test('F2 mounted Console stops native SQL and restores SQL history', async ({ page }) => {
+test('F2 mounted Console stops native SQL, reviews writes and restores history', async ({ page }) => {
   test.setTimeout(0);
   await withWorkbench(page, 'f2-console', async fixture => {
     await page.getByRole('button', { name: 'Console', exact: true }).click();
@@ -43,6 +43,22 @@ test('F2 mounted Console stops native SQL and restores SQL history', async ({ pa
     await page.getByRole('button', { name: 'Run', exact: true }).click();
     await expect(page.getByText('desktop-control', { exact: true })).toBeVisible();
     console.info('P2-F2-known-good-mounted-console', fixture.runtime);
+
+    await page.getByRole('radio', { name: 'Write', exact: true }).click();
+    await replaceSql("UPDATE ui_stage SET note = $1 WHERE id = 'first'");
+    const parameter = 'desktop-private-parameter';
+    await page.getByRole('textbox', { name: 'Value of $1', exact: true }).fill(parameter);
+    await page.getByRole('button', { name: 'Run', exact: true }).click();
+    const approval = page.getByRole('dialog', { name: /^(Run SQL|Run a plugin action)$/ });
+    await expect(approval).toBeVisible();
+    await approval.getByRole('button', { name: 'Technical details' }).click();
+    await expect(approval).not.toContainText(parameter);
+    await expect(page.getByText('Offline · nothing cached yet', { exact: true })).toBeHidden();
+    const readNative = () => fixture.sql('dbw_selected', "SELECT note FROM ui_stage WHERE id = 'first'");
+    expect(await readNative()).toBe('before');
+    await approval.getByRole('button', { name: /^(Run SQL|Run a plugin action)$/ }).click();
+    await expect.poll(readNative).toBe(parameter);
+    await page.getByRole('radio', { name: 'Read', exact: true }).click();
 
     const activeQueryCount = () => fixture.sql('dbw_selected', `SELECT count(*) FROM pg_stat_activity
       WHERE pid <> pg_backend_pid() AND state = 'active' AND query LIKE '%DBW_DESKTOP_F2_STOP%'`);

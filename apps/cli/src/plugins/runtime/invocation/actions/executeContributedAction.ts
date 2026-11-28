@@ -1,6 +1,6 @@
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readPluginModuleFailureCause } from '@/plugins/runtime/moduleFailure';
-import { ACTION_IDS } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_IDS, ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -593,10 +593,11 @@ export async function executeContributedAction(params: Readonly<{
   // reviewing it. The Action's own policy decides as that press (owner 2026-11-15,
   // option A): UI-surface defaults and Settings, plus the plugin row it is called on.
   const approvalContextForPress = params.approvalContext;
-  const ownPressChild = params.presentUserIntent === 'confirmed' && !hasAdmittedReview && !params.reviewedChild
-    && actionSurface === 'plugin' && approvalContextForPress?.surface === 'ui'
+  const presentsOwnUiReview = approvalContextForPress?.surface === 'ui'
     && (isPresentUserHostInvocation(approvalContextForPress)
-      || isHomeAdmittedPresentUserHostInvocation(approvalContextForPress, 'action.invoke'));
+      || isHomeAdmittedPresentUserHostInvocation(approvalContextForPress, ACTION_INVOKE_ACTION_ID_V1));
+  const ownPressChild = params.presentUserIntent === 'confirmed' && !hasAdmittedReview && !params.reviewedChild
+    && actionSurface === 'plugin' && presentsOwnUiReview;
   // An admitted review finishes after a later Off (next natural boundary). An own
   // press child is checked on its own surface and as that UI press.
   const settingsUnavailable = hasAdmittedReview ? null
@@ -880,6 +881,10 @@ export async function executeContributedAction(params: Readonly<{
       // Durable replay already acquired placement and holds the confirmed Ask.
       : params.requestCurrentIntent && !replayPlacement
       ? async (request: TargetActionCurrentIntentRequest): Promise<TargetActionCurrentIntentResult> => {
+          if (params.daemonHoldsApprovalWaiter && actionSurface === 'ui' && presentsOwnUiReview
+            && request.automaticChecks?.humanApprovalRequired !== false) {
+            return { status: 'unavailable', code: 'action_interactive_review_required' };
+          }
           const projectedInput = projectTargetActionApprovalInput(request.action.input, request.action.secretInputPaths ?? []);
           // Declared live custody, confidential input and Account hosts without
           // a replay-placement producer belong to the existing live waiter.

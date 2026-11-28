@@ -4196,6 +4196,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       context: ctx,
       ...(childrenApprovalPreview === undefined ? {} : { hostReviewedContent: childrenApprovalPreview }),
       forCarriedReview,
+      ...(forCarriedReview && actionId === ACTION_INVOKE_ACTION_ID_V1 ? { carriedContributedSecretInputPaths: secretInputPaths } : {}),
       ...(deploymentReview === undefined ? {} : { deploymentReview }),
       ...(hostReviewedChildren ? { hostReviewedChildren } : {}),
       ...(requiredHandoffTargetApproval ? { handoffTargetReplacementApproval: requiredHandoffTargetApproval } : {}),
@@ -7019,7 +7020,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
           if (!invoked.ok && invoked.errorCode === 'action_interactive_review_required' && !reviewAdmitted
             && readRecord(invoked.details).reviewDigest === undefined && ctx.surface === 'ui'
             && (isPresentUserHostInvocation(ctx) || isHomeAdmittedPresentUserHostInvocation(ctx, 'action.invoke'))) {
-            const review = await prepareCurrentApproval();
+            const review = await prepareCurrentApproval(true);
             if (review && !('ok' in review)) return reviewRefusal(review);
           }
           return invoked;

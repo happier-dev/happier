@@ -1527,6 +1527,12 @@ passes it up, and the pressed Action's executor returns its own review and
 child is admitted once without another policy read. A Machine-placed source
 receives `presentUserIntent: 'confirmed'` only for such a reviewed child. A bare
 press keeps its UI origin there, and the receiving daemon's own policy decides.
+When a mounted host control runs a Machine contribution directly, Home carries
+the physical requester to that daemon. If its policy asks the requester for
+review, the daemon returns the existing in-flow review to the same App. For
+Workbench SQL, the review projects the statement while masking declared bound
+values. The App keeps the original input and binds confirmation to it and the
+carried review before retrying.
 In unreleased 0.3 source, reversible own-Session Board upserts and layout writes
 default to Allow on Agent, MCP and CLI surfaces. A visual with no network or
 host Actions therefore needs no approval by default. Visual preparation retains
