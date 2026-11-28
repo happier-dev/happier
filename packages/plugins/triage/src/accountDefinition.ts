@@ -179,7 +179,6 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
             when: { op: 'and', all: [
               TRIAGE_EXISTING_SESSION_INPUT,
               { op: 'eq', path: 'handoff.delivery', value: 'send' },
-              { op: 'truthy', path: 'sendPresentation.actionLabel' },
             ] },
             title: configuredConfirmationText('sendTitle', 'Send to this Session?'),
             body: configuredConfirmationText('sendBody',

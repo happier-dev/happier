@@ -2030,12 +2030,11 @@ The helper preserves the standard approval/failure envelope and action-owned
 recovery; an uncertain send is not permission to start again.
 
 For an existing Session, supply the Session selector in
-`handoff.sessionChoice.session`. The mounted Send prepares presentation hints
-for the existing host confirmation. The confirmation shows the bound
-`handoff.configuredActionId` once, using its declared catalog label when
-available, and explains that the entry and instructions go to the existing Session. The mounted
-Session snapshot also supplies the optional `recipientStopNotice`. Requests
-without the prepared Send labels keep the configured-action confirmation.
+`handoff.sessionChoice.session`. With `handoff.delivery` set to `send`, the host
+confirmation shows the bound Session and `handoff.configuredActionId`, using
+the action's catalog label when available. It explains that the entry and
+instructions go to the existing Session. Callers can omit `sendPresentation`.
+The mounted Session snapshot also supplies the optional `recipientStopNotice`.
 The Session owner retains the requester class and decides whether to deliver.
 When a person has explicitly stopped the recipient, Agent Send can return
 `handoff.kind: 'sendResult'` with `result.status: 'held'` and

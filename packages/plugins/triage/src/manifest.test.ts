@@ -69,10 +69,11 @@ describe('Triage plugin manifest', () => {
   it.each([
     { mode: 'start', choice: { kind: 'configured' }, launch: { kind: 'configured', launchMode: 'start' }, destination: 'single', expected: 'Start a new Session' },
     { mode: 'send', choice: { kind: 'existing', session: { selector: 'sessions', addresses: [{ serverId: 'home-a', sessionId: 'bound-session' }] } }, destination: 'single', expected: 'Send now' },
+    { mode: 'send', choice: { kind: 'existing', session: { selector: 'sessions', addresses: [{ serverId: 'home-a', sessionId: 'bound-session' }] } }, destination: 'single', expected: 'Send now', omitActionLabel: true },
     { mode: 'compose for existing', choice: { kind: 'existing', session: { selector: 'self' } }, destination: 'single', expected: 'Open a draft' },
     { mode: 'Add instructions', choice: { kind: 'configured' }, launch: { kind: 'configured', launchMode: 'review' }, destination: 'single', expected: 'Open a draft to add instructions' },
     { mode: 'bulk start', choice: { kind: 'configured' }, destination: 'oneSessionPerEntry', expected: 'One new Session per entry' },
-  ])('describes $mode in the registered configured Action confirmation', ({ mode, choice, launch, destination, expected }) => {
+  ])('describes $mode in the registered configured Action confirmation ($omitActionLabel)', ({ mode, choice, launch, destination, expected, omitActionLabel }) => {
     const action = PLUGIN_MANIFEST.contributes.actions.find(candidate => candidate.id === TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1);
     const entry = { entryRef: testkitEntryRef({ entryId: 'issue-a', kindId: 'issue' }), sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID };
     const input = TriageRunConfiguredActionInputV1Schema.parse({ v: 1, handoff: {
@@ -81,7 +82,7 @@ describe('Triage plugin manifest', () => {
       evidence: [{ kind: 'entry', entry }], sessionChoice: choice,
       delivery: mode === 'send' ? 'send' : mode === 'compose for existing' ? 'compose' : 'configured',
     }, ...(launch === undefined ? {} : { singleIntent: launch }),
-    ...(choice.kind === 'existing' ? { sendPresentation: { actionLabel: 'Resolve production alert', sessionTitle: 'Production investigation' } } : {}) });
+    ...(choice.kind === 'existing' && !omitActionLabel ? { sendPresentation: { actionLabel: 'Resolve production alert', sessionTitle: 'Production investigation' } } : {}) });
     const projection = projectTargetActionApprovalInput(input, []);
     const confirmation = resolveTargetActionConfirmationPresentation(action?.confirmation, projection);
     if (!confirmation || !projection) throw new Error('The configured Action needs a reviewable confirmation');
