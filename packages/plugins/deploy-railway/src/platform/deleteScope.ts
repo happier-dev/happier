@@ -89,7 +89,7 @@ function scopeActions(kind: 'project' | 'environment'): Record<string, AccountAc
           { path: 'happierLinks', title: 'Happier Environments and Links using this scope' }],
       },
       inputSchema: actionObject({ ...inputFields, ...reviewFields }),
-      resultSchema: actionObject({ status: { type: 'string', enum: ['removed', 'kept-unchecked'] } }),
+      resultSchema: actionObject({ status: { type: 'string' as const, enum: ['removed', 'kept-unchecked'] } }),
       async run(value, context): Promise<DeleteResult> {
         const input = value as unknown as Selection & Preview;
         const operations = createRailwayProjectOperations(railwayRequest(context), context.signal);

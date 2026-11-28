@@ -8,7 +8,7 @@ import { projectRailwayFailure, railwayAccountAction, railwayIdentity, railwayRe
 type AccountAction = PluginActionDefinition<Extract<PluginActionDeclaration, { execution: { target: 'account' } }>>;
 const base = DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema.properties!;
 const text = { type: 'string', minLength: 1 } as const;
-const choice = { type: 'object', additionalProperties: false, properties: { id: text, name: text }, required: ['id', 'name'] } as const;
+const choice = { type: 'object', additionalProperties: false, properties: { id: text, name: text }, required: ['id', 'name'] as string[] } as const;
 const environmentSelection = railwayRoleInput(DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema).properties!.providerEnvironment!;
 const selectEnvironment = (projectId: string, environmentId: string) => ({ kind: 'native', selection: { projectId, environmentId } });
 const accountFields = { credentialRef: base.credentialRef!, credentialPrincipal: base.credentialPrincipal! };
