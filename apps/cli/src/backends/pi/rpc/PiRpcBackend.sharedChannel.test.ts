@@ -107,6 +107,9 @@ function createFakeAttachedPi(initialSessionId: string, beforeStateReply?: () =>
             case 'get_session_stats':
               reply(command, { success: true, data: { sessionId } });
               return;
+            case 'set_thinking_level':
+              reply(command, { success: true });
+              return;
             case 'abort':
               reply(command, { success: true, data: { didRequestAbort: streaming } });
               return;
@@ -320,9 +323,12 @@ describe('PiRpcBackend over an attached shared-terminal channel', () => {
     const { backend } = createAttachedBackend(fake);
     const { sessionId } = await backend.startSession();
     fake.detach(false);
-    fake.setStreaming(true);
-    await Promise.all([backend.cancel(sessionId), backend.cancel(sessionId)]);
+    await Promise.all([
+      backend.setSessionConfigOption(sessionId, 'reasoning_effort', 'low'),
+      backend.setSessionConfigOption(sessionId, 'reasoning_effort', 'high'),
+    ]);
     expect(fake.opens).toHaveLength(2);
+    expect(fake.commands[1]?.filter(({ type }) => type === 'set_thinking_level')).toHaveLength(2);
   });
 
   it('re-attaches on its own after a same-session reload so terminal turns keep reaching Happier', async () => {
@@ -568,7 +574,11 @@ describe('PiRpcBackend over an attached shared-terminal channel', () => {
     reattach = gate.promise;
     fake.detach();
     await vi.waitFor(() => expect(fake.commands[1]?.some(({ type }) => type === 'get_state')).toBe(true));
-    const stop = backend.cancel(sessionId);
+    let stopped = false;
+    const stop = backend.cancel(sessionId).then(() => { stopped = true; });
+    await flushIo();
+    const stoppedBeforeReattach = stopped;
+    fake.setStreaming(true);
     gate.resolve();
     await stop;
 
@@ -576,6 +586,8 @@ describe('PiRpcBackend over an attached shared-terminal channel', () => {
       status: 'rejected_before_effect', error: { reason: 'provider_unavailable_before_acceptance' },
     });
     expect(promptCommands(fake)).toHaveLength(1);
+    expect(stoppedBeforeReattach).toBe(true);
+    expect(fake.commands[1]?.some(({ type }) => type === 'abort')).toBe(false);
   });
 
   it('settles a held web prompt before effect when the terminal stops answering', async () => {

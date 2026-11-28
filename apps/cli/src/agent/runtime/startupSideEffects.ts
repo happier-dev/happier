@@ -1,5 +1,5 @@
 import type { ApiSessionClient } from '@/api/session/sessionClient';
-import type { Metadata } from '@/api/types';
+import type { AgentState, Metadata } from '@/api/types';
 import { configuration } from '@/configuration';
 import { notifyDaemonSessionStarted } from '@/daemon/controlClient';
 import { writeTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
@@ -57,13 +57,17 @@ function isTruthyEnvFlag(raw: string | undefined): boolean {
     return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'y';
 }
 
-export function primeAgentStateForUi(session: ApiSessionClient, logPrefix: string): void {
+export function primeAgentStateForUi(
+    session: ApiSessionClient,
+    logPrefix: string,
+    prepareState: (state: AgentState) => AgentState = (state) => ({ ...state }),
+): void {
     // Bump agentStateVersion early so the UI can reliably treat the agent as "ready" to receive messages.
     // The server does not currently persist agentState during initial session creation; it starts at version 0
     // and only changes via 'update-state'. The UI uses agentStateVersion > 0 as its readiness signal.
     updateAgentStateBestEffort(
         session,
-        (currentState) => ({ ...currentState }),
+        prepareState,
         logPrefix,
         'prime agent state for ui',
     );

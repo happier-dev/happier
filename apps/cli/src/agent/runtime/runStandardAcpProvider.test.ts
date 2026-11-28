@@ -1343,6 +1343,42 @@ describe('runStandardAcpProvider', () => {
     expect(sessionWasArchived(harness.session)).toBe(false);
   });
 
+  it('dispatches provider-owned Stop while the Session flush is blocked', async () => {
+    const harness = createHarness();
+    let releaseFlush!: () => void;
+    const flush = new Promise<void>((resolve) => { releaseFlush = resolve; });
+    harness.session.flush.mockImplementation(() => flush);
+    delete harness.deps.createProviderEnforcedPermissionHandlerFn;
+    let cancelled = false;
+    const backend = createFakeAcpRuntimeBackend({
+      cancel: async () => { cancelled = true; },
+    });
+    harness.config.createRuntime = (params) => createTestAcpRuntime({
+      provider: 'pi',
+      directory: params.directory,
+      session: params.session,
+      messageBuffer: params.messageBuffer,
+      mcpServers: {},
+      permissionHandler: params.permissionHandler,
+      onThinkingChange: params.setThinking,
+      promptTurnOwner: 'provider',
+      ensureBackend: async () => backend,
+    });
+    harness.deps.runPermissionModePromptLoopFn = async (params: Parameters<typeof runPermissionModePromptLoop>[0]) => {
+      await params.runtime.startOrLoad({});
+      const stop = Promise.resolve(harness.handlers.get('abort')?.());
+      try {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(cancelled).toBe(true);
+      } finally {
+        releaseFlush();
+        await stop;
+      }
+    };
+
+    await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+  });
+
   it.each(['completed', 'failed', 'flush-failed'] as const)(
     'resumes queued input immediately after %s Stop cancellation without polling',
     async (cancelOutcome) => {

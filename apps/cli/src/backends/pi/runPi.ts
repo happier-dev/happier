@@ -74,7 +74,7 @@ function createPiRuntime(opts: PiRunOptions, params: PiRuntimeParams, sharedTerm
   });
 }
 
-function createRpcConfig(opts: PiRunOptions): StandardAcpProviderConfig {
+function createBaseConfig(opts: PiRunOptions): StandardAcpProviderConfig {
   return {
     flavor: 'pi',
     backendDisplayName: 'Pi',
@@ -100,16 +100,23 @@ function createRpcConfig(opts: PiRunOptions): StandardAcpProviderConfig {
   };
 }
 
+function createRpcConfig(opts: PiRunOptions): StandardAcpProviderConfig {
+  return {
+    ...createBaseConfig(opts),
+    prepareAttachedAgentState: (state) =>
+      state.localControl?.topology === 'shared' ? { ...state, localControl: null } : state,
+  };
+}
+
 /**
  * `happier pi` in the user's own terminal: Pi's native TUI owns the screen and Happier attaches
  * through the bridge extension. Pi is the runtime here, so the runner never draws, its keepalive
  * reports local control, and Pi exiting ends the runner.
  */
 function createSharedTerminalConfig(opts: PiRunOptions): StandardAcpProviderConfig {
-  const rpc = createRpcConfig(opts);
   let sharedTerminal: PiSharedTerminalHost | null = null;
   return {
-    ...rpc,
+    ...createBaseConfig(opts),
     startRuntimeBeforeFirstPrompt: true,
     shouldRenderTerminalDisplay: () => false,
     resolveKeepAliveMode: () => 'local',

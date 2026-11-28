@@ -2611,10 +2611,18 @@ export function createAcpRuntime(params: {
       const providerSessionId = sessionId;
       const turn = turnState;
       if (params.promptTurnOwner === 'provider') {
-        const b = await ensureBackend();
-        await b.cancel(providerSessionId);
-        if (turnState === turn && turn.currentTurnId !== null && !turn.settlement) {
-          rememberTurnOutcome({ kind: 'aborted', stopReason: 'cancelled' }, turn);
+        const requestedTurnId = turn.currentTurnId;
+        // The loaded provider owns this Stop. Do not reopen the backend or wait on Session I/O
+        // before dispatching, since a replacement terminal connection could own another turn.
+        const cancellation = backend?.cancel(providerSessionId);
+        const permissionSettlement = abortPendingAcpPermissionRequests(params.permissionHandler, 'Aborted by user');
+        try {
+          await cancellation;
+          if (requestedTurnId && turnState === turn && turn.currentTurnId === requestedTurnId && !turn.settlement) {
+            rememberTurnOutcome({ kind: 'aborted', stopReason: 'cancelled' }, turn);
+          }
+        } finally {
+          await permissionSettlement;
         }
         return;
       }

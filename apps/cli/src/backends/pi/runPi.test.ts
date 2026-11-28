@@ -3,6 +3,9 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { accountSettingsParse } from '@happier-dev/protocol';
 
 import type { Credentials } from '@/persistence';
+import type { AgentState } from '@/api/types';
+import { primeAgentStateForUi } from '@/agent/runtime/startupSideEffects';
+import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { PI_BROKER_SELECTIONS_ENV, serializePiBrokerSelections } from '@/backends/pi/brokerExtension';
 
 const { runStandardAcpProviderMock, createPiAcpRuntimeMock } = vi.hoisted(() => ({
@@ -159,14 +162,13 @@ describe('runPi', () => {
     config.createRuntime(createRuntimeParams());
     expect(createPiAcpRuntimeMock.mock.calls[0]?.[0].sharedTerminal).toBeDefined();
 
-    let agentState: Record<string, unknown> = {};
-    const session = {
-      updateAgentState: vi.fn((updater: (state: Record<string, unknown>) => Record<string, unknown>) => {
+    let agentState: AgentState = { controlledByUser: true };
+    const session = createMutableApiSessionClientFixture({ overrides: {
+      updateAgentState: async (updater) => {
         agentState = updater(agentState);
-      }),
-      sendAgentMessage: vi.fn(),
+      },
       subscribeToSessionConnectionState: () => () => undefined,
-    };
+    } });
     await config.onAfterStart({ session, runtime: {}, initialControlsApplied: true, prepareLocalAttachment: async () => false });
     expect(agentState.localControl).toEqual({
       attached: true,
@@ -176,6 +178,20 @@ describe('runPi', () => {
       canDetach: false,
     });
     await config.onDispose({ session, runtime: {} });
+
+    await runPi({
+      credentials,
+      startedBy: 'daemon',
+      existingSessionId: 'session-1',
+      accountSettingsContext: accountSettingsContext(true),
+    });
+    const rpcConfig = runStandardAcpProviderMock.mock.calls[1]?.[1];
+    primeAgentStateForUi(
+      session,
+      rpcConfig.uiLogPrefix,
+      rpcConfig.prepareAttachedAgentState,
+    );
+    expect(agentState).toMatchObject({ controlledByUser: true, localControl: null });
   });
 
   it.each([

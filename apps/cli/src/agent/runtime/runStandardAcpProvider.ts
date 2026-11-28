@@ -177,6 +177,7 @@ export type StandardAcpProviderConfig = {
   beforeInitializeSession?: (params: { metadata: Metadata; opts: StandardAcpProviderRunOptions }) => void;
   onAttachMetadataSnapshotMissing?: (error: unknown | null) => void;
   onAttachMetadataSnapshotError?: (error: unknown) => void;
+  prepareAttachedAgentState?: InitializeBackendRunSessionOptions['prepareAttachedAgentState'];
   onSessionSwap?: (params: { session: ApiSessionClient }) => void | Promise<void>;
   onAfterStart?: (params: { session: ApiSessionClient; runtime: RuntimeForLoop } & ProviderStartupControls) => void | Promise<void>;
   onAfterReset?: (params: { session: ApiSessionClient; runtime: RuntimeForLoop }) => void | Promise<void>;
@@ -324,6 +325,7 @@ export async function runStandardAcpProvider(
     metadata,
     state,
     existingSessionId: opts.existingSessionId,
+    prepareAttachedAgentState: config.prepareAttachedAgentState,
     uiLogPrefix: config.uiLogPrefix,
     terminalAgentLabel: policyAgentId,
     terminalHostOwner: config.terminalHostOwner,
@@ -685,14 +687,16 @@ export async function runStandardAcpProvider(
     if (explicitAbortPromise) return explicitAbortPromise;
     const operation = (async () => {
       logger.debug(`${config.uiLogPrefix} Abort requested`);
-      await permissionHandler.abortPendingRequestsAndFlush('Aborted by user');
       const providerOwnsPromptTurn = runtime.promptTurnOwner === 'provider';
       if (!providerOwnsPromptTurn) {
+        await permissionHandler.abortPendingRequestsAndFlush('Aborted by user');
         session.sendAgentMessage(config.agentMessageType, { type: 'turn_aborted', id: randomUUID() });
+        abortController.abort();
       }
-      abortController.abort();
       try {
-        await (options ? runtime.cancel(options) : runtime.cancel());
+        const cancellation = options ? runtime.cancel(options) : runtime.cancel();
+        if (providerOwnsPromptTurn) abortController.abort();
+        await cancellation;
       } catch (error) {
         logger.debug(`${config.uiLogPrefix} Failed to cancel current operation (non-fatal)`, error);
         if (providerOwnsPromptTurn) {

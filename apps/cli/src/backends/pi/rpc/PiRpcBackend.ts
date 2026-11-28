@@ -1490,15 +1490,18 @@ export class PiRpcBackend implements AgentBackend {
     const withdrewHeldPrompt = this.sharedPromptHeld;
     this.cancelGeneration += 1;
     this.wakeProviderIdleWaiters();
-    await abortPendingAcpPermissionRequests(this.permissionHandler, 'Pi turn cancelled');
-    const pendingTurn = this.pendingTurn;
     if (this.channelHost.kind === 'attached') {
-      const response = await this.sendCommand({ type: 'abort' }, PI_SHARED_CONTROL_RESPONSE_TIMEOUT_MS);
-      if (asRecord(response.data)?.didRequestAbort !== true && !withdrewHeldPrompt) {
+      // A successor channel may already have a different terminal turn running.
+      const response = this.channel && this.processTransitionInFlight === null
+        ? await this.sendCommand({ type: 'abort' }, PI_SHARED_CONTROL_RESPONSE_TIMEOUT_MS, { processAlreadyEnsured: true })
+        : undefined;
+      if (asRecord(response?.data)?.didRequestAbort !== true && !withdrewHeldPrompt) {
         throw new Error('Could not confirm cancellation in Pi. A message still in preparation may start in the terminal.');
       }
       return;
     }
+    await abortPendingAcpPermissionRequests(this.permissionHandler, 'Pi turn cancelled');
+    const pendingTurn = this.pendingTurn;
     await this.sendCommand({ type: 'abort' });
     // Pi's successful abort response is an idle barrier: its RPC handler awaits the provider's
     // waitForIdle() before acknowledging. Settle the same local turn from that authoritative
