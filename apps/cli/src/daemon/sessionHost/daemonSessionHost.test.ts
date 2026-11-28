@@ -902,6 +902,37 @@ describe.skipIf(process.platform === 'win32')('daemon session host placement', (
       .toEqual([ra!.trackingKey, rb!.trackingKey, rc!.trackingKey, d.record.trackingKey].sort());
   });
 
+  it('holds a fresh Session host without preloading and still warms the same host on New Session intent', { timeout: 120_000 }, async () => {
+    const launchesBefore = census.hostLaunches;
+    const preloadsBefore = census.runnerPreloads;
+    const openSockets = new Set(hostSockets);
+    const harness = await createHarness();
+    const fresh = new AbortController();
+    const intent = new AbortController();
+    const freshHold = harness.sessionHost.prestart(fresh.signal, { preloadRunner: false });
+    let intentHold: Promise<void> | undefined;
+    try {
+      // The only new connection is this hold. Its response follows host admission.
+      await vi.waitFor(() => expect([...hostSockets].some(socket =>
+        !openSockets.has(socket) && socket.bytesWritten > 0,
+      )).toBe(true), { timeout: 60_000 });
+
+      const session = await harness.spawnSession('fresh-while-host-held');
+      expect(session.result).toMatchObject({ type: 'success', sessionId: 'fresh-while-host-held' });
+      expect(census.runnerPreloads).toBe(preloadsBefore);
+
+      intentHold = harness.sessionHost.prestart(intent.signal);
+      await vi.waitFor(() => expect(census.runnerPreloads).toBe(preloadsBefore + 1), { timeout: 60_000 });
+      expect(census.hostLaunches - launchesBefore).toBe(1);
+    } finally {
+      fresh.abort();
+      intent.abort();
+      await Promise.all([freshHold, intentHold]);
+      harness.releaseAll();
+    }
+    await harness.hosts[0]!.host.whenEnded;
+  });
+
   it('prestarts ONE host on New Session intents, preloads the runner once, and the next Session joins that host', { timeout: 120_000 }, async () => {
     const launchesBefore = census.hostLaunches;
     const preloadsBefore = census.runnerPreloads;
