@@ -50,6 +50,8 @@ import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
 import { resolveHomeTarget as resolveCapturedHomeTarget, resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { isActionEffectResult as isEffectResult } from '@/sync/domains/scope/actionAccountScopeError';
 import { publishArtifactDeletion } from './artifactDeletionPublication';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { recoverBrowserApprovalClaim, retainBrowserApprovalClaim, type BrowserApprovalClaim } from './browserApprovalClaim';
 
 function artifactContentUnavailable(): Error & Readonly<{ code: 'content_unavailable' }> {
     return Object.assign(new Error('Artifact content is unavailable'), { code: 'content_unavailable' as const });
@@ -179,6 +181,8 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
             createArtifactDocument: async (_input: ArtifactCreateOperation) => artifactUnavailable(),
             updateArtifactDocument: async (_input: ArtifactUpdateOperation) => artifactUnavailable(),
             updateArtifact: async (_artifactId: string, _header: ArtifactHeader, _body: string, _basis?: DecryptedArtifact, _onIssued?: () => void, _options?: Readonly<{ savedBy?: ArtifactSavedByV1 | null }>): Promise<DecryptedArtifact | null> => unavailable(),
+            retainApprovalClaim: async (_artifact: DecryptedArtifact) => {},
+            clearApprovalClaim: (_artifactId: string) => {},
             workflowArtifacts, artifactAccessGrants, encodeArtifactListCursor,
             homeHubArtifactTransport: { read: artifactUnavailable, create: artifactUnavailable, update: artifactUnavailable } satisfies HomeHubArtifactTransportV1,
             listArtifacts: async (_options: Parameters<WorkflowDefinitionArtifactOperations['list']>[0]) => artifactUnavailable(),
@@ -238,7 +242,12 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
         };
     };
     const unsubscribe = watch();
+    let browserApprovalClaims: Map<string, BrowserApprovalClaim> | undefined;
     const dispose = () => {
+        if (browserApprovalClaims) {
+            for (const claim of browserApprovalClaims.values()) claim.release();
+            browserApprovalClaims.clear();
+        }
         unsubscribe();
     };
     // A finished context holds no watch: an Account departure on its Home since admission retires it.
@@ -478,12 +487,46 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
         };
         const fetchArtifact = async (artifactId: string, options?: ArtifactReadOptions) => {
             const artifact = await readArtifact(artifactId, options);
+            if (artifact?.rawHeader?.approvalStatus === 'executing') {
+                const recovered = await recoverBrowserApprovalClaim({
+                    scope, artifact, write: (basis, header, body) => updateArtifact(artifactId, header, body, basis, undefined, { savedBy: null }),
+                });
+                assertCurrent();
+                if (recovered) {
+                    publishHomeAccountChange(serverId, [artifactId], { changeKinds: ['artifact'] });
+                    return recovered;
+                }
+            }
             if (canPublish()) {
                 // One read publishes one row, without claiming inventory readiness.
                 if (artifact) storage.getState().updateArtifact(artifact);
                 else storage.getState().deleteArtifact(artifactId, 'unavailable');
             }
             return artifact;
+        };
+        // `basis` is the exact read a caller validated its change against; its
+        // versions become the CAS expectation. Without one, the latest row is.
+        const updateArtifact = async (artifactId: string, header: ArtifactHeader, body: string, basis?: DecryptedArtifact, onIssued?: () => void, options?: Readonly<{ savedBy?: ArtifactSavedByV1 | null }>): Promise<DecryptedArtifact | null> => {
+            const current = basis ?? await fetchArtifact(artifactId, { fresh: true });
+            const artifactOptions = await artifactParams();
+            let committed: DecryptedArtifact | null = null;
+            await updateArtifactWithHeaderViaApi({
+                ...artifactOptions, artifactId, header, body,
+                ...(options?.savedBy !== undefined ? { savedBy: options.savedBy } : {}),
+                expectedRevision: current?.bodyVersion === undefined ? undefined
+                    : { headerVersion: current.headerVersion, bodyVersion: current.bodyVersion },
+                ...(onIssued ? { request: ((path, init, reqOptions) => artifactOptions.request(path, init, {
+                    ...reqOptions,
+                    ...(init?.method === 'POST' ? { onIssued: () => { onIssued(); reqOptions?.onIssued?.(); } } : {}),
+                })) satisfies ServerFetch } : {}),
+                getArtifact: () => current ?? undefined,
+                updateArtifact: (artifact: DecryptedArtifact) => {
+                    committed = artifact;
+                    if (canPublish()) storage.getState().updateArtifact(artifact);
+                },
+            });
+            assertCurrent();
+            return committed;
         };
         const readArtifactHeaders = async (artifactIds: readonly string[], options?: Pick<ArtifactReadOptions, 'signal' | 'fresh'>): Promise<PromiseSettledResult<DecryptedArtifact | null>[]> =>
             withArtifactReadSignal(options?.signal, async borrowerSignal => {
@@ -947,29 +990,14 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
                 return result;
             },
             createArtifact: async (header: Readonly<Record<string, unknown>>, body: string) => (await createArtifactDocument({ header, body })).artifactId,
-            // `basis` is the exact read a caller validated its change against; its
-            // versions become the CAS expectation. Without one, the latest row is.
-            updateArtifact: async (artifactId: string, header: ArtifactHeader, body: string, basis?: DecryptedArtifact, onIssued?: () => void, options?: Readonly<{ savedBy?: ArtifactSavedByV1 | null }>): Promise<DecryptedArtifact | null> => {
-                const current = basis ?? await fetchArtifact(artifactId, { fresh: true });
-                const artifactOptions = await artifactParams();
-                let committed: DecryptedArtifact | null = null;
-                await updateArtifactWithHeaderViaApi({
-                    ...artifactOptions, artifactId, header, body,
-                    ...(options?.savedBy !== undefined ? { savedBy: options.savedBy } : {}),
-                    expectedRevision: current?.bodyVersion === undefined ? undefined
-                        : { headerVersion: current.headerVersion, bodyVersion: current.bodyVersion },
-                    ...(onIssued ? { request: ((path, init, reqOptions) => artifactOptions.request(path, init, {
-                        ...reqOptions,
-                        ...(init?.method === 'POST' ? { onIssued: () => { onIssued(); reqOptions?.onIssued?.(); } } : {}),
-                    })) satisfies ServerFetch } : {}),
-                    getArtifact: () => current ?? undefined,
-                    updateArtifact: (artifact: DecryptedArtifact) => {
-                        committed = artifact;
-                        if (canPublish()) storage.getState().updateArtifact(artifact);
-                    },
-                });
-                assertCurrent();
-                return committed;
+            updateArtifact,
+            retainApprovalClaim: async (artifact: DecryptedArtifact) => {
+                const claim = await retainBrowserApprovalClaim(scope, artifact);
+                if (claim) (browserApprovalClaims ??= new Map()).set(artifact.id, claim);
+            },
+            clearApprovalClaim: (artifactId: string) => {
+                browserApprovalClaims?.get(artifactId)?.settled();
+                browserApprovalClaims?.delete(artifactId);
             },
         };
     } catch (error) {

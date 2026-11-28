@@ -41,6 +41,10 @@ export function installWebLockManagerMock(): WebLockManagerMockHandle {
             : optionalCallback;
         if (!callback) throw new TypeError('Web Lock callback is required');
 
+        if (typeof optionsOrCallback !== 'function' && optionsOrCallback.ifAvailable && pendingByName.has(name)) {
+            await hostTask();
+            return await callback(null);
+        }
         const predecessor = pendingByName.get(name) ?? Promise.resolve();
         let release!: () => void;
         const current = new Promise<void>((resolve) => {

@@ -10165,7 +10165,12 @@ Home and Account remain bound to the Artifact. One-time results reach only the d
 Action's material-safe projection. If the
 effect may have happened but terminal persistence cannot be proven, the
 Artifact remains `executing` and later callers receive
-`approval_execution_outcome_unknown`; they do not replay blindly.
+`approval_execution_outcome_unknown`; they do not replay blindly. In 0.3
+development, the browser app can settle its own interrupted execution on an
+exact Account Artifact read. It holds a browser lock for each acknowledged
+claim and retains only the Home, Account, Artifact and revision coordinates
+locally. An exact matching read after that lock is released can CAS the
+existing Artifact to `outcome_unknown` through its normal storage mode.
 Current V2 terminal receipts carry evidence of whether the Action effect was
 attempted. A refusal before the handler starts records `effectAttempted: false`.
 A lost Account KV write acknowledgement records `true` because the storage

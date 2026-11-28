@@ -109,6 +109,11 @@ offered-answer or viewer-access checks. Requesting approval never supplies
 the human decision itself. The optional [Approval reviewer](/sessions/approval-reviewer)
 has its own request-scoped host decision path.
 
+In 0.3 development, if the browser closes while carrying out an approval,
+reopen its details in the same browser profile. When Happier can identify the
+interrupted execution, it records that the outcome is unknown. Check the
+target for the requested change before making another request.
+
 Inspect the [host Action reference](/plugins/api/host-actions) for the exact
 inputs and available surfaces. CLI calls use
 `happier actions invoke <action-id> --input-json '<json>'`; the app's row

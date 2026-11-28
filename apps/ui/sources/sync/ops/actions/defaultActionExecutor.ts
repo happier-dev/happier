@@ -1584,8 +1584,11 @@ type VoiceActionExecutorBinding = Readonly<{
           writeAttempted = true;
           if (artifactAccount) {
             const committed = await artifactAccount.updateArtifact(artifactId, header, body, writeBasis, undefined, { savedBy: null });
-            if (artifactAccount === accountContext && committed) {
-              approvalArtifacts.rememberWriteBasis(committed);
+            if (committed) {
+              // A forwarded decision never writes `executing` here. This ACK belongs to the app that won the Artifact CAS.
+              if (request.v === 2 && request.status === 'executing') await artifactAccount.retainApprovalClaim(committed);
+              else accountContext?.clearApprovalClaim(artifactId);
+              if (artifactAccount === accountContext) approvalArtifacts.rememberWriteBasis(committed);
             }
             return;
           }

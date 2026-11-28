@@ -20,6 +20,7 @@ import { t, setPreferredLanguageFromSettings, preloadTranslations } from '@/text
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installOwnMachineApprovalReplayBoundary } from '@/dev/testkit/harness/approvalInbox';
+import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 
@@ -348,6 +349,67 @@ describe('present-user UI approval origin at the Action host', () => {
             expect(copy).toContain(t('roles.settings.sourceYours'));
         }
         expect(harness.requests.slice(before).filter(({ path, input }) => input && path.includes('/entity-rows/'))).toEqual([]);
+    });
+
+    it('settles an interrupted browser approval on re-read without replaying the effect', async () => {
+        const serverId = await harness.addHome({ name: 'Approval exit', serverUrl: 'https://approval-exit.test', accountId: 'alice' });
+        const browserStorage = installLocalStorageMock();
+        onTestFinished(browserStorage.restore);
+        const approvingDocument = installWebLockManagerMock();
+        onTestFinished(approvingDocument.restore);
+        const executor = createDefaultActionExecutor();
+        const context = { surface: 'ui', serverId } as const;
+        const proposed = await executor.execute('approval.request.create', {
+            actionId: 'roles.create', actionArgs: { roleId: 'browser-exit-role', role: BUILT_IN_ROLES_V1.builder },
+            summary: 'Create a role', createdBy: { surface: 'system' },
+        }, context);
+        expect(proposed).toMatchObject({ ok: true });
+        const store = harness.artifacts(serverId);
+        const artifactId = store.list()[0]!.id;
+        const path = `/v1/artifacts/${artifactId}`;
+        const terminalIssued = Promise.withResolvers<void>();
+        const releaseTerminal = Promise.withResolvers<void>();
+        harness.answer(serverId, `POST ${path}`, { select: async (input, incoming) => {
+            const encoded = input && typeof input === 'object' && 'body' in input && typeof input.body === 'string'
+                ? decodePlainArtifactStoredContent(input.body) : null;
+            const body = encoded && typeof encoded === 'object' && 'body' in encoded && typeof encoded.body === 'string'
+                ? ApprovalRequestSchema.parse(JSON.parse(encoded.body)) : null;
+            if (body?.status === 'executed' || body?.status === 'failed') {
+                terminalIssued.resolve();
+                await releaseTerminal.promise;
+            }
+            const response = await store.handle(path, incoming.init);
+            if (!response) throw new Error('Expected Artifact write boundary');
+            return { status: response.status, body: await response.json() };
+        } });
+        const decision = executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, context);
+        const read = async () => {
+            const { captureLazyActionAccountContext } = await import('./actionAccountContext');
+            const reader = await captureLazyActionAccountContext(serverId);
+            try {
+                const row = await reader.fetchArtifact(artifactId, { fresh: true, prepareRecipientKeys: false });
+                return ApprovalRequestSchema.parse(JSON.parse(row?.body ?? 'null'));
+            } finally { reader.dispose(); }
+        };
+        try {
+            await Promise.race([terminalIssued.promise, decision.then(result => {
+                throw new Error(`Expected the terminal write to be held, received ${JSON.stringify(result)}`);
+            })]);
+            expect(await read()).toMatchObject({ status: 'executing' });
+            // Browser termination releases the document's locks while preserving origin storage.
+            approvingDocument.restore();
+            const replacementDocument = installWebLockManagerMock();
+            try {
+                expect(await read()).toMatchObject({ status: 'outcome_unknown', execution: {
+                    ok: false, errorCode: 'approval_execution_outcome_unknown',
+                } });
+                expect(ApprovalRequestSchema.parse(JSON.parse(store.readPlainBody(artifactId) ?? 'null')))
+                    .toMatchObject({ status: 'outcome_unknown' });
+            } finally { replacementDocument.restore(); }
+        } finally {
+            releaseTerminal.resolve();
+            await decision;
+        }
     });
 
     it.each(['recoverable', 'persistent', 'claimed'] as const)('reconciles a failed approval claim through the real UI decision owner (%s)', async failure => {
