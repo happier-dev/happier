@@ -155,6 +155,7 @@ export function createCliMachineActionTransport(
   const authenticatedMachineIngressMethods = new Set<string>([
     // Marker disclosure uses the caller stamped by Machine admission, including on this daemon.
     getActionSpec('machines.runs.list').bindings!.rpcMethod!,
+    RPC_METHODS.MACHINES_SECURITY_INSPECT,
     ...[
       ...ACTION_ID_FAMILIES_V1.machine_agent_isolation,
       ...ACTION_ID_FAMILIES_V1.machine_admin_access,

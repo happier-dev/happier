@@ -3,7 +3,7 @@
 
 import type { ActionFailureCauseV1 } from '../../errors/index.js';
 import type { JsonValue } from '../../identity.js';
-import type { ActionDtoShape_018437f8f05070dd, ActionDtoShape_04b040c388663760, ActionDtoShape_11574700c7eb01af, ActionDtoShape_117d6137ce55c4ec, ActionDtoShape_12bbfd990caac010, ActionDtoShape_1eb71fe3d50135eb, ActionDtoShape_2671802692acc1d9, ActionDtoShape_2fe6006562f0c18f, ActionDtoShape_36f62215e94ef210, ActionDtoShape_3e00d61ead5141ee, ActionDtoShape_442ce1a90e0f3366, ActionDtoShape_5f8df5e8a569a14a, ActionDtoShape_617f5d0aec0ffdb2, ActionDtoShape_679bc43f11196ece, ActionDtoShape_6c7931ff8ac615b4, ActionDtoShape_731723e8c29b7659, ActionDtoShape_7d917989e67547d1, ActionDtoShape_8ff43e0e44977d01, ActionDtoShape_95365bb6104c4193, ActionDtoShape_9bd52cb8774da89a, ActionDtoShape_a72513205e583987, ActionDtoShape_adec878dd053155d, ActionDtoShape_cbfa97b8aa3d1361, ActionDtoShape_da872101393cd06a, ActionDtoShape_f34f01cf94ab096f } from './pluginActionDtoShapes.generated.js';
+import type { ActionDtoShape_018437f8f05070dd, ActionDtoShape_11574700c7eb01af, ActionDtoShape_117d6137ce55c4ec, ActionDtoShape_12bbfd990caac010, ActionDtoShape_1c562fedb29534b5, ActionDtoShape_1eb71fe3d50135eb, ActionDtoShape_2671802692acc1d9, ActionDtoShape_2fe6006562f0c18f, ActionDtoShape_36f62215e94ef210, ActionDtoShape_3e00d61ead5141ee, ActionDtoShape_442ce1a90e0f3366, ActionDtoShape_546a37f46d6cfa11, ActionDtoShape_5f8df5e8a569a14a, ActionDtoShape_617f5d0aec0ffdb2, ActionDtoShape_679bc43f11196ece, ActionDtoShape_6c7931ff8ac615b4, ActionDtoShape_731723e8c29b7659, ActionDtoShape_7d917989e67547d1, ActionDtoShape_8ff43e0e44977d01, ActionDtoShape_9bd52cb8774da89a, ActionDtoShape_a72513205e583987, ActionDtoShape_adec878dd053155d, ActionDtoShape_cbfa97b8aa3d1361, ActionDtoShape_da872101393cd06a, ActionDtoShape_f34f01cf94ab096f } from './pluginActionDtoShapes.generated.js';
 import type { SessionTargetV1 } from './pluginActionDtoSupport.generated.js';
 
 export type SessionTranscriptsActionInputById = {
@@ -282,11 +282,11 @@ export type SessionTranscriptsActionResultById = {
                     requests: Record<string, {
                         tool: 'Happier Action confirmation';
                         kind: 'user_action';
-                        arguments: ActionDtoShape_95365bb6104c4193;
+                        arguments: ActionDtoShape_546a37f46d6cfa11;
                         createdAt: number;
                         turnId: string;
                         source: 'happier_action';
-                        responseTarget: ActionDtoShape_04b040c388663760;
+                        responseTarget: ActionDtoShape_1c562fedb29534b5;
                         sidechainId?: string | undefined;
                         permissionResponseClaimV1?: undefined | {
                             version: 1;
@@ -300,14 +300,14 @@ export type SessionTranscriptsActionResultById = {
                     completedRequests: Record<string, {
                         tool: 'Happier Action confirmation';
                         kind: 'user_action';
-                        arguments: ActionDtoShape_95365bb6104c4193;
+                        arguments: ActionDtoShape_546a37f46d6cfa11;
                         createdAt: number;
                         completedAt: number;
                         status: 'approved' | 'canceled' | 'denied';
                         decision: 'abort' | 'approved' | 'denied';
                         turnId: string;
                         source: 'happier_action';
-                        responseTarget: ActionDtoShape_04b040c388663760;
+                        responseTarget: ActionDtoShape_1c562fedb29534b5;
                         reason?: string | undefined;
                         sidechainId?: string | undefined;
                         permissionDecisionActorV1?: undefined | ActionDtoShape_a72513205e583987;

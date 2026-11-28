@@ -5,10 +5,12 @@ import { registerHooks } from 'node:module';
 // or archive implementation is replaced by the harness.
 const archiveModules = new Set();
 const htmlParserModules = new Set();
+let machineSecurityLoaded = false;
 registerHooks({
     load(url, context, nextLoad) {
         if (url.includes('/node_modules/@zip.js/zip.js/')) archiveModules.add(url);
         if (url.includes('/node_modules/parse5/')) htmlParserModules.add(url);
+        if (url.endsWith('/machines/security/projectMachineSecurity.ts')) machineSecurityLoaded = true;
         return nextLoad(url, context);
     },
 });
@@ -16,6 +18,7 @@ registerHooks({
 await import('../../startDaemon.ts');
 const idleArchiveModules = archiveModules.size;
 const idleHtmlParserModules = htmlParserModules.size;
+const idleMachineSecurity = machineSecurityLoaded;
 
 // Demand the real canonical archive owner to prove both the observer and the
 // deferred producer/consumer remain reachable after daemon startup imports.
@@ -37,14 +40,21 @@ assert.match(buildArtifactHtmlDocumentV1({
     files: { 'index.html': { mime: 'text/html', contentBase64: 'PGgxPkhlbGxvPC9oMT4=' } },
 }), /Hello/);
 assert(htmlParserModules.size > 0, 'HTML demand did not reach the observed parser');
+const { projectMachineSecurity } = await import('../../../machines/security/projectMachineSecurity.ts');
+const security = projectMachineSecurity({
+    machineId: 'idle-graph', canManage: false, updates: { status: 'unavailable' },
+});
+assert.equal(security.grade.kind, 'incomplete');
+assert(machineSecurityLoaded, 'Security demand did not reach the daemon projection');
 const idleGraphs = [
     ...(idleArchiveModules > 0 ? ['zip-archive'] : []),
     ...(idleHtmlParserModules > 0 ? ['html-parser'] : []),
+    ...(idleMachineSecurity ? ['machine-security'] : []),
 ];
 process.stdout.write(`${JSON.stringify({
     idleGraphs,
     demandedArchiveModules: archiveModules.size,
     demandedHtmlParserModules: htmlParserModules.size,
 })}\n`);
-assert.deepEqual(idleGraphs, [], 'Idle daemon composition loaded optional archive or HTML parser code');
+assert.deepEqual(idleGraphs, [], 'Idle daemon composition loaded optional demand code');
 process.exit(0);

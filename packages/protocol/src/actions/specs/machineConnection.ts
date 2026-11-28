@@ -1,4 +1,6 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
+import { MACHINE_SECURITY_INSPECT_ACTION_ID_V1 } from './machineConnectionActionIdsV1.js';
+import { MachineSecurityInspectInputV1Schema, MachineSecurityInspectResultV1Schema } from '../../machines/security/machineSecurityInspectV1.js';
 import { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS, MACHINE_DOCTOR_SNAPSHOT_ACTION_ID, MACHINE_ACTIVITY_LIST_ACTION_ID, MACHINE_PAIRING_CANCEL_ACTION_ID_V1, PERSONAL_HOME_CREATE_ACTION_ID_V1 } from './machineConnectionActionIdsV1.js';
 export { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS, MACHINE_MANAGED_INSTALLATION_ACTION_IDS } from './machineConnectionActionIdsV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
@@ -78,6 +80,7 @@ export const MachineReplacementOutputSchema = lazyZodSchema(() => z.union([
 ]));
 export const MACHINE_PAGE_ACTION_INPUT_SCHEMAS = {
   [MACHINE_DOCTOR_SNAPSHOT_ACTION_ID]: MachineDoctorSnapshotActionInputV1Schema,
+  [MACHINE_SECURITY_INSPECT_ACTION_ID_V1]: MachineSecurityInspectInputV1Schema,
   'machines.metadata.update': MachineMetadataUpdateInputSchema,
   'machines.daemon.stop': MachineStopDaemonInputSchema,
   'machines.remove': MachineRemoveInputSchema,
@@ -89,6 +92,7 @@ export const MACHINE_PAGE_ACTION_INPUT_SCHEMAS = {
 } as const;
 export const MACHINE_PAGE_ACTION_OUTPUT_SCHEMAS = {
   [MACHINE_DOCTOR_SNAPSHOT_ACTION_ID]: MachineDoctorSnapshotActionResultV1Schema,
+  [MACHINE_SECURITY_INSPECT_ACTION_ID_V1]: MachineSecurityInspectResultV1Schema,
   'machines.runs.list': DaemonExecutionRunListResponseSchema,
   'machines.metadata.update': lazyZodSchema(() => z.strictObject({ version: z.number().check(z.int(), z.nonnegative()) })),
   'machines.daemon.stop': lazyZodSchema(() => z.strictObject({ message: z.string() })),
@@ -191,6 +195,20 @@ const clientSurfaces = { ui: true, voice: false, agent: true, mcp: true, cli: tr
 const setupClientSurfaces = { ...clientSurfaces, cli: false } as const;
 function createMachineConnectionActionSpecs() {
   return [
+  {
+    id: MACHINE_SECURITY_INSPECT_ACTION_ID_V1, title: 'Inspect Machine security',
+    description: 'Read the Machine’s observed security grade, coverage and repair hints. Open any repair through its own reviewed Action.',
+    approvalPolicy: { agentDefault: 'authority' }, approval: { result: 'required' }, approvalScope: 'machine',
+    safety: 'safe', sideEffectClass: 'read', executionPlacement: 'machine', placements: [],
+    surfaces: clientSurfaces,
+    bindings: { mcpToolName: 'machines_security_inspect', rpcMethod: RPC_METHODS.MACHINES_SECURITY_INSPECT },
+    cli: { commands: [{ path: ['machines', 'security', 'inspect'], visibility: 'canonical' }] },
+    toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
+    inputSchema: MachineSecurityInspectInputV1Schema, outputSchema: MachineSecurityInspectResultV1Schema,
+    invocationServerIdForInput: actionInputServerId(MachineSecurityInspectInputV1Schema, input => input.serverId),
+    inputHints: { fields: [{ path: 'serverId', title: 'Home ID', widget: 'text' },
+      { path: 'machineId', title: 'Machine ID', widget: 'text', required: true }] },
+  },
   {
     id: MACHINE_DOCTOR_SNAPSHOT_ACTION_ID, title: 'Read Machine Doctor',
     description: 'Read fresh Machine Doctor health for one Machine without logs, paths, or Account identity.',

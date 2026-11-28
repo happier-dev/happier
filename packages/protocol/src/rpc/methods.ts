@@ -613,6 +613,7 @@ export const RPC_METHODS = {
   CAPABILITIES_DETECT: 'capabilities.detect',
   CAPABILITIES_INVOKE: 'capabilities.invoke',
   MACHINES_DOCTOR_SNAPSHOT: 'machines.doctor.snapshot',
+  MACHINES_SECURITY_INSPECT: 'machines.security.inspect',
   BUGREPORT_COLLECT_DIAGNOSTICS: 'bugreport.collectDiagnostics',
   BUGREPORT_GET_LOG_TAIL: 'bugreport.getLogTail',
   BUGREPORT_UPLOAD_ARTIFACT: 'bugreport.uploadArtifact',

@@ -3,10 +3,16 @@ import { act } from 'react-test-renderer';
 import { createMachineFixture, renderHook, standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { useMachineUpdates } from './useMachineUpdates';
 
+const machineRpc = vi.hoisted(() => vi.fn());
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: machineRpc }));
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
 const baseline = storage.getState();
-afterEach(() => { standardCleanup(); vi.restoreAllMocks(); storage.setState(baseline, true); });
+afterEach(async () => { standardCleanup(); vi.restoreAllMocks(); machineRpc.mockReset(); await homes.reset(); storage.setState(baseline, true); });
 
 it('keeps missing counts and reboot unknown, consumes pushed native facts, and stays quiet for unrelated Machine changes', async () => {
   const serverId = getActiveServerSnapshot().serverId;
@@ -45,4 +51,22 @@ it('takes no subscriptions or network work while Security is closed', async () =
   expect(hook.getCurrent()).toMatchObject({ status: 'unknown', rebootNeeded: null });
   expect(subscribe).not.toHaveBeenCalled();
   expect(fetch).not.toHaveBeenCalled();
+});
+
+it('uses the unread Security result for Updates while the previous passing publication is in the store', async () => {
+  const serverId = await homes.addHome({ name: 'Security', serverUrl: 'https://machine-security.test',
+    serverIdentityId: 'srv_machine_security', accountId: 'test-owner', currentAccount: true });
+  const machine = createMachineFixture({ daemonState: { status: 'running', setup: {
+    version: 1, desiredRevision: 0, status: 'satisfied', recipes: [],
+    updates: { status: 'satisfied', pendingAll: 0, pendingSecurity: 0, rebootNeeded: false },
+  } } });
+  storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
+  const projection = { grade: { kind: 'incomplete', lowerBand: 'A', upperBand: 'F' },
+    rows: [{ check: 'osUpdates', state: 'unread', reason: 'needs_admin_to_check' }],
+    updates: { status: 'unavailable', reason: 'needs_admin_to_check' } };
+  machineRpc.mockResolvedValue(projection);
+  const hook = await renderHook(() => useMachineUpdates({ machineId: machine.id, serverId, enabled: true, reachable: true }, true));
+  await vi.waitFor(() => expect(hook.getCurrent().projection).toEqual(projection));
+  expect(hook.getCurrent()).toMatchObject({ status: 'unavailable', pendingAll: null, rebootNeeded: null, stale: true });
+  expect(machineRpc).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ machineId: machine.id, method: RPC_METHODS.MACHINES_SECURITY_INSPECT }));
 });

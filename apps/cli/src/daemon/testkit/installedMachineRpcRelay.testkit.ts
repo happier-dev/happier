@@ -76,6 +76,7 @@ export async function createInstalledMachineRpcRelay(input: Readonly<{
     machineId: string;
     transportOwnerAccountId: string;
     methods: readonly string[];
+    authenticatedHomeReceiver?: true;
     ui?: Readonly<{ installation: MachineInstallationIdentityV1; ownerAccountId?: string }>;
 }>) {
     // Runtime paths keep server source aliases under their own package and out
@@ -150,7 +151,8 @@ export async function createInstalledMachineRpcRelay(input: Readonly<{
                     installationId: input.ui.installation.installationId } }) } : {}) } });
     const callers = new Map<string, ReturnType<typeof io>>();
     receiver.on(SOCKET_RPC_EVENTS.REQUEST, (request: RpcRequest, acknowledge: (result: unknown) => void) => {
-        void input.manager.handleRequest(request).then(acknowledge);
+        const source = input.authenticatedHomeReceiver ? 'authenticated_home_socket' : undefined;
+        void input.manager.handleRequest(request, undefined, source).then(acknowledge);
     });
     let closing: Promise<void> | undefined;
     const close = () => closing ??= (async () => {

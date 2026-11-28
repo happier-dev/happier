@@ -71,6 +71,7 @@
   ["machines.services.unwatch","manage"],
   ["machines.reboot","manage"],
   ["machines.doctor.snapshot","use"],
+  ["machines.security.inspect","use"],
   ["daemon.executionRuns.list","use"],
   ["daemon.executionRuns.brokerAuthority.resolve.v1","use"],
   ["daemon.memory.status","use"],

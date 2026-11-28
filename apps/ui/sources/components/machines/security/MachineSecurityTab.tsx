@@ -9,6 +9,8 @@ import { describeMachineSetupRowSummary, describeMachineSharingSummary } from '@
 import { MachineNetworkSection } from '@/components/machines/security/network/MachineNetworkSection';
 import { describeNetworkRowSummary, useMachineNetworkLead, useMachineNetworkRowFacts } from '@/components/machines/security/network/useMachineNetworkLead';
 import { MachineSecuritySection } from '@/components/machines/security/MachineSecuritySection';
+import { MachineSecurityGradeSummary, machineSecurityGradeView } from '@/components/machines/security/grade/MachineSecurityGradeSummary';
+import { useMachineSecurityObservation } from '@/components/machines/security/useMachineSecurityObservation';
 import { MachineRolesSection } from '@/components/machines/security/MachineRolesSection';
 import { describeMachineIsolationAvailability, MachineIsolationOfflineLine } from '@/components/machines/security/isolation/MachineIsolationAvailability';
 import { MachineIsolationPage } from '@/components/machines/security/isolation/MachineIsolationPage';
@@ -56,6 +58,9 @@ export function MachineSecurityTab(props: MachinePageTabBodyProps) {
     }),
     [setParams],
   );
+  // One Security read for the tab (plan U1c): the grade summary and the Updates details share it.
+  const security = useMachineSecurityObservation({ serverId: target.serverId, machineId: machine?.id ?? '',
+    enabled: machine != null && page == null, reachable: props.online });
   if (!machine) return null;
   const machineName = target.machineSentenceName;
   const needsManage =
@@ -119,6 +124,10 @@ export function MachineSecurityTab(props: MachinePageTabBodyProps) {
         metadataReadable={machine.metadata != null}
         canManage={!needsManage}
         shared={machine.isShared === true}
+        updates={security.updates}
+        renderGrade={security.status === 'unsupported' ? undefined : (fix) => (
+          <MachineSecurityGradeSummary view={machineSecurityGradeView(security)} machineName={machineName} fix={fix} />
+        )}
         reach={
           <>
             <MachineIsolationSummaryRow serverId={target.serverId} machine={machine} machineName={machineName}

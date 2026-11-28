@@ -1053,6 +1053,21 @@ exports[`preserves every declared method and complete effective policy through d
     "sharedMachineAccess": "manage",
   },
   {
+    "actionSpecId": "machines.security.inspect",
+    "method": "machines.security.inspect",
+    "ownerPacket": "PMS-5",
+    "rationale": "Use reads closed Machine security evidence. Repair retains the effect owner’s admission.",
+    "routeClass": "server_required",
+    "rpcClassification": "action_spec_bound",
+    "scope": {
+      "accountRequired": true,
+      "machineRequired": true,
+      "serverRequired": true,
+    },
+    "serverRequiredReason": "auth",
+    "sharedMachineAccess": "use",
+  },
+  {
     "actionSpecId": "machines.runs.list",
     "method": "daemon.executionRuns.list",
     "ownerPacket": "PMS-5",

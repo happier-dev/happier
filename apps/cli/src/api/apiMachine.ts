@@ -74,6 +74,7 @@ import type { MachineElevationDependencies } from '@/machines/adminAccess/runEle
 import { resolveMachineEffectCli } from '@/machines/adminAccess/machineEffectCli';
 import { createMachineRebootAction, type DaemonMachineRebootRoutes, type MachineRebootDirectTargetInvocation } from '@/daemon/lifecycle/machineReboot';
 import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
+import { MachineSecurityInspectInputV1Schema } from '@happier-dev/protocol/machines/security/machineSecurityInspectV1';
 import type { MachineMetadataFieldReadV1, MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import { getMachineSetupDesiredV1, mutateMachineSetupDesiredV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { getMachineAdminAccessV1 } from '@happier-dev/protocol/machines/adminAccessV1';
@@ -2051,6 +2052,26 @@ export class ApiMachineClient {
             observeExecution: this.actionOperationRuntime.observeExecution,
             resolveActionExecutor: request => this.hostResourceRoutes?.resolveLauncherActionExecutor?.(request)
                 ?? { execute: async () => ({ ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' }) },
+        });
+        this.rpcHandlerManager.registerHandler(RPC_METHODS.MACHINES_SECURITY_INSPECT, async (raw, context) => {
+            const request = MachineSecurityInspectInputV1Schema.safeParse(raw);
+            if (!request.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+            const admission = context?.machineAdmission;
+            if (!admission) return { ok: false, errorCode: 'machine_access_denied', error: 'machine_access_denied' };
+            if (admission.machineId !== this.machine.id || request.data.machineId !== admission.machineId) {
+                return { ok: false, errorCode: 'machine_target_mismatch', error: 'machine_target_mismatch' };
+            }
+            const { projectMachineSecurity } = await import('@/machines/security/projectMachineSecurity');
+            const canManage = admission.role === 'manage';
+            const updates = request.data.observation === 'settled'
+                ? this.getMachineSetupObservationSnapshot()?.updates
+                    ?? { status: 'unavailable' as const, reason: 'required_fact_unavailable' as const }
+                : await this.refreshMachineSetupUpdates({ signal: context.signal });
+            const { heldPackages, ...publicUpdates } = updates;
+            return projectMachineSecurity({
+                machineId: admission.machineId, canManage,
+                updates: canManage && heldPackages ? { ...publicUpdates, heldPackages } : publicUpdates,
+            });
         });
         this.filesystemAccessPolicy = resolveFilesystemAccessPolicy();
         const resolveWorkspaceMutationActionExecutor = (): RpcActionExecutor | null => this.externalActionIngressOwner && !this.projectionSchedulingClosed ? {
@@ -5997,6 +6018,7 @@ export class ApiMachineClient {
             return (options.runNative ?? runMachineSetupNativeCommand)({ executable, args,
                 ...(env ? { env } : {}), ...(options.signal ? { signal: options.signal } : {}) });
         } });
+        options.signal?.throwIfAborted();
         await this.publishMachineSetupUpdates(observation);
         return observation;
     }

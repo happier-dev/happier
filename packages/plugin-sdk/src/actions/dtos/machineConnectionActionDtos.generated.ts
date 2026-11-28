@@ -2,7 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
-import type { ActionDtoShape_0812ae71a217b97a, ActionDtoShape_09f37c5c79ff72ba, ActionDtoShape_0bb4e311ac3b0b4a, ActionDtoShape_103e11c72879e016, ActionDtoShape_10fab732fb908174, ActionDtoShape_14d50a2d324f7ad6, ActionDtoShape_16fb9acc9411fc89, ActionDtoShape_1e00cda677c8e326, ActionDtoShape_1eafb77fe1af6783, ActionDtoShape_203f9f5493740f9c, ActionDtoShape_2983a694706de750, ActionDtoShape_2e835d0637e6fa6e, ActionDtoShape_373830037597771c, ActionDtoShape_67a511c17c683b6d, ActionDtoShape_6b88f77fbe370482, ActionDtoShape_867615f406d9aa68, ActionDtoShape_86847a7011a05f99, ActionDtoShape_86a72727ea6bcd5e, ActionDtoShape_8cd57edc7896dbe8, ActionDtoShape_945bcd99afe89436, ActionDtoShape_b096c57da1710da6, ActionDtoShape_b8c38a293e038cdd, ActionDtoShape_baebcdda3c2ee712, ActionDtoShape_ca15d2ccdd1fb1e4, ActionDtoShape_d4eae54b9b1320d0, ActionDtoShape_da2dc136ee042d7d, ActionDtoShape_e300c55ad38f6703, ActionDtoShape_fdb9a9e112dcfd08 } from './pluginActionDtoShapes.generated.js';
+import type { ActionDtoShape_0812ae71a217b97a, ActionDtoShape_09f37c5c79ff72ba, ActionDtoShape_0bb4e311ac3b0b4a, ActionDtoShape_103e11c72879e016, ActionDtoShape_10fab732fb908174, ActionDtoShape_14d50a2d324f7ad6, ActionDtoShape_16fb9acc9411fc89, ActionDtoShape_1e00cda677c8e326, ActionDtoShape_1eafb77fe1af6783, ActionDtoShape_203f9f5493740f9c, ActionDtoShape_2983a694706de750, ActionDtoShape_2e835d0637e6fa6e, ActionDtoShape_373830037597771c, ActionDtoShape_67a511c17c683b6d, ActionDtoShape_6b88f77fbe370482, ActionDtoShape_867615f406d9aa68, ActionDtoShape_86847a7011a05f99, ActionDtoShape_86a72727ea6bcd5e, ActionDtoShape_8cd57edc7896dbe8, ActionDtoShape_945bcd99afe89436, ActionDtoShape_b096c57da1710da6, ActionDtoShape_b8c38a293e038cdd, ActionDtoShape_babd38950fcc407b, ActionDtoShape_baebcdda3c2ee712, ActionDtoShape_ca15d2ccdd1fb1e4, ActionDtoShape_d4eae54b9b1320d0, ActionDtoShape_da2dc136ee042d7d, ActionDtoShape_e300c55ad38f6703, ActionDtoShape_fdb9a9e112dcfd08 } from './pluginActionDtoShapes.generated.js';
 
 export type MachineConnectionActionInputById = {
     readonly "machines.terminal.open": ActionDtoShape_e300c55ad38f6703;
@@ -64,6 +64,11 @@ export type MachineConnectionActionInputById = {
         machineId: string;
     };
     readonly "machines.terminal.restart": ActionDtoShape_e300c55ad38f6703;
+    readonly "machines.security.inspect": {
+        machineId: string;
+        serverId?: string | undefined;
+        observation?: 'settled' | undefined;
+    };
     readonly "machines.doctor.snapshot": {
         machineId: string;
         refresh?: boolean | undefined;
@@ -275,6 +280,43 @@ export type MachineConnectionActionResultById = {
         ok: true;
     } | ActionDtoShape_103e11c72879e016;
     readonly "machines.terminal.restart": ActionDtoShape_b8c38a293e038cdd;
+    readonly "machines.security.inspect": {
+        grade: {
+            kind: 'graded';
+            band: 'A' | 'B' | 'C' | 'D' | 'F';
+        } | {
+            kind: 'incomplete';
+            lowerBand: 'A' | 'B' | 'C' | 'D' | 'F';
+            upperBand: 'A' | 'B' | 'C' | 'D' | 'F';
+        } | {
+            kind: 'no_applicable_evidence';
+        };
+        rows: {
+            check: 'firewall' | 'isolation' | 'osUpdates' | 'privateExposure' | 'rebootRequired' | 'sshPassword' | 'sshRootCredential';
+            state: 'fail' | 'inapplicable' | 'pass' | 'unread';
+            reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+            evidence?: undefined | {
+                pendingAll?: number | undefined;
+                pendingSecurity?: number | undefined;
+                rebootNeeded?: boolean | undefined;
+            };
+            repair?: undefined | {
+                actionId: 'machines.reboot';
+                target: {
+                    machineId: string;
+                };
+            } | {
+                actionId: 'machines.setup.plan';
+                target: {
+                    machineId: string;
+                };
+                inputHints: {
+                    scope: 'all' | 'security';
+                };
+            };
+        }[];
+        updates: ActionDtoShape_babd38950fcc407b;
+    };
     readonly "machines.doctor.snapshot": {
         capturedAt: string;
         daemon: null | {

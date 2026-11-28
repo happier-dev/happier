@@ -2,7 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
-import type { ActionDtoShape_0d4ad5f5f974fb20, ActionDtoShape_2e34dc1a7472a43a, ActionDtoShape_58a810bf3e18484e, ActionDtoShape_5f3ad2631bd57267, ActionDtoShape_631dae061d6e4d4f, ActionDtoShape_6925c0687352d3bb, ActionDtoShape_735cd8af148c86ae, ActionDtoShape_9eea3eaaf8b89350, ActionDtoShape_aaed83a3fbe58985, ActionDtoShape_c540597e634acb20, ActionDtoShape_c68b80b3aa8cf855, ActionDtoShape_c7ef2171988037c2, ActionDtoShape_d0a4b1c8097e2a0a, ActionDtoShape_d62b66984af9a439, ActionDtoShape_fa8dd2ced0911401 } from './pluginActionDtoShapes.generated.js';
+import type { ActionDtoShape_0d4ad5f5f974fb20, ActionDtoShape_2e34dc1a7472a43a, ActionDtoShape_58a810bf3e18484e, ActionDtoShape_66c17d078ef10cbb, ActionDtoShape_6925c0687352d3bb, ActionDtoShape_735cd8af148c86ae, ActionDtoShape_9de50d2b0e45a4a6, ActionDtoShape_9eea3eaaf8b89350, ActionDtoShape_aaed83a3fbe58985, ActionDtoShape_c540597e634acb20, ActionDtoShape_c68b80b3aa8cf855, ActionDtoShape_c7ef2171988037c2, ActionDtoShape_d0a4b1c8097e2a0a, ActionDtoShape_d62b66984af9a439, ActionDtoShape_fa8dd2ced0911401 } from './pluginActionDtoShapes.generated.js';
 
 export type SessionBoardActionInputById = {
     readonly "session.board.get": {
@@ -17,12 +17,12 @@ export type SessionBoardActionInputById = {
     readonly "session.board.item.upsert": {
         itemId: string;
         expectedItemRevision: null | string;
-        item: ActionDtoShape_5f3ad2631bd57267 | {
+        item: ActionDtoShape_9de50d2b0e45a4a6 | {
             v: 1;
             title: string;
             frame: 'card' | 'frameless' | 'full_bleed';
             height: ActionDtoShape_d62b66984af9a439;
-            source: ActionDtoShape_fa8dd2ced0911401 | ActionDtoShape_631dae061d6e4d4f | ActionDtoShape_2e34dc1a7472a43a | {
+            source: ActionDtoShape_fa8dd2ced0911401 | ActionDtoShape_66c17d078ef10cbb | ActionDtoShape_2e34dc1a7472a43a | {
                 kind: 'widget';
                 instance: ActionDtoShape_58a810bf3e18484e;
             };
@@ -134,7 +134,7 @@ export type SessionBoardActionResultById = {
                 title: string;
                 frame: 'card' | 'frameless' | 'full_bleed';
                 height: ActionDtoShape_d62b66984af9a439;
-                source: ActionDtoShape_d0a4b1c8097e2a0a | ActionDtoShape_631dae061d6e4d4f | ActionDtoShape_2e34dc1a7472a43a | {
+                source: ActionDtoShape_d0a4b1c8097e2a0a | ActionDtoShape_66c17d078ef10cbb | ActionDtoShape_2e34dc1a7472a43a | {
                     kind: 'widget';
                     instance: ActionDtoShape_aaed83a3fbe58985;
                 };

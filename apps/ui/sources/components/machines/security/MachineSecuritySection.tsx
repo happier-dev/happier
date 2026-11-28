@@ -2,6 +2,8 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import type { MachineSetupPackageHoldV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import type { MachineSecurityInspectResultV1 } from '@happier-dev/protocol/machines/security/machineSecurityInspectV1';
+import { MACHINE_SETUP_PLAN_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { describeMachineSetupReason } from '@/components/machines/setup/machineSetupReasonText';
 
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
@@ -36,13 +38,19 @@ import {
   useMachineSecurityReboot,
   type MachineSecurityReboot,
 } from './useMachineSecurityReboot';
-import { useMachineUpdates } from './useMachineUpdates';
+import type { useMachineUpdates } from './useMachineUpdates';
 import {
   useMachineUpdatesReview,
   type MachineUpdatesReview,
 } from './useMachineUpdatesReview';
 
-export type MachineUpdatesModel = ReturnType<typeof useMachineUpdates>;
+export type MachineUpdatesModel = Omit<ReturnType<typeof useMachineUpdates>, 'projection'>;
+
+export type MachineSecurityRepairControls = Readonly<{
+  onFix: (repair: NonNullable<MachineSecurityInspectResultV1['rows'][number]['repair']>) => void;
+  busy: boolean;
+  canFix: boolean;
+}>;
 
 export type MachineSecurityControls = Readonly<{
   review: MachineUpdatesReview;
@@ -76,26 +84,26 @@ export function MachineSecuritySection(
     /** Elevation needs Manage (10-31); a Use grantee reads the facts only. */
     canManage: boolean;
     shared: boolean;
+    updates: MachineUpdatesModel;
+    renderGrade?: (fix: MachineSecurityRepairControls) => React.ReactNode;
     /** How the Machine is reached and who shares it, placed after administrator power (P-M2 order). */
     reach?: React.ReactNode;
   }>,
 ) {
   const router = useRouter();
-  const updates = useMachineUpdates({
-    serverId: props.serverId,
-    machineId: props.machineId,
-    enabled: true,
-    reachable: props.online,
-  });
+  const { updates } = props;
   const { refresh } = updates;
   const { happier, store } = useMachineUpdateRows(props.machineId);
   const onSettled = React.useCallback(() => {
     void refresh();
   }, [refresh]);
+  const onUpdatesSettled = React.useCallback(() => {
+    void refresh('settled');
+  }, [refresh]);
   const updatesReview = useMachineUpdatesReview({
     serverId: props.serverId,
     machineId: props.machineId,
-    onSettled,
+    onSettled: onUpdatesSettled,
   });
   const reboot = useMachineSecurityReboot({
     serverId: props.serverId,
@@ -131,8 +139,21 @@ export function MachineSecuritySection(
     onOpenOperation: (operationId) =>
       openActionOperationDetail({ serverId: props.serverId, operationId }),
   };
+  const fix: MachineSecurityRepairControls = {
+    canFix: props.canManage && props.online === true,
+    busy: isMachineUpdateReviewBusy(controls.review)
+      || controls.reboot.kind === 'starting' || controls.reboot.kind === 'restarting',
+    onFix: (repair) => {
+      if (repair.actionId === MACHINE_SETUP_PLAN_ACTION_ID_V1) {
+        controls.onPrepare(repair.inputHints.scope);
+      } else if (controls.canReboot) {
+        controls.onReboot();
+      }
+    },
+  };
   return (
     <>
+      {props.renderGrade?.(fix)}
       <MachineAdminPowerSection
         serverId={props.serverId}
         machineId={props.machineId}
@@ -159,6 +180,10 @@ export function MachineSecuritySection(
   );
 }
 
+function isMachineUpdateReviewBusy(review: MachineUpdatesReview): boolean {
+  return review.kind !== 'idle' && review.kind !== 'settled' && review.kind !== 'nothing' && review.kind !== 'failed';
+}
+
 export function MachineSecurityView(
   props: Readonly<{
     updates: MachineUpdatesModel;
@@ -180,11 +205,7 @@ export function MachineSecurityView(
   const canManage = props.canManage ?? true;
   const machine = props.machineName;
   const status = describeUpdatesStatus(updates, machine, props.online, canManage);
-  const busy =
-    controls.review.kind !== 'idle' &&
-    controls.review.kind !== 'settled' &&
-    controls.review.kind !== 'nothing' &&
-    controls.review.kind !== 'failed';
+  const busy = isMachineUpdateReviewBusy(controls.review);
   const canCheck = props.online === true && !updates.refreshing;
   return (
     <View testID="machine-security">

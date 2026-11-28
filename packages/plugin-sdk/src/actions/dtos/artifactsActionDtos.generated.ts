@@ -2,7 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
-import type { ActionDtoShape_0c7678e6d4d79877, ActionDtoShape_13967b31fb9c1bf7, ActionDtoShape_201313031c7c8e48, ActionDtoShape_371a5fb2096803df, ActionDtoShape_3b7d658c93523574, ActionDtoShape_43ff8ea337fa3619, ActionDtoShape_968a7793d24a089b, ActionDtoShape_a9992be6a0621417, ActionDtoShape_ada07d5e41881a4c, ActionDtoShape_b5b87876125ff2e1, ActionDtoShape_c1e23f91831b23bd, ActionDtoShape_ca999ad83317f9a8, ActionDtoShape_cefc2e8b4aea04a0, ActionDtoShape_ecb7808c9463ba5e } from './pluginActionDtoShapes.generated.js';
+import type { ActionDtoShape_0c7678e6d4d79877, ActionDtoShape_13967b31fb9c1bf7, ActionDtoShape_201313031c7c8e48, ActionDtoShape_371a5fb2096803df, ActionDtoShape_3c9604df80ad667b, ActionDtoShape_43ff8ea337fa3619, ActionDtoShape_5e35af02a18cfba4, ActionDtoShape_968a7793d24a089b, ActionDtoShape_a9992be6a0621417, ActionDtoShape_ada07d5e41881a4c, ActionDtoShape_b5b87876125ff2e1, ActionDtoShape_c1e23f91831b23bd, ActionDtoShape_ca999ad83317f9a8, ActionDtoShape_cefc2e8b4aea04a0, ActionDtoShape_ecb7808c9463ba5e } from './pluginActionDtoShapes.generated.js';
 
 export type ArtifactsActionInputById = {
     readonly "artifact.create": {
@@ -79,17 +79,13 @@ export type ArtifactsActionInputById = {
         title?: string | undefined;
         mime?: string | undefined;
         kind?: string | undefined;
-        requestedCapabilities?: ActionDtoShape_3b7d658c93523574;
+        requestedCapabilities?: ActionDtoShape_5e35af02a18cfba4;
     };
     readonly "artifact.revisions.list": {
         artifactId: string;
         projection?: 'headers' | undefined;
     };
-    readonly "artifact.revisions.restore": {
-        artifactId: string;
-        bodyVersion: number;
-        expectedRevision: ActionDtoShape_968a7793d24a089b;
-    };
+    readonly "artifact.revisions.restore": ActionDtoShape_3c9604df80ad667b;
     readonly "artifact.revisions.trim": {
         artifactId: string;
     };

@@ -1,5 +1,6 @@
 import type { CliActionDepsParams } from './types';
 import { MACHINE_CAPABILITIES_DETECT_ACTION_ID, MACHINE_DOCTOR_SNAPSHOT_ACTION_ID, MACHINE_RUN_MARKERS_LIST_ACTION_ID } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
+import { MACHINE_SECURITY_INSPECT_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
 import type { CliMachineActionCall, CliMachineActionServerScopeCurrent } from './machineTransport';
 import axios from '@/api/client/credentialAxios';
 import { MachineCapabilityInstallInputSchema, MachineCapabilityInstallOutputSchema, MachineReplacementSetInputSchema } from '@happier-dev/protocol/actions/specs/machineConnection';
@@ -131,9 +132,10 @@ export function createCliMachineActionDeps(
       return await runOperationAction();
     },
     machinePageAction: async ({ actionId, input, context }) => {
-      if (actionId === MACHINE_DOCTOR_SNAPSHOT_ACTION_ID) {
+      if (actionId === MACHINE_DOCTOR_SNAPSHOT_ACTION_ID || actionId === MACHINE_SECURITY_INSPECT_ACTION_ID_V1) {
         return callMachineAction({ machineId: input.machineId, serverId: input.serverId,
-          method: RPC_METHODS.MACHINES_DOCTOR_SNAPSHOT, request: input, context,
+          method: actionId === MACHINE_SECURITY_INSPECT_ACTION_ID_V1 ? RPC_METHODS.MACHINES_SECURITY_INSPECT : RPC_METHODS.MACHINES_DOCTOR_SNAPSHOT,
+          request: input, context,
           effectActionId: actionId, authority: context.authority, exactMachine: true,
           ...(context.signal ? { signal: context.signal } : {}) });
       }

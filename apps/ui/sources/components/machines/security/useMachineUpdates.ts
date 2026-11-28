@@ -1,9 +1,13 @@
 import type { MachineSetupObservationV1 } from '@happier-dev/protocol';
 import * as React from 'react';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { MACHINE_SECURITY_INSPECT_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { MachineSecurityInspectResultV1Schema, type MachineSecurityInspectResultV1 } from '@happier-dev/protocol/machines/security/machineSecurityInspectV1';
+import { isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpcErrors';
 import { resumeActionExecutionResult, type ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { useMachineField } from '@/sync/store/hooks';
 import { planMachineUpdates } from './machineUpdatesActions';
 
@@ -14,18 +18,21 @@ export type UseMachineUpdatesInput = Readonly<{
 export type MachineUpdatesRead = Readonly<{ kind: 'unrequested' | 'pending' | 'settled' }>
   | Readonly<{ kind: 'failed'; failure: Extract<ActionExecuteResult, { ok: false }> }>;
 
+const execute = createFrontDoorActionExecute();
+
 /** Data port for the visible Security consumer; composition stays with the page owner. */
-export function useMachineUpdates(input: UseMachineUpdatesInput) {
+export function useMachineUpdates(input: UseMachineUpdatesInput, inspectSecurity = false) {
   const setup = useMachineField(input.machineId, 'daemonState', 'setup', { serverId: input.serverId, enabled: input.enabled });
-  const observation = setup?.updates ?? null;
+  const publishedUpdates = setup?.updates ?? null;
   const demanded = input.enabled && input.reachable === true;
   const { resolution, binding: lifetime } = useServerCredentialAccountScopeBinding(demanded ? input.serverId : null);
   const key = JSON.stringify([input.serverId, input.machineId]);
   const [record, setRecord] = React.useState<Readonly<{
     key: string; lifetime: typeof lifetime; read: MachineUpdatesRead; approval: ActionApprovalContinuation | null;
+    projection?: MachineSecurityInspectResultV1;
   }>>({ key, lifetime, read: { kind: 'unrequested' }, approval: null });
   const pending = React.useRef<Readonly<{ controller: AbortController; promise: Promise<void> }> | null>(null);
-  const refresh = React.useCallback((): Promise<void> => {
+  const refresh = React.useCallback((observation?: 'settled'): Promise<void> => {
     if (!demanded || !lifetime) return Promise.resolve();
     if (pending.current) return pending.current.promise;
     const controller = new AbortController();
@@ -33,26 +40,47 @@ export function useMachineUpdates(input: UseMachineUpdatesInput) {
     setRecord({ key, lifetime, read: { kind: 'pending' }, approval: null });
     const promise = (async () => {
       const target = { serverId: input.serverId, homeId: lifetime.scope.serverId, machineId: input.machineId };
-      const actionInput = { homeId: target.homeId, machineId: target.machineId, mode: 'check', updates: { scope: 'all' } };
-      let result: ActionExecuteResult;
+      let result: ActionExecuteResult | undefined;
+      let projection: MachineSecurityInspectResultV1 | undefined;
+      let actionId: typeof MACHINE_SECURITY_INSPECT_ACTION_ID_V1 | 'machines.setup.plan' =
+        inspectSecurity ? MACHINE_SECURITY_INSPECT_ACTION_ID_V1 : 'machines.setup.plan';
+      const context = { expectedAccountId: lifetime.scope.accountId, signal: controller.signal };
+      const onApprovalPending = (approval: ActionApprovalContinuation) => {
+        if (!controller.signal.aborted) setRecord({ key, lifetime, read: { kind: 'pending' }, approval });
+      };
       try {
-        result = await resumeActionExecutionResult({
-          result: await planMachineUpdates(target, 'all', 'check', {
-            expectedAccountId: lifetime.scope.accountId, signal: controller.signal,
-          }), actionId: 'machines.setup.plan', actionInput, scope: lifetime.scope, signal: controller.signal,
-          onApprovalPending: approval => {
-            if (!controller.signal.aborted) setRecord({ key, lifetime, read: { kind: 'pending' }, approval });
-          },
-        });
+        if (inspectSecurity) {
+          const actionInput = { serverId: target.serverId, machineId: target.machineId, ...(observation ? { observation } : {}) };
+          result = await resumeActionExecutionResult({
+            result: await execute(MACHINE_SECURITY_INSPECT_ACTION_ID_V1, actionInput, {
+              ...context, serverId: target.serverId, surface: 'ui',
+            }), actionId: MACHINE_SECURITY_INSPECT_ACTION_ID_V1, actionInput, scope: lifetime.scope,
+            signal: controller.signal, onApprovalPending,
+          });
+          if (result.ok) {
+            const parsed = MachineSecurityInspectResultV1Schema.safeParse(result.result);
+            if (parsed.success) projection = parsed.data;
+            else result = { ok: false, errorCode: 'action_invalid_output', error: 'action_invalid_output' };
+          } else if (isRpcMethodNotFoundResult(result)) {
+            actionId = 'machines.setup.plan';
+          }
+        }
+        if (actionId === 'machines.setup.plan') {
+          const actionInput = { homeId: target.homeId, machineId: target.machineId, mode: 'check', updates: { scope: 'all' } };
+          result = await resumeActionExecutionResult({
+            result: await planMachineUpdates(target, 'all', 'check', context), actionId, actionInput, scope: lifetime.scope,
+            signal: controller.signal, onApprovalPending,
+          });
+        }
       } catch (error: unknown) {
-        result = { ok: false, ...normalizeActionExecutorThrownError(error, 'machines.setup.plan') };
+        result = { ok: false, ...normalizeActionExecutorThrownError(error, actionId) };
       } finally { retirement.dispose(); }
-      if (!controller.signal.aborted) setRecord({ key, lifetime,
-        read: result.ok ? { kind: 'settled' } : { kind: 'failed', failure: result }, approval: null });
+      if (result && !controller.signal.aborted) setRecord({ key, lifetime,
+        read: result.ok ? { kind: 'settled' } : { kind: 'failed', failure: result }, approval: null, projection });
     })().finally(() => { if (pending.current?.controller === controller) pending.current = null; });
     pending.current = { controller, promise };
     return promise;
-  }, [demanded, input.serverId, input.machineId, lifetime, key]);
+  }, [demanded, input.serverId, input.machineId, inspectSecurity, lifetime, key]);
   // Opening/reconnecting and explicit refresh are demand. Publications never trigger a native read.
   React.useEffect(() => {
     void refresh();
@@ -63,6 +91,8 @@ export function useMachineUpdates(input: UseMachineUpdatesInput) {
   const read: MachineUpdatesRead = demanded && !lifetime && !unresolved
     ? { kind: 'failed', failure: { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' } }
     : bound ? record.read : { kind: 'unrequested' };
+  const projection = bound && demanded ? record.projection ?? null : null;
+  const observation = projection?.updates ?? publishedUpdates;
   return {
     observation, status: observation?.status ?? 'unknown', reason: observation?.reason ?? null,
     backend: observation?.backend ?? null,
@@ -72,6 +102,6 @@ export function useMachineUpdates(input: UseMachineUpdatesInput) {
       || observation.status === 'unavailable' || observation.status === 'unverifiable'),
     refreshing: demanded && read.kind === 'pending', read,
     failure: read.kind === 'failed' ? read.failure : null,
-    approval: bound && demanded ? record.approval : null, refresh,
+    approval: bound && demanded ? record.approval : null, projection, refresh,
   };
 }

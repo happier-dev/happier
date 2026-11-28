@@ -7,6 +7,7 @@ import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_M
 import { USAGE_SOURCE_ACTION_IDS } from '../../../../usage/usageSourcesActionIdsV1.js';
 import { MACHINE_SERVICE_ACTION_IDS } from '../../../../local/services/actionIdsV1.js';
 import { MACHINE_CAPABILITIES_DETECT_ACTION_ID, MACHINE_DOCTOR_SNAPSHOT_ACTION_ID } from '../../../../actions/specs/machineConnectionActionIdsV1.js';
+import { MACHINE_SECURITY_INSPECT_ACTION_ID_V1 } from '../../../../actions/specs/machineConnectionActionIdsV1.js';
 import { SESSION_SUBAGENTS_GET_ACTION_ID, SESSION_SUBAGENTS_LIST_ACTION_ID } from '../../../../actions/actionIds.js';
 
 export type MachineRpcGovernanceClassification = 'action_spec_bound' | 'internal_only' | 'advisory_unclassified';
@@ -31,6 +32,7 @@ const ACTION_SPEC_RPC_METHOD_IDS = Object.freeze({
   ...Object.fromEntries(Object.entries(PROJECT_DEFINITION_ACTION_RPC_METHODS_V1).map(([id, method]) => [method, id])),
   [RPC_METHODS.CAPABILITIES_DETECT]: MACHINE_CAPABILITIES_DETECT_ACTION_ID,
   [RPC_METHODS.MACHINES_DOCTOR_SNAPSHOT]: MACHINE_DOCTOR_SNAPSHOT_ACTION_ID,
+  [RPC_METHODS.MACHINES_SECURITY_INSPECT]: MACHINE_SECURITY_INSPECT_ACTION_ID_V1,
   [RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST]: 'machines.runs.list',
   [RPC_METHODS.MACHINES_COMMAND_RUN]: 'machines.command.run',
   [RPC_METHODS.MACHINE_ADMIN_ACCESS_SET]: 'machines.setup.adminAccess.set',

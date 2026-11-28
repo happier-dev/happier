@@ -308,6 +308,19 @@ current Doctor snapshot from a specific machine. The Action returns the
 collection time and daemon and service health. For full local diagnostics, run
 `hdev doctor` on that machine.
 
+### Inspect Machine Security (0.3 development)
+
+```bash
+hdev machines security inspect --machine-id <machine-id> --json
+```
+
+The selected machine reads its security evidence and returns the grade and
+check results. **Incomplete** includes the two possible grade bounds when
+unread checks could change the grade. In the initial development cut, OS
+updates and restart status are checked locally. Held packages are excluded
+from the update counts. A repair hint leads to the existing reviewed Updates
+or Restart action. The inspection itself only reads evidence.
+
 ### Inspect processes (development only)
 
 With a CLI built from the current unreleased 0.3 source, inspect the exact
