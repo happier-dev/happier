@@ -1,4 +1,4 @@
-import type { PrismaClientType } from "@/storage/prisma";
+import type { SqliteMaintenanceClient } from "./prismaClientConstruction";
 import { sqliteMaintenanceDurationHistogram } from "@/app/monitoring/metrics/databaseMetrics";
 import { log } from "@/utils/logging/log";
 import { onSqliteCommittedWrite } from "@/storage/sqliteCommittedWrites";
@@ -51,6 +51,8 @@ function parseUnsignedIntegerEnv(params: Readonly<{
     }
     return parsed;
 }
+
+type SqliteMaintenanceQueries = Pick<SqliteMaintenanceClient, "$queryRawUnsafe" | "$executeRawUnsafe">;
 
 export type SqliteWalCheckpointResult = Readonly<{
     // SQLite returns 1 when the checkpoint could not run to completion because the
@@ -130,13 +132,13 @@ export function resolveSqliteIncrementalVacuumPagesFromEnv(env: NodeJS.ProcessEn
 }
 
 async function runSqliteWalCheckpoint(
-    client: PrismaClientType,
+    client: SqliteMaintenanceQueries,
     mode: "PASSIVE" | "TRUNCATE",
 ): Promise<SqliteWalCheckpointResult> {
     // `PRAGMA wal_checkpoint` returns three integer columns documented as
     // (busy, log, checkpointed). Prefer SQLite's documented column names, falling back
     // to positional order, so we are robust to driver-specific result shaping either way.
-    const rows = await client.$queryRawUnsafe<Array<Record<string, number | bigint>>>(
+    const rows = await client.$queryRawUnsafe(
         `PRAGMA wal_checkpoint(${mode});`,
     );
     const row = rows[0] ?? {};
@@ -153,7 +155,7 @@ async function runSqliteWalCheckpoint(
  * Run a single TRUNCATE checkpoint, resetting the WAL file to zero bytes when it can.
  * Returns SQLite's `(busy, log, checkpointed)` triple.
  */
-export async function checkpointSqliteWal(client: PrismaClientType): Promise<SqliteWalCheckpointResult> {
+export async function checkpointSqliteWal(client: SqliteMaintenanceQueries): Promise<SqliteWalCheckpointResult> {
     return runSqliteWalCheckpoint(client, "TRUNCATE");
 }
 
@@ -162,7 +164,7 @@ export async function checkpointSqliteWal(client: PrismaClientType): Promise<Sql
  * is useful only when PASSIVE could not checkpoint every frame; when all frames are
  * already checkpointed, SQLite can recycle the WAL after the reader gap on its own.
  */
-export async function maintainSqliteWal(client: PrismaClientType): Promise<SqliteWalCheckpointResult> {
+export async function maintainSqliteWal(client: SqliteMaintenanceQueries): Promise<SqliteWalCheckpointResult> {
     const passive = await runSqliteWalCheckpoint(client, "PASSIVE");
     if (passive.logFrames <= passive.checkpointedFrames) {
         return passive;
@@ -173,10 +175,10 @@ export async function maintainSqliteWal(client: PrismaClientType): Promise<Sqlit
 export type SqliteWalCheckpointWorkerHandle = Readonly<{ stop: () => Promise<void> }>;
 
 export type StartSqliteWalCheckpointWorkerOptions = Readonly<{
-    client: PrismaClientType;
+    client: SqliteMaintenanceQueries;
     intervalMs: number;
     // Injectable for tests; defaults to PASSIVE-first maintenance with TRUNCATE only for backlog.
-    runCheckpoint?: (client: PrismaClientType) => Promise<SqliteWalCheckpointResult>;
+    runCheckpoint?: (client: SqliteMaintenanceQueries) => Promise<SqliteWalCheckpointResult>;
 }>;
 
 /**
@@ -283,7 +285,7 @@ export function startSqliteWalCheckpointWorker(
     };
 }
 
-export async function incrementalVacuumSqlite(client: PrismaClientType, pages: number): Promise<void> {
+export async function incrementalVacuumSqlite(client: SqliteMaintenanceQueries, pages: number): Promise<void> {
     const normalizedPages = parseUnsignedIntegerEnv({
         env: { HAPPIER_SQLITE_INCREMENTAL_VACUUM_PAGES: String(pages) },
         primaryKey: "HAPPIER_SQLITE_INCREMENTAL_VACUUM_PAGES",
@@ -299,7 +301,7 @@ export async function incrementalVacuumSqlite(client: PrismaClientType, pages: n
  * deletes rows (the only time free pages appear). Failures are logged and observed;
  * the next sweep tries again.
  */
-export async function reclaimSqliteFreePages(client: PrismaClientType, pages: number): Promise<void> {
+export async function reclaimSqliteFreePages(client: SqliteMaintenanceQueries, pages: number): Promise<void> {
     const startedAtMs = Date.now();
     let outcome = "error";
     try {

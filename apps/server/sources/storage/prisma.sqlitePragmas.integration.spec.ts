@@ -27,7 +27,7 @@ describe("storage/prisma sqlite pragmas", () => {
         expect(getPrismaConnectionLimit()).toBe(3);
         const maintenance = await createDbSqliteMaintenanceClient();
         try {
-            expect(await maintenance.$queryRawUnsafe("SELECT 1 AS value")).toEqual([{ value: 1n }]);
+            expect(Number((await maintenance.$queryRawUnsafe("SELECT 1 AS value"))[0]?.value)).toBe(1);
             expect(await withSqliteReadSnapshot(reader => reader.$queryRawUnsafe("SELECT 1 AS value"))).toEqual([{ value: 1n }]);
             expect(getPrismaConnectionLimit()).toBe(3);
         } finally {

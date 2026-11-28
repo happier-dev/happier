@@ -255,8 +255,28 @@ export function onDbClientQuery(client: PrismaClientType, listener: (event: Pris
     (client as unknown as { $on(event: "query", listener: (event: PrismaNamespace.QueryEvent) => void): void }).$on("query", listener);
 }
 
-export async function createDbSqliteMaintenanceClient(): Promise<PrismaClientType> {
-    return (await createGeneratedPrismaClient("sqlite")).client;
+export type SqliteMaintenanceClient = Readonly<{
+    $queryRawUnsafe(query: string): PromiseLike<readonly Record<string, unknown>[]>;
+    $executeRawUnsafe(query: string): PromiseLike<number>;
+    $disconnect(): Promise<void>;
+}>;
+
+/** Keep checkpoint and vacuum work off the application pool and Prisma query compiler. */
+export async function createDbSqliteMaintenanceClient(
+    busyTimeoutMs = resolveLightSqliteBusyTimeoutMsFromEnv(process.env),
+): Promise<SqliteMaintenanceClient> {
+    const { factory } = createPrismaDriverAdapter("sqlite", withConnectionLimit(requireDatabaseUrl(undefined), 1), {
+        sqliteBusyTimeoutMs: busyTimeoutMs,
+    });
+    const adapter = await factory.connect();
+    return {
+        async $queryRawUnsafe(sql) {
+            const { columnNames, rows } = await adapter.queryRaw({ sql, args: [], argTypes: [] });
+            return rows.map(row => Object.fromEntries(columnNames.map((name, index) => [name, row[index]])));
+        },
+        $executeRawUnsafe: sql => adapter.executeRaw({ sql, args: [], argTypes: [] }),
+        $disconnect: () => adapter.dispose(),
+    };
 }
 
 export function withConnectionLimit(rawUrl: string, limit: number): string {

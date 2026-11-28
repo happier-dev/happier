@@ -155,12 +155,9 @@ describe("startServer sqlite WAL checkpoint shutdown ordering", () => {
         expect(sqliteWalCheckpointMocks.startWorker).toHaveBeenCalledWith(expect.objectContaining({
             client: startServerDbMocks.sqliteMaintenanceClient,
         }));
+        expect(startServerDbMocks.createDbSqliteMaintenanceClient).toHaveBeenCalledWith(5_000);
         expect(startServerDbMocks.applySqliteRuntimePragmas).toHaveBeenCalledWith(
-            startServerDbMocks.sqliteMaintenanceClient,
-            expect.objectContaining({
-                HAPPIER_SQLITE_BUSY_TIMEOUT_MS: "5000",
-                HAPPY_SQLITE_BUSY_TIMEOUT_MS: "5000",
-            }),
+            startServerDbMocks.sqliteMaintenanceClient, process.env,
         );
         expect(callOrder).toEqual([
             "sqliteWalCheckpoint.stop",

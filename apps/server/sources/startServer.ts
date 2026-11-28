@@ -20,6 +20,7 @@ import {
     initDbSqlite,
     shutdownDbClient,
     shutdownDbPglite,
+    type SqliteMaintenanceClient,
 } from '@/storage/db';
 import {
     runHomeOwnerClaimCommand,
@@ -257,7 +258,7 @@ export async function startServer(flavor: ServerFlavor, options?: StartServerOpt
         : null;
 
     let dbConnected = false;
-    let sqliteWalCheckpointClient: typeof db | null = null;
+    let sqliteWalCheckpointClient: SqliteMaintenanceClient | null = null;
     let sqliteWalCheckpointWorker: ReturnType<typeof startSqliteWalCheckpointWorker> = null;
     let sqliteLifecycleCleanedUp = false;
     const cleanupSqliteLifecycle = async (): Promise<void> => {
@@ -341,14 +342,9 @@ export async function startServer(flavor: ServerFlavor, options?: StartServerOpt
             throw new Error(`Unsupported HAPPY_FILES_BACKEND/HAPPIER_FILES_BACKEND: ${String(filesBackend)}`);
         }
         await initializeSessionSystemRecordsProtocolV1Activation(db);
-        if (shouldStartSqliteMaintenanceClient) {
-            sqliteWalCheckpointClient = await createDbSqliteMaintenanceClient();
-            await sqliteWalCheckpointClient.$connect();
-            await applySqliteRuntimePragmas(sqliteWalCheckpointClient, {
-                ...process.env,
-                HAPPIER_SQLITE_BUSY_TIMEOUT_MS: String(sqliteWalCheckpointBusyTimeoutMs),
-                HAPPY_SQLITE_BUSY_TIMEOUT_MS: String(sqliteWalCheckpointBusyTimeoutMs),
-            });
+        if (sqliteWalCheckpointBusyTimeoutMs !== null) {
+            sqliteWalCheckpointClient = await createDbSqliteMaintenanceClient(sqliteWalCheckpointBusyTimeoutMs);
+            await applySqliteRuntimePragmas(sqliteWalCheckpointClient, process.env);
         }
 
         // Actively checkpoint the SQLite WAL after committed writes so it cannot be

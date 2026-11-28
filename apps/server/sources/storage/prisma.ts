@@ -37,6 +37,7 @@ export {
     resolvePackagedGeneratedClientEntrypoint,
     resolvePreferredGeneratedClientEntrypoint,
     type DbClientLog,
+    type SqliteMaintenanceClient,
 } from "./prismaClientConstruction";
 
 export * from "./enums.generated";
@@ -531,7 +532,7 @@ export function resolveSqliteStartupDiagnosticsFromEnv(env: NodeJS.ProcessEnv): 
     };
 }
 
-export async function applySqliteRuntimePragmas(client: Pick<PrismaClientType, "$queryRawUnsafe">, env: NodeJS.ProcessEnv): Promise<void> {
+export async function applySqliteRuntimePragmas(client: { $queryRawUnsafe(query: string): PromiseLike<unknown> }, env: NodeJS.ProcessEnv): Promise<void> {
     const pragmas = resolveSqliteRuntimePragmasFromEnv(env);
     // These PRAGMA values come from strict allow-list / numeric-range resolvers above.
     // Keep the resolution step as the SQL safety boundary for these raw statements.
