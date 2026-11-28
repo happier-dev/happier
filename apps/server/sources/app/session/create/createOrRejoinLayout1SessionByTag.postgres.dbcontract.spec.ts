@@ -103,6 +103,65 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("t
     });
     afterAll(async () => { await db.$disconnect(); });
 
+    it("commits one of two competing Fresh births with an inactive Account in the Session's Team", async () => {
+        vi.stubEnv("HAPPIER_SERVER_IDENTITY_ID", sessionStartServerId);
+        const requester = await db.account.create({ data: { encryptionMode: "plain" } });
+        const inactiveMember = await db.account.create({ data: { encryptionMode: "plain", status: "disabled" } });
+        const team = await db.team.create({ data: {
+            name: "Fresh Session Team",
+            memberships: { create: [{ accountId: requester.id, role: "owner" }, { accountId: inactiveMember.id, role: "member" }] },
+        } });
+        try {
+            const { machine, installationId } = await createSessionStartMachine(requester.id);
+            const fixture = { pluginId: "example.vm", localId: "lima" };
+            const resource = await db.managedMachine.create({ data: {
+                homeId: sessionStartServerId, custodianAccountId: requester.id,
+                controllerMachineId: machine.id, controllerInstallationId: installationId,
+                admittedActionRequestId: randomUUID(),
+                admittedInput: { enrollmentAccountId: requester.id, acquisitionMode: "resource-bound",
+                    creationScopeRetention: { effect: "delete" } },
+                launch: { provider: fixture, schemaVersion: 1, name: "Fresh guest", choices: {} },
+                resource: { contributionRef: fixture, schemaVersion: 1, value: {} },
+                allocation: "bound", creationState: "active", retention: { kind: "until-delete" }, wakeOnAcceptedMessage: false,
+            } });
+            const managedCreation = { homeId: sessionStartServerId, managedId: resource.id,
+                controller: { machineId: machine.id, installationId } };
+            const attempts = await Promise.allSettled([randomUUID(), randomUUID()].map(tag =>
+                createOrRejoinLayout1SessionByTag({
+                    ...prepared(requester.id, "unused", tag), originKind: "none", originSessionId: undefined,
+                    manager: undefined, managedCreation, primaryTeamId: team.id,
+                    initialAccess: { grants: [{ subject: { kind: "team", teamId: team.id },
+                        accessLevel: "view", canApprovePermissions: false }] },
+                }, authentication)));
+            const outcomes = attempts.map(attempt => {
+                if (attempt.status === "rejected") throw attempt.reason;
+                return attempt.value;
+            });
+            expect(outcomes.map(outcome => outcome.kind).sort()).toEqual(["created", "rejected"]);
+            expect(outcomes.find(outcome => outcome.kind === "rejected")).toMatchObject({
+                rejection: { reason: "session-managed-target-busy" },
+            });
+            const sessions = await db.session.findMany({ where: { managedCreationId: resource.id } });
+            expect(sessions).toHaveLength(1);
+            expect(sessions[0]?.accountId).toBe(requester.id);
+            expect(await db.managedMachine.findUniqueOrThrow({ where: { id: resource.id } })).toMatchObject({
+                admittedInput: { creationScopeRetention: { effect: "delete", source: { kind: "session", sessionId: sessions[0]?.id } } },
+            });
+            expect(await db.accountChange.findMany({ where: { entityId: resource.id, kind: "account" } }))
+                .toEqual([expect.objectContaining({ accountId: requester.id })]);
+            expect(await db.sessionGrant.findMany({ where: { sessionId: sessions[0]?.id } }))
+                .toEqual([expect.objectContaining({ teamId: team.id, accessLevel: "view" })]);
+            expect(await db.accountChange.count({ where: { accountId: inactiveMember.id, entityId: sessions[0]?.id } })).toBe(0);
+        } finally {
+            vi.unstubAllEnvs();
+            await db.session.deleteMany({ where: { accountId: requester.id } });
+            await db.managedMachine.deleteMany({ where: { custodianAccountId: requester.id } });
+            await db.machine.deleteMany({ where: { accountId: requester.id } });
+            await db.team.delete({ where: { id: team.id } });
+            await db.account.deleteMany({ where: { id: { in: [requester.id, inactiveMember.id] } } });
+        }
+    });
+
     it.each(["CLI", "Home", "unplaced"] as const)("commits the eligible Session-start Runs for a %s birth", async launch => {
         vi.stubEnv("HAPPIER_SERVER_IDENTITY_ID", sessionStartServerId);
         vi.stubEnv("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");

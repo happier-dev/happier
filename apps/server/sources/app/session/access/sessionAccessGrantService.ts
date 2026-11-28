@@ -619,6 +619,7 @@ export async function teamsPolicyStillRequireGrants(tx: Tx, teamIds: readonly st
 async function resolveAffectedAccountIdsInTx(
     tx: Tx,
     subject: ShareSubject,
+    options?: Readonly<{ includeInactiveAccounts?: boolean }>,
 ): Promise<string[]> {
     if (subject.kind === "account") return [subject.accountId];
     return await resolveSubjectMemberAccountIdsInTx(
@@ -626,11 +627,12 @@ async function resolveAffectedAccountIdsInTx(
         subject.kind === "team"
             ? { kind: "team", teamId: subject.teamId }
             : { kind: "group", teamId: subject.teamId, groupId: subject.groupId },
+        options,
     );
 }
 
-/** Pure birth census; grant eligibility and envelope validation remain with the writer. */
-export async function readInitialSessionAccessAccountIdsInTx(tx: Tx, input: Readonly<{
+/** Admit retained members before the grant exists so reactivation waits behind the same fence. */
+export async function readInitialSessionAccessFenceAccountIdsInTx(tx: Tx, input: Readonly<{
     initialAccess?: SessionInitialAccessMaterializedV1;
     primaryTeamId?: string | null;
 }>): Promise<readonly string[]> {
@@ -641,7 +643,7 @@ export async function readInitialSessionAccessAccountIdsInTx(tx: Tx, input: Read
     if (addRequiredPrimaryTeam) subjects.push({ kind: "team", teamId: primaryTeamId });
     const accounts = new Set<string>();
     for (const subject of subjects) {
-        for (const accountId of await resolveAffectedAccountIdsInTx(tx, subject)) accounts.add(accountId);
+        for (const accountId of await resolveAffectedAccountIdsInTx(tx, subject, { includeInactiveAccounts: true })) accounts.add(accountId);
     }
     return [...accounts].sort();
 }

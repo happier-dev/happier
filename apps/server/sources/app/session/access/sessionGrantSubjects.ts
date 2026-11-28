@@ -6,18 +6,22 @@ export type SessionCollectiveGrantSubject =
     | Readonly<{ kind: "team"; teamId: string }>
     | Readonly<{ kind: "group"; teamId: string; groupId: string }>;
 
-/** Accounts currently reached by one subject, used to bound a mutation's delta. */
+/** Accounts reached by one subject, optionally including retained memberships for admission. */
 export async function resolveSubjectMemberAccountIdsInTx(
     tx: Tx,
     subject: SessionCollectiveGrantSubject,
+    options?: Readonly<{ includeInactiveAccounts?: boolean }>,
 ): Promise<string[]> {
+    const currentMembership = {
+        status: TeamMembershipStatus.active,
+        ...(options?.includeInactiveAccounts ? {} : { account: { status: AccountStatus.active } }),
+    };
     if (subject.kind === "team") {
         const memberships = await tx.teamMembership.findMany({
             where: {
                 teamId: subject.teamId,
-                status: TeamMembershipStatus.active,
+                ...currentMembership,
                 role: { in: [...TEAM_PRINCIPAL_ROLES_V1] },
-                account: { status: AccountStatus.active },
             },
             select: { accountId: true },
         });
@@ -26,10 +30,7 @@ export async function resolveSubjectMemberAccountIdsInTx(
     const groupMemberships = await tx.teamGroupMembership.findMany({
         where: {
             teamGroupId: subject.groupId,
-            teamMembership: {
-                status: TeamMembershipStatus.active,
-                account: { status: AccountStatus.active },
-            },
+            teamMembership: currentMembership,
         },
         select: { teamMembership: { select: { accountId: true } } },
     });

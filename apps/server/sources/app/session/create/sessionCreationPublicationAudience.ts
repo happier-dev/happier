@@ -1,7 +1,7 @@
 import { acquireAccountChangePublicationLocksInTx } from "@/app/changes/markAccountChanged";
 import { resolveDiscussionAudienceInTx } from "@/app/discussions/access";
 import { readManagedWakePublicationAccountIdsInTx } from "@/app/machines/managed/managedWake";
-import { readInitialSessionAccessAccountIdsInTx } from "@/app/session/access/sessionAccessGrantService";
+import { readInitialSessionAccessFenceAccountIdsInTx } from "@/app/session/access/sessionAccessGrantService";
 import { fenceSessionAccountCursorAudienceInTx, readSessionAccountCursorAudienceInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
 import { getSessionLifecycleAutomationPublicationAudienceInTx, getWorkflowPublicationAudienceInTx } from "@/app/workflows/workflowPublicationAudience";
 import { inReadSnapshot, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
@@ -28,7 +28,7 @@ export async function readLayout1SessionCreatePublicationAudienceInTx(tx: Tx, in
     const incumbent = await tx.session.findUnique({
         where: { accountId_tag: { accountId: input.accountId, tag: input.tag } }, select: { id: true, active: true, archivedAt: true },
     });
-    const initialAccessAccountIds = await readInitialSessionAccessAccountIdsInTx(tx, input);
+    const initialAccessAccountIds = await readInitialSessionAccessFenceAccountIdsInTx(tx, input);
     const accounts = new Set([input.accountId, ...initialAccessAccountIds]);
     if (input.discussionParticipant) {
         for (const accountId of await resolveDiscussionAudienceInTx(tx, input.discussionParticipant.discussionId)) accounts.add(accountId);
