@@ -2,6 +2,8 @@ import { memo, type ReactElement, type ReactNode } from 'react';
 import { View } from 'react-native';
 
 import { useHappierUiTheme } from '../../environment/context.js';
+import { HAPPIER_RADIUS_V1 } from '../../environment/radius.js';
+import { HAPPIER_SPACE_STEPS } from '../../environment/spacing.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import type {
   HappierPortableStyle,
@@ -20,21 +22,22 @@ export const HAPPIER_MEDIA_GRID_METRICS = {
   /** The narrowest tile: three across the 340 px Files pane. */
   tileMinPx: 100,
   /** One rhythm between tiles, folders and rows (lab `s4`). */
-  gapPx: 4,
+  gapPx: HAPPIER_SPACE_STEPS.s4,
   /** A folder tile's one line (lab `.sg-f`); a finger gets the touch height. */
   folderHeightPx: 36,
   folderTouchHeightPx: 44,
   /** A folder tile's narrowest width before its row holds one fewer (lab `.sg-big .sg-folders`). */
   folderMinPx: 160,
   /** A day heading's line (lab `.sm-sec`): its padding above and below the label line. */
-  headingPadTopPx: 12,
-  headingPadBottomPx: 6,
+  headingPadTopPx: HAPPIER_SPACE_STEPS.s12,
+  headingPadBottomPx: HAPPIER_SPACE_STEPS.s6,
   /** The tile's corner (the product's small radius) and its badge inset. */
-  tileRadiusPx: 6,
-  badgeInsetPx: 4,
+  tileRadiusPx: HAPPIER_RADIUS_V1.sm,
+  badgeInsetPx: HAPPIER_SPACE_STEPS.s4,
 } as const;
 
 const M = HAPPIER_MEDIA_GRID_METRICS;
+const S = HAPPIER_SPACE_STEPS;
 
 /** Columns for a body of this inner width: as many tiles as fit at the minimum, never wider than the maximum. */
 export function resolveHappierMediaGridGeometry(
@@ -143,10 +146,10 @@ export function HappierMediaGridRow(
 const headingStyle: HappierPortableStyle = {
   flexDirection: 'row',
   alignItems: 'baseline',
-  gap: 8,
+  gap: S.s8,
   paddingTop: M.headingPadTopPx,
   paddingBottom: M.headingPadBottomPx,
-  paddingHorizontal: 2,
+  paddingHorizontal: S.s2,
 };
 const headingTitleStyle: HappierPortableStyle = { flex: 1, minWidth: 0 };
 
@@ -190,6 +193,8 @@ export const HappierMediaTile = memo(function HappierMediaTile(
     selected?: boolean;
     /** Lower-start corner: a video's length, a play mark. */
     badge?: ReactNode;
+    /** Lower-end corner: who added it (a person's own attachment). */
+    endBadge?: ReactNode;
     children?: ReactNode;
     testID?: string;
   }>,
@@ -214,6 +219,11 @@ export const HappierMediaTile = memo(function HappierMediaTile(
       {props.badge ? (
         <View pointerEvents="none" style={badgeStyle}>
           {props.badge}
+        </View>
+      ) : null}
+      {props.endBadge ? (
+        <View pointerEvents="none" style={endBadgeStyle}>
+          {props.endBadge}
         </View>
       ) : null}
       {props.selected ? (
@@ -253,6 +263,11 @@ const ringStyle: HappierPortableStyle = {
 const badgeStyle: HappierPortableStyle = {
   position: 'absolute',
   left: M.badgeInsetPx,
+  bottom: M.badgeInsetPx,
+};
+const endBadgeStyle: HappierPortableStyle = {
+  position: 'absolute',
+  right: M.badgeInsetPx,
   bottom: M.badgeInsetPx,
 };
 
@@ -314,8 +329,8 @@ export const HappierMediaFolderTile = memo(function HappierMediaFolderTile(
 const folderStyle: HappierPortableStyle = {
   flexDirection: 'row',
   alignItems: 'center',
-  gap: 8,
-  paddingHorizontal: 10,
+  gap: S.s8,
+  paddingHorizontal: S.s10,
   borderRadius: M.tileRadiusPx,
   borderWidth: 1,
   minWidth: 0,
@@ -325,10 +340,10 @@ const folderNameStyle: HappierPortableStyle = { flex: 1, minWidth: 0 };
 const footStyle: HappierPortableStyle = {
   flexDirection: 'row',
   alignItems: 'center',
-  gap: 6,
+  gap: S.s6,
   paddingTop: M.headingPadTopPx,
   paddingBottom: M.gapPx,
-  paddingHorizontal: 2,
+  paddingHorizontal: S.s2,
 };
 const footTextStyle: HappierPortableStyle = { flex: 1, minWidth: 0 };
 

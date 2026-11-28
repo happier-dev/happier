@@ -15,15 +15,18 @@ import { openGalleryStage } from '@/hooks/workspaces/files/gallery/galleryStage'
 import { useSessionMediaCaptureScope } from '@/hooks/workspaces/files/gallery/useSessionMediaCaptureScope';
 import { useSessionMediaModel } from '@/hooks/workspaces/files/gallery/useSessionMediaModel';
 import { useShowGalleryItemInChat } from '@/hooks/workspaces/files/gallery/useShowGalleryItemInChat';
-import type { GalleryMediaItem } from '@/hooks/workspaces/files/gallery/galleryModel';
+import type { GalleryMediaItem, GalleryMediaOrigin } from '@/hooks/workspaces/files/gallery/galleryModel';
 import { Modal } from '@/modal';
+import { useSessionCockpitSurfaceNavigation } from '@/components/workspaceCockpit/session/SessionCockpitSurfaceNavigation';
 import { requestRegisteredComposerAttachmentPicker } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
-import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
+import { useActiveServerAccountScopeLifetime, useSessionDisplayNameSource } from '@/sync/store/hooks';
+import { getSessionName } from '@/utils/sessions/sessionUtils';
+import { DetailsTabHeader } from '@/components/appShell/panes/details/header/DetailsTabHeader';
 import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
 import { t } from '@/text';
 
 import { RepositoryTreeRootErrorState } from '@/components/workspaces/files/repositoryTree/RepositoryTreeRootErrorState';
-import { GalleryFootLine, GalleryGrid } from './GalleryGrid';
+import { formatGalleryMoment, GalleryFootLine, GalleryGrid } from './GalleryGrid';
 
 const NO_FOLDERS = [] as const;
 
@@ -84,10 +87,13 @@ export function SessionMediaGalleryView(props: SessionMediaGalleryViewProps) {
     model;
   const { onOpenFile } = props;
   const stageId = React.useRef<string | null>(null);
+  // The tile of the item the person last opened or went to in the chat stays ringed (lab SM1j).
+  const [selectedItemId, setSelectedItemId] = React.useState<string | null>(null);
   const jumpToChat = React.useCallback(
     async (item: GalleryMediaItem) => {
       const result = await showInChat(item);
       if (result.ok) {
+        setSelectedItemId(item.id);
         if (stageId.current) Modal.hide(stageId.current);
       } else if (result.code !== 'cancelled') {
         Modal.alert(t('files.pane.gallery.showInChatFailed'));
@@ -99,7 +105,13 @@ export function SessionMediaGalleryView(props: SessionMediaGalleryViewProps) {
     (index: number) => {
       const item = items[index];
       if (!item) return;
+      setSelectedItemId(item.id);
+      const nowMs = Date.now();
       stageId.current = openGalleryStage(stage, items, item.id, (entry) => ({
+        // Who made it and when, under the name (lab SM1s: "screen capture · today 13:51").
+        subtitle: [describeMediaOrigin(entry.origin),
+          entry.modifiedMs === undefined ? null : formatGalleryMoment(entry.modifiedMs, nowMs)]
+          .filter((part): part is string => part !== null).join(' · '),
         ...(entry.messageLocalId
           ? {
               showInChat: () => {
@@ -116,10 +128,16 @@ export function SessionMediaGalleryView(props: SessionMediaGalleryViewProps) {
     [address, items, jumpToChat, onOpenFile, stage],
   );
   // A real zero teaches the feature: its one next step is this Session's own composer picker (lab SM1z).
+  const cockpit = useSessionCockpitSurfaceNavigation();
   const attachPicture = React.useCallback(() => {
     if (!lifetime?.isCurrent()) return;
-    requestRegisteredComposerAttachmentPicker({ ref: { kind: 'session', sessionId: props.sessionId }, scope: lifetime.scope });
-  }, [lifetime, props.sessionId]);
+    const scope = lifetime.scope;
+    const pick = () => requestRegisteredComposerAttachmentPicker({ ref: { kind: 'session', sessionId: props.sessionId }, scope });
+    // A phone shows the composer only on the chat surface: bring it forward, then open its picker once it is in front.
+    if (!cockpit) { pick(); return; }
+    cockpit.switchSurface('chat');
+    requestAnimationFrame(pick);
+  }, [cockpit, lifetime, props.sessionId]);
   const loadRest = React.useCallback(async () => {
     if (loadMore) await loadMore();
     else for (const folder of pendingFolders) await loadFolder(folder.id);
@@ -164,26 +182,21 @@ export function SessionMediaGalleryView(props: SessionMediaGalleryViewProps) {
       </>
     ) : null;
   const inset = props.presentation === 'pane' ? paneInset : theme.space.s20;
+  const nameSource = useSessionDisplayNameSource(props.sessionId, address.serverId || null);
+  const sessionName = nameSource ? getSessionName(nameSource) : null;
+  const countsKnown = !((model.loading || !machineRpcTargetAvailable) && items.length === 0);
   const header =
     props.presentation === 'tab' ? (
-      <View style={styles.tabHeader} testID="media-tab-header">
-        <View style={styles.tabTitleRow}>
-          <Icon name="image" size={20} color={theme.colors.text.secondary} />
-          <Text
-            variant="title"
-            emphasis="semiBold"
-            numberOfLines={1}
-            style={[styles.grow, { color: theme.colors.text.primary }]}
-          >
-            {t('files.pane.gallery.media')}
-          </Text>
-        </View>
-        {(model.loading || !machineRpcTargetAvailable) && items.length === 0 ? null : (
-          <Text variant="meta" style={{ color: theme.colors.text.tertiary }}>
-            {t('files.pane.gallery.pictureCount', { count: model.shownCount })}
-          </Text>
-        )}
-      </View>
+      <DetailsTabHeader
+        testID="media-tab-header"
+        title={t('files.pane.gallery.media')}
+        leading={<Icon name="image" size={20} color={theme.colors.text.secondary} />}
+        meta={[
+          ...(sessionName ? [{ key: 'session', text: sessionName, tone: 'strong' as const, shrink: true }] : []),
+          ...(countsKnown ? [{ key: 'count', text: t('files.pane.gallery.pictureCount', { count: model.shownCount }) }] : []),
+          { key: 'order', text: t('files.pane.gallery.newestFirst'), tone: 'muted' as const },
+        ]}
+      />
     ) : null;
 
   return (
@@ -219,6 +232,7 @@ export function SessionMediaGalleryView(props: SessionMediaGalleryViewProps) {
           foot={foot}
           insetPx={inset}
           onOpenItem={openItem}
+          selectedItemId={selectedItemId}
           empty={
             <SurfaceStateCard
               kind="empty"
@@ -235,18 +249,17 @@ export function SessionMediaGalleryView(props: SessionMediaGalleryViewProps) {
   );
 }
 
+function describeMediaOrigin(origin: GalleryMediaOrigin): string | null {
+  switch (origin) {
+    case 'messages': return t('files.pane.gallery.originAttached');
+    case 'generated': return t('files.pane.gallery.originGenerated');
+    case 'artifacts': return t('files.pane.gallery.originToolOutput');
+    case 'captures': return t('files.pane.gallery.originCapture');
+    case 'folder': return null;
+  }
+}
+
 const styles = StyleSheet.create((theme) => ({
   fill: { flex: 1, minHeight: 0 },
   grow: { flex: 1, minWidth: 0 },
-  tabHeader: {
-    gap: theme.space.s4,
-    paddingHorizontal: theme.space.s20,
-    paddingTop: theme.space.s16,
-    paddingBottom: theme.space.s12,
-  },
-  tabTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.space.s8,
-  },
 }));

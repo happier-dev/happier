@@ -65,7 +65,8 @@ import {
 } from '@/sync/runtime/nativeIrohTunnels/machineTransferLifecycle';
 import { WorkspaceRepositoryTreeList, type WorkspaceRepositoryTreeWebDropTarget } from './WorkspaceRepositoryTreeList';
 import { retryableLazy } from '@/components/ui/performance/retryableLazy';
-import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
+import { GallerySkeleton } from '@/components/workspaces/files/gallery/GallerySkeleton';
+import { usePaneContentInsetPx } from '@/components/ui/lists/listPresentation';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 
 export type WorkspaceRepositoryTreeBrowserViewProps = Readonly<{
@@ -167,6 +168,7 @@ function BrowserPaneHeader(props: Readonly<{ action: React.ReactNode; line?: Pan
 
 export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRepositoryTreeBrowserViewProps) => {
     const { theme } = useUnistyles();
+    const paneInsetPx = usePaneContentInsetPx();
     const homeApplicationCarrierEligibility = useLocalSetting('homeApplicationCarrierEligibility');
     const [treeReloadNonce, setTreeReloadNonce] = React.useState(0);
     const [treeRootLoading, setTreeRootLoading] = React.useState(false);
@@ -673,9 +675,16 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
     const openGalleryFolderBeside = galleryHost?.openFolderBeside ?? null;
     const openFolderBeside = React.useMemo(() => openGalleryFolderBeside ? (path: string, event?: unknown) => {
         openGalleryFolderBeside(path, event);
-        // The folder now has the big view; the pane goes back to its list (lab SG2e).
+        // The folder now has the big view; the pane goes back to its list with that folder in view (lab SG2e).
         setView('list');
-    } : null, [openGalleryFolderBeside, setView]);
+        if (path) handleRevealPath(path, true);
+    } : null, [handleRevealPath, openGalleryFolderBeside, setView]);
+    const openGalleryMediaBeside = galleryHost?.openMediaBeside ?? null;
+    const openMediaBeside = React.useMemo(() => openGalleryMediaBeside ? (event?: unknown) => {
+        openGalleryMediaBeside(event);
+        // Media moves into Details; the pane returns to the files instead of drawing the same grid twice (lab SG2f).
+        setView('list');
+    } : null, [openGalleryMediaBeside, setView]);
     const showFolderAsList = React.useCallback((path: string) => {
         setView('list');
         if (path) handleRevealPath(path, true);
@@ -688,8 +697,8 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
         galleryView: { mode: view === 'gallery' ? 'gallery' as const : 'list' as const,
             onChange: (mode: 'list' | 'gallery') => (mode === 'gallery' ? showGallery(galleryPath) : setView('list')) },
         media: galleryHost.media ? { selected: view === 'media', onSelect: () => setView('media') } : null,
-        onOpenMediaBeside: galleryHost.openMediaBeside ?? null,
-    } : null, [galleryHost, galleryPath, setView, showGallery, view]);
+        onOpenMediaBeside: openMediaBeside,
+    } : null, [galleryHost, galleryPath, openMediaBeside, setView, showGallery, view]);
     const defaultRenderRowActions = React.useCallback<NonNullable<WorkspaceRepositoryTreeBrowserViewProps['renderRowActions']>>((node, control) => {
         if (node.type !== 'file' && node.type !== 'directory') return null;
         const nodeKind: 'file' | 'directory' = node.type === 'file' ? 'file' : 'directory';
@@ -927,7 +936,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
             {composed ? composed({ controls: composedControls, body: dropZone, status: actionApproval.approvalId ? approvalNotice('inline') : null })
                 : view === 'media' && galleryHost?.media && !shouldShowSearchResults ? galleryHost.media
                 : view === 'gallery' && !shouldShowSearchResults ? (
-                    <React.Suspense fallback={<PaneLoadingFallback />}>
+                    <React.Suspense fallback={<GallerySkeleton insetPx={paneInsetPx} />}>
                     <FolderGalleryView
                         scope={workspaceScope}
                         folderPath={galleryPath}

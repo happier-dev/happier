@@ -29,7 +29,8 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 import { useSessionGalleryOpener } from '@/components/sessions/panes/details/useSessionGalleryOpenActions';
 import { retryableLazy } from '@/components/ui/performance/retryableLazy';
-import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
+import { GallerySkeleton } from '@/components/workspaces/files/gallery/GallerySkeleton';
+import { usePaneContentInsetPx } from '@/components/ui/lists/listPresentation';
 import { useDeviceType } from '@/utils/platform/responsive';
 
 const styles = StyleSheet.create({
@@ -134,6 +135,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
     // A folder's gallery opens big in Details beside the pane; a phone's Files tab is already the full-screen host,
     // so there the pane itself switches (lab pr974 SG2).
     const phone = useDeviceType() === 'phone';
+    const paneInsetPx = usePaneContentInsetPx();
     const openSessionGallery = useSessionGalleryOpener({ sessionId: props.sessionId, serverId: serverId ?? null });
     const { onOpenFile } = props;
     const gallery = React.useMemo(() => {
@@ -146,7 +148,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
                 openSessionGallery({ kind: 'gallery', path }, { title: folderTitle(path), event, beside: true });
             },
             media: (
-                <React.Suspense fallback={<PaneLoadingFallback />}>
+                <React.Suspense fallback={<GallerySkeleton insetPx={paneInsetPx} />}>
                     <SessionMediaGalleryView sessionId={props.sessionId} serverId={serverId ?? null} presentation="pane" onOpenFile={onOpenFile} />
                 </React.Suspense>
             ),
@@ -155,7 +157,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
             },
             targetSession: serverId ? { sessionId: props.sessionId, serverId } : null,
         };
-    }, [onOpenFile, openSessionGallery, phone, props.sessionId, rootLabel, serverId]);
+    }, [onOpenFile, openSessionGallery, paneInsetPx, phone, props.sessionId, rootLabel, serverId]);
 
     if (!scope) return <UnavailableSessionFiles rootLabel={rootLabel} machineName={machineName}
         machineScope={displayMachineScope} paneHeaderLine={chrome.paneHeaderLine} />;

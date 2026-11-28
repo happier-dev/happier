@@ -626,11 +626,12 @@ const PHONE_NARROW_STRIDE = PHONE_STRIP.narrow + PHONE_STRIP.gap;
 const PHONE_WIDE_STRIDE = PHONE_STRIP.wide + PHONE_STRIP.gap + PHONE_STRIP.wideMargin * 2;
 
 /** Where a strip cell stands: wide-stride squares on wide screens; on a phone the current cell is the wide one. */
-export function resolveStageStripCellLayout(index: number, current: number, phone: boolean, stride: number): Readonly<{ length: number; offset: number }> {
+export function resolveStageStripCellLayout(index: number, current: number, phone: boolean, stride: number,
+  phoneInset = 0): Readonly<{ length: number; offset: number }> {
   if (!phone) return { length: stride, offset: stride * index };
   return {
     length: index === current ? PHONE_WIDE_STRIDE : PHONE_NARROW_STRIDE,
-    offset: PHONE_NARROW_STRIDE * index + (index > current ? PHONE_WIDE_STRIDE - PHONE_NARROW_STRIDE : 0),
+    offset: phoneInset + PHONE_NARROW_STRIDE * index + (index > current ? PHONE_WIDE_STRIDE - PHONE_NARROW_STRIDE : 0),
   };
 }
 
@@ -712,6 +713,7 @@ function StageGalleryStrip(props: Readonly<{
   const extraData = React.useMemo(() => ({ index: props.index, enabled: props.enabled, visible }), [props.index, props.enabled, visible]);
   const stride = STRIP_THUMB_SIZE + theme.space.s4;
   const { phone, index: current } = props;
+  const phoneInset = phone ? Math.max(0, (props.width - PHONE_WIDE_STRIDE) / 2) : 0;
   return <FlatList
     ref={list}
     testID="media-stage-gallery"
@@ -720,7 +722,9 @@ function StageGalleryStrip(props: Readonly<{
     extraData={extraData}
     initialScrollIndex={props.index}
     initialNumToRender={Math.max(1, Math.ceil(props.width / (phone ? PHONE_NARROW_STRIDE : stride)))}
-    getItemLayout={(_items, index) => ({ ...resolveStageStripCellLayout(index, current, phone, stride), index })}
+    getItemLayout={(_items, index) => ({ ...resolveStageStripCellLayout(index, current, phone, stride, phoneInset), index })}
+    // A phone keeps the current cell centred at either end too (lab pr974 ST1p): half the strip of room before and after.
+    {...(phone ? { ListHeaderComponent: <View style={{ width: phoneInset }} />, ListFooterComponent: <View style={{ width: phoneInset }} /> } : {})}
     keyExtractor={(_item, index) => String(index)}
     onViewableItemsChanged={onViewableItemsChanged}
     style={{ maxWidth: props.width }}
@@ -1421,15 +1425,27 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
                 <StageAnnotateEntry tooltip={t('files.annotate.annotate')} onPress={enterAnnotate} phone busy={readingFrame} />
               ) : null}
               {item.showInChat ? (
+                // The one labelled action (lab pr974 SM1sp); Open file steps down to its glyph beside it.
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={item.showInChat}
+                  style={stageStyles.phoneLink}
+                  testID="media-stage-show-in-chat"
+                >
+                  <Text variant="body" emphasis="medium" style={{ color: theme.colors.text.link }}>
+                    {t('files.pane.gallery.showInChat')}
+                  </Text>
+                </Pressable>
+              ) : null}
+              {item.openFile && item.showInChat ? (
                 <IconButton
                   variant="plain"
-                  iconName="chat-circle"
-                  accessibilityLabel={t('files.pane.gallery.showInChat')}
-                  onPress={item.showInChat}
-                  testID="media-stage-show-in-chat"
+                  iconName="arrow-square-out"
+                  accessibilityLabel={t('files.viewer.openFile')}
+                  onPress={item.openFile}
+                  testID="media-stage-open-file"
                 />
-              ) : null}
-              {item.openFile ? (
+              ) : item.openFile ? (
                 <Pressable
                   accessibilityRole="button"
                   onPress={item.openFile}

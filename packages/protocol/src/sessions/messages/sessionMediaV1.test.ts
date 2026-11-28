@@ -517,3 +517,13 @@ describe('session media v1 schemas', () => {
     }
   });
 });
+
+describe('stored session media names', () => {
+  it('shows the person’s name for attachments and generated media, and leaves other names alone', async () => {
+    const { buildSessionMediaStoredFileName, readSessionMediaDisplayName } = await import('./sessionMediaV1.js');
+    expect(readSessionMediaDisplayName(buildSessionMediaStoredFileName('b0fb13c5', 'resize-flow.mp4'))).toBe('resize-flow.mp4');
+    expect(readSessionMediaDisplayName(buildSessionMediaStoredFileName('0123456789ab', 'generated-image.png'))).toBe('generated-image.png');
+    expect(readSessionMediaDisplayName('capture-2026-11-27.png')).toBe('capture-2026-11-27.png');
+    expect(readSessionMediaDisplayName('deadbeef-')).toBe('deadbeef-');
+  });
+});

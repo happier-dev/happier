@@ -6489,6 +6489,12 @@ const filesPaneTranslations = { it: {
             capturesUnreadable: "Le catture dello schermo non sono leggibili su questa macchina",
             showInChat: "Mostra nella chat",
             showInChatFailed: "Messaggio non trovato",
+            showInFiles: "Mostra in File",
+            newestFirst: "Prima i più recenti",
+            originAttached: "Allegato in chat",
+            originGenerated: "Creato dall’agente",
+            originToolOutput: "Output dello strumento",
+            originCapture: "Cattura dello schermo",
         },
     } } as const satisfies Pick<Record<string, FilesPaneTranslations>, "it">;
 

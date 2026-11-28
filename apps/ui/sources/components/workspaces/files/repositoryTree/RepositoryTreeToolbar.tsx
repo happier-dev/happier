@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { usePaneContentInsetPx } from '@/components/ui/lists/listPresentation';
-import { Platform, View } from 'react-native';
+import { Platform, View, type LayoutChangeEvent } from 'react-native';
+import { useDeviceType } from '@/utils/platform/responsive';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -106,10 +107,20 @@ export const RepositoryTreeToolbar = React.memo(function RepositoryTreeToolbar(
     onQuickOpen,
     searchValue,
   } = props;
-  // Three options and the view toggle need the field's width: Go to file moves into the View menu until chosen
-  // (lab pr974 SG1 draws it as a glyph; the shared segmented control is wider than the lab's, so the glyph would
-  // push the menu onto a second line in the Files pane), and folds back when it is left empty.
+  // Three options and the view toggle need the field's width: Go to file stands as its glyph (lab pr974 SG1), and
+  // moves into the View menu on a phone (SG1p) or where the row would otherwise wrap; it folds back when left empty.
   const searchCollapsed = props.media != null && props.showSearch !== false && searchValue.length === 0 && !searchOpened;
+  const phone = useDeviceType() === 'phone';
+  // The row width at which the glyph made the row wrap: the glyph returns once the row is wider than that.
+  const [wrapWidth, setWrapWidth] = React.useState<number | null>(null);
+  const searchInMenu = searchCollapsed && (phone || wrapWidth !== null);
+  const searchGlyph = searchCollapsed && !searchInMenu;
+  const rowLineMaxPx = 32 + theme.space.s8 * 2 + theme.space.s4;
+  const measureRow = (event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout;
+    if (searchGlyph && height > rowLineMaxPx) setWrapWidth(width);
+    else if (wrapWidth !== null && width > wrapWidth + 1) setWrapWidth(null);
+  };
   // The ⌘P control is its keycaps: where they are not drawn (a finger, no key bound) nothing is pressable.
   const quickOpenHintDrawn = useKeyboardCommandHintLabel('search.files') !== null;
   const projectViewAvailable = visibility?.available === true;
@@ -119,7 +130,7 @@ export const RepositoryTreeToolbar = React.memo(function RepositoryTreeToolbar(
 
   const viewItems = React.useMemo((): readonly DropdownMenuItem[] => {
     const items: DropdownMenuItem[] = [];
-    if (searchCollapsed) {
+    if (searchInMenu) {
       items.push({
         id: `${prefix}-go-to-file`,
         testID: `${prefix}-go-to-file`,
@@ -171,7 +182,7 @@ export const RepositoryTreeToolbar = React.memo(function RepositoryTreeToolbar(
     onCollapseAll,
     prefix,
     projectViewAvailable,
-    searchCollapsed,
+    searchInMenu,
     showAllFiles,
     visibility,
   ]);
@@ -277,23 +288,28 @@ export const RepositoryTreeToolbar = React.memo(function RepositoryTreeToolbar(
   );
   const activeShow: TreeShow = media?.selected ? 'media' : props.changedOnly ? 'changed' : 'all';
   const galleryView = activeShow === 'all' ? props.galleryView ?? null : null;
-  const changeGalleryView = galleryView?.onChange;
   const viewTabs = React.useMemo((): ReadonlyArray<SegmentedTab<TreeView>> => [
     { id: 'list', label: t('files.pane.gallery.list'), testID: `${prefix}-view-list`,
       icon: <Icon name="list-bullets" size={SEGMENTED_TAB_ICON_SIZE_PX} color={iconColor} /> },
     { id: 'gallery', label: t('files.pane.gallery.gallery'), testID: `${prefix}-view-gallery`,
       icon: <Icon name="squares-four" size={SEGMENTED_TAB_ICON_SIZE_PX} color={iconColor} /> },
   ], [iconColor, prefix]);
-  const viewToggle = galleryView && changeGalleryView ? (
-    <SegmentedTabBar<TreeView>
-      tabs={viewTabs}
-      activeTabId={galleryView.mode}
-      onSelectTab={changeGalleryView}
-      segmentSizing="content"
-      accessibilityLabel={t('files.pane.gallery.viewLabel')}
-      testIDPrefix={`${prefix}-view-mode`}
-    />
-  ) : activeShow === 'media' && props.onOpenMediaBeside ? (
+  // One stable slot (lab pr974 SM1): List | Gallery stays mounted while Media hides it, so no orphaned surface is left
+  // behind; Media's Open beside takes the slot's place.
+  const offeredGalleryView = props.galleryView ?? null;
+  const viewToggle = offeredGalleryView ? (
+    <View style={galleryView ? null : styles.hiddenSlot} aria-hidden={galleryView ? undefined : true}>
+      <SegmentedTabBar<TreeView>
+        tabs={viewTabs}
+        activeTabId={offeredGalleryView.mode}
+        onSelectTab={offeredGalleryView.onChange}
+        segmentSizing="content"
+        accessibilityLabel={t('files.pane.gallery.viewLabel')}
+        testIDPrefix={`${prefix}-view-mode`}
+      />
+    </View>
+  ) : null;
+  const mediaBeside = activeShow === 'media' && props.onOpenMediaBeside ? (
     <IconButton
       testID={`${prefix}-media-beside`}
       variant="plain"
@@ -353,7 +369,8 @@ export const RepositoryTreeToolbar = React.memo(function RepositoryTreeToolbar(
     ) : null;
 
   return (
-    <View testID={`${prefix}-toolbar`} style={[styles.row, { paddingLeft: contentInsetPx, paddingRight: contentInsetPx / 2 }]}>
+    <View testID={`${prefix}-toolbar`} onLayout={props.media != null ? measureRow : undefined}
+      style={[styles.row, { paddingLeft: contentInsetPx, paddingRight: contentInsetPx / 2 }]}>
       {searchCollapsed ? null : (
         <View style={styles.field}>
           <CompactSearchField
@@ -369,6 +386,19 @@ export const RepositoryTreeToolbar = React.memo(function RepositoryTreeToolbar(
       )}
       {segment}
       {viewToggle}
+      {mediaBeside}
+      {searchGlyph ? (
+        <IconButton
+          testID={`${prefix}-search-open`}
+          variant="plain"
+          size={32}
+          interactiveTargetGapPx={controlGap}
+          iconName="magnifying-glass"
+          accessibilityLabel={t('projects.code.goToFile')}
+          tooltip={t('projects.code.goToFile')}
+          onPress={() => setSearchOpened(true)}
+        />
+      ) : null}
       {viewMenu}
       {props.trailing}
       {close}
@@ -400,5 +430,8 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   spacer: {
     flex: 1,
+  },
+  hiddenSlot: {
+    display: 'none',
   },
 }));

@@ -8,13 +8,13 @@ import {
   HappierMediaGridHeading,
   HappierMediaGridRow,
   HappierMediaTile,
-  HappierMediaTileSkeleton,
   buildHappierMediaGridLines,
   resolveHappierMediaGridGeometry,
   type HappierMediaGridLine,
 } from '@happier-dev/plugin-ui/presentation';
 import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 
+import { GallerySkeleton } from './GallerySkeleton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import {
@@ -24,12 +24,16 @@ import {
 import { MediaPicture } from '@/components/ui/media/MediaPicture';
 import { useFilePreviewSource } from '@/components/ui/media/useFilePreviewSource';
 import { Text } from '@/components/ui/text/Text';
+import { formatPlaybackTime } from '@/components/workspaces/files/file/filePageMediaFacts';
+import { withVideoFrameSource } from '@/components/workspaces/files/file/videoFrameAccess';
+import { useSetting } from '@/sync/domains/state/storage';
 import { createGalleryPreviewInput } from '@/hooks/workspaces/files/gallery/galleryStage';
-import type {
-  GalleryDaySection,
-  GalleryMediaItem,
+import {
+  localDay,
+  type GalleryDaySection,
+  type GalleryMediaItem,
 } from '@/hooks/workspaces/files/gallery/galleryModel';
-import { formatCalendarDate } from '@/utils/datetime/cachedIntlFormatters';
+import { formatCalendarDate, formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
 import { t } from '@/text';
 
@@ -48,36 +52,69 @@ export function formatGalleryDay(day: string | null, nowMs: number): string {
   return formatCalendarDate(start, undefined, nowMs);
 }
 
+/** A poster's decoded width: one still per video, large enough for the widest tile at 2x. */
+const POSTER_WIDTH_PX = 320;
+type VideoPoster = Readonly<{ source: string; uri: string; durationSeconds?: number }>;
+
+/** The video's first frame and its length, decoded once through the shared frame owner while the tile is mounted. */
+function useVideoPoster(uri: string | null): VideoPoster | null {
+  const [poster, setPoster] = React.useState<VideoPoster | null>(null);
+  React.useEffect(() => {
+    if (!uri) return;
+    const lifetime = new AbortController();
+    void withVideoFrameSource(uri, (player) => player.readFrame({ timeSeconds: 0, width: POSTER_WIDTH_PX }), lifetime.signal)
+      .then((frame) => {
+        if (lifetime.signal.aborted) return;
+        setPoster({ source: uri, uri: frame.uri,
+          ...(frame.durationSeconds === undefined ? {} : { durationSeconds: frame.durationSeconds }) });
+      })
+      // An undecodable video keeps its name as the stand-in.
+      .catch(() => undefined);
+    return () => lifetime.abort();
+  }, [uri]);
+  return poster?.source === uri ? poster : null;
+}
+
+/** When an item was made, for the stage caption: its day heading's words and the local time ("Today 13:51"). */
+export function formatGalleryMoment(modifiedMs: number, nowMs: number): string {
+  return `${formatGalleryDay(localDay(modifiedMs), nowMs)} ${formatWithCachedDateTimeFormatter(modifiedMs, undefined, { hour: 'numeric', minute: '2-digit' })}`;
+}
+
 const GalleryTile = React.memo(function GalleryTile(
   props: Readonly<{
     item: GalleryMediaItem;
     index: number;
     sizePx: number;
     cacheOnly: boolean;
+    selected: boolean;
     onOpen: (index: number) => void;
   }>,
 ) {
   const { theme } = useUnistyles();
   const { item } = props;
-  const picture = item.kind !== 'video';
+  const video = item.kind === 'video';
+  // A video reads under the pictures' own preview budget; a longer one keeps its name as the stand-in.
+  const previewLimit = useSetting('filesImagePreviewMaxBytes');
   // A tile is mounted only while its row is near the list's window (the virtualized list owns that), so mounting is
   // the demand; a stale (Machine away) gallery shows what this device holds.
   const preview = useFilePreviewSource(
-    createGalleryPreviewInput(
-      item,
-      picture,
-      props.cacheOnly ? { cacheOnly: true } : undefined,
-    ),
+    createGalleryPreviewInput(item, true, {
+      ...(props.cacheOnly ? { cacheOnly: true } : {}),
+      ...(video ? { maxBytes: previewLimit } : {}),
+    }),
   );
-  const loaded = picture && preview.status === 'loaded';
+  const poster = useVideoPoster(video && preview.status === 'loaded' ? preview.uri : null);
+  const pictureUri = video ? poster?.uri ?? null : preview.status === 'loaded' ? preview.uri : null;
+  const pending = preview.status === 'loading' || (video && preview.status === 'loaded' && poster === null);
   return (
     <HappierMediaTile
       sizePx={props.sizePx}
       accessibilityLabel={item.name}
       onPress={() => props.onOpen(props.index)}
+      selected={props.selected}
       testID={`gallery-tile-${item.name}`}
       badge={
-        item.kind === 'video' ? (
+        video ? (
           <View style={styles.badge}>
             <Icon
               name="play"
@@ -85,26 +122,37 @@ const GalleryTile = React.memo(function GalleryTile(
               size={10}
               color={theme.colors.overlay.foreground}
             />
+            {poster?.durationSeconds !== undefined ? (
+              <Text variant="micro" emphasis="semiBold" style={styles.badgeText}>
+                {formatPlaybackTime(poster.durationSeconds)}
+              </Text>
+            ) : null}
+          </View>
+        ) : null
+      }
+      endBadge={
+        // A picture someone attached in the chat (lab SM1): the paperclip says where it came from.
+        item.origin === 'messages' ? (
+          <View style={styles.badge} testID="gallery-tile-attached">
+            <Icon name="paperclip" size={10} color={theme.colors.overlay.foreground} />
           </View>
         ) : null
       }
     >
-      {loaded ? (
+      {pictureUri ? (
         <MediaPicture
           kind={item.kind === 'svg' ? 'svg' : 'image'}
-          uri={preview.uri}
+          uri={pictureUri}
           fit="cover"
           size={{ width: props.sizePx, height: props.sizePx }}
           style={StyleSheet.absoluteFill}
         />
-      ) : preview.status === 'loading' ? null : (
+      ) : pending ? null : (
         // Not readable here (a video, past the preview limit, not cached while the Machine is away): its name stands in.
         <View style={styles.standIn}>
-          <Icon
-            name={item.kind === 'video' ? 'video-camera' : 'image'}
-            size={20}
-            color={theme.colors.text.tertiary}
-          />
+          {video ? null : (
+            <Icon name="image" size={20} color={theme.colors.text.tertiary} />
+          )}
           <Text
             variant="micro"
             numberOfLines={1}
@@ -134,12 +182,13 @@ export type GalleryGridProps = Readonly<{
   onOpenFolder?: (folder: GalleryFolder, event?: unknown) => void;
   /** Opens the stage at this item's index in visual order. */
   onOpenItem: (index: number) => void;
+  /** The item the person last went to (the stage's current item, a chat jump's picture): its tile is ringed. */
+  selectedItemId?: string | null;
   /** The body's side inset: the Files pane's text edge, or a Details tab's wider one. */
   insetPx: number;
   testID?: string;
 }>;
 
-const SKELETON_ROWS = 3;
 
 /**
  * The gallery body every host draws (Files pane, Details tab, Session Media): the shared media grid's lines through
@@ -182,6 +231,7 @@ export function GalleryGrid(props: GalleryGridProps) {
       HAPPIER_MEDIA_GRID_METRICS.gapPx * (folderColumns - 1)) /
     folderColumns;
   const { onOpenFolder, onOpenItem, stale } = props;
+  const selectedItemId = props.selectedItemId ?? null;
   const foot = props.foot;
   const renderLine = React.useCallback<
     VirtualizedListRenderItem<
@@ -229,6 +279,7 @@ export function GalleryGrid(props: GalleryGridProps) {
                   index={line.first + offset}
                   sizePx={tilePx}
                   cacheOnly={stale}
+                  selected={item.id === selectedItemId}
                   onOpen={onOpenItem}
                 />
               ))}
@@ -243,6 +294,7 @@ export function GalleryGrid(props: GalleryGridProps) {
       foot,
       onOpenFolder,
       onOpenItem,
+      selectedItemId,
       stale,
       theme.colors.text.secondary,
       tilePx,
@@ -264,32 +316,8 @@ export function GalleryGrid(props: GalleryGridProps) {
     );
   };
   if (props.loading && items.length === 0 && props.folders.length === 0) {
-    const rows = Array.from({ length: SKELETON_ROWS }, (_, row) => row);
-    return (
-      <View
-        style={styles.fill}
-        onLayout={measure}
-        testID={props.testID ? `${props.testID}-loading` : undefined}
-      >
-        {props.header ?? null}
-        {width === null ? null : (
-          <View style={contentStyle}>
-            <View style={styles.skeletonHeading} />
-            {rows.map((row) => (
-              <HappierMediaGridRow key={row}>
-                {Array.from({ length: columns }, (_, column) => (
-                  <HappierMediaTileSkeleton
-                    key={column}
-                    sizePx={tilePx}
-                    testID="gallery-skeleton-tile"
-                  />
-                ))}
-              </HappierMediaGridRow>
-            ))}
-          </View>
-        )}
-      </View>
-    );
+    return <GallerySkeleton insetPx={props.insetPx} header={props.header}
+      testID={props.testID ? `${props.testID}-loading` : undefined} />;
   }
   if (
     !props.loading &&
@@ -367,10 +395,15 @@ const styles = StyleSheet.create((theme) => ({
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
-    height: 18,
+    gap: theme.space.s2,
+    paddingVertical: theme.space.s2,
     paddingHorizontal: theme.space.s4,
-    borderRadius: 9,
+    borderRadius: theme.borderRadius.sm,
     backgroundColor: theme.colors.overlay.scrim,
+  },
+  badgeText: {
+    color: theme.colors.overlay.foreground,
+    fontVariant: ['tabular-nums'],
   },
   standIn: {
     alignItems: 'center',
@@ -378,11 +411,5 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.space.s4,
     padding: theme.space.s8,
     maxWidth: '100%',
-  },
-  skeletonHeading: {
-    height:
-      HAPPIER_MEDIA_GRID_METRICS.headingPadTopPx +
-      18 +
-      HAPPIER_MEDIA_GRID_METRICS.headingPadBottomPx,
   },
 }));

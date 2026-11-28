@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { normalizeAttachmentRelativePathV1, sanitizeAttachmentFileName } from '@happier-dev/protocol/transfers/attachments/attachmentPathV1';
 
-import { buildSessionMediaFilePath } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
+import { buildSessionMediaFilePath, buildSessionMediaStoredFileName } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
 
 import { validatePath } from '@/rpc/handlers/pathSecurity';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
@@ -77,7 +77,7 @@ export function buildAttachmentUploadPath(input: Readonly<{
   relativePath?: string;
 }>): string {
   const relativeFilePath = input.relativePath === undefined
-    ? `${randomUUID().slice(0, 8)}-${sanitizeAttachmentFileName(input.fileName)}`
+    ? buildSessionMediaStoredFileName(randomUUID().slice(0, 8), sanitizeAttachmentFileName(input.fileName))
     : normalizeAttachmentRelativePathV1(input.relativePath);
   if (!relativeFilePath) throw new Error('Invalid attachment relativePath');
   return buildSessionMediaFilePath({

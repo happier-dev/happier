@@ -6438,6 +6438,12 @@ const filesPaneTranslations = { ja: {
             capturesUnreadable: "このマシンではスクリーンキャプチャを読み取れません",
             showInChat: "チャットで表示",
             showInChatFailed: "そのメッセージが見つかりません",
+            showInFiles: "ファイルで表示",
+            newestFirst: "新しい順",
+            originAttached: "チャットで添付",
+            originGenerated: "エージェントが作成",
+            originToolOutput: "ツールの出力",
+            originCapture: "画面キャプチャ",
         },
     } } as const satisfies Pick<Record<string, FilesPaneTranslations>, "ja">;
 

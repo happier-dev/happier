@@ -42,6 +42,16 @@ function FilesToolbar(props: Readonly<{ scopeKey: string; withMedia: boolean }>)
 }
 function Probe(_props: Readonly<{ view: string; changedOnly: boolean }>) { return null; }
 const read = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.findByType(Probe).props as { view: string; changedOnly: boolean };
+/** Drawn: mounted and not inside a slot the toolbar hides (List | Gallery stays mounted while Changed or Media shows). */
+function isDrawn(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string): boolean {
+  let node = screen.findByTestId(testID) as { props: Record<string, unknown>; parent: unknown } | null;
+  if (!node) return false;
+  while (node) {
+    if (node.props['aria-hidden'] === true) return false;
+    node = node.parent as typeof node;
+  }
+  return true;
+}
 function select(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) {
   return act(async () => { screen.pressByTestId(testID); });
 }
@@ -49,22 +59,24 @@ function select(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string
 describe('Files toolbar: List | Gallery and Media (lab pr974 SG1, SM1)', () => {
   it('toggles the folder in view between list and gallery, drawn only while All shows the files', async () => {
     const screen = await renderScreen(<FilesToolbar scopeKey="toggle" withMedia={false} />);
-    expect(screen.findByTestId('repository-tree-view-gallery')).toBeTruthy();
+    expect(isDrawn(screen, 'repository-tree-view-gallery')).toBe(true);
     await select(screen, 'repository-tree-view-gallery');
     expect(read(screen).view).toBe('gallery');
     // Changed is always a diff list: choosing it returns the gallery to the list and hides the toggle.
     await select(screen, 'repository-tree-show-changed');
     expect(read(screen)).toEqual({ view: 'list', changedOnly: true });
-    expect(screen.findByTestId('repository-tree-view-gallery')).toBeFalsy();
+    expect(isDrawn(screen, 'repository-tree-view-gallery')).toBe(false);
     await screen.unmount?.();
   });
 
   it('offers Media as the segment’s last option, uncounted, and All leaves it for the list', async () => {
     const screen = await renderScreen(<FilesToolbar scopeKey="media" withMedia />);
+    // Beside Media, Go to file stands as its glyph where the row has room (lab SG1), never only in the menu.
+    expect(screen.findByTestId('repository-tree-search-open')).toBeTruthy();
     await select(screen, 'repository-tree-show-media');
     expect(read(screen).view).toBe('media');
     // Media is always a gallery: no List | Gallery toggle.
-    expect(screen.findByTestId('repository-tree-view-gallery')).toBeFalsy();
+    expect(isDrawn(screen, 'repository-tree-view-gallery')).toBe(false);
     await select(screen, 'repository-tree-show-all');
     expect(read(screen)).toEqual({ view: 'list', changedOnly: false });
     await screen.unmount?.();

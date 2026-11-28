@@ -32,6 +32,22 @@ export function readSessionMediaMessageDirectoryId(directory: string): string | 
   }
 }
 
+/**
+ * A stored media file is named `<prefix>-<name>`: the prefix keeps two files of the same name apart in one
+ * message folder (8 random hex digits for an attachment, the first 12 of the content hash for generated media).
+ * The person's own name is the part after it.
+ */
+export function buildSessionMediaStoredFileName(prefix: string, name: string): string {
+  return `${prefix}-${name}`;
+}
+
+const STORED_FILE_NAME = /^(?:[0-9a-f]{8}|[0-9a-f]{12})-(.+)$/;
+
+/** The name to show for a stored media file; a name without the stored prefix is shown as it is. */
+export function readSessionMediaDisplayName(storedFileName: string): string {
+  return STORED_FILE_NAME.exec(storedFileName)?.[1] ?? storedFileName;
+}
+
 export function buildSessionMediaCategoryDirectory(category: SessionMediaTransferCategory, uploadRoot = SESSION_MEDIA_WORKSPACE_UPLOAD_ROOT): string {
   return `${uploadRoot.replace(/\\+/g, '/').replace(/\/+$/, '')}/${category}`;
 }

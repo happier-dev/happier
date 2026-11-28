@@ -6482,6 +6482,12 @@ const filesPaneTranslations = { ca: {
             capturesUnreadable: "Les captures de pantalla no es poden llegir en aquesta màquina",
             showInChat: "Mostra al xat",
             showInChatFailed: "No s’ha trobat aquest missatge",
+            showInFiles: "Mostra a Fitxers",
+            newestFirst: "Primer els més recents",
+            originAttached: "Adjuntat al xat",
+            originGenerated: "Fet per l’agent",
+            originToolOutput: "Sortida d’eina",
+            originCapture: "Captura de pantalla",
         },
     } } as const satisfies Pick<Record<string, FilesPaneTranslations>, "ca">;
 

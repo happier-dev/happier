@@ -6378,6 +6378,12 @@ const filesPaneTranslations = { 'zh-Hant': {
             capturesUnreadable: "此機器上的螢幕擷取畫面無法讀取",
             showInChat: "在聊天中顯示",
             showInChatFailed: "找不到該訊息",
+            showInFiles: "在檔案中顯示",
+            newestFirst: "最新優先",
+            originAttached: "在聊天中附加",
+            originGenerated: "由代理程式產生",
+            originToolOutput: "工具輸出",
+            originCapture: "螢幕擷取",
         },
     } } as const satisfies Pick<Record<string, FilesPaneTranslations>, "zh-Hant">;
 

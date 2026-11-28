@@ -31,7 +31,8 @@ export function classifyGalleryFile(
         ...(messageLocalId === undefined ? {} : { messageLocalId }) };
 }
 
-function localDay(modifiedMs: number | undefined): string | null {
+/** The local calendar day key ("2026-11-27") a gallery groups by. */
+export function localDay(modifiedMs: number | undefined): string | null {
     if (modifiedMs === undefined) return null;
     const date = new Date(modifiedMs);
     if (!Number.isFinite(date.valueOf())) return null;

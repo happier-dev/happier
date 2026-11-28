@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon } from '@/components/ui/icons/Icon';
+import { DetailsTabHeader } from '@/components/appShell/panes/details/header/DetailsTabHeader';
 import { usePaneContentInsetPx } from '@/components/ui/lists/listPresentation';
 import { useMediaStage } from '@/components/ui/media/stage/useMediaStage';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -97,18 +98,18 @@ export function FolderGalleryView(props: FolderGalleryViewProps) {
 
   const crumbs = folderPath ? folderPath.split('/') : [];
   const name = crumbs.at(-1) ?? props.rootLabel;
-  const upButton = (
+  // Up only where there is an up: the root draws none (an inert arrow reads as broken).
+  const upButton = folderPath ? (
     <IconButton
       variant="plain"
       size={28}
       iconName="arrow-up"
-      disabled={!folderPath}
       accessibilityLabel={t('files.pane.gallery.up')}
       tooltip={t('files.pane.gallery.up')}
       onPress={() => onNavigate(parentPath(folderPath))}
       testID="gallery-up"
     />
-  );
+  ) : null;
   const crumbLine = (
     <Text variant="meta" numberOfLines={1} style={styles.crumbs}>
       {[props.rootLabel, ...crumbs].map((crumb, index, all) => (
@@ -129,6 +130,12 @@ export function FolderGalleryView(props: FolderGalleryViewProps) {
       ))}
     </Text>
   );
+  const countsKnown = !model.loading && (props.online || model.stale);
+  const tabMeta = [
+    { key: 'path', text: [props.rootLabel, ...crumbs].join(' / '), tone: 'muted' as const, shrink: true },
+    ...(countsKnown ? [{ key: 'pictures', text: t('files.pane.gallery.pictureCount', { count: shownCount }) }] : []),
+    ...(folders.length > 0 ? [{ key: 'folders', text: t('files.pane.gallery.folderCount', { count: folders.length }) }] : []),
+  ];
   const beside = onOpenBeside ? (
     <IconButton
       variant="plain"
@@ -154,33 +161,16 @@ export function FolderGalleryView(props: FolderGalleryViewProps) {
         {beside}
       </View>
     ) : (
-      <View style={styles.tabHeader} testID="gallery-tab-header">
-        <View style={styles.tabTitleRow}>
-          <Icon name="folder" size={20} color={theme.colors.text.secondary} />
-          <Text
-            variant="title"
-            emphasis="semiBold"
-            numberOfLines={1}
-            style={[styles.grow, { color: theme.colors.text.primary }]}
-          >
-            {name}
-          </Text>
-          {upButton}
-        </View>
-        <Text
-          variant="meta"
-          numberOfLines={1}
-          style={{ color: theme.colors.text.tertiary }}
-        >
-          {crumbLine}
-          {model.loading || (!props.online && !model.stale)
-            ? ''
-            : ` · ${t('files.pane.gallery.pictureCount', { count: shownCount })}`}
-          {folders.length > 0
-            ? ` · ${t('files.pane.gallery.folderCount', { count: folders.length })}`
-            : ''}
-        </Text>
-      </View>
+      <DetailsTabHeader
+        testID="gallery-tab-header"
+        title={name}
+        leading={<Icon name="folder" size={20} color={theme.colors.text.secondary} />}
+        meta={tabMeta}
+        buttons={folderPath ? [{ label: t('files.pane.gallery.up'), iconName: 'arrow-up', onPress: () => onNavigate(parentPath(folderPath)),
+          testID: 'gallery-up' }] : undefined}
+        menuActions={[{ id: 'show-in-files', title: t('files.pane.gallery.showInFiles'), icon: 'list-bullets',
+          onSelect: showAsList, testID: 'gallery-show-in-files' }]}
+      />
     );
   const inset = props.presentation === 'pane' ? paneInset : theme.space.s20;
 
@@ -293,15 +283,4 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.space.s4,
   },
   crumbs: { color: theme.colors.text.tertiary },
-  tabHeader: {
-    gap: theme.space.s4,
-    paddingHorizontal: theme.space.s20,
-    paddingTop: theme.space.s16,
-    paddingBottom: theme.space.s12,
-  },
-  tabTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.space.s8,
-  },
 }));

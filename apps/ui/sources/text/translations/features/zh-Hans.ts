@@ -6378,6 +6378,12 @@ const filesPaneTranslations = { 'zh-Hans': {
             capturesUnreadable: "此机器上的屏幕截图无法读取",
             showInChat: "在聊天中显示",
             showInChatFailed: "找不到该消息",
+            showInFiles: "在文件中显示",
+            newestFirst: "最新优先",
+            originAttached: "在聊天中附加",
+            originGenerated: "由智能体生成",
+            originToolOutput: "工具输出",
+            originCapture: "屏幕截图",
         },
     } } as const satisfies Pick<Record<string, FilesPaneTranslations>, "zh-Hans">;
 

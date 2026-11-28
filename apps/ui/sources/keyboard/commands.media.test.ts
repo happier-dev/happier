@@ -34,4 +34,17 @@ describe('media stage keyboard commands', () => {
         expect(createKeyboardShortcutDispatcher({ ...options, handlers,
             getContext: () => ({ isEditableTarget: true, isComposing: false }) })(event)).toBe(false);
     });
+    it.each([
+        ['media.previous', 'ArrowLeft', 'ArrowLeft'], ['media.next', 'ArrowRight', 'ArrowRight'],
+        ['media.zoomOut', '-', 'Minus'], ['media.fit', '0', 'Digit0'], ['media.actualSize', '1', 'Digit1'],
+        ['media.playPause', ' ', 'Space'],
+    ] as const)('lets the open stage own %s while app-wide shortcuts and letter keys are off (their defaults)', (id, key, code) => {
+        const run = vi.fn();
+        const dispatch = createKeyboardShortcutDispatcher({ enabled: false, platform: 'macos', surface: 'web',
+            singleKeyShortcutsEnabled: false, disabledCommandIds: [], overrides: {}, handlers: { [id]: run },
+            getContext: () => ({ isEditableTarget: false, isComposing: false }) });
+        expect(dispatch({ key, code, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false,
+            repeat: false, isComposing: false })).toBe(true);
+        expect(run).toHaveBeenCalledOnce();
+    });
 });

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
+import { useSessionCockpitSurfaceNavigation } from '@/components/workspaceCockpit/session/SessionCockpitSurfaceNavigation';
 import { createServerRequestForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { runWithServerAccountScopeRequestGuard } from '@/sync/runtime/orchestration/serverScopedRpc/serverAccountScopeRequestGuard';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
@@ -12,6 +13,8 @@ import { resolveGalleryChatJump, type GalleryChatJump } from './showGalleryItemI
 
 export function useShowGalleryItemInChat(address: SessionAddress, lifetime: ServerAccountScopeLifetime | null) {
     const navigate = useNavigateToSession();
+    // A phone shows one surface at a time: the chat comes forward before the transcript jumps (lab pr974 SM1jp).
+    const cockpit = useSessionCockpitSurfaceNavigation();
     const { sessionId, serverId } = address;
     return React.useCallback(async (item: Pick<GalleryMediaItem, 'messageLocalId'>, signal?: AbortSignal): Promise<GalleryChatJump> => {
         if (!item.messageLocalId) return { ok: false, code: 'no_message' };
@@ -35,10 +38,13 @@ export function useShowGalleryItemInChat(address: SessionAddress, lifetime: Serv
                 return jump;
             });
             if (!lifetime.isCurrent() || signal?.aborted) return { ok: false, code: 'cancelled' };
-            if (result.ok) await navigate(sessionId, { serverId, query: result.query });
+            if (result.ok) {
+                cockpit?.switchSurface('chat');
+                await navigate(sessionId, { serverId, query: result.query });
+            }
             return result;
         } catch (error) {
             return { ok: false, code: error === retired || signal?.aborted || !lifetime.isCurrent() ? 'cancelled' : 'read_failed' };
         }
-    }, [lifetime, navigate, serverId, sessionId]);
+    }, [cockpit, lifetime, navigate, serverId, sessionId]);
 }

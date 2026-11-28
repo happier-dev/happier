@@ -29,7 +29,7 @@ import {
   sanitizeSessionMediaFileName,
   withSessionMediaFileExtension,
 } from './names';
-import { buildSessionMediaFilePath, normalizeSessionMediaPathId } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
+import { buildSessionMediaFilePath, buildSessionMediaStoredFileName, normalizeSessionMediaPathId } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
 import {
   prepareSource,
   resolveSourceSuggestedName,
@@ -142,7 +142,7 @@ function buildStoredFileName(input: Readonly<{
   const rawName = resolveSourceSuggestedName(input.source, input.suggestedName || fallback);
   const safeName = sanitizeSessionMediaFileName(rawName, fallback);
   const nameWithExtension = withSessionMediaFileExtension(safeName, extensionForSessionMediaMimeType(input.mimeType));
-  return `${input.sha256.slice(0, 12)}-${addCollisionSuffix(nameWithExtension, input.collisionIndex ?? 0)}`;
+  return buildSessionMediaStoredFileName(input.sha256.slice(0, 12), addCollisionSuffix(nameWithExtension, input.collisionIndex ?? 0));
 }
 
 export async function persistSessionMedia(params: Readonly<{

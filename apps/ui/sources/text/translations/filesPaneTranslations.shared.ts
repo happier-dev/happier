@@ -24,6 +24,12 @@ export type FilesPaneTranslations = Readonly<{
         capturesUnreadable: string;
         showInChat: string;
         showInChatFailed: string;
+        showInFiles: string;
+        newestFirst: string;
+        originAttached: string;
+        originGenerated: string;
+        originToolOutput: string;
+        originCapture: string;
     }>;
     menu: Readonly<{
         openBeside: string;
@@ -500,9 +506,15 @@ export const filesPaneTranslationsEnglish = { en: {
             mediaEmptyTitle: "Pictures and videos from this session collect here",
             mediaEmptyReason: "Screenshots and recordings the agent makes, and images you attach, appear here newest first.",
             attachPicture: "Attach a picture",
-            mediaFailed: "Couldn’t list this Session’s media",
+            mediaFailed: "Couldn’t list this session’s media",
             capturesUnreadable: "Screen captures aren’t readable on this Machine",
             showInChat: "Show in chat",
             showInChatFailed: "Couldn’t find that message",
+            showInFiles: "Show in Files",
+            newestFirst: "Newest first",
+            originAttached: "Attached in chat",
+            originGenerated: "Made by the agent",
+            originToolOutput: "Tool output",
+            originCapture: "Screen capture",
         },
     } } as const satisfies Pick<Record<string, FilesPaneTranslations>, "en">;

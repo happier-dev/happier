@@ -3,8 +3,7 @@ import {
     buildSessionMediaCategoryDirectory,
     buildSessionMediaSessionDirectory,
     normalizeSessionMediaPathId,
-    readSessionMediaMessageDirectoryId,
-} from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
+    readSessionMediaMessageDirectoryId, readSessionMediaDisplayName } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
 import { readTranscriptAttachmentsMeta, readTranscriptSessionMediaMeta } from '@/components/sessions/transcript/structured/happierMetaEnvelope';
 import { workspaceGetDirectoryTree, workspaceListDirectory, type WorkspaceTreeNode } from '@/sync/ops/workspaceFileSystem/directoryBrowsing';
 import { workspaceFileSystemTargetFromScope } from '@/sync/ops/workspaceFileSystem/workspaceTarget';
@@ -59,7 +58,8 @@ function filesInFolder(
     const messageLocalId = store === 'captures' ? undefined : readSessionMediaMessageDirectoryId(folder) ?? undefined;
     return files.flatMap(file => {
         if (file.type !== 'file' || !isPathSegment(file.name)) return [];
-        const item = classifyGalleryFile({ name: file.name, path: `${path}/${folder}/${file.name}`,
+        // The tile and stage show the person's name, never the store's unique prefix.
+        const item = classifyGalleryFile({ name: readSessionMediaDisplayName(file.name), path: `${path}/${folder}/${file.name}`,
             sizeBytes: file.size, modifiedMs: file.modified }, scope, store, messageLocalId);
         return item ? [item] : [];
     });
