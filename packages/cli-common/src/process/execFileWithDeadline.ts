@@ -1,10 +1,11 @@
 import { execFile, spawn, type ChildProcess, type ExecFileOptions, type SpawnOptions } from 'node:child_process';
+import type { EventEmitter } from 'node:events';
 
 import { closeStdioWhenCommandExits } from './closeStdioWhenCommandExits.js';
 
 /** The process and pipe operations shared by native children and placement adapters. */
 export type ExecFileChild = Pick<ChildProcess,
-  'pid' | 'exitCode' | 'signalCode' | 'killed' | 'kill' | 'once' | 'stdin' | 'stdout' | 'stderr'>;
+  'pid' | 'exitCode' | 'signalCode' | 'killed' | 'kill' | 'stdin' | 'stdout' | 'stderr'> & Pick<EventEmitter, 'once'>;
 
 export type ExecFileWithDeadlineOptions =
   & Readonly<Omit<ExecFileOptions, 'timeout' | 'killSignal'>>
@@ -154,8 +155,8 @@ export function execFileWithDeadline(
       child.stderr?.setEncoding('utf8');
       child.stdout?.on('data', (chunk: string) => { onStdoutChunk?.(chunk); stdout = append(stdout, chunk, 'stdoutTruncated'); });
       child.stderr?.on('data', (chunk: string) => { stderr = append(stderr, chunk, 'stderrTruncated'); });
-      child.once('error', (error) => { processError = error; });
-      child.once('close', (code, signalCode) => {
+      child.once('error', (error: Error) => { processError = error; });
+      child.once('close', (code: number | null, signalCode: NodeJS.Signals | null) => {
         const error = processError ?? (code !== 0 || signalCode !== null
           ? Object.assign(new Error(`Command failed: ${command}`), { code, signal: signalCode, killed: child.killed }) : null);
         onCommandResult(error, stdout, stderr);

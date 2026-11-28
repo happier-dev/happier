@@ -1,4 +1,5 @@
 import type { ChildProcess } from 'node:child_process';
+import type { EventEmitter } from 'node:events';
 import type { Readable } from 'node:stream';
 
 /**
@@ -50,7 +51,7 @@ const QUIET_CHECK_PHASE_TURNS = 2;
  * Intended for a consumer that reads these streams (both callers do). It does not attach listeners
  * and so does not change what that consumer receives.
  */
-export function closeStdioWhenCommandExits(child: Pick<ChildProcess, 'stdout' | 'stderr' | 'once'>): void {
+export function closeStdioWhenCommandExits(child: Pick<ChildProcess, 'stdout' | 'stderr'> & Pick<EventEmitter, 'once'>): void {
   const streams = [child.stdout, child.stderr].filter((stream): stream is Readable => Boolean(stream));
   if (streams.length === 0) {
     return;

@@ -7,7 +7,7 @@
  * - callers can request termination with a grace period (handled by a higher-level supervisor).
  */
 
-import type { ChildProcess } from 'node:child_process';
+import type { EventEmitter } from 'node:events';
 import { logger } from '@/ui/logger';
 import { observeProcessLaunch } from '@/processes/launchNotification';
 
@@ -24,7 +24,7 @@ export type ManagedChildProcess = Readonly<{
   waitForTermination: () => Promise<TerminationEvent>;
 }>;
 
-export function createManagedChildProcess(child: Pick<ChildProcess, 'pid' | 'on' | 'once'>): ManagedChildProcess {
+export function createManagedChildProcess(child: Pick<EventEmitter, 'on' | 'once'> & { pid?: number }): ManagedChildProcess {
   observeProcessLaunch(child);
   const pid = typeof child.pid === 'number' && Number.isFinite(child.pid) ? child.pid : null;
 
@@ -38,8 +38,8 @@ export function createManagedChildProcess(child: Pick<ChildProcess, 'pid' | 'on'
     };
   });
 
-  child.once('exit', (code, signal) => {
-    resolveTermination(classifyChildExit({ code, signal: (signal as NodeJS.Signals | null) ?? null }));
+  child.once('exit', (code: number | null, signal: NodeJS.Signals | null) => {
+    resolveTermination(classifyChildExit({ code, signal: signal ?? null }));
   });
   child.on('error', (error) => {
     if (pid === null) {
