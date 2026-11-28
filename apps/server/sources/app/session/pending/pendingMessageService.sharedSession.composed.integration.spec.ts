@@ -8120,7 +8120,7 @@ describe("pendingMessageService (shared sessions)", () => {
         });
     });
 
-    it('returns the exact Team publication refusal for a committed input', async () => {
+    it.each([false, true])('returns the exact Team publication refusal for a committed input (typed: %s)', async typed => {
         const owner = await createAccount('withdrawn-input-owner');
         const session = await createSession(owner.id);
         const localId = `withdrawn-input-${randomUUID()}`;
@@ -8132,7 +8132,22 @@ describe("pendingMessageService (shared sessions)", () => {
         // The native send already published its user row; Home has no Turn begin witness.
         expect(await createSessionMessage({ ...input, inputAdmission: 'authenticatedAccount', authentication,
             messageRole: 'user', ciphertext: 'retained-input' })).toMatchObject({ ok: true, didWrite: true });
-        await withAuthenticatedTestApp(registerSessionMessageRoutes, async app => {
+        const runtimeIssueV1 = { v: 1 as const, scope: 'primary_session' as const, status: 'failed' as const,
+            source: 'team_credential' as const, code: 'session_team_credential_binding_rejected', occurredAt: Date.now(),
+            failureCause: { phase: 'turn_start' as const, failureReason: 'permission_denied' as const,
+                providerErrorCode: 'access_removed', retryable: false } };
+        if (typed) {
+            const progress = await inTx(tx => createSessionInputReplyProgressInTx(tx, {
+                accountId: owner.id, requestSessionId: session.id, reply: { mode: 'wait' },
+            }));
+            if (!progress) throw new Error('Canonical reply admission failed');
+            await db.sessionPendingMessage.update({ where: { sessionId_localId: { sessionId: session.id, localId } },
+                data: { replyProgress: progress, replyDisposition: progress.disposition } });
+        }
+        await withAuthenticatedTestApp(app => {
+            registerSessionMessageRoutes(app);
+            sessionPendingRoutes(app);
+        }, async app => {
             const read = () => app.inject({
                 method: 'GET', url: `/v2/sessions/${session.id}/messages/by-local-id/${localId}`,
                 headers: { 'x-test-user-id': owner.id },
@@ -8140,10 +8155,16 @@ describe("pendingMessageService (shared sessions)", () => {
             const initial = await read();
             expect(initial.statusCode, initial.body).toBe(200);
             expect(initial.json().message).not.toHaveProperty('inputDeliveryIssue');
-            expect(await blockPendingDelivery({ ...input, reason: 'team_access_removed' })).toMatchObject({ ok: true });
+            const block = await app.inject({
+                method: 'POST', url: `/v2/sessions/${session.id}/pending/${localId}/delivery/block`,
+                headers: { 'x-test-user-id': owner.id },
+                payload: { reason: 'team_access_removed', ...(typed ? { runtimeIssueV1 } : {}) },
+            });
+            expect(block.statusCode, block.body).toBe(200);
+            expect(block.json()).toMatchObject({ ok: true });
             const refused = await read();
             expect(refused.statusCode, refused.body).toBe(200);
-            expect(refused.json()).toMatchObject({ message: { inputDeliveryIssue: {
+            expect(refused.json()).toMatchObject({ message: { inputDeliveryIssue: typed ? runtimeIssueV1 : {
                 code: 'team_access_removed', failureCause: { phase: 'turn_start', providerErrorCode: 'team_access_removed' },
             } } });
         });

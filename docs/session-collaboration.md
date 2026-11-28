@@ -153,9 +153,11 @@ queue and remains the delivery outcome for the original in the CLI reply wait an
 app transcript.
 
 In 0.3 source, if Home refuses Turn publication after the Agent receives a
-primary Session input and Pending records `team_access_removed`, the exact
-original result reports a failed delivery with that cause. The result describes
-Home publication. The native Agent may already have acted on the input.
+primary Session input, the exact original reports failed delivery. When the Team
+model grant was withdrawn, a waiting Send retains Home's `access_removed` cause
+in the runtime issue. Older publishers that supplied only `team_access_removed`
+retain that cause. The Send receipt remains `outcomeUnknown` because the native
+Agent may already have acted on the input.
 
 The Session share also governs its ephemeral managed Browser: View watches its
 frames and Steer drives it, without a Machine grant. Browser routing consumes

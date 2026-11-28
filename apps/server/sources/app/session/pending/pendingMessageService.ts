@@ -4447,8 +4447,10 @@ export async function blockPendingDelivery(params: {
                 }
                 const progress = SessionMessageReplyProgressV1Schema.safeParse(existing.replyProgress);
                 if ((params.runtimeIssueV1 || reason === 'provider_rejected_before_acceptance' || reason === 'team_access_removed')
-                    && progress.success && progress.data.workflow
-                    && localId === deriveWorkflowSessionInputLocalIdV2(progress.data.workflow)) {
+                    && progress.success
+                    && (progress.data.workflow
+                        ? localId === deriveWorkflowSessionInputLocalIdV2(progress.data.workflow)
+                        : reason === 'team_access_removed' && params.runtimeIssueV1 !== undefined)) {
                     await settleUnacceptedSessionInputReplyInTx(tx, sessionId, localId, 'failed', params.runtimeIssueV1);
                 }
                 if (existing.deliveryState === "blocked" && existing.deliveryBlockedReason === reason) {
