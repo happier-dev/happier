@@ -8618,7 +8618,10 @@ as runners (`launchDetachedHappierProcess.ts`: binary-safe command, Linux user s
 OOM score, sanitized stderr) as `happier session-host`. TTY-bound launches (tmux,
 Windows terminal, adapter hosts) and every Windows spawn keep one runner process per
 Session under the current launch placement rule. Windows local RPC clients verify
-the connected pipe server's same-user SID before sending input.
+the connected pipe server's same-user SID before sending input. The exact
+internal host invocation brings up the Home transport and local listener before
+loading general CLI dispatch. An admitted add loads that dispatch in the host
+when the Session starts.
 
 The daemon adds and ends Sessions on the host's owner-only local endpoint, the same
 peer-checked endpoint as the local Session RPC channel

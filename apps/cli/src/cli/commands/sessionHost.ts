@@ -9,16 +9,12 @@ export const handleSessionHostCliCommand: CommandHandler = async (context) => {
   if (context.args.length !== 1) throw new Error('session-host takes no arguments');
   const [
     { startSessionHost, SESSION_HOST_READY_LINE },
-    { dispatchCli },
-    { parseCliArgs },
     { runWithRunnerHomeTransport },
     { readPublishedDaemonProcessBirth },
     { selfMigrateDaemonSpawnedSessionProcessOutOfDaemonServiceCgroup },
     { createSessionHostCredentialHold },
   ] = await Promise.all([
     import('@/agent/runtime/lifecycle/sessionHost'),
-    import('@/cli/dispatch'),
-    import('@/cli/parseArgs'),
     import('@/api/connection/runWithRunnerHomeTransport'),
     import('@/persistence'),
     import('@/daemon/platform/linux/daemonSpawnedSessionCgroupSelfMigration'),
@@ -31,6 +27,10 @@ export const handleSessionHostCliCommand: CommandHandler = async (context) => {
   await runWithRunnerHomeTransport(async () => {
     const host = await startSessionHost({
       runSessionCommand: async (argv, launch) => {
+        const [{ dispatchCli }, { parseCliArgs }] = await Promise.all([
+          import('@/cli/dispatch'),
+          import('@/cli/parseArgs'),
+        ]);
         const { args, terminalRuntime } = parseCliArgs([...argv]);
         // The daemon already admitted this Session's Account and Machine: its command re-derives neither.
         let credentials: Awaited<ReturnType<typeof credentialHold.resolve>> | null = null;

@@ -1,10 +1,10 @@
 import '../configureZodLocale';
-import { dispatchCli } from '@/cli/dispatch';
-import { readCliProcessArgs, parseCliArgs } from '@/cli/parseArgs';
+import { readCliProcessArgs } from '@/cli/processArgs';
+import { CLI_API_TOKEN_ENV, CLI_API_TOKEN_HANDOFF_ENV } from '@/auth/cliApiTokenEnvironment';
+import { applyDaemonAutostartEnvForInvocation } from '@/daemon/daemonAutostartPolicy';
 import { initToolTraceIfEnabled } from '@/agent/tools/trace/toolTrace';
 import axios from '@/api/client/credentialAxios';
 import { configuration } from '@/configuration';
-import { maybeAutoUpdateNotice } from '@/cli/runtime/update/autoUpdateNotice';
 import { maybeReexecToRuntime } from '@/cli/runtime/update/runtimeReexec';
 import { dirname } from 'node:path';
 import * as tls from 'node:tls';
@@ -51,6 +51,25 @@ export async function runCliBootstrap(entrypointUrl: string): Promise<void> {
       packageName: updatePackageName,
       env: process.env,
     });
+    if (normalizedArgv.length === 1 && normalizedArgv[0] === 'session-host'
+      && !process.stderr.isTTY && configuration.organizationPolicy.status !== 'invalid'
+      && !Object.keys(process.env).some(key => {
+        const name = key.toUpperCase();
+        return name === CLI_API_TOKEN_ENV || name === CLI_API_TOKEN_HANDOFF_ENV;
+      })) {
+      // The daemon supplies the Home and the host endpoint checks its process birth.
+      // Runner CLI dispatch belongs to the first authorized add, or intent preload.
+      const { handleSessionHostCliCommand } = await import('@/cli/commands/sessionHost');
+      applyDaemonAutostartEnvForInvocation({ args: normalizedArgv, env: process.env });
+      if (process.env.DEBUG) logger.debug('Starting happy CLI with args: ', process.argv);
+      await handleSessionHostCliCommand({ args: normalizedArgv, rawArgv: process.argv, terminalRuntime: null });
+      return;
+    }
+    const [{ maybeAutoUpdateNotice }, { parseCliArgs }, { dispatchCli }] = await Promise.all([
+      import('@/cli/runtime/update/autoUpdateNotice'),
+      import('@/cli/parseArgs'),
+      import('@/cli/dispatch'),
+    ]);
     maybeAutoUpdateNotice({
       argv: normalizedArgv,
       isTTY: Boolean(process.stderr.isTTY),
